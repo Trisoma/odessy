@@ -15,6 +15,33 @@ class FakeModel:
                 name="calculator.eval",
                 arguments={"expression": user_text.strip()[10:].strip()},
             )
+        if normalized.startswith("read "):
+            return ToolRequest(
+                name="filesystem.read",
+                arguments={"path": user_text.strip()[5:].strip()},
+            )
+        if normalized.startswith("list"):
+            path = user_text.strip()[4:].strip() or "."
+            return ToolRequest(name="filesystem.list", arguments={"path": path})
+        if normalized.startswith("find "):
+            return ToolRequest(
+                name="project.find",
+                arguments={"pattern": user_text.strip()[5:].strip(), "path": "."},
+            )
+        if normalized.startswith("grep "):
+            return ToolRequest(
+                name="project.grep",
+                arguments={"pattern": user_text.strip()[5:].strip(), "path": "."},
+            )
+        if normalized == "git status":
+            return ToolRequest(name="git.status", arguments={})
+        if normalized.startswith("git diff"):
+            mode = "cached" if "--cached" in normalized else "working"
+            return ToolRequest(name="git.diff", arguments={"mode": mode})
+        if normalized.startswith("git changed"):
+            return ToolRequest(name="git.changed_files", arguments={"mode": "all"})
+        if normalized.startswith("git log"):
+            return ToolRequest(name="git.log", arguments={"limit": 20})
         if "time" in normalized or "date" in normalized:
             return ToolRequest(name="time.now", arguments={})
         return FinalResponse(
@@ -42,6 +69,19 @@ class FakeModel:
             return FinalResponse(
                 text=f"{result['expression']} = {result['result']}"
             )
+        if observation.request.name == "filesystem.read":
+            result = observation.result
+            return FinalResponse(text=f"Read {result['path']}:\n{result['content']}")
+        if observation.request.name == "filesystem.list":
+            entries = observation.result["entries"]
+            names = ", ".join(entry["name"] for entry in entries)
+            return FinalResponse(text=f"Directory entries: {names}")
+        if observation.request.name in {"project.find", "project.grep"}:
+            return FinalResponse(
+                text=f"{observation.request.name} found {observation.result['count']} result(s)."
+            )
+        if observation.request.name.startswith("git."):
+            return FinalResponse(text=f"{observation.request.name} returned a structured result.")
         return FinalResponse(text="I received a tool result, but I cannot summarize it yet.")
 
 

@@ -16,7 +16,19 @@ class OdessyPolicy:
     max_timeout: int = 30
 
     def evaluate(self, request: ToolRequest) -> PolicyDecision:
-        allowed_tools = self.allowed_tools or {"time.now", "terminal.run", "calculator.eval"}
+        allowed_tools = self.allowed_tools or {
+            "time.now",
+            "terminal.run",
+            "calculator.eval",
+            "filesystem.read",
+            "filesystem.list",
+            "project.find",
+            "project.grep",
+            "git.status",
+            "git.diff",
+            "git.changed_files",
+            "git.log",
+        }
         if request.name not in allowed_tools:
             return PolicyDecision(
                 action="deny",
@@ -48,6 +60,8 @@ class OdessyPolicy:
                 reason="calculator.eval allowed as a read-only arithmetic tool",
                 risk="low",
             )
+        if request.name in _READ_ONLY_TOOL_NAMES:
+            return self._evaluate_read_only_tool(request)
         if request.name == "terminal.run":
             return self._evaluate_terminal_run(request)
         return PolicyDecision(
@@ -115,6 +129,41 @@ class OdessyPolicy:
             return PolicyDecision(
                 "deny",
                 "terminal.run denied because cwd is outside the allowed workspace",
+                "high",
+            )
+        return None
+
+    def _evaluate_read_only_tool(self, request: ToolRequest) -> PolicyDecision:
+        for key, value in request.arguments.items():
+            if key in {"path", "file", "cwd"} and isinstance(value, str):
+                path_decision = self._check_workspace_path(value, request.name)
+                if path_decision is not None:
+                    return path_decision
+        return PolicyDecision(
+            "allow",
+            f"{request.name} allowed as a read-only workspace tool",
+            "low",
+        )
+
+    def _check_workspace_path(self, candidate_path: str, tool_name: str) -> PolicyDecision | None:
+        if _looks_like_secret_path(candidate_path):
+            return PolicyDecision(
+                "deny",
+                f"{tool_name} denied because the path targets credentials or secrets",
+                "high",
+            )
+        root = self.workspace_root.resolve()
+        candidate = Path(candidate_path).expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        try:
+            resolved = candidate.resolve(strict=False)
+        except OSError:
+            return PolicyDecision("deny", f"{tool_name} denied because path is invalid", "high")
+        if resolved != root and root not in resolved.parents:
+            return PolicyDecision(
+                "deny",
+                f"{tool_name} denied because path is outside the allowed workspace",
                 "high",
             )
         return None
@@ -195,3 +244,36 @@ def _matches_deny_rule(command: str, tokens: list[str]) -> bool:
     if any(pattern in command for pattern in destructive_patterns):
         return True
     return False
+
+
+_READ_ONLY_TOOL_NAMES = {
+    "filesystem.read",
+    "filesystem.list",
+    "project.find",
+    "project.grep",
+    "git.status",
+    "git.diff",
+    "git.changed_files",
+    "git.log",
+}
+
+
+def _looks_like_secret_path(value: str) -> bool:
+    normalized = value.replace("\\", "/").lower()
+    secret_terms = {
+        ".aws",
+        ".env",
+        ".git-credentials",
+        ".gnupg",
+        ".kube",
+        ".netrc",
+        ".npmrc",
+        ".pypirc",
+        ".ssh",
+        "credentials.json",
+        "id_rsa",
+        "id_ed25519",
+        "secrets.json",
+        "token.json",
+    }
+    return any(term in normalized for term in secret_terms)
