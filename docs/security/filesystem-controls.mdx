@@ -1,0 +1,87 @@
+---
+title: "Understand Workspace Filesystem Controls"
+sidebar-title: "Filesystem Controls"
+description: "Review Odessy's local workspace authority model, path containment, symlink handling, and sensitive-path deny policy."
+description-agent: "Explains Odessy's workspace filesystem authority boundary. Use when reviewing path resolution, workspace containment, sensitive-path denial, or read-only tool safety."
+keywords: ["odessy filesystem controls", "workspace authority", "path guard", "sensitive paths"]
+content:
+  type: "concept"
+---
+Odessy v0.1.0 confines filesystem-sensitive operations to an explicit local workspace.
+The Python runtime owns the authoritative workspace decision before any MCP tool call is allowed.
+The Node MCP tool server also performs path checks as defense in depth, but it is not the security authority.
+
+## Authority Boundary
+
+| Aspect | Detail |
+|---|---|
+| Default | Odessy resolves all workspace-sensitive paths against the configured workspace root. |
+| Authority | Python `WorkspaceAuthority` and `OdessyPolicy` decide whether a model-proposed path is allowed before MCP is invoked. |
+| Defense in depth | The Node tool server has its own `path-guard.ts` checks for read-only filesystem tools. |
+| Risk if relaxed | If policy moved into the model, MCP server, or shell handler, a malformed or adversarial tool request could reach execution before Odessy authorizes it. |
+| Recommendation | Keep all workspace authorization in Python and treat Node checks as a second line of defense only. |
+
+## Inside The Workspace
+
+Odessy does not use string-prefix checks.
+A path is inside the workspace only when its resolved location is contained by the resolved workspace root.
+
+The runtime handles:
+
+- relative paths;
+- absolute paths;
+- `.` and `..` components;
+- redundant separators;
+- sibling-prefix attacks;
+- existing paths;
+- non-existent targets whose nearest existing ancestor can be resolved safely;
+- symlink or reparse-point escapes where the platform resolver exposes them.
+
+For non-existent targets, Odessy resolves the nearest existing ancestor, verifies that ancestor is inside the workspace, then reapplies the missing path suffix.
+
+## Sensitive Paths
+
+Odessy separates containment from sensitivity.
+A path can be inside the workspace and still be denied because it is sensitive.
+
+Examples denied by policy include:
+
+- `.env`
+- `.env.*`
+- `*.pem`
+- `*.key`
+- private key names such as `id_rsa` and `id_ed25519`
+- credential files;
+- secret files;
+- token-like filenames;
+- `.ssh/`
+- `.aws/`
+- `.kube/`
+- `.git-credentials`
+
+This is not a perfect secret detector.
+It is a defense-in-depth deny layer for obvious high-risk paths.
+
+## Symlink And Reparse-Point Handling
+
+Odessy validates canonical resolved paths, not only lexical paths.
+If a workspace path points through a symlink or reparse point to an outside location, the Python authority denies it when the platform resolver exposes that target.
+
+Example:
+
+```text
+workspace/
+  link -> outside/
+
+read link/secret.txt
+```
+
+The request must be denied because the resolved target is outside the workspace.
+
+## Limitations
+
+Odessy v0.1.0 is not a kernel sandbox, container, or VM.
+User-space path checks have inherent TOCTOU limitations if files or links change between validation and use.
+
+For v0.1.0, the goal is a serious local single-user authority boundary before Gemma integration, not complete operating-system isolation.
+

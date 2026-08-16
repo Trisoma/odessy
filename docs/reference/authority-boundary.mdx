@@ -1,0 +1,99 @@
+---
+title: "Odessy Authority Boundary"
+sidebar-title: "Authority Boundary"
+description: "Reference for Odessy's model, runtime, MCP, Node tool-server, and execution authority split."
+description-agent: "Use when checking whether a proposed Odessy change preserves the runtime authority model and MCP/tool-server boundaries."
+keywords: ["odessy architecture", "authority boundary", "mcp security", "runtime policy"]
+content:
+  type: "reference"
+---
+Odessy v0.1.0 uses a local single-user command-line authority model.
+The architecture is intentionally small, but the authority split is strict.
+
+## Required Flow
+
+```text
+MODEL
+  -> structured tool proposal
+  -> Python Odessy Runtime
+     -> schema validation
+     -> policy
+     -> workspace authority
+     -> process authority
+     -> confirmation when required
+  -> MCP client
+  -> Node MCP tool server
+  -> tool handler
+  -> execution environment
+  -> structured observation
+  -> Python runtime
+  -> MODEL
+```
+
+## Non-Negotiable Rules
+
+| Rule | Meaning |
+|---|---|
+| The model is not an authority | FakeModel or future Gemma can propose, but cannot approve or execute. |
+| MCP is not an authority | MCP is the protocol for `tools/list` and `tools/call`. |
+| Node is not an authority | Node executes bounded tool handlers and performs defense-in-depth checks. |
+| Python is the authority | Python owns validation, policy, workspace checks, process checks, and confirmation. |
+| DENY means no execution | A denied request must not reach `tools/call`. |
+| CONFIRM means human approval | The model cannot approve its own action. |
+
+## Current Tool Surface
+
+Step 7 keeps the v0.1.0 command-line scope:
+
+```text
+time.now
+calculator.eval
+terminal.run
+filesystem.read
+filesystem.list
+project.find
+project.grep
+git.status
+git.diff
+git.changed_files
+git.log
+```
+
+Write tools, voice integration, Gemma integration, GUI automation, robotics, and background autonomy remain outside this step.
+
+## Defense In Depth
+
+| Layer | Responsibility |
+|---|---|
+| Python runtime | Authoritative policy, workspace authority, process authority, confirmation. |
+| MCP | Tool protocol and structured result transport. |
+| Node tool server | Read-only tool handlers, schema validation, path guard defense in depth. |
+| OS/process layer | cwd, sanitized environment, timeout, stdout/stderr bounds, process cleanup. |
+
+## Step 7 Verification
+
+Step 7 adversarial tests cover:
+
+- relative and absolute inside paths;
+- outside paths;
+- sibling-prefix paths;
+- symlink escape where supported;
+- non-existent safe targets;
+- sensitive filenames and directories;
+- background and detached terminal attempts;
+- sanitized environment behavior;
+- stdout bounds;
+- timeout handling;
+- no-MCP-on-deny behavior.
+
+Current verification:
+
+```text
+Python tests: 39 passed
+Node typecheck: passed
+Node read-only tool tests: 6 passed, 0 failed, 0 skipped
+```
+
+For current security and product limits, see `docs/reference/current-limitations.mdx`.
+
+This reference should be updated whenever Odessy changes the authority model or adds new tool capabilities.

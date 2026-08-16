@@ -59,6 +59,20 @@ class OdessyAgent:
             )
         )
 
+        preflight_decision = self._policy.evaluate(action)
+        if preflight_decision.action == "deny":
+            log.append(
+                LogEntry(
+                    "policy_denied",
+                    {
+                        "name": action.name,
+                        "risk": preflight_decision.risk,
+                        "reason": preflight_decision.reason,
+                    },
+                )
+            )
+            raise PermissionError(f"Policy denied request: {preflight_decision.reason}")
+
         async with Client(self._mcp_server) as client:
             tools = await client.list_tools()
 

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from odessy.types import PolicyDecision, ToolRequest
+from odessy.workspace_authority import WorkspaceAuthority, WorkspaceAuthorityError
 
 
 @dataclass(frozen=True)
@@ -14,6 +15,10 @@ class OdessyPolicy:
     allowed_tools: set[str] | None = None
     normal_timeout: int = 10
     max_timeout: int = 30
+
+    @property
+    def authority(self) -> WorkspaceAuthority:
+        return WorkspaceAuthority(Path(self.workspace_root))
 
     def evaluate(self, request: ToolRequest) -> PolicyDecision:
         allowed_tools = self.allowed_tools or {
@@ -95,6 +100,12 @@ class OdessyPolicy:
         lowered = command.strip().lower()
         tokens = lowered.replace("\\", "/").split()
 
+        if _matches_background_or_detach_rule(lowered, tokens):
+            return PolicyDecision(
+                "deny",
+                "terminal.run denied because background or detached execution is outside the request lifecycle",
+                "high",
+            )
         if _matches_deny_rule(lowered, tokens):
             return PolicyDecision(
                 "deny",
@@ -120,12 +131,9 @@ class OdessyPolicy:
         )
 
     def _check_workspace_cwd(self, cwd: str) -> PolicyDecision | None:
-        root = self.workspace_root.resolve()
-        candidate = Path(cwd)
-        if not candidate.is_absolute():
-            candidate = root / candidate
-        resolved = candidate.resolve()
-        if resolved != root and root not in resolved.parents:
+        try:
+            self.authority.resolve_cwd(cwd)
+        except WorkspaceAuthorityError:
             return PolicyDecision(
                 "deny",
                 "terminal.run denied because cwd is outside the allowed workspace",
@@ -146,24 +154,18 @@ class OdessyPolicy:
         )
 
     def _check_workspace_path(self, candidate_path: str, tool_name: str) -> PolicyDecision | None:
-        if _looks_like_secret_path(candidate_path):
-            return PolicyDecision(
-                "deny",
-                f"{tool_name} denied because the path targets credentials or secrets",
-                "high",
-            )
-        root = self.workspace_root.resolve()
-        candidate = Path(candidate_path).expanduser()
-        if not candidate.is_absolute():
-            candidate = root / candidate
         try:
-            resolved = candidate.resolve(strict=False)
-        except OSError:
-            return PolicyDecision("deny", f"{tool_name} denied because path is invalid", "high")
-        if resolved != root and root not in resolved.parents:
+            resolved = self.authority.resolve_path(candidate_path, must_exist=False)
+        except WorkspaceAuthorityError:
             return PolicyDecision(
                 "deny",
                 f"{tool_name} denied because path is outside the allowed workspace",
+                "high",
+            )
+        if resolved.sensitive:
+            return PolicyDecision(
+                "deny",
+                f"{tool_name} denied because the path targets credentials or secrets",
                 "high",
             )
         return None
@@ -242,6 +244,29 @@ def _matches_deny_rule(command: str, tokens: list[str]) -> bool:
     if any(term in command for term in secret_terms):
         return True
     if any(pattern in command for pattern in destructive_patterns):
+        return True
+    return False
+
+
+def _matches_background_or_detach_rule(command: str, tokens: list[str]) -> bool:
+    if not tokens:
+        return True
+    detached_terms = {
+        "disown",
+        "nohup",
+        "schtasks",
+        "setsid",
+        "start-job",
+        "start-process",
+    }
+    if tokens[0] in detached_terms:
+        return True
+    padded = f" {command} "
+    if tokens[:2] in (["cmd", "/c"], ["cmd.exe", "/c"]) and " start " in padded:
+        return True
+    if " --detach" in command or " -d " in padded:
+        return True
+    if command.endswith(" &") or " & " in command or " 2>&1 &" in command:
         return True
     return False
 

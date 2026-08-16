@@ -1,0 +1,98 @@
+---
+title: "Understand Process Execution Controls"
+sidebar-title: "Process Controls"
+description: "Review Odessy's terminal.run authority model, sanitized environment, timeout handling, output limits, and detached-process restrictions."
+description-agent: "Explains Odessy's terminal execution controls. Use when reviewing terminal.run policy, sanitized subprocess environments, timeouts, output bounds, or background execution denial."
+keywords: ["odessy process controls", "terminal.run security", "subprocess environment", "timeout"]
+content:
+  type: "concept"
+---
+`terminal.run` is a high-risk Odessy capability.
+The model may propose a terminal action, but only the Python Odessy runtime can authorize it.
+
+## Execution Authority
+
+| Aspect | Detail |
+|---|---|
+| Default | `terminal.run` requires schema validation, policy classification, workspace cwd authorization, and confirmation when required. |
+| Authority | Python `OdessyPolicy` and `CommandBridge` own the process authority boundary. |
+| Protocol | MCP carries only an already approved request. |
+| Execution server | The local MCP server invokes the command bridge; it does not decide model authority. |
+| Recommendation | Keep terminal policy and confirmation outside the model and outside MCP. |
+
+## Working Directory
+
+Every terminal request has an explicit working directory.
+The cwd must resolve inside the configured Odessy workspace.
+
+Denied examples include:
+
+```text
+run --cwd .. pwd
+run --cwd C:\Users\...\outside pwd
+run --cwd workspace-link-to-outside pwd
+```
+
+## Subprocess Environment
+
+Odessy does not blindly inherit the parent environment.
+The command bridge builds a small allowlisted environment needed for local command execution.
+
+Commonly allowed variables include:
+
+- `PATH`
+- `PATHEXT`
+- `SystemRoot`
+- `COMSPEC`
+- `TEMP`
+- `TMP`
+- `WINDIR`
+- locale or terminal variables when needed
+
+Obvious credential-shaped variables are excluded, including API keys, tokens, cloud credentials, provider keys, passwords, and private authentication material.
+
+The tradeoff is intentional: some commands may need additional non-secret variables later, but adding them should be a deliberate runtime decision, not accidental inheritance.
+
+## Timeout And Lifecycle
+
+Every terminal request has a bounded timeout.
+On timeout, Odessy returns a structured timeout observation and attempts request-scoped cleanup.
+
+On Windows, cleanup uses the platform process tree tool.
+On POSIX platforms, cleanup uses the process group where practical.
+
+This is not a universal process jail.
+It is a v0.1.0 local single-user lifecycle boundary.
+
+## Background And Detached Execution
+
+Odessy v0.1.0 is request-scoped.
+Intentional background or detached execution is outside the authority model.
+
+The policy layer denies obvious detachment patterns such as:
+
+- `nohup`
+- `disown`
+- `setsid`
+- `Start-Process`
+- `Start-Job`
+- `cmd /c start`
+- shell background suffixes such as `&`
+- detached flags such as `--detach`
+
+Odessy does not claim to parse every shell language perfectly.
+Policy detection is paired with execution-level timeout and cleanup controls.
+
+## Output Bounds
+
+Terminal stdout and stderr are bounded.
+If a command produces too much output, Odessy truncates deterministically and marks the result with structured truncation flags.
+
+This prevents a model-requested command from flooding logs, observations, or model context.
+
+## Current Limitations
+
+Odessy process control is a local v0.1.0 authority boundary, not a complete OS sandbox.
+Timeout cleanup is best effort, shell command parsing is intentionally limited, and intentionally detached descendants may require stronger OS primitives in a future version.
+
+For the full current limitation register, see `docs/reference/current-limitations.mdx`.

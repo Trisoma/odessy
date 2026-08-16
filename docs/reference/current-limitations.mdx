@@ -1,0 +1,88 @@
+---
+title: "Current v0.1.0 Limitations"
+sidebar-title: "Current Limitations"
+description: "Reference for Odessy's current implementation limits, security limits, and intentionally deferred v0.1.0 capabilities."
+description-agent: "Use before claiming Odessy is sandboxed, autonomous, voice-ready, Gemma-integrated, or production-secure. Lists current known limitations and deferred work."
+keywords: ["odessy limitations", "v0.1.0 scope", "security limitations", "deferred work"]
+content:
+  type: "reference"
+---
+Odessy v0.1.0 currently has a real local command-line authority boundary, but it is not a complete operating-system sandbox or finished product.
+This page records the limits future agents must keep visible when changing the runtime, tools, policy, MCP integration, or public documentation.
+
+## Product Scope Limits
+
+| Area | Current state | Limitation |
+|---|---|---|
+| Model | Fake deterministic model adapter | Gemma 3 1B is not integrated yet. Current tests prove the runtime loop, not model reasoning quality. |
+| Voice | Not implemented | Whisper/Kokoro/STT/TTS are deferred. Odessy is text-first right now. |
+| GUI automation | Out of scope | No mouse, keyboard injection, screen capture, browser automation, desktop automation, or robotics. |
+| Multi-agent behavior | Out of scope | No delegation, background autonomy, scheduler, or multi-session agent orchestration. |
+| Writes | Out of scope after Step 7 | `filesystem.write` and `log.append` are not implemented yet. Step 8 must design confirmation semantics before adding writes. |
+
+## Security Boundary Limits
+
+| Area | Current control | Limitation |
+|---|---|---|
+| Workspace confinement | Python `WorkspaceAuthority` plus Node path guard defense in depth | This is user-space validation, not kernel isolation. TOCTOU races remain possible if filesystem state changes between validation and access. |
+| Symlinks/reparse points | Canonical path resolution blocks existing symlink escapes where the platform resolver exposes them | This is not a claim of complete coverage for every Windows reparse-point or filesystem race edge case. |
+| Sensitive paths | Obvious sensitive names and segments are denied | The classifier is intentionally conservative, not a perfect secret detector. It may miss unusual secret filenames and may deny some legitimate files. |
+| Command parsing | Policy denies destructive, credential-seeking, and obvious detached/background patterns | Odessy does not implement a full shell parser. Execution-level timeout cleanup is a backstop, not a universal containment proof. |
+| Timeout cleanup | Windows uses process-tree termination; POSIX uses process-group termination where practical | Cleanup is best effort. Intentionally detached descendants may evade request-scoped cleanup without stronger OS primitives. |
+| Environment isolation | `terminal.run` receives a sanitized allowlisted environment | Some legitimate tools may require additional non-secret environment variables later. Additions must be explicit and reviewed. |
+| Output bounds | stdout/stderr are truncated deterministically | Output truncation is not the same as semantic secret redaction. Git diffs or command output may still contain secrets unless redaction is added before exposure. |
+| MCP server exposure | Node HTTP transport is intended for local/controlled use | There is no production authentication layer for a LAN-exposed MCP endpoint yet. Prefer loopback or SSH tunneling for Jetson/laptop development. |
+
+## Tooling Limits
+
+| Tool area | Current state | Limitation |
+|---|---|---|
+| `terminal.run` | Workspace-cwd-bound, policy-gated, sanitized env, timeout, output caps | It still invokes a shell, so policy cannot perfectly infer all command behavior from text. |
+| Read-only Node tools | `filesystem.read`, `filesystem.list`, `project.find`, `project.grep`, Git read-only tools | They are useful for project understanding, but they are not a broad file manager or search platform. |
+| Git tools | Fixed-argv read-only commands | Git output is captured/truncated, but not fully semantically redacted. |
+| Schema validation | Basic MCP schema validation in the Python loop | Validation is intentionally small and type-focused. It does not yet implement full JSON Schema semantics. |
+| Observations | Structured tool result objects | Observation formatting and redaction are still basic. Step 8+ should avoid feeding raw large or secret-bearing outputs to the model. |
+
+## Testing Limits
+
+| Area | Current state | Limitation |
+|---|---|---|
+| Python tests | Step 7 suite passes locally | Tests cover important adversarial cases, but not every shell, filesystem race, or platform-specific reparse behavior. |
+| Node tests | Normal PowerShell verifies 6/6 tests passing | In the Codex sandbox, the Git test may skip because Node subprocess spawning is restricted. Normal Windows PowerShell is the source of truth for that test. |
+| Process cleanup tests | Timeout result is tested | Tests verify timeout reporting, but do not deeply inspect every possible descendant-process cleanup scenario. |
+
+## Architecture Limits
+
+Odessy is currently designed for:
+
+```text
+single user
+local workspace
+command-line tools
+Python runtime authority
+MCP tool protocol
+Node laptop-side tool server
+```
+
+It is not currently designed for:
+
+- untrusted multi-user hosting;
+- public network MCP exposure;
+- arbitrary third-party MCP servers;
+- production-grade sandbox isolation;
+- long-running autonomous jobs;
+- GUI/desktop operation;
+- hardware/robotics control.
+
+## Before Step 8
+
+Before adding write tools, future work should explicitly decide:
+
+1. Which writes require confirmation.
+2. Which writes, if any, can be automatically allowed.
+3. How output redaction should work for file reads, grep results, Git diffs, and terminal output.
+4. Whether write paths need stricter rules than read paths.
+5. How confirmation is represented so the model cannot approve itself.
+
+These limitations should be updated whenever Odessy adds Gemma, voice, write tools, public MCP exposure, or stronger OS-level containment.
+
