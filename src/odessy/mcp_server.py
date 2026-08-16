@@ -7,6 +7,7 @@ from typing import TypedDict
 
 from mcp.server import MCPServer
 
+from odessy.calculator import CalculatorEvalResult, evaluate_arithmetic_expression
 from odessy.command_bridge import CommandBridge, TerminalRunResult
 
 
@@ -45,5 +46,11 @@ def build_odessy_mcp_server(
         """Run a workspace-bound command and return structured output."""
 
         return bridge.run(command=command, cwd=cwd, timeout=timeout)
+
+    @server.tool(name="calculator.eval")
+    def calculator_eval(expression: str) -> CalculatorEvalResult:
+        """Evaluate a side-effect-free arithmetic expression."""
+
+        return evaluate_arithmetic_expression(expression)
 
     return server

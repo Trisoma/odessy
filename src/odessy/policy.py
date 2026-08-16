@@ -16,7 +16,7 @@ class OdessyPolicy:
     max_timeout: int = 30
 
     def evaluate(self, request: ToolRequest) -> PolicyDecision:
-        allowed_tools = self.allowed_tools or {"time.now", "terminal.run"}
+        allowed_tools = self.allowed_tools or {"time.now", "terminal.run", "calculator.eval"}
         if request.name not in allowed_tools:
             return PolicyDecision(
                 action="deny",
@@ -27,6 +27,25 @@ class OdessyPolicy:
             return PolicyDecision(
                 action="deny",
                 reason="time.now does not accept arguments",
+                risk="low",
+            )
+        if request.name == "calculator.eval":
+            expression = request.arguments.get("expression")
+            if set(request.arguments) != {"expression"}:
+                return PolicyDecision(
+                    action="deny",
+                    reason="calculator.eval accepts only an expression argument",
+                    risk="low",
+                )
+            if not isinstance(expression, str) or not expression.strip():
+                return PolicyDecision(
+                    action="deny",
+                    reason="calculator.eval requires a non-empty expression",
+                    risk="low",
+                )
+            return PolicyDecision(
+                action="allow",
+                reason="calculator.eval allowed as a read-only arithmetic tool",
                 risk="low",
             )
         if request.name == "terminal.run":

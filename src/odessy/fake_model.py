@@ -10,6 +10,11 @@ class FakeModel:
         normalized = user_text.strip().lower()
         if normalized.startswith("run "):
             return _terminal_request(user_text.strip()[4:])
+        if normalized.startswith("calculate "):
+            return ToolRequest(
+                name="calculator.eval",
+                arguments={"expression": user_text.strip()[10:].strip()},
+            )
         if "time" in normalized or "date" in normalized:
             return ToolRequest(name="time.now", arguments={})
         return FinalResponse(
@@ -31,6 +36,11 @@ class FakeModel:
             exit_code = result["exit_code"]
             return FinalResponse(
                 text=f"Command `{command}` finished with status {status} and exit code {exit_code}."
+            )
+        if observation.request.name == "calculator.eval":
+            result = observation.result
+            return FinalResponse(
+                text=f"{result['expression']} = {result['result']}"
             )
         return FinalResponse(text="I received a tool result, but I cannot summarize it yet.")
 
