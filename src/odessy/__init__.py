@@ -5,6 +5,8 @@ __all__ = [
     "command_bridge",
     "fake_model",
     "mcp_server",
+    "ollama_model",
     "policy",
     "types",
+    "voice",
 ]

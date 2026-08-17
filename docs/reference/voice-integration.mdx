@@ -1,0 +1,107 @@
+---
+title: "Voice Integration"
+sidebar-title: "Voice Integration"
+description: "Reference for Odessy's staged v0.1.0 voice loop, configuration, and current operating limits."
+description-agent: "Use when running or changing Odessy's voice path. Preserve the runtime authority boundary and staged Jetson voice design."
+keywords: ["odessy voice", "whisper.cpp", "kokoro", "ollama", "gemma", "jetson"]
+content:
+  type: "reference"
+---
+
+Odessy v0.1.0 adds voice as an interface around the existing runtime.
+Voice does not replace the policy, MCP, workspace authority, process authority, or confirmation path.
+
+## Architecture
+
+The staged voice turn is:
+
+```text
+bounded audio recording
+  -> Whisper.cpp CPU-only STT
+  -> transcript text
+  -> existing Odessy agent loop
+  -> policy/MCP/tool handling if the model proposes a tool
+  -> final response text
+  -> Kokoro ONNX TTS
+  -> audio playback
+```
+
+The required authority invariant remains:
+
+```text
+Model proposes.
+Runtime validates.
+Policy decides.
+MCP transports.
+Tools execute only after authorization.
+```
+
+The voice layer must not execute tools directly.
+
+## Run Command
+
+After installing the package in editable mode:
+
+```powershell
+pip install -e .
+```
+
+Then run:
+
+```powershell
+python -m odessy voice
+```
+
+For local testing without Ollama/Gemma:
+
+```powershell
+python -m odessy voice --fake-model
+```
+
+The existing text loop remains available:
+
+```powershell
+odessy voice
+odessy-loop "calculate 12 * 8"
+```
+
+## Configuration
+
+Voice mode is configured through environment variables.
+Device names are intentionally not hard-coded.
+
+```text
+ODESSY_WHISPER_BIN      path/name of whisper-cli
+ODESSY_WHISPER_MODEL    path to ggml-tiny.en.bin or another Whisper model
+ODESSY_KOKORO_MODEL     path to kokoro-v1.0.int8.onnx
+ODESSY_KOKORO_VOICES    path to voices-v1.0.bin
+ODESSY_OLLAMA_MODEL     Ollama model name, default gemma3:1b
+ODESSY_AUDIO_RECORDER   recorder command, default arecord
+ODESSY_AUDIO_PLAYER     player command, default aplay
+ODESSY_AUDIO_INPUT_DEVICE
+ODESSY_AUDIO_OUTPUT_DEVICE
+ODESSY_VOICE_SECONDS    bounded recording duration, default 5
+ODESSY_VOICE_TMPDIR     controlled temporary audio directory
+```
+
+## Jetson Baseline
+
+For v0.1.0, Whisper.cpp should use CPU inference with `-ng`.
+CUDA Whisper remains a separate unresolved optimization because the benchmark saw cuBLAS resource-allocation failure.
+
+Kokoro ONNX int8 works on the Jetson but is slow in the current benchmark:
+
+```text
+about 14.8 seconds generation for 5.7 seconds of audio
+about 2.6x real time
+```
+
+This latency is accepted for v0.1.0 because the priority is a working local voice loop before optimization.
+
+## Current Limits
+
+Voice mode is staged and turn-based.
+It is not always-on listening, wake-word detection, streaming TTS, or a real-time voice assistant.
+
+The ordinary automated tests use fake audio/STT/TTS components.
+A real Bluetooth headset test must still be run on the Jetson environment before claiming the physical voice loop is complete.

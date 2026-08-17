@@ -9,6 +9,7 @@ dependencies = [
 
 [project.scripts]
 odessy-loop = "odessy.cli:main"
+odessy = "odessy.cli:main"
 
 [project.optional-dependencies]
 test = [
