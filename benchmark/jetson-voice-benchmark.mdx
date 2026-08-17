@@ -1,0 +1,271 @@
+---
+title: "Jetson Voice Stack Benchmark"
+sidebar-title: "Jetson Voice Benchmark"
+description: "Benchmark report for Odessy v0.1.0 voice-stack feasibility on Jetson Orin Nano Super 4GB."
+description-agent: "Use when reasoning about Odessy's v0.1.0 Jetson-side STT, Gemma, and TTS feasibility. Records measured memory, latency, and architecture implications."
+keywords: ["odessy benchmark", "jetson voice", "whisper.cpp", "kokoro", "gemma 3 1b", "edge ai"]
+content:
+  type: "reference"
+---
+
+# Odessy v0.1.0 Jetson Voice Stack Benchmark
+
+Date: 2026-08-17
+System under test: Jetson Orin Nano Super 4GB
+Benchmark area: local speech-to-text, local reasoning model, local text-to-speech
+Status: feasibility benchmark completed for v0.1.0 planning
+
+## Executive Summary
+
+This benchmark evaluated whether Odessy v0.1.0 can run its voice-facing components on the Jetson while preserving the laptop as the controlled MCP command-line execution environment.
+
+The current result is:
+
+```text
+Jetson-side STT: feasible with whisper.cpp CPU-only.
+Jetson-side Gemma 3 1B: feasible through Ollama GPU execution.
+Jetson-side TTS: feasible with Kokoro ONNX int8, but slow.
+Fully parallel STT + Gemma + TTS: not required for v0.1.0 and not recommended.
+Turn-based voice pipeline: recommended for v0.1.0.
+```
+
+The most important engineering decision from this benchmark is to make Odessy work before optimizing it. The measured Kokoro latency is not yet natural, but it is acceptable for a first v0.1.0 voice prototype.
+
+## Current Odessy Architecture Context
+
+Odessy's operation side is already built around this invariant:
+
+```text
+model proposes
+  -> Python Odessy runtime validates and applies policy
+  -> MCP carries approved tool calls
+  -> laptop-side tool server executes bounded tools
+  -> structured observation returns to the runtime
+```
+
+The voice benchmark does not change that authority model.
+
+The intended v0.1.0 voice architecture is:
+
+```text
+Jetson
+  -> speech-to-text
+  -> Gemma 3 1B / Odessy runtime
+  -> text-to-speech
+  -> MCP client
+
+Laptop
+  -> MCP tool server
+  -> controlled command-line workspace execution
+```
+
+The laptop remains the execution environment. The Jetson becomes the local voice and reasoning node.
+
+## Hardware Baseline
+
+Clean Jetson baseline:
+
+```text
+Mem: 3.5 GiB total
+Used: about 730 MiB
+Available: about 2.6 GiB
+Swap: 0 / 1.8 GiB
+tegrastats RAM: about 793 / 3602 MB
+GR3D_FREQ: 0%
+```
+
+This clean baseline is much healthier than an earlier memory-pressure snapshot that showed high swap usage. The benchmark therefore used the cleaner state as the practical reference point.
+
+## Experiment A: Gemma 3 1B
+
+Gemma was run through Ollama:
+
+```text
+model: gemma3:1b
+reported model size: 1.2 GB
+processor: 100% GPU
+context: 4096
+```
+
+Representative memory:
+
+```text
+RAM: about 2439 to 2472 / 3602 MB
+Swap: about 1 / 1801 MB
+GR3D_FREQ: up to 99% during activity
+```
+
+Observation:
+
+Gemma 3 1B fits on the Jetson and uses the GPU. It consumes a large part of the memory budget, but it does not by itself force heavy swap usage in the clean baseline.
+
+## Experiment B: Whisper.cpp STT
+
+Whisper.cpp was built and tested on the Jetson with the tiny English model:
+
+```text
+model: ggml-tiny.en.bin
+mode: CPU-only with -ng
+audio: samples/jfk.wav
+audio duration: 11.0 seconds
+```
+
+Representative timing:
+
+```text
+total time: about 1.4 seconds
+```
+
+Representative memory during test:
+
+```text
+RAM idle around: 938 to 942 / 3602 MB
+RAM peak around: 1184 / 3602 MB
+Swap: about 1 / 1801 MB
+GR3D_FREQ: 0%
+```
+
+Observation:
+
+Whisper.cpp CPU-only is fast enough for v0.1.0. It transcribed an 11-second audio sample much faster than real time and does not need GPU acceleration for the first Odessy voice path.
+
+CUDA Whisper was also investigated separately. CUDA device detection worked, but execution failed during cuBLAS resource allocation. This is recorded as a resource-allocation limitation, not as a blocker for CPU STT.
+
+## Experiment C: Gemma + Whisper
+
+Gemma and Whisper were tested together, although v0.1.0 does not require them to run in parallel.
+
+Representative memory:
+
+```text
+RAM: about 2316 to 2411 / 3602 MB
+Swap: about 58 to 158 / 1801 MB
+Whisper total time: about 1.57 seconds
+```
+
+Observation:
+
+Gemma + Whisper can run together, but this is not the preferred architecture. STT should usually run before Gemma reasoning, then release memory. The test is useful as stress evidence, but Odessy should not design around unnecessary STT/model parallelism.
+
+## Experiment D: Kokoro TTS
+
+Kokoro ONNX was tested with an int8 model:
+
+```text
+model: kokoro-v1.0.int8.onnx
+voices: voices-v1.0.bin
+voice: af_sarah
+sample rate: 24000 Hz
+```
+
+Test prompt:
+
+```text
+Odessy is a local authority controlled artificial intelligence system running on edge hardware.
+```
+
+Representative standalone memory:
+
+```text
+RAM baseline around: 932 / 3602 MB
+RAM peak around: 1281 / 3602 MB
+Swap: about 35 / 1801 MB
+GR3D_FREQ: 0%
+```
+
+Observation:
+
+Kokoro ONNX int8 runs on the Jetson, but it is CPU-heavy and not fast enough for natural streaming speech yet.
+
+## Experiment E: Gemma + Kokoro
+
+Gemma + Kokoro is the meaningful overlap test for v0.1.0 because Odessy may eventually read final output while text is being generated or prepared.
+
+Measured command result:
+
+```text
+Kokoro model load time: 1.326 seconds
+Kokoro generation time: 14.812 seconds
+Generated audio duration: 5.739 seconds
+Sample rate: 24000 Hz
+```
+
+Approximate real-time factor:
+
+```text
+14.812 / 5.739 = about 2.58x real time
+```
+
+In practical terms, Kokoro currently needs about 2.6 seconds to generate 1 second of speech on this Jetson setup.
+
+Representative memory:
+
+```text
+Before generation:
+  RAM: about 2224 / 3602 MB
+  Swap: about 325 / 1801 MB
+
+During generation:
+  RAM peak: about 2681 / 3602 MB
+  Swap: about 350 to 389 / 1801 MB
+  CPU: heavy utilization
+  GR3D_FREQ: periodic spikes up to 99%
+```
+
+Observation:
+
+Gemma + Kokoro is feasible from a memory perspective, but the current TTS latency is a known v0.1.0 limitation. This is acceptable for the first release because the project priority is a working local voice path before optimization.
+
+## Architecture Decision For v0.1.0
+
+The benchmark supports a staged voice pipeline:
+
+```text
+1. User audio
+2. Whisper.cpp CPU-only STT
+3. Text enters Odessy runtime
+4. Gemma / runtime produces final text
+5. Kokoro ONNX int8 generates speech
+6. Audio is played back
+```
+
+Odessy should not require this architecture:
+
+```text
+STT + Gemma + TTS all resident and active at the same time
+```
+
+That fully parallel design is unnecessary for v0.1.0 and would make the 4GB Jetson memory budget harder than needed.
+
+## Current Professional Conclusion
+
+The benchmark shows that Odessy can plausibly become a Jetson-side local voice agent for v0.1.0 if the implementation stays staged and practical.
+
+The current recommended default is:
+
+```text
+STT: whisper.cpp CPU-only on Jetson
+Reasoning: Gemma 3 1B on Jetson through Ollama
+TTS: Kokoro ONNX int8 on Jetson
+Execution: laptop-side MCP tool server
+Pipeline: sequential turn-based voice, not always-on fully parallel voice
+```
+
+## NVIDIA Internship Relevance
+
+This benchmark is important because it demonstrates direct hardware-aware engineering work.
+
+I did not assume that a voice AI stack would fit on the Jetson. I built and ran the components, measured memory, swap, CPU/GPU behavior, and latency, and used those measurements to shape the architecture.
+
+The work demonstrates:
+
+- practical Jetson setup and benchmarking;
+- local speech-to-text validation with whisper.cpp;
+- local text-to-speech validation with Kokoro ONNX;
+- Gemma 3 1B resource measurement on Jetson;
+- awareness of unified-memory constraints on edge devices;
+- separation of feasibility work from premature optimization;
+- disciplined architecture decisions based on measured evidence.
+
+The current TTS result is not hidden or overclaimed. Kokoro is slow, but it works. The engineering decision is to accept the latency for v0.1.0, ship a working local voice path first, and treat optimization as future work.
+

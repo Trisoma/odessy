@@ -15,7 +15,7 @@ This page records the limits future agents must keep visible when changing the r
 | Area | Current state | Limitation |
 |---|---|---|
 | Model | Fake deterministic model adapter | Gemma 3 1B is not integrated yet. Current tests prove the runtime loop, not model reasoning quality. |
-| Voice | Not implemented | Whisper/Kokoro/STT/TTS are deferred. Odessy is text-first right now. |
+| Voice | Benchmarked on Jetson, not integrated into Odessy runtime yet | Whisper.cpp CPU-only STT works on Jetson and Kokoro ONNX int8 TTS runs on Jetson, but the voice path is not wired into Odessy yet. |
 | GUI automation | Out of scope | No mouse, keyboard injection, screen capture, browser automation, desktop automation, or robotics. |
 | Multi-agent behavior | Out of scope | No delegation, background autonomy, scheduler, or multi-session agent orchestration. |
 | Writes | Out of scope after Step 7 | `filesystem.write` and `log.append` are not implemented yet. Step 8 must design confirmation semantics before adding writes. |
@@ -42,6 +42,25 @@ This page records the limits future agents must keep visible when changing the r
 | Git tools | Fixed-argv read-only commands | Git output is captured/truncated, but not fully semantically redacted. |
 | Schema validation | Basic MCP schema validation in the Python loop | Validation is intentionally small and type-focused. It does not yet implement full JSON Schema semantics. |
 | Observations | Structured tool result objects | Observation formatting and redaction are still basic. Step 8+ should avoid feeding raw large or secret-bearing outputs to the model. |
+
+## Jetson Voice Benchmark Limits
+
+Odessy has started voice feasibility benchmarking on Jetson Orin Nano Super 4GB, but the result is not yet an integrated voice feature.
+
+Current benchmark status:
+
+| Component | Current result | Limitation |
+|---|---|---|
+| Whisper.cpp STT | CPU-only `ggml-tiny.en.bin` transcribes an 11-second sample in about 1.1 to 1.6 seconds | CUDA Whisper currently fails during cuBLAS resource allocation, so CPU-only STT is the v0.1.0 baseline. |
+| Gemma 3 1B | Runs through Ollama with GPU usage and fits on the Jetson in the clean baseline | It consumes much of the 4GB memory budget, so other voice components should be scheduled carefully. |
+| Kokoro TTS | ONNX int8 model runs on Jetson and can generate speech | Current measured generation is about 14.8 seconds for 5.7 seconds of audio, about 2.6x real time. This is acceptable for v0.1.0 feasibility, but not natural low-latency speech. |
+| Full voice stack | STT, Gemma, and TTS are individually feasible, and Gemma + Kokoro can run together | Odessy should use a staged turn-based pipeline for v0.1.0, not require STT + Gemma + TTS to stay active in parallel. |
+
+Reference:
+
+```text
+docs/reference/jetson-voice-benchmark.mdx
+```
 
 ## Testing Limits
 
@@ -85,4 +104,3 @@ Before adding write tools, future work should explicitly decide:
 5. How confirmation is represented so the model cannot approve itself.
 
 These limitations should be updated whenever Odessy adds Gemma, voice, write tools, public MCP exposure, or stronger OS-level containment.
-
