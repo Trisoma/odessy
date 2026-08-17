@@ -216,6 +216,154 @@ Observation:
 
 Gemma + Kokoro is feasible from a memory perspective, but the current TTS latency is a known v0.1.0 limitation. This is acceptable for the first release because the project priority is a working local voice path before optimization.
 
+## Experiment F: Full Voice Command Observed With `tegrastats`
+
+After the initial voice integration was transferred to the Jetson, Odessy was tested through the real command:
+
+```bash
+python -m odessy voice
+```
+
+This was not a code-instrumented benchmark.
+It was an external system observation using `tegrastats` during a single voice-command run.
+
+The software path reached the local voice-agent loop:
+
+```text
+headset input / recording attempt
+  -> Whisper.cpp
+  -> Gemma 3 1B through Ollama
+  -> Odessy runtime
+  -> Kokoro ONNX TTS
+  -> headset/output playback path
+```
+
+Observed command outputs included:
+
+```text
+Transcript: [BLANK_AUDIO]
+Odessy: unknown
+
+Transcript: One, two, three, four.
+Odessy: None
+
+Transcript: or hold the door, hold the door, hold the door.
+Odessy: ...
+```
+
+This proves that the local voice path is alive, but it also shows that transcription quality and model response formatting still need work.
+
+Ollama reported Gemma 3 1B as resident during the test:
+
+```text
+model: gemma3:1b
+size: 1.2 GB
+processor: 100% CPU
+context: 4096
+```
+
+The `tegrastats` sample showed severe memory pressure:
+
+```text
+RAM before/early voice run: about 2884 to 2939 / 3602 MB
+RAM peak observed: about 3144 / 3602 MB
+Swap before/early voice run: about 1691 / 1801 MB
+Swap peak observed: 1801 / 1801 MB
+Largest free block: as low as 1x2MB or 2x1MB
+GR3D_FREQ: 0%
+CPU peak: multiple cores near 98% to 100%
+VDD_IN peak observed: about 8.9 W
+Temperature: about 57C to 60C range
+```
+
+Interpretation:
+
+The voice agent can run, but the current scheduling and process lifecycle are not acceptable as a stable v0.1.0 runtime state.
+Swap saturation near 100% means the system has almost no memory margin for repeated turns, failures, background services, or tool integration.
+
+This observation reinforces the need for a dedicated optimization pass before calling the Jetson voice runtime stable.
+The immediate target is not smarter behavior; it is reducing memory residency and avoiding swap exhaustion.
+
+## Experiment G: Full Voice Command After Closing Chromium
+
+A later `tegrastats` observation was collected after reducing desktop memory pressure.
+Before the run, Gemma was explicitly stopped:
+
+```bash
+ollama stop gemma3:1b
+```
+
+Chromium was also closed because it had been consuming substantial RAM.
+
+This was again an external `tegrastats` observation, not a code-instrumented benchmark.
+
+The successful real voice command was:
+
+```bash
+python -m odessy voice
+```
+
+Observed voice result:
+
+```text
+Transcript: Who are you? Briefly introduce yourself.
+Odessy: I am Odessy, your local model adapter. I’m here to assist you with various tasks, leveraging my knowledge and capabilities to provide helpful and efficient solutions. Essentially, I’m here to help you with things like generating text, answering questions, and performing simple operations.
+```
+
+This is the first strong real-model local voice result:
+
+```text
+spoken user input
+  -> Whisper.cpp transcript
+  -> Gemma/Ollama response
+  -> Odessy voice path
+  -> Kokoro spoken output
+```
+
+The response is not yet ideal in wording because the model calls itself the "local model adapter."
+That is a prompt/adapter-quality issue, not a voice-pipeline failure.
+
+Representative `tegrastats` observations after Chromium was closed:
+
+```text
+Baseline after stopping Gemma:
+  RAM: about 1218 to 1274 / 3602 MB
+  Swap: about 890 / 1801 MB
+  Largest free block: about 24x4MB
+
+During model/voice activity:
+  RAM rose through about 2043, 2459, 2704, and 2889 MB
+  RAM peak observed: about 3279 / 3602 MB
+  Swap rose from about 884 MB to about 992 MB
+  Largest free block dropped as low as 1x256kB to 1x512kB
+  GR3D_FREQ reached 99% during part of the run
+  One CPU core repeatedly reached 100%, with other cores moderately loaded
+  VDD_IN peak observed: about 8.5 W
+  Temperature stayed around 58C to 61C
+
+After the turn settled:
+  RAM returned to about 2647 to 2656 / 3602 MB
+  Swap stayed around 963 / 1801 MB
+  Largest free block recovered to about 8x4MB to 9x4MB
+```
+
+Interpretation:
+
+Closing Chromium significantly improved the starting memory condition and avoided the earlier full swap saturation.
+The full voice path still uses heavy memory and CPU, but this run shows that the Jetson can complete a real local voice-agent turn when desktop memory pressure is reduced.
+
+The remaining optimization priority is therefore more specific:
+
+```text
+control background desktop memory
+control Gemma residency
+measure Kokoro lifecycle cost
+add lightweight stage timing
+improve response prompt/format
+```
+
+This result changes the tone from "barely possible under bad memory pressure" to "working, but still needs scheduling discipline."
+
 ## Architecture Decision For v0.1.0
 
 The benchmark supports a staged voice pipeline:
@@ -268,4 +416,3 @@ The work demonstrates:
 - disciplined architecture decisions based on measured evidence.
 
 The current TTS result is not hidden or overclaimed. Kokoro is slow, but it works. The engineering decision is to accept the latency for v0.1.0, ship a working local voice path first, and treat optimization as future work.
-
