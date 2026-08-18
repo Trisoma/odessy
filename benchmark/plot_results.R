@@ -26,52 +26,79 @@ metadata_path <- file.path(results_dir, "metadata.json")
 
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
+numeric_cols <- c(
+  "iteration",
+  "total_ms",
+  "benchmark_process_rss_before_bytes",
+  "benchmark_process_rss_after_bytes",
+  "benchmark_process_swap_before_bytes",
+  "benchmark_process_swap_after_bytes",
+  "process_tree_rss_before_bytes",
+  "process_tree_rss_after_bytes",
+  "process_tree_swap_before_bytes",
+  "process_tree_swap_after_bytes",
+  "system_ram_used_before_bytes",
+  "system_ram_used_after_bytes",
+  "system_ram_available_before_bytes",
+  "system_ram_available_after_bytes",
+  "system_swap_used_before_bytes",
+  "system_swap_used_after_bytes",
+  "system_swap_available_before_bytes",
+  "system_swap_available_after_bytes",
+  "record_ms",
+  "transcribe_ms",
+  "proposal_ms",
+  "response_ms",
+  "agent_ms",
+  "synthesize_ms",
+  "play_ms"
+)
+
 samples <- read_csv(
   samples_path,
   show_col_types = FALSE,
-  col_types = cols(
-    scenario = col_character(),
-    iteration = col_integer(),
-    is_warmup = col_logical(),
-    status = col_character(),
-    total_ms = col_double(),
-    rss_before_bytes = col_double(),
-    rss_after_bytes = col_double(),
-    swap_before_bytes = col_double(),
-    swap_after_bytes = col_double(),
-    record_ms = col_double(),
-    transcribe_ms = col_double(),
-    proposal_ms = col_double(),
-    response_ms = col_double(),
-    agent_ms = col_double(),
-    synthesize_ms = col_double(),
-    play_ms = col_double(),
-    started_at = col_character(),
-    finished_at = col_character(),
-    notes = col_character(),
-    error = col_character()
-  )
-)
+  col_types = cols(.default = col_guess())
+) %>%
+  mutate(across(any_of(numeric_cols), as.numeric))
 
-metadata <- NULL
-if (file.exists(metadata_path)) {
-  metadata <- fromJSON(metadata_path, simplifyVector = TRUE)
+metadata <- if (file.exists(metadata_path)) {
+  fromJSON(metadata_path, simplifyVector = TRUE)
+} else {
+  NULL
 }
 
 measured <- samples %>% filter(!is_warmup)
 
-stage_cols <- intersect(
-  c("record_ms", "transcribe_ms", "proposal_ms", "response_ms", "agent_ms", "synthesize_ms", "play_ms"),
-  names(measured)
-)
-
-memory_cols <- intersect(
-  c("rss_before_bytes", "rss_after_bytes", "swap_before_bytes", "swap_after_bytes"),
-  names(measured)
-)
+stage_cols <- c("record_ms", "transcribe_ms", "proposal_ms", "response_ms", "agent_ms", "synthesize_ms", "play_ms")
+stage_cols <- stage_cols[stage_cols %in% names(measured)]
 
 memory_to_mb <- function(x) {
   x / 1024 / 1024
+}
+
+plot_memory_scope <- function(data, metrics, labels, filename, title) {
+  memory_long <- data %>%
+    select(scenario, iteration, all_of(metrics)) %>%
+    pivot_longer(cols = all_of(metrics), names_to = "metric", values_to = "bytes") %>%
+    mutate(metric = recode(metric, !!!labels), value_mb = memory_to_mb(bytes)) %>%
+    filter(!is.na(value_mb))
+
+  plot <- ggplot(memory_long, aes(x = iteration, y = value_mb, color = metric, group = metric)) +
+    geom_line(linewidth = 0.7) +
+    geom_point(size = 1.8) +
+    facet_wrap(~scenario, scales = "free_y") +
+    labs(title = paste("Odessy", title), x = "Iteration", y = "Memory (MB)", color = NULL) +
+    theme_minimal(base_size = 12)
+
+  ggsave(filename = filename, plot = plot, width = 12, height = 7, dpi = 160)
+}
+
+safe_summary <- function(values, fn) {
+  values <- values[!is.na(values)]
+  if (length(values) == 0) {
+    return(NA_real_)
+  }
+  as.numeric(fn(values))
 }
 
 summary_tbl <- measured %>%
@@ -79,10 +106,10 @@ summary_tbl <- measured %>%
   summarise(
     runs = sum(status == "ok", na.rm = TRUE),
     failed = sum(status != "ok", na.rm = TRUE),
-    mean_ms = mean(total_ms[status == "ok"], na.rm = TRUE),
-    median_ms = median(total_ms[status == "ok"], na.rm = TRUE),
-    p95_ms = quantile(total_ms[status == "ok"], 0.95, na.rm = TRUE, type = 7),
-    max_ms = max(total_ms[status == "ok"], na.rm = TRUE),
+    mean_ms = safe_summary(total_ms[status == "ok"], mean),
+    median_ms = safe_summary(total_ms[status == "ok"], median),
+    p95_ms = safe_summary(total_ms[status == "ok"], function(x) quantile(x, 0.95, na.rm = TRUE, type = 7)),
+    max_ms = safe_summary(total_ms[status == "ok"], max),
     .groups = "drop"
   )
 
@@ -100,63 +127,74 @@ latency_plot <- ggplot(measured, aes(x = scenario, y = total_ms, fill = scenario
   theme_minimal(base_size = 12) +
   theme(legend.position = "none")
 
-ggsave(
-  filename = file.path(output_dir, "latency_by_scenario.png"),
-  plot = latency_plot,
-  width = 10,
-  height = 6,
-  dpi = 160
+ggsave(file.path(output_dir, "latency_by_scenario.png"), latency_plot, width = 10, height = 6, dpi = 160)
+
+plot_memory_scope(
+  measured,
+  c(
+    "benchmark_process_rss_before_bytes",
+    "benchmark_process_rss_after_bytes",
+    "benchmark_process_swap_before_bytes",
+    "benchmark_process_swap_after_bytes"
+  ),
+  c(
+    benchmark_process_rss_before_bytes = "RSS before",
+    benchmark_process_rss_after_bytes = "RSS after",
+    benchmark_process_swap_before_bytes = "Swap before",
+    benchmark_process_swap_after_bytes = "Swap after"
+  ),
+  file.path(output_dir, "memory_by_scenario.png"),
+  "Benchmark Process Memory"
 )
 
-if (length(memory_cols) > 0) {
-  memory_long <- measured %>%
-    select(scenario, iteration, all_of(memory_cols)) %>%
-    pivot_longer(
-      cols = all_of(memory_cols),
-      names_to = "metric",
-      values_to = "bytes"
-    ) %>%
-    mutate(
-      metric = recode(
-        metric,
-        rss_before_bytes = "RSS before",
-        rss_after_bytes = "RSS after",
-        swap_before_bytes = "Swap before",
-        swap_after_bytes = "Swap after"
-      ),
-      value_mb = memory_to_mb(bytes)
-    ) %>%
-    filter(!is.na(value_mb))
+plot_memory_scope(
+  measured,
+  c(
+    "process_tree_rss_before_bytes",
+    "process_tree_rss_after_bytes",
+    "process_tree_swap_before_bytes",
+    "process_tree_swap_after_bytes"
+  ),
+  c(
+    process_tree_rss_before_bytes = "RSS before",
+    process_tree_rss_after_bytes = "RSS after",
+    process_tree_swap_before_bytes = "Swap before",
+    process_tree_swap_after_bytes = "Swap after"
+  ),
+  file.path(output_dir, "process_tree_memory_by_scenario.png"),
+  "Process Tree Memory"
+)
 
-  memory_plot <- ggplot(memory_long, aes(x = iteration, y = value_mb, color = metric, group = metric)) +
-    geom_line(linewidth = 0.7) +
-    geom_point(size = 1.8) +
-    facet_wrap(~scenario, scales = "free_y") +
-    labs(
-      title = "Odessy Benchmark Memory Pressure",
-      x = "Iteration",
-      y = "Memory (MB)",
-      color = NULL
-    ) +
-    theme_minimal(base_size = 12)
-
-  ggsave(
-    filename = file.path(output_dir, "memory_by_scenario.png"),
-    plot = memory_plot,
-    width = 12,
-    height = 7,
-    dpi = 160
-  )
-}
+plot_memory_scope(
+  measured,
+  c(
+    "system_ram_used_before_bytes",
+    "system_ram_used_after_bytes",
+    "system_ram_available_before_bytes",
+    "system_ram_available_after_bytes",
+    "system_swap_used_before_bytes",
+    "system_swap_used_after_bytes",
+    "system_swap_available_before_bytes",
+    "system_swap_available_after_bytes"
+  ),
+  c(
+    system_ram_used_before_bytes = "RAM used before",
+    system_ram_used_after_bytes = "RAM used after",
+    system_ram_available_before_bytes = "RAM available before",
+    system_ram_available_after_bytes = "RAM available after",
+    system_swap_used_before_bytes = "Swap used before",
+    system_swap_used_after_bytes = "Swap used after",
+    system_swap_available_before_bytes = "Swap available before",
+    system_swap_available_after_bytes = "Swap available after"
+  ),
+  file.path(output_dir, "system_memory_by_scenario.png"),
+  "System Memory"
+)
 
 if (length(stage_cols) > 0) {
   stage_long <- measured %>%
     select(scenario, iteration, all_of(stage_cols)) %>%
-    pivot_longer(
-      cols = all_of(stage_cols),
-      names_to = "stage",
-      values_to = "stage_ms"
-    ) %>%
+    pivot_longer(cols = all_of(stage_cols), names_to = "stage", values_to = "stage_ms") %>%
     filter(!is.na(stage_ms)) %>%
     group_by(scenario, stage) %>%
     summarise(
@@ -178,13 +216,7 @@ if (length(stage_cols) > 0) {
     ) +
     theme_minimal(base_size = 12)
 
-  ggsave(
-    filename = file.path(output_dir, "stage_breakdown.png"),
-    plot = stage_plot,
-    width = 11,
-    height = 7,
-    dpi = 160
-  )
+  ggsave(file.path(output_dir, "stage_breakdown.png"), stage_plot, width = 11, height = 7, dpi = 160)
 }
 
 cat("Wrote benchmark visualizations to: ", normalizePath(output_dir), "\n", sep = "")

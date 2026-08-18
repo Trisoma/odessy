@@ -35,6 +35,7 @@ def test_runner_writes_csv_and_jsonl(tmp_path: Path) -> None:
             stt=FakeSTT(),
             tts=FakeTTS(),
             tmp_dir=tmp_path / "artifacts",
+            input_audio_path=_fake_audio(tmp_path),
             seconds=1,
             preserve_artifacts=False,
         ),
@@ -61,10 +62,41 @@ def test_runner_writes_csv_and_jsonl(tmp_path: Path) -> None:
         rows = list(csv.DictReader(handle))
     assert rows
     assert {"scenario", "iteration", "total_ms", "status"}.issubset(rows[0].keys())
+    assert "benchmark_process_rss_before_bytes" in rows[0]
+    assert "process_tree_rss_after_bytes" in rows[0]
+    assert "system_ram_used_after_bytes" in rows[0]
+    assert "components_invoked" in rows[0]
 
     with (tmp_path / "out" / "samples.jsonl").open("r", encoding="utf-8") as handle:
         lines = [json.loads(line) for line in handle if line.strip()]
     assert len(lines) == len(run.samples)
+
+
+def test_voice_turn_uses_provided_audio_without_recording_copy(tmp_path: Path) -> None:
+    source_audio = _fake_audio(tmp_path)
+    audio_io = GuardedAudioIO()
+    agent = OdessyAgent(
+        model=fake_model(),
+        policy=OdessyPolicy(workspace_root=tmp_path),
+        mcp_server=None,
+    )
+    scenario = VoiceTurnBenchmark(
+        agent=agent,
+        audio_io=audio_io,
+        stt=FakeSTT("hello"),
+        tts=FakeTTS(),
+        tmp_dir=tmp_path / "artifacts",
+        input_audio_path=source_audio,
+        seconds=1,
+        preserve_artifacts=False,
+    )
+
+    outcome = scenario.run_once(iteration=0, is_warmup=False)
+
+    assert outcome.status == "ok"
+    assert outcome.details["input_audio_path"] == str(source_audio)
+    assert source_audio.exists()
+    assert audio_io.record_called is False
 
 
 def test_summary_excludes_warmups(tmp_path: Path) -> None:
@@ -127,3 +159,15 @@ class ScriptedScenario:
         outcome = self._outcomes[self._index]
         self._index += 1
         return outcome
+
+
+class GuardedAudioIO:
+    def __init__(self) -> None:
+        self.record_called = False
+
+    def record(self, output_path: Path, seconds: int) -> None:
+        self.record_called = True
+        raise AssertionError("voice_turn should reuse the provided audio file instead of recording a copy")
+
+    def play(self, audio_path: Path) -> None:
+        pass

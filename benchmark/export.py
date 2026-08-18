@@ -40,13 +40,27 @@ def write_csv(path: Path, samples: list[BenchmarkSample]) -> None:
         "is_warmup",
         "status",
         "total_ms",
-        "rss_before_bytes",
-        "rss_after_bytes",
-        "swap_before_bytes",
-        "swap_after_bytes",
+        "benchmark_process_rss_before_bytes",
+        "benchmark_process_rss_after_bytes",
+        "benchmark_process_swap_before_bytes",
+        "benchmark_process_swap_after_bytes",
+        "process_tree_rss_before_bytes",
+        "process_tree_rss_after_bytes",
+        "process_tree_swap_before_bytes",
+        "process_tree_swap_after_bytes",
+        "system_ram_used_before_bytes",
+        "system_ram_used_after_bytes",
+        "system_ram_available_before_bytes",
+        "system_ram_available_after_bytes",
+        "system_swap_used_before_bytes",
+        "system_swap_used_after_bytes",
+        "system_swap_available_before_bytes",
+        "system_swap_available_after_bytes",
         *STAGE_COLUMNS,
         "started_at",
         "finished_at",
+        "telemetry_notes",
+        "components_invoked",
         "notes",
         "error",
     ]
@@ -60,12 +74,26 @@ def write_csv(path: Path, samples: list[BenchmarkSample]) -> None:
                 "is_warmup": sample.is_warmup,
                 "status": sample.status,
                 "total_ms": _format_number(sample.total_ms),
-                "rss_before_bytes": sample.rss_before_bytes,
-                "rss_after_bytes": sample.rss_after_bytes,
-                "swap_before_bytes": sample.swap_before_bytes,
-                "swap_after_bytes": sample.swap_after_bytes,
+                "benchmark_process_rss_before_bytes": sample.benchmark_process_rss_before_bytes,
+                "benchmark_process_rss_after_bytes": sample.benchmark_process_rss_after_bytes,
+                "benchmark_process_swap_before_bytes": sample.benchmark_process_swap_before_bytes,
+                "benchmark_process_swap_after_bytes": sample.benchmark_process_swap_after_bytes,
+                "process_tree_rss_before_bytes": sample.process_tree_rss_before_bytes,
+                "process_tree_rss_after_bytes": sample.process_tree_rss_after_bytes,
+                "process_tree_swap_before_bytes": sample.process_tree_swap_before_bytes,
+                "process_tree_swap_after_bytes": sample.process_tree_swap_after_bytes,
+                "system_ram_used_before_bytes": sample.system_ram_used_before_bytes,
+                "system_ram_used_after_bytes": sample.system_ram_used_after_bytes,
+                "system_ram_available_before_bytes": sample.system_ram_available_before_bytes,
+                "system_ram_available_after_bytes": sample.system_ram_available_after_bytes,
+                "system_swap_used_before_bytes": sample.system_swap_used_before_bytes,
+                "system_swap_used_after_bytes": sample.system_swap_used_after_bytes,
+                "system_swap_available_before_bytes": sample.system_swap_available_before_bytes,
+                "system_swap_available_after_bytes": sample.system_swap_available_after_bytes,
                 "started_at": sample.started_at,
                 "finished_at": sample.finished_at,
+                "telemetry_notes": sample.telemetry_notes,
+                "components_invoked": _json_cell(sample.details.get("components_invoked")),
                 "notes": sample.notes,
                 "error": sample.error,
             }
@@ -107,3 +135,11 @@ def _format_number(value: float | None) -> float | str:
     if value is None:
         return ""
     return round(float(value), 6)
+
+
+def _json_cell(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)

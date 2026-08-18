@@ -175,6 +175,7 @@ def _build_scenarios(
                         stt=stt,
                         tts=tts,
                         tmp_dir=output_dir / "artifacts",
+                        input_audio_path=audio_path,
                         seconds=config.voice_seconds,
                         preserve_artifacts=args.keep_artifacts,
                     )
@@ -193,6 +194,7 @@ def _build_scenarios(
                         stt=stt,
                         tts=tts,
                         tmp_dir=output_dir / "artifacts",
+                        input_audio_path=audio_path,
                         seconds=config.voice_seconds,
                         preserve_artifacts=args.keep_artifacts,
                     )

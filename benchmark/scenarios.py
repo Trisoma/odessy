@@ -62,6 +62,10 @@ class GemmaBenchmark:
                 "response_mode": response_mode,
                 "response_text": response_text,
                 "total_ms": total_ms,
+                "components_invoked": {
+                    "model": _component_name(self.model),
+                    "ollama_model": getattr(self.model, "model", None),
+                },
             },
         )
 
@@ -89,6 +93,11 @@ class STTBenchmark:
                 "audio_path": str(self.audio_path),
                 "transcript": result.text,
                 "total_ms": (time.perf_counter() - started) * 1000.0,
+                "components_invoked": {
+                    "stt": _component_name(self.stt),
+                    "whisper_bin": getattr(self.stt, "whisper_bin", None),
+                    "whisper_model": getattr(self.stt, "model_path", None),
+                },
             },
             error=result.error,
         )
@@ -116,6 +125,11 @@ class TTSBenchmark:
                 "text": self.text,
                 "output_path": str(output_path),
                 "total_ms": (time.perf_counter() - started) * 1000.0,
+                "components_invoked": {
+                    "tts": _component_name(self.tts),
+                    "kokoro_model": getattr(self.tts, "model_path", None),
+                    "kokoro_voices": getattr(self.tts, "voices_path", None),
+                },
             },
             error=result.error,
         )
@@ -128,6 +142,7 @@ class VoiceTurnBenchmark:
     stt: Any
     tts: Any
     tmp_dir: Path
+    input_audio_path: Path | None = None
     seconds: int = 5
     name: str = "voice_turn"
     preserve_artifacts: bool = False
@@ -136,7 +151,7 @@ class VoiceTurnBenchmark:
         import time
 
         turn_id = uuid.uuid4().hex
-        input_audio = self.tmp_dir / f"odessy-bench-input-{turn_id}.wav"
+        input_audio = self.input_audio_path or self.tmp_dir / f"odessy-bench-input-{turn_id}.wav"
         output_audio = self.tmp_dir / f"odessy-bench-output-{turn_id}.wav"
         stages: dict[str, float] = {}
         started = time.perf_counter()
@@ -144,11 +159,16 @@ class VoiceTurnBenchmark:
         final_text = ""
         error: str | None = None
         status = "ok"
+        tool_request_name: str | None = None
+        components_invoked = _voice_components(self.agent, self.audio_io, self.stt, self.tts)
 
         try:
-            record_begin = time.perf_counter()
-            self.audio_io.record(input_audio, self.seconds)
-            stages["record_ms"] = (time.perf_counter() - record_begin) * 1000.0
+            if self.input_audio_path is None:
+                record_begin = time.perf_counter()
+                self.audio_io.record(input_audio, self.seconds)
+                stages["record_ms"] = (time.perf_counter() - record_begin) * 1000.0
+            else:
+                stages["record_ms"] = 0.0
 
             stt_begin = time.perf_counter()
             stt_result = self.stt.transcribe(input_audio)
@@ -165,6 +185,7 @@ class VoiceTurnBenchmark:
                         "output_audio_path": str(output_audio),
                         "transcript": transcript,
                         "total_ms": (time.perf_counter() - started) * 1000.0,
+                        "components_invoked": components_invoked,
                     },
                     error=error,
                 )
@@ -173,6 +194,8 @@ class VoiceTurnBenchmark:
             turn = asyncio.run(self.agent.run_turn(transcript))
             stages["agent_ms"] = (time.perf_counter() - agent_begin) * 1000.0
             final_text = turn.final_text
+            if turn.tool_request is not None:
+                tool_request_name = turn.tool_request.name
 
             tts_begin = time.perf_counter()
             tts_result = self.tts.synthesize(final_text, output_audio)
@@ -188,7 +211,9 @@ class VoiceTurnBenchmark:
                         "output_audio_path": str(output_audio),
                         "transcript": transcript,
                         "final_text": final_text,
+                        "tool_request_name": tool_request_name,
                         "total_ms": (time.perf_counter() - started) * 1000.0,
+                        "components_invoked": components_invoked,
                     },
                     error=error,
                 )
@@ -200,8 +225,9 @@ class VoiceTurnBenchmark:
             status = "failed"
             error = str(exc)
         finally:
-            if not self.preserve_artifacts:
+            if not self.preserve_artifacts and self.input_audio_path is None:
                 _unlink_if_exists(input_audio)
+            if not self.preserve_artifacts:
                 _unlink_if_exists(output_audio)
 
         return BenchmarkOutcome(
@@ -212,7 +238,9 @@ class VoiceTurnBenchmark:
                 "output_audio_path": str(output_audio),
                 "transcript": transcript,
                 "final_text": final_text,
+                "tool_request_name": tool_request_name,
                 "total_ms": (time.perf_counter() - started) * 1000.0,
+                "components_invoked": components_invoked,
             },
             error=error,
         )
@@ -248,3 +276,27 @@ def _unlink_if_exists(path: Path) -> None:
         path.unlink(missing_ok=True)
     except OSError:
         pass
+
+
+def _component_name(component: Any) -> str:
+    return type(component).__name__
+
+
+def _voice_components(
+    agent: OdessyAgent,
+    audio_io: VoiceBenchmarkAudioIO,
+    stt: Any,
+    tts: Any,
+) -> dict[str, Any]:
+    model = getattr(agent, "_model", None)
+    return {
+        "audio_io": _component_name(audio_io),
+        "stt": _component_name(stt),
+        "model": _component_name(model) if model is not None else None,
+        "ollama_model": getattr(model, "model", None),
+        "tts": _component_name(tts),
+        "whisper_bin": getattr(stt, "whisper_bin", None),
+        "whisper_model": getattr(stt, "model_path", None),
+        "kokoro_model": getattr(tts, "model_path", None),
+        "kokoro_voices": getattr(tts, "voices_path", None),
+    }

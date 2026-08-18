@@ -1,7 +1,7 @@
 {
-  "created_at": "2026-08-18T03:23:51.783459+00:00",
+  "created_at": "2026-08-18T04:42:28.267576+00:00",
   "workspace_root": "/home/jaimef/odessy",
-  "output_dir": "/home/jaimef/odessy/benchmark/results/20260818-032351",
+  "output_dir": "/home/jaimef/odessy/benchmark/results/20260818-044228",
   "host": "ubuntu",
   "platform": "Linux-5.15.148-tegra-aarch64-with-glibc2.35",
   "python_version": "3.11.0rc1",
