@@ -18,26 +18,36 @@ from odessy.voice.stt import WhisperCppSTT
 from odessy.voice.tts import KokoroTTS
 
 
-async def _main_async(user_text: str) -> None:
-    workspace_root = Path.cwd()
-    agent = OdessyAgent(
-        model=FakeModel(),
+def _build_model(use_fake_model: bool, *, ollama_model: str) -> FakeModel | OllamaModel:
+    if use_fake_model:
+        return FakeModel()
+    return OllamaModel(model=ollama_model)
+
+
+def _build_agent(workspace_root: Path, model: FakeModel | OllamaModel) -> OdessyAgent:
+    return OdessyAgent(
+        model=model,
         policy=OdessyPolicy(workspace_root=workspace_root),
         mcp_server=_build_mcp_servers(workspace_root),
     )
+
+
+async def _text_async(user_text: str, use_fake_model: bool) -> None:
+    workspace_root = Path.cwd()
+    model = _build_model(
+        use_fake_model,
+        ollama_model=os.environ.get("ODESSY_OLLAMA_MODEL", "gemma3:1b"),
+    )
+    agent = _build_agent(workspace_root, model)
     result = await agent.run_turn(user_text)
     print(result.final_text)
 
 
 async def _voice_async(use_fake_model: bool) -> None:
     config = VoiceConfig.from_env()
-    model = FakeModel() if use_fake_model else OllamaModel(model=config.ollama_model)
     workspace_root = Path.cwd()
-    agent = OdessyAgent(
-        model=model,
-        policy=OdessyPolicy(workspace_root=workspace_root),
-        mcp_server=_build_mcp_servers(workspace_root),
-    )
+    model = _build_model(use_fake_model, ollama_model=config.ollama_model)
+    agent = _build_agent(workspace_root, model)
     loop = VoiceLoop(
         agent=agent,
         audio_io=CommandAudioIO(
@@ -90,11 +100,16 @@ def main(argv: list[str] | None = None) -> None:
         asyncio.run(_voice_async(use_fake_model=args.fake_model))
         return
     parser = argparse.ArgumentParser(description="Run the Odessy text loop.")
+    parser.add_argument(
+        "--fake-model",
+        action="store_true",
+        help="Use the deterministic fake model instead of Ollama/Gemma.",
+    )
     parser.add_argument("text", help="User text to send into the Odessy loop.")
     args = parser.parse_args(argv)
     if not args.text:
         parser.error("text is required unless using the voice subcommand")
-    asyncio.run(_main_async(args.text))
+    asyncio.run(_text_async(args.text, use_fake_model=args.fake_model))
 
 
 if __name__ == "__main__":

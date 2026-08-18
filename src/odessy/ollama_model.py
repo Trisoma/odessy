@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from odessy.types import FinalResponse, ModelAction, ToolObservation, ToolRequest
+from odessy.tool_contracts import render_tool_contracts, validate_tool_arguments
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,7 @@ def _proposal_prompt(user_text: str) -> str:
     return (
         "You are Odessy's local model adapter. Return only JSON.\n"
         "For normal answers: {\"type\":\"final\",\"text\":\"...\"}\n"
-        "For tool requests: {\"type\":\"tool\",\"name\":\"calculator.eval|time.now|filesystem.read|filesystem.list|project.find|project.grep|git.status|git.diff|git.changed_files|git.log|terminal.run\",\"arguments\":{...}}\n"
+        f"{render_tool_contracts()}\n"
         "Do not decide whether a tool is safe. The Odessy runtime will validate and authorize.\n"
         f"User: {user_text}\n"
         "JSON:"
@@ -75,8 +76,10 @@ def _parse_model_action(raw_text: str) -> ModelAction:
     if payload.get("type") == "tool":
         name = payload.get("name")
         arguments = payload.get("arguments", {})
-        if isinstance(name, str) and isinstance(arguments, dict):
-            return ToolRequest(name=name, arguments=arguments)
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Malformed tool request: missing tool name")
+        validate_tool_arguments(name, arguments)
+        return ToolRequest(name=name, arguments=arguments)
     if isinstance(payload.get("text"), str):
         return FinalResponse(text=payload["text"])
     return FinalResponse(text=raw_text.strip())
