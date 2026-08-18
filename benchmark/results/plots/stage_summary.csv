@@ -1,0 +1,6 @@
+scenario,stage,median_ms,mean_ms
+voice_turn,agent_ms,1929.240469,1930.3557354
+voice_turn,play_ms,687.509025,742.4086468
+voice_turn,record_ms,5084.250949,5085.029122
+voice_turn,synthesize_ms,3181.213279,3716.951697
+voice_turn,transcribe_ms,1909.160748,1791.984803
