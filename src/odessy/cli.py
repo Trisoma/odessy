@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -18,10 +19,11 @@ from odessy.voice.tts import KokoroTTS
 
 
 async def _main_async(user_text: str) -> None:
+    workspace_root = Path.cwd()
     agent = OdessyAgent(
         model=FakeModel(),
-        policy=OdessyPolicy(workspace_root=Path.cwd()),
-        mcp_server=build_odessy_mcp_server(workspace_root=Path.cwd()),
+        policy=OdessyPolicy(workspace_root=workspace_root),
+        mcp_server=_build_mcp_servers(workspace_root),
     )
     result = await agent.run_turn(user_text)
     print(result.final_text)
@@ -30,10 +32,11 @@ async def _main_async(user_text: str) -> None:
 async def _voice_async(use_fake_model: bool) -> None:
     config = VoiceConfig.from_env()
     model = FakeModel() if use_fake_model else OllamaModel(model=config.ollama_model)
+    workspace_root = Path.cwd()
     agent = OdessyAgent(
         model=model,
-        policy=OdessyPolicy(workspace_root=Path.cwd()),
-        mcp_server=build_odessy_mcp_server(workspace_root=Path.cwd()),
+        policy=OdessyPolicy(workspace_root=workspace_root),
+        mcp_server=_build_mcp_servers(workspace_root),
     )
     loop = VoiceLoop(
         agent=agent,
@@ -61,6 +64,17 @@ async def _voice_async(use_fake_model: bool) -> None:
         print(f"Odessy: {result.final_text}")
     if result.status != "ok":
         raise SystemExit(f"Voice turn failed with status {result.status}: {result.error}")
+
+
+def _build_mcp_servers(workspace_root: Path) -> tuple[object, ...] | object:
+    servers: list[object] = [build_odessy_mcp_server(workspace_root=workspace_root)]
+    extra_urls = os.environ.get("ODESSY_MCP_SERVER_URLS") or os.environ.get("ODESSY_TOOL_SERVER_URL")
+    if extra_urls:
+        for raw_url in extra_urls.replace(";", ",").split(","):
+            url = raw_url.strip()
+            if url:
+                servers.append(url)
+    return tuple(servers) if len(servers) > 1 else servers[0]
 
 
 def main(argv: list[str] | None = None) -> None:

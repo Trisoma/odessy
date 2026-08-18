@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
 from mcp import Client
@@ -41,7 +41,7 @@ class OdessyAgent:
     ) -> None:
         self._model = model
         self._policy = policy
-        self._mcp_server = mcp_server
+        self._mcp_servers = _normalize_mcp_servers(mcp_server)
         self._confirm = confirm
 
     async def run_turn(self, user_text: str) -> AgentTurnResult:
@@ -73,10 +73,9 @@ class OdessyAgent:
             )
             raise PermissionError(f"Policy denied request: {preflight_decision.reason}")
 
-        async with Client(self._mcp_server) as client:
-            tools = await client.list_tools()
+        tool_registry = await self._collect_tool_registry()
 
-        self._validate_tool_request(action, tools)
+        self._validate_tool_request(action, tool_registry)
         log.append(LogEntry("schema_validated", {"name": action.name}))
 
         decision = self._policy.evaluate(action)
@@ -121,9 +120,8 @@ class OdessyAgent:
                 )
             )
 
-        async with Client(self._mcp_server) as client:
-            result = await client.call_tool(action.name, action.arguments)
-            log.append(LogEntry("mcp_tool_called", {"name": action.name}))
+        result = await self._call_tool(action.name, action.arguments, tool_registry)
+        log.append(LogEntry("mcp_tool_called", {"name": action.name}))
 
         structured_result = self._extract_structured_result(result)
         observation = ToolObservation(request=action, result=structured_result)
@@ -149,12 +147,37 @@ class OdessyAgent:
             return bool(self._confirm(decision, request))
         return bool(self._confirm)
 
-    def _validate_tool_request(self, request: ToolRequest, tools: Any) -> None:
-        available_tools = getattr(tools, "tools", tools)
-        tool_by_name = {tool.name: tool for tool in available_tools}
-        tool = tool_by_name.get(request.name)
-        if tool is None:
+    async def _collect_tool_registry(self) -> dict[str, tuple[Any, Any]]:
+        if not self._mcp_servers:
+            return {}
+
+        registry: dict[str, tuple[Any, Any]] = {}
+        for server in self._mcp_servers:
+            async with Client(server) as client:
+                tools = await client.list_tools()
+            available_tools = getattr(tools, "tools", tools)
+            for tool in available_tools:
+                registry.setdefault(tool.name, (tool, server))
+        return registry
+
+    async def _call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        tool_registry: dict[str, tuple[Any, Any]],
+    ) -> Any:
+        entry = tool_registry.get(name)
+        if entry is None:
+            raise ValueError(f"Unknown MCP tool requested: {name}")
+        _, server = entry
+        async with Client(server) as client:
+            return await client.call_tool(name, arguments)
+
+    def _validate_tool_request(self, request: ToolRequest, tools: dict[str, tuple[Any, Any]]) -> None:
+        entry = tools.get(request.name)
+        if entry is None:
             raise ValueError(f"Unknown MCP tool requested: {request.name}")
+        tool, _server = entry
 
         input_schema = _get_tool_input_schema(tool)
         if not isinstance(request.arguments, dict):
@@ -209,3 +232,11 @@ def _get_tool_input_schema(tool: Any) -> dict[str, Any] | None:
     if not isinstance(schema, dict):
         raise TypeError(f"Unsupported MCP tool schema type: {type(schema).__name__}")
     return schema
+
+
+def _normalize_mcp_servers(mcp_server: Any) -> tuple[Any, ...]:
+    if mcp_server is None:
+        return ()
+    if isinstance(mcp_server, Sequence) and not isinstance(mcp_server, (str, bytes, bytearray)):
+        return tuple(server for server in mcp_server if server is not None)
+    return (mcp_server,)
