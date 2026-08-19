@@ -5,12 +5,14 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from odessy.agent_loop import OdessyAgent
 from odessy.fake_model import FakeModel
 from odessy.mcp_server import build_odessy_mcp_server
 from odessy.ollama_model import OllamaModel
 from odessy.policy import OdessyPolicy
+from odessy.types import PolicyDecision, ToolRequest
 from odessy.voice.audio_io import CommandAudioIO
 from odessy.voice.config import VoiceConfig
 from odessy.voice.loop import VoiceLoop
@@ -29,7 +31,27 @@ def _build_agent(workspace_root: Path, model: FakeModel | OllamaModel) -> Odessy
         model=model,
         policy=OdessyPolicy(workspace_root=workspace_root),
         mcp_server=_build_mcp_servers(workspace_root),
+        confirm=_confirm_tool_call,
     )
+
+
+def _confirm_tool_call(decision: PolicyDecision, request: ToolRequest) -> bool:
+    print(f"Odessy needs confirmation to run {request.name}.")
+    print(f"Risk: {decision.risk}")
+    print(f"Reason: {decision.reason}")
+    print(f"Arguments: {_summarize_arguments(request.arguments)}")
+    answer = input("Allow this tool call? [y/N] ")
+    return answer.strip().lower() in {"y", "yes"}
+
+
+def _summarize_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+    for key, value in arguments.items():
+        if key == "content" and isinstance(value, str):
+            summary[key] = f"<{len(value.encode('utf-8'))} bytes>"
+        else:
+            summary[key] = value
+    return summary
 
 
 async def _text_async(user_text: str, use_fake_model: bool) -> None:
