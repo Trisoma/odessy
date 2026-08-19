@@ -3,17 +3,25 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
 from odessy.types import FinalResponse, ModelAction, ToolObservation, ToolRequest
 from odessy.tool_contracts import (
     TOOL_REQUEST_SCHEMAS,
+    build_openai_tools,
     render_tool_contract,
     render_tool_contracts,
     validate_tool_arguments,
 )
+
+OLLAMA_BASE_URL = os.environ.get("ODESSY_OLLAMA_URL", "http://127.0.0.1:11434")
+
+
+class _OllamaToolsUnsupported(RuntimeError):
+    """Raised when the selected model does not support native function calling."""
 
 
 @dataclass(frozen=True)
@@ -30,34 +38,83 @@ class OllamaModel:
 
     model: str = "gemma3:1b"
     timeout: int = 120
+    temperature: float = 0.0
 
     def propose(self, user_text: str) -> ModelAction:
-        prompt = _proposal_prompt(user_text)
-        response = self._run_ollama(prompt)
+        tool_name = _proposal_tool_name_for_user_text(user_text)
+        system_prompt = _system_prompt(tool_name)
+        fallback_prompt = _text_system_prompt(user_text, tool_name)
+        tools = _select_tools(tool_name)
         try:
-            action = _parse_and_validate_model_action(response, user_text)
+            action = self._chat_action(user_text, system_prompt, tools, fallback_prompt)
         except ValueError as error:
-            model_error = _model_output_error(response, error, user_text)
+            model_error = _model_output_error("", error, user_text, tool_name)
             repair_prompt = _repair_prompt(user_text, model_error)
             _debug_model_repair(
                 [
-                    ("first Gemma proposal", response),
+                    ("first Gemma proposal", "native tool call rejected"),
                     ("validation failure", model_error.validation_error),
                     ("repair prompt", repair_prompt),
                 ]
             )
-            repaired_response = self._run_ollama(repair_prompt)
-            _debug_model_repair([("second Gemma proposal", repaired_response)])
             try:
-                action = _parse_and_validate_model_action(repaired_response, user_text)
+                action = self._chat_action(user_text, repair_prompt, tools, repair_prompt)
             except ValueError as retry_error:
                 raise ValueError(
                     f"Model repair failed after one retry: {retry_error}"
                 ) from retry_error
-            _debug_parsed_action(action)
-            return action
+            _debug_model_repair([("second Gemma proposal", "repaired native tool call")])
         _debug_parsed_action(action)
         return action
+
+    def _chat_action(
+        self,
+        user_text: str,
+        system_prompt: str,
+        tools: list[dict[str, Any]],
+        fallback_prompt: str,
+    ) -> ModelAction:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_text},
+        ]
+        try:
+            response = self._chat(messages, tools=tools)
+        except _OllamaToolsUnsupported:
+            response = self._chat([{"role": "user", "content": fallback_prompt}], tools=None)
+        return _extract_model_action_from_chat(response, user_text)
+
+    def _chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            "options": {"temperature": self.temperature},
+        }
+        if tools:
+            payload["tools"] = tools
+        request = urllib.request.Request(
+            f"{OLLAMA_BASE_URL}/api/chat",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            body = _read_error_body(error)
+            if "does not support tools" in body:
+                raise _OllamaToolsUnsupported(body) from error
+            raise RuntimeError(
+                f"Ollama API call failed ({error.code}): {body or error.reason}"
+            ) from error
+        except urllib.error.URLError as error:
+            raise RuntimeError(f"Ollama API call failed: {error}") from error
 
     def respond_to_observation(
         self,
@@ -73,48 +130,90 @@ class OllamaModel:
             f"Observation: {json.dumps(observation.result)}\n"
             "Final response:"
         )
-        response = self._run_ollama(prompt).strip()
-        if response and not _looks_like_generic_final_response(response):
-            return FinalResponse(text=response)
+        response = self._chat([{"role": "user", "content": prompt}])
+        text = ((response.get("message") or {}).get("content") or "").strip()
+        if text and not _looks_like_generic_final_response(text):
+            return FinalResponse(text=text)
         return FinalResponse(text=_fallback_observation_response(observation))
 
-    def _run_ollama(self, prompt: str) -> str:
-        result = subprocess.run(
-            ["ollama", "run", self.model, prompt],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=self.timeout,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError((result.stderr or result.stdout or "Ollama failed").strip())
-        return result.stdout
+
+def _system_prompt(tool_name: str | None) -> str:
+    if tool_name is not None:
+        intent_instruction = f"The user's request maps to {tool_name}. Call that tool."
+    else:
+        intent_instruction = "Call the single tool that best fulfills the user's request."
+    return (
+        "You are Odessy's tool-calling adapter.\n"
+        f"{intent_instruction}\n"
+        "Use the function tools provided in this request to carry out the user's intent.\n"
+        "If the user only wants information and no tool applies, answer directly.\n"
+        "Do not decide whether a tool is safe. The Odessy runtime will validate and authorize.\n"
+    )
 
 
-def _proposal_prompt(user_text: str) -> str:
-    tool_name = _proposal_tool_name_for_user_text(user_text)
-    contracts = render_tool_contract(tool_name) if tool_name is not None else render_tool_contracts()
+def _text_system_prompt(user_text: str, tool_name: str | None) -> str:
+    """Text-mode prompt used when the model does not support native tool calling."""
+    contract = render_tool_contract(tool_name) if tool_name is not None else render_tool_contracts()
     intent_instruction = (
         f"User intent maps to {tool_name}. MUST use {tool_name}."
         if tool_name is not None
-        else "Choose the best JSON shape for the user's request."
+        else "Choose the best tool for the user's request."
     )
     return (
-        "Based on user's request, generate a JSON that include relevant linux command.\n"
-        "Output exactly one JSON object.\n"
+        "Based on the user's request, generate exactly one JSON object.\n"
         f"{intent_instruction}\n"
-        "For command requests, write the exact commandline command in the command field.\n"
-        "For normal answers: {\"type\":\"final\",\"text\":\"...\"}\n"
-        "Leave `cwd` untouched. Leave optional fields untouched unless the user explicitly says them.\n"
-        f"{contracts}\n"
+        "For command requests, write the exact command in the command field.\n"
+        "Leave optional fields omitted unless the user explicitly specifies them.\n"
+        f"{contract}\n"
         "Do not add markdown, explanation, or extra text.\n"
         "Do not decide whether a tool is safe. The Odessy runtime will validate and authorize.\n"
         f"User: {user_text}\n"
         "JSON:"
     )
+
+
+def _read_error_body(error: urllib.error.HTTPError) -> str:
+    try:
+        return error.read().decode("utf-8", "replace")
+    except Exception:
+        return ""
+
+
+def _select_tools(tool_name: str | None) -> list[dict[str, Any]]:
+    if tool_name is not None:
+        single = build_openai_tools([tool_name])
+        if single:
+            return single
+    return build_openai_tools()
+
+
+def _extract_model_action_from_chat(response: dict[str, Any], user_text: str) -> ModelAction:
+    message = response.get("message") or {}
+    tool_calls = message.get("tool_calls") or []
+    if tool_calls:
+        call = tool_calls[0]
+        function = call.get("function") or {}
+        name = function.get("name")
+        arguments_raw = function.get("arguments", {})
+        if isinstance(arguments_raw, str):
+            try:
+                arguments = json.loads(arguments_raw)
+            except json.JSONDecodeError as error:
+                raise ValueError(f"Invalid tool arguments JSON: {error.msg}") from error
+        else:
+            arguments = arguments_raw
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Malformed tool call: missing function name")
+        if not isinstance(arguments, dict):
+            raise ValueError("Tool arguments must be a JSON object")
+        validate_tool_arguments(name, arguments)
+        action = ToolRequest(name=name, arguments=arguments)
+        _validate_tool_selection_for_user_intent(user_text, action)
+        return action
+    content = message.get("content") or ""
+    if content.strip():
+        return _parse_and_validate_model_action(content, user_text)
+    raise ValueError("Ollama returned neither a tool call nor content")
 
 
 def _proposal_tool_name_for_user_text(user_text: str) -> str | None:
@@ -241,8 +340,9 @@ def _model_output_error(
     raw_output: str,
     error: ValueError,
     user_text: str,
+    intended_tool_name: str | None = None,
 ) -> ModelOutputError:
-    tool_name = _extract_tool_name(raw_output)
+    tool_name = _extract_tool_name(raw_output) or intended_tool_name
     if (
         tool_name == "terminal.run"
         and _is_laptop_command_intent(user_text)

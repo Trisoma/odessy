@@ -131,6 +131,54 @@ def render_tool_contract(name: str) -> str:
     )
 
 
+_TOOL_DESCRIPTIONS: dict[str, str] = {
+    "time.now": "Return the current local time.",
+    "terminal.run": "Run a shell command in the local workspace and return structured output.",
+    "laptop.terminal.run": "Run a shell command on the user's laptop (not the local machine).",
+    "filesystem.write": "Write content to a file inside the workspace. Requires confirmation.",
+    "log.append": "Append a line to the internal Odessy log. Destination is fixed and internal.",
+    "calculator.eval": "Evaluate a side-effect-free arithmetic expression.",
+    "filesystem.read": "Read a regular text file inside the workspace.",
+    "filesystem.list": "List directory entries inside the workspace.",
+    "project.find": "Find file names inside the workspace.",
+    "project.grep": "Search file contents inside the workspace.",
+    "git.status": "Return git status output.",
+    "git.diff": "Return git diff output.",
+    "git.changed_files": "Return changed file names.",
+    "git.log": "Return recent commit summaries.",
+}
+
+
+def build_openai_tools(names: list[str] | None = None) -> list[dict[str, Any]]:
+    """Render tool schemas in OpenAI function-calling format for Ollama's /api/chat."""
+    selected = names if names is not None else list(TOOL_REQUEST_SCHEMAS)
+    tools: list[dict[str, Any]] = []
+    for name in selected:
+        schema = TOOL_REQUEST_SCHEMAS.get(name)
+        if schema is None:
+            continue
+        tools.append(_to_openai_tool(name, schema))
+    return tools
+
+
+def _to_openai_tool(name: str, schema: dict[str, Any]) -> dict[str, Any]:
+    properties: dict[str, dict[str, Any]] = {}
+    for key, spec in schema["properties"].items():
+        properties[key] = {k: v for k, v in spec.items() if k != "optional"}
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "parameters": {
+                "type": "object",
+                "properties": properties,
+                "required": schema["required"],
+            },
+        },
+    }
+
+
 def validate_tool_arguments(name: str, arguments: dict[str, Any]) -> None:
     schema = TOOL_REQUEST_SCHEMAS.get(name)
     if schema is None:

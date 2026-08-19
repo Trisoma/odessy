@@ -3,7 +3,12 @@ from __future__ import annotations
 import pytest
 
 from odessy.agent_loop import OdessyAgent
-from odessy.ollama_model import OllamaModel, _parse_model_action, _proposal_prompt
+from odessy.ollama_model import (
+    OllamaModel,
+    _parse_model_action,
+    _select_tools,
+    _system_prompt,
+)
 from odessy.policy import OdessyPolicy
 from odessy.types import FinalResponse, ToolObservation, ToolRequest
 
@@ -13,11 +18,15 @@ class QueuedOllamaModel(OllamaModel):
         object.__setattr__(self, "outputs", list(outputs))
         object.__setattr__(self, "prompts", [])
 
-    def _run_ollama(self, prompt: str) -> str:
-        self.prompts.append(prompt)
+    def _chat(self, messages, tools=None):
+        system = next(
+            (m.get("content") for m in messages if m.get("role") == "system"),
+            messages[0].get("content") if messages else "",
+        )
+        self.prompts.append(system)
         if not self.outputs:
             raise AssertionError("No queued Ollama output available")
-        return self.outputs.pop(0)
+        return {"message": {"content": self.outputs.pop(0)}}
 
 
 @pytest.fixture
@@ -25,37 +34,33 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-def test_proposal_prompt_includes_terminal_run_argument_schema() -> None:
-    prompt = _proposal_prompt("run pwd")
+def test_system_prompt_targets_terminal_run_single_tool() -> None:
+    prompt = _system_prompt("terminal.run")
 
-    assert "exactly one JSON object" in prompt
-    assert "tool request" not in prompt.lower()
-    assert '"name": "terminal.run"' in prompt
-    assert '"name": "laptop.terminal.run"' not in prompt
-    assert '"command": "string"' in prompt
-    assert "omit unless the user explicitly specifies it" in prompt
-    assert '"cwd": "string (omit unless the user explicitly specifies it)"' in prompt
-    assert '"timeout": "integer (omit unless the user explicitly specifies it)"' in prompt
+    assert "tool-calling adapter" in prompt
+    assert "maps to terminal.run" in prompt
+    assert "laptop.terminal.run" not in prompt
 
 
-def test_proposal_prompt_includes_laptop_terminal_run_argument_schema() -> None:
-    prompt = _proposal_prompt("run pwd on my laptop")
+def test_system_prompt_targets_laptop_terminal_run_single_tool() -> None:
+    prompt = _system_prompt("laptop.terminal.run")
 
-    assert "exactly one JSON object" in prompt
-    assert '"name": "laptop.terminal.run"' in prompt
-    assert '"name": "terminal.run"' not in prompt
-    assert '"command": "string"' in prompt
-    assert '"cwd": "string (omit unless the user explicitly specifies it)"' in prompt
-    assert '"timeout": "integer (omit unless the user explicitly specifies it)"' in prompt
-    assert "MUST use laptop.terminal.run" in prompt
+    assert "tool-calling adapter" in prompt
+    assert "maps to laptop.terminal.run" in prompt
 
 
-def test_proposal_prompt_shows_empty_arguments_for_git_status() -> None:
-    prompt = _proposal_prompt("git status")
+def test_select_tools_returns_single_tool_for_git_status() -> None:
+    tools = _select_tools("git.status")
 
-    assert '"name": "git.status"' in prompt
-    assert '"name": "terminal.run"' not in prompt
-    assert '"arguments": {}' in prompt
+    assert len(tools) == 1
+    assert tools[0]["function"]["name"] == "git.status"
+    assert tools[0]["function"]["parameters"]["required"] == []
+
+
+def test_select_tools_returns_all_tools_when_unknown() -> None:
+    tools = _select_tools(None)
+
+    assert len(tools) > 10
 
 
 def test_valid_tool_json_becomes_tool_request() -> None:
