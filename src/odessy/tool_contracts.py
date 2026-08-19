@@ -109,7 +109,7 @@ TOOL_REQUEST_SCHEMAS: dict[str, dict[str, Any]] = {
 
 def render_tool_contracts() -> str:
     lines = [
-        "Use only these exact tool request shapes.",
+        "Use only these exact JSON shapes.",
         "If a tool has no arguments, emit \"arguments\": {}.",
     ]
     for name, schema in TOOL_REQUEST_SCHEMAS.items():
@@ -124,7 +124,7 @@ def render_tool_contract(name: str) -> str:
         raise ValueError(f"Unknown tool contract requested: {name}")
     return "\n".join(
         [
-            "Use this exact tool request shape.",
+            "Use this exact JSON shape.",
             f"{name}:",
             _render_tool_request_shape(name, schema),
         ]
@@ -163,7 +163,7 @@ def _render_tool_request_shape(name: str, schema: dict[str, Any]) -> str:
     for argument_name, spec in properties.items():
         label = _render_type_label(spec)
         if argument_name not in required:
-            label = f"{label}, optional"
+            label = f"{label} (omit unless the user explicitly specifies it)"
         arguments[argument_name] = label
     return json.dumps(
         {

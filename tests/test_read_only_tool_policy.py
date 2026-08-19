@@ -98,3 +98,17 @@ def test_log_append_denies_unexpected_path_argument(tmp_path: Path) -> None:
 
     assert decision.action == "deny"
     assert "only a content argument" in decision.reason
+
+
+def test_laptop_terminal_run_denies_zero_timeout(tmp_path: Path) -> None:
+    policy = OdessyPolicy(workspace_root=tmp_path)
+
+    decision = policy.evaluate(
+        ToolRequest(
+            name="laptop.terminal.run",
+            arguments={"command": "pwd", "cwd": ".", "timeout": 0},
+        )
+    )
+
+    assert decision.action == "deny"
+    assert "laptop.terminal.run timeout must be between 1 and" in decision.reason

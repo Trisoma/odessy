@@ -5,7 +5,7 @@ import pytest
 from odessy.agent_loop import OdessyAgent
 from odessy.ollama_model import OllamaModel, _parse_model_action, _proposal_prompt
 from odessy.policy import OdessyPolicy
-from odessy.types import FinalResponse, ToolRequest
+from odessy.types import FinalResponse, ToolObservation, ToolRequest
 
 
 class QueuedOllamaModel(OllamaModel):
@@ -28,19 +28,24 @@ def anyio_backend() -> str:
 def test_proposal_prompt_includes_terminal_run_argument_schema() -> None:
     prompt = _proposal_prompt("run pwd")
 
+    assert "exactly one JSON object" in prompt
+    assert "tool request" not in prompt.lower()
     assert '"name": "terminal.run"' in prompt
     assert '"command": "string"' in prompt
-    assert '"cwd": "string, optional"' in prompt
-    assert '"timeout": "integer, optional"' in prompt
+    assert "omit unless the user explicitly specifies it" in prompt
+    assert '"cwd": "string (omit unless the user explicitly specifies it)"' in prompt
+    assert '"timeout": "integer (omit unless the user explicitly specifies it)"' in prompt
 
 
 def test_proposal_prompt_includes_laptop_terminal_run_argument_schema() -> None:
     prompt = _proposal_prompt("run pwd on my laptop")
 
+    assert "exactly one JSON object" in prompt
     assert '"name": "laptop.terminal.run"' in prompt
     assert '"command": "string"' in prompt
-    assert '"cwd": "string, optional"' in prompt
-    assert '"timeout": "integer, optional"' in prompt
+    assert '"cwd": "string (omit unless the user explicitly specifies it)"' in prompt
+    assert '"timeout": "integer (omit unless the user explicitly specifies it)"' in prompt
+    assert "MUST use laptop.terminal.run" in prompt
 
 
 def test_proposal_prompt_shows_empty_arguments_for_git_status() -> None:
@@ -99,6 +104,21 @@ def test_ollama_valid_first_tool_request_does_not_retry() -> None:
     assert len(model.prompts) == 1
 
 
+def test_ollama_debug_output_shows_valid_first_action(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("ODESSY_DEBUG_MODEL_REPAIR", "1")
+    model = QueuedOllamaModel(
+        ['{"type":"tool","name":"terminal.run","arguments":{"command":"pwd"}}']
+    )
+
+    action = model.propose("run pwd")
+
+    assert isinstance(action, ToolRequest)
+    captured = capsys.readouterr()
+    assert "parsed tool request" in captured.out
+    assert "terminal.run" in captured.out
+    assert '"command": "pwd"' in captured.out
+
+
 def test_ollama_repairs_malformed_json_once() -> None:
     model = QueuedOllamaModel(
         [
@@ -112,7 +132,7 @@ def test_ollama_repairs_malformed_json_once() -> None:
     assert isinstance(action, ToolRequest)
     assert action.arguments == {"command": "pwd"}
     assert len(model.prompts) == 2
-    assert "Your previous tool request was invalid." in model.prompts[1]
+    assert "Your previous JSON output was invalid." in model.prompts[1]
     assert "Validation error:" in model.prompts[1]
 
 
@@ -162,6 +182,68 @@ def test_ollama_repairs_unknown_tool_once() -> None:
     assert "Unknown tool requested by model: terminal.execute" in model.prompts[1]
 
 
+def test_ollama_repairs_laptop_intent_that_selected_terminal_run_once() -> None:
+    model = QueuedOllamaModel(
+        [
+            '{"type":"tool","name":"terminal.run","arguments":{"command":"pwd"}}',
+            '{"type":"tool","name":"laptop.terminal.run","arguments":{"command":"pwd"}}',
+        ]
+    )
+
+    action = model.propose("on my laptop, run pwd")
+
+    assert isinstance(action, ToolRequest)
+    assert action.name == "laptop.terminal.run"
+    assert action.arguments == {"command": "pwd"}
+    assert len(model.prompts) == 2
+    assert "Laptop command requests must use laptop.terminal.run" in model.prompts[1]
+    assert '"name": "laptop.terminal.run"' in model.prompts[1]
+
+
+def test_ollama_laptop_intent_fails_if_retry_still_selects_terminal_run() -> None:
+    model = QueuedOllamaModel(
+        [
+            '{"type":"tool","name":"terminal.run","arguments":{"command":"pwd"}}',
+            '{"type":"tool","name":"terminal.run","arguments":{"command":"pwd"}}',
+        ]
+    )
+
+    with pytest.raises(ValueError, match="Model repair failed"):
+        model.propose("on my laptop, run pwd")
+
+    assert len(model.prompts) == 2
+
+
+def test_ollama_laptop_intent_fails_if_retry_selects_other_valid_tool() -> None:
+    model = QueuedOllamaModel(
+        [
+            '{"type":"tool","name":"laptop.terminal.run","arguments":{"command":"pwd","args":{"--interactive"}}}',
+            '{"type":"tool","name":"time.now","arguments":{}}',
+        ]
+    )
+
+    with pytest.raises(ValueError, match="Laptop command requests must use laptop.terminal.run"):
+        model.propose("on my laptop, run pwd")
+
+    assert len(model.prompts) == 2
+
+
+def test_ollama_repair_prompt_recovers_tool_name_from_malformed_laptop_request() -> None:
+    model = QueuedOllamaModel(
+        [
+            '{"type":"tool","name":"laptop.terminal.run","arguments":{"command":"pwd","args":{"--interactive"}}}',
+            '{"type":"tool","name":"laptop.terminal.run","arguments":{"command":"pwd"}}',
+        ]
+    )
+
+    action = model.propose("on my laptop, run pwd")
+
+    assert isinstance(action, ToolRequest)
+    assert action.name == "laptop.terminal.run"
+    assert "laptop.terminal.run:" in model.prompts[1]
+    assert "time.now:" not in model.prompts[1]
+
+
 def test_ollama_invalid_retry_fails_after_exactly_one_repair_attempt() -> None:
     model = QueuedOllamaModel(
         [
@@ -184,6 +266,32 @@ def test_ollama_valid_final_response_does_not_retry() -> None:
     assert isinstance(action, FinalResponse)
     assert action.text == "done"
     assert len(model.prompts) == 1
+
+
+def test_ollama_blank_observation_response_falls_back_to_summary() -> None:
+    model = QueuedOllamaModel(["   "])
+    observation = ToolObservation(
+        request=ToolRequest("filesystem.list", {"path": "."}),
+        result={"entries": [{"name": "src"}, {"name": "tests"}]},
+    )
+
+    action = model.respond_to_observation("list files", observation)
+
+    assert isinstance(action, FinalResponse)
+    assert action.text == "Directory entries: src, tests"
+
+
+def test_ollama_generic_observation_response_falls_back_to_summary() -> None:
+    model = QueuedOllamaModel(["Yes."])
+    observation = ToolObservation(
+        request=ToolRequest("filesystem.list", {"path": "."}),
+        result={"entries": [{"name": "src"}, {"name": "tests"}]},
+    )
+
+    action = model.respond_to_observation("list files", observation)
+
+    assert isinstance(action, FinalResponse)
+    assert action.text == "Directory entries: src, tests"
 
 
 def test_ollama_repair_debug_output_is_optional(monkeypatch, capsys) -> None:

@@ -83,24 +83,31 @@ class OdessyPolicy:
         )
 
     def _evaluate_terminal_run(self, request: ToolRequest) -> PolicyDecision:
+        tool_name = request.name
         command = request.arguments.get("command")
         cwd = request.arguments.get("cwd", ".")
         timeout = request.arguments.get("timeout", self.normal_timeout)
 
         if not isinstance(command, str) or not command.strip():
-            return PolicyDecision("deny", "terminal.run requires a non-empty command", "high")
+            return PolicyDecision("deny", f"{tool_name} requires a non-empty command", "high")
         if not isinstance(cwd, str) or not cwd.strip():
-            return PolicyDecision("deny", "terminal.run requires a valid cwd", "high")
+            return PolicyDecision("deny", f"{tool_name} requires a valid cwd", "high")
         if not isinstance(timeout, int):
-            return PolicyDecision("deny", "terminal.run timeout must be an integer", "high")
-        if timeout < 1 or timeout > self.max_timeout:
+            return PolicyDecision("deny", f"{tool_name} timeout must be an integer", "high")
+        if timeout < 1:
+            return PolicyDecision(
+                "deny",
+                f"{tool_name} timeout must be between 1 and the maximum execution scope",
+                "high",
+            )
+        if timeout > self.max_timeout:
             return PolicyDecision(
                 "confirm",
-                f"terminal.run timeout {timeout} exceeds the normal execution scope",
+                f"{tool_name} timeout {timeout} exceeds the normal execution scope",
                 "medium",
             )
 
-        cwd_decision = self._check_workspace_cwd(cwd)
+        cwd_decision = self._check_workspace_cwd(cwd, tool_name)
         if cwd_decision is not None:
             return cwd_decision
 
@@ -110,40 +117,40 @@ class OdessyPolicy:
         if _matches_background_or_detach_rule(lowered, tokens):
             return PolicyDecision(
                 "deny",
-                "terminal.run denied because background or detached execution is outside the request lifecycle",
+                f"{tool_name} denied because background or detached execution is outside the request lifecycle",
                 "high",
             )
         if _matches_deny_rule(lowered, tokens):
             return PolicyDecision(
                 "deny",
-                "terminal.run denied because the command is destructive or credential-seeking",
+                f"{tool_name} denied because the command is destructive or credential-seeking",
                 "high",
             )
         if _matches_confirm_rule(lowered, tokens):
             return PolicyDecision(
                 "confirm",
-                "terminal.run requires confirmation because the command may modify state",
+                f"{tool_name} requires confirmation because the command may modify state",
                 "medium",
             )
         if _matches_allow_rule(lowered, tokens):
             return PolicyDecision(
                 "allow",
-                "terminal.run allowed as a read-only workspace command",
+                f"{tool_name} allowed as a read-only workspace command",
                 "low",
             )
         return PolicyDecision(
             "confirm",
-            "terminal.run requires confirmation because the command is outside the low-risk allow rules",
+            f"{tool_name} requires confirmation because the command is outside the low-risk allow rules",
             "medium",
         )
 
-    def _check_workspace_cwd(self, cwd: str) -> PolicyDecision | None:
+    def _check_workspace_cwd(self, cwd: str, tool_name: str) -> PolicyDecision | None:
         try:
             self.authority.resolve_cwd(cwd)
         except WorkspaceAuthorityError:
             return PolicyDecision(
                 "deny",
-                "terminal.run denied because cwd is outside the allowed workspace",
+                f"{tool_name} denied because cwd is outside the allowed workspace",
                 "high",
             )
         return None
