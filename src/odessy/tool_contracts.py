@@ -118,6 +118,19 @@ def render_tool_contracts() -> str:
     return "\n".join(lines)
 
 
+def render_tool_contract(name: str) -> str:
+    schema = TOOL_REQUEST_SCHEMAS.get(name)
+    if schema is None:
+        raise ValueError(f"Unknown tool contract requested: {name}")
+    return "\n".join(
+        [
+            "Use this exact tool request shape.",
+            f"{name}:",
+            _render_tool_request_shape(name, schema),
+        ]
+    )
+
+
 def validate_tool_arguments(name: str, arguments: dict[str, Any]) -> None:
     schema = TOOL_REQUEST_SCHEMAS.get(name)
     if schema is None:
