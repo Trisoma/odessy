@@ -28,6 +28,8 @@ class OdessyPolicy:
             "calculator.eval",
             "filesystem.read",
             "filesystem.list",
+            "filesystem.write",
+            "log.append",
             "project.find",
             "project.grep",
             "git.status",
@@ -70,6 +72,10 @@ class OdessyPolicy:
             return self._evaluate_read_only_tool(request)
         if request.name in {"terminal.run", "laptop.terminal.run"}:
             return self._evaluate_terminal_run(request)
+        if request.name == "filesystem.write":
+            return self._evaluate_filesystem_write(request)
+        if request.name == "log.append":
+            return self._evaluate_log_append(request)
         return PolicyDecision(
             action="allow",
             reason=f"Tool is allowed: {request.name}",
@@ -170,6 +176,46 @@ class OdessyPolicy:
                 "high",
             )
         return None
+
+    def _evaluate_filesystem_write(self, request: ToolRequest) -> PolicyDecision:
+        if set(request.arguments) != {"path", "content"}:
+            return PolicyDecision(
+                "deny",
+                "filesystem.write accepts only path and content arguments",
+                "high",
+            )
+        path_value = request.arguments.get("path")
+        content = request.arguments.get("content")
+        if not isinstance(path_value, str) or not path_value.strip():
+            return PolicyDecision("deny", "filesystem.write requires a valid path", "high")
+        if not isinstance(content, str):
+            return PolicyDecision("deny", "filesystem.write requires string content", "high")
+
+        path_decision = self._check_workspace_path(path_value, "filesystem.write")
+        if path_decision is not None:
+            return path_decision
+
+        return PolicyDecision(
+            "confirm",
+            "filesystem.write modifies the workspace and requires confirmation",
+            "medium",
+        )
+
+    def _evaluate_log_append(self, request: ToolRequest) -> PolicyDecision:
+        if set(request.arguments) != {"content"}:
+            return PolicyDecision(
+                "deny",
+                "log.append accepts only a content argument",
+                "high",
+            )
+        content = request.arguments.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return PolicyDecision("deny", "log.append requires non-empty string content", "high")
+        return PolicyDecision(
+            "allow",
+            "log.append allowed because its destination is fixed and internal",
+            "low",
+        )
 
 
 def _matches_allow_rule(command: str, tokens: list[str]) -> bool:

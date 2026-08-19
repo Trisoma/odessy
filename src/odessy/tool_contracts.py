@@ -25,6 +25,19 @@ TOOL_REQUEST_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["command"],
     },
+    "filesystem.write": {
+        "properties": {
+            "path": {"type": "string"},
+            "content": {"type": "string"},
+        },
+        "required": ["path", "content"],
+    },
+    "log.append": {
+        "properties": {
+            "content": {"type": "string"},
+        },
+        "required": ["content"],
+    },
     "calculator.eval": {
         "properties": {
             "expression": {"type": "string"},

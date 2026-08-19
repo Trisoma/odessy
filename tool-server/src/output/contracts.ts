@@ -85,3 +85,15 @@ export interface TerminalRunResult {
   stdout_truncated: boolean;
   stderr_truncated: boolean;
 }
+
+export interface FilesystemWriteResult {
+  path: string;
+  bytes_written: number;
+  status: ToolStatus;
+}
+
+export interface LogAppendResult {
+  path: string;
+  bytes_written: number;
+  status: ToolStatus;
+}

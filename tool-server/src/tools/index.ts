@@ -7,9 +7,11 @@ import { z } from "zod";
 import type {
   FilesystemListResult,
   FilesystemReadResult,
+  FilesystemWriteResult,
   GitChangedFilesResult,
   GitLogResult,
   GitTextResult,
+  LogAppendResult,
   ProjectFindResult,
   ProjectGrepMatch,
   ProjectGrepResult,
@@ -63,6 +65,15 @@ export const laptopTerminalRunInputSchema = {
   command: z.string(),
   cwd: z.string().optional(),
   timeout: z.number().int().min(1).max(30).optional(),
+};
+
+export const filesystemWriteInputSchema = {
+  path: z.string(),
+  content: z.string(),
+};
+
+export const logAppendInputSchema = {
+  content: z.string(),
 };
 
 export async function readFileTool(
@@ -262,6 +273,39 @@ export async function laptopTerminalRun(
     timed_out: result.timedOut,
     stdout_truncated: stdout.truncated,
     stderr_truncated: stderr.truncated,
+  };
+}
+
+export async function filesystemWriteTool(
+  guard: WorkspaceGuard,
+  input: { path: string; content: string },
+): Promise<FilesystemWriteResult> {
+  const absolutePath = guard.resolveCandidate(input.path);
+  await fs.promises.mkdir(path.dirname(absolutePath), { recursive: true });
+  await fs.promises.writeFile(absolutePath, input.content, "utf8");
+  return {
+    path: guard.relative(absolutePath),
+    bytes_written: Buffer.byteLength(input.content, "utf8"),
+    status: "ok",
+  };
+}
+
+const LOG_DIR = path.join(".odessy", "logs");
+const LOG_FILE = "odessy.log";
+
+export async function logAppendTool(
+  guard: WorkspaceGuard,
+  input: { content: string },
+): Promise<LogAppendResult> {
+  const logDir = path.join(guard.root, LOG_DIR);
+  await fs.promises.mkdir(logDir, { recursive: true });
+  const logPath = path.join(logDir, LOG_FILE);
+  const line = `[${new Date().toISOString()}] ${input.content}\n`;
+  await fs.promises.appendFile(logPath, line, "utf8");
+  return {
+    path: guard.relative(logPath),
+    bytes_written: Buffer.byteLength(line, "utf8"),
+    status: "ok",
   };
 }
 

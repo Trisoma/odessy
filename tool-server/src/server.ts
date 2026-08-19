@@ -7,6 +7,8 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
 import {
+  filesystemWriteInputSchema,
+  filesystemWriteTool,
   findInputSchema,
   findProjectTool,
   gitChangedFiles,
@@ -22,6 +24,8 @@ import {
   laptopTerminalRunInputSchema,
   listDirectoryTool,
   listInputSchema,
+  logAppendInputSchema,
+  logAppendTool,
   readFileTool,
   readInputSchema,
 } from "./tools/index.js";
@@ -134,6 +138,26 @@ function buildServer(): McpServer {
       inputSchema: laptopTerminalRunInputSchema,
     },
     async (input) => resultPayload(await laptopTerminalRun(guard, input)),
+  );
+
+  server.registerTool(
+    "filesystem.write",
+    {
+      title: "Write File",
+      description: "Write content to a file inside the Odessy workspace.",
+      inputSchema: filesystemWriteInputSchema,
+    },
+    async (input) => resultPayload(await filesystemWriteTool(guard, input)),
+  );
+
+  server.registerTool(
+    "log.append",
+    {
+      title: "Append Log",
+      description: "Append a line to the internal Odessy log at .odessy/logs/odessy.log.",
+      inputSchema: logAppendInputSchema,
+    },
+    async (input) => resultPayload(await logAppendTool(guard, input)),
   );
 
   return server;
