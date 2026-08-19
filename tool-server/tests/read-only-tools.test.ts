@@ -6,11 +6,13 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  filesystemWriteTool,
   gitChangedFiles,
   gitDiff,
   gitLog,
   gitStatus,
   laptopTerminalRun,
+  logAppendTool,
   readFileTool,
   listDirectoryTool,
   findProjectTool,
@@ -157,4 +159,43 @@ test("laptop.terminal.run executes a command in the workspace", async () => {
   assert.equal(result.command, "pwd");
   assert.equal(result.exit_code, 0);
   assert.match(result.stdout, /.+/);
+});
+
+test("filesystem.write writes content inside the workspace", async () => {
+  const workspace = makeWorkspace();
+  const guard = createWorkspaceGuard(workspace);
+
+  const result = await filesystemWriteTool(guard, {
+    path: path.join("src", "notes.txt"),
+    content: "hello odessy\n",
+  });
+
+  assert.equal(result.status, "ok");
+  assert.equal(result.path, "src/notes.txt");
+  assert.equal(
+    fs.readFileSync(path.join(workspace, "src", "notes.txt"), "utf8"),
+    "hello odessy\n",
+  );
+});
+
+test("filesystem.write denies workspace escape", async () => {
+  const workspace = makeWorkspace();
+  const guard = createWorkspaceGuard(workspace);
+
+  await assert.rejects(
+    () => filesystemWriteTool(guard, { path: "../secret.txt", content: "x" }),
+    /outside the workspace/,
+  );
+});
+
+test("log.append writes to the fixed internal log path", async () => {
+  const workspace = makeWorkspace();
+  const guard = createWorkspaceGuard(workspace);
+
+  const result = await logAppendTool(guard, { content: "hello log" });
+
+  assert.equal(result.status, "ok");
+  assert.equal(result.path, ".odessy/logs/odessy.log");
+  const raw = fs.readFileSync(path.join(workspace, ".odessy", "logs", "odessy.log"), "utf8");
+  assert.match(raw, /hello log/);
 });

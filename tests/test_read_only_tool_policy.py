@@ -45,12 +45,56 @@ def test_read_only_policy_denies_secret_paths(tmp_path: Path) -> None:
     assert "credentials or secrets" in decision.reason
 
 
-def test_write_tools_remain_denied_in_step_6(tmp_path: Path) -> None:
+def test_filesystem_write_requires_confirmation(tmp_path: Path) -> None:
     policy = OdessyPolicy(workspace_root=tmp_path)
 
     decision = policy.evaluate(
         ToolRequest(name="filesystem.write", arguments={"path": "notes.txt", "content": "x"})
     )
 
+    assert decision.action == "confirm"
+    assert decision.risk == "medium"
+
+
+def test_filesystem_write_denies_workspace_escape(tmp_path: Path) -> None:
+    policy = OdessyPolicy(workspace_root=tmp_path)
+
+    decision = policy.evaluate(
+        ToolRequest(name="filesystem.write", arguments={"path": "../secret.txt", "content": "x"})
+    )
+
     assert decision.action == "deny"
-    assert "not allowed" in decision.reason
+    assert "outside the allowed workspace" in decision.reason
+
+
+def test_filesystem_write_denies_secret_paths(tmp_path: Path) -> None:
+    policy = OdessyPolicy(workspace_root=tmp_path)
+
+    decision = policy.evaluate(
+        ToolRequest(name="filesystem.write", arguments={"path": ".env", "content": "TOKEN=x"})
+    )
+
+    assert decision.action == "deny"
+    assert "credentials or secrets" in decision.reason
+
+
+def test_log_append_is_allowed_without_path(tmp_path: Path) -> None:
+    policy = OdessyPolicy(workspace_root=tmp_path)
+
+    decision = policy.evaluate(
+        ToolRequest(name="log.append", arguments={"content": "hello"})
+    )
+
+    assert decision.action == "allow"
+    assert decision.risk == "low"
+
+
+def test_log_append_denies_unexpected_path_argument(tmp_path: Path) -> None:
+    policy = OdessyPolicy(workspace_root=tmp_path)
+
+    decision = policy.evaluate(
+        ToolRequest(name="log.append", arguments={"content": "hello", "path": "../outside"})
+    )
+
+    assert decision.action == "deny"
+    assert "only a content argument" in decision.reason
