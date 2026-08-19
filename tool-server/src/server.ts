@@ -18,6 +18,8 @@ import {
   gitStatus,
   grepInputSchema,
   grepProjectTool,
+  laptopTerminalRun,
+  laptopTerminalRunInputSchema,
   listDirectoryTool,
   listInputSchema,
   readFileTool,
@@ -122,6 +124,16 @@ function buildServer(): McpServer {
       inputSchema: gitLogInputSchema,
     },
     async (input) => resultPayload(await gitLog(guard, input)),
+  );
+
+  server.registerTool(
+    "laptop.terminal.run",
+    {
+      title: "Laptop Terminal Run",
+      description: "Run a laptop-side command in the Odessy workspace.",
+      inputSchema: laptopTerminalRunInputSchema,
+    },
+    async (input) => resultPayload(await laptopTerminalRun(guard, input)),
   );
 
   return server;

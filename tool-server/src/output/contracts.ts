@@ -72,3 +72,16 @@ export interface GitLogResult {
   limit: number;
   error?: string;
 }
+
+export interface TerminalRunResult {
+  stdout: string;
+  stderr: string;
+  exit_code: number;
+  duration: number;
+  status: "ok" | "failed" | "timeout";
+  command: string;
+  cwd: string;
+  timed_out: boolean;
+  stdout_truncated: boolean;
+  stderr_truncated: boolean;
+}

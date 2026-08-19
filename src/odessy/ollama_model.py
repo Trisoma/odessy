@@ -54,8 +54,9 @@ class OllamaModel:
 
 def _proposal_prompt(user_text: str) -> str:
     return (
-        "You are Odessy's local model adapter. Return only JSON.\n"
+        "You are Odessy's local model adapter. Given the user's request, choose the tool request or final answer that best fulfills the user's intention.\n"
         "For normal answers: {\"type\":\"final\",\"text\":\"...\"}\n"
+        "When the user asks to run a command on their laptop (for example, \"on my laptop\"), use laptop.terminal.run instead of terminal.run.\n"
         f"{render_tool_contracts()}\n"
         "Do not decide whether a tool is safe. The Odessy runtime will validate and authorize.\n"
         f"User: {user_text}\n"

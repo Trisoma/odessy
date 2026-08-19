@@ -172,3 +172,13 @@ async def test_policy_denies_sensitive_request_before_mcp(tmp_path: Path) -> Non
 
     with pytest.raises(PermissionError, match="credentials or secrets"):
         await agent.run_turn("read .env")
+
+
+def test_policy_allows_laptop_terminal_run_for_safe_command(tmp_path: Path) -> None:
+    policy = OdessyPolicy(workspace_root=tmp_path)
+
+    decision = policy.evaluate(
+        ToolRequest("laptop.terminal.run", {"command": "pwd"})
+    )
+
+    assert decision.action == "allow"

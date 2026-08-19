@@ -15,6 +15,15 @@ def test_proposal_prompt_includes_terminal_run_argument_schema() -> None:
     assert '"timeout": "integer, optional"' in prompt
 
 
+def test_proposal_prompt_includes_laptop_terminal_run_argument_schema() -> None:
+    prompt = _proposal_prompt("run pwd on my laptop")
+
+    assert '"name": "laptop.terminal.run"' in prompt
+    assert '"command": "string"' in prompt
+    assert '"cwd": "string, optional"' in prompt
+    assert '"timeout": "integer, optional"' in prompt
+
+
 def test_proposal_prompt_shows_empty_arguments_for_git_status() -> None:
     prompt = _proposal_prompt("git status")
 
@@ -29,6 +38,16 @@ def test_valid_tool_json_becomes_tool_request() -> None:
 
     assert isinstance(action, ToolRequest)
     assert action.name == "terminal.run"
+    assert action.arguments == {"command": "pwd"}
+
+
+def test_valid_laptop_terminal_tool_json_becomes_tool_request() -> None:
+    action = _parse_model_action(
+        '{"type":"tool","name":"laptop.terminal.run","arguments":{"command":"pwd"}}'
+    )
+
+    assert isinstance(action, ToolRequest)
+    assert action.name == "laptop.terminal.run"
     assert action.arguments == {"command": "pwd"}
 
 

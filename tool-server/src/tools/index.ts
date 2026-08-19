@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -13,6 +13,7 @@ import type {
   ProjectFindResult,
   ProjectGrepMatch,
   ProjectGrepResult,
+  TerminalRunResult,
 } from "../output/contracts.js";
 import { DEFAULT_MAX_BYTES, normalizeLimit, truncateUtf8 } from "../output/truncate.js";
 import type { WorkspaceGuard } from "../workspace/path-guard.js";
@@ -56,6 +57,12 @@ export const gitChangedFilesInputSchema = {
 
 export const gitLogInputSchema = {
   limit: z.number().int().min(1).max(500).optional(),
+};
+
+export const laptopTerminalRunInputSchema = {
+  command: z.string(),
+  cwd: z.string().optional(),
+  timeout: z.number().int().min(1).max(30).optional(),
 };
 
 export async function readFileTool(
@@ -233,6 +240,31 @@ export async function gitLog(
   };
 }
 
+export async function laptopTerminalRun(
+  guard: WorkspaceGuard,
+  input: { command: string; cwd?: string; timeout?: number },
+): Promise<TerminalRunResult> {
+  const resolvedCwd = await guard.resolveExisting(input.cwd ?? ".");
+  const effectiveTimeout = Math.min(Math.max(1, input.timeout ?? 10), 30);
+  const start = Date.now();
+  const result = await runShellCommand(input.command, resolvedCwd, effectiveTimeout);
+  const duration = (Date.now() - start) / 1000;
+  const stdout = truncateUtf8(result.stdout, 64 * 1024);
+  const stderr = truncateUtf8(result.stderr, 32 * 1024);
+  return {
+    stdout: stdout.content,
+    stderr: stderr.content,
+    exit_code: result.exitCode,
+    duration,
+    status: result.timedOut ? "timeout" : result.exitCode === 0 ? "ok" : "failed",
+    command: input.command,
+    cwd: resolvedCwd,
+    timed_out: result.timedOut,
+    stdout_truncated: stdout.truncated,
+    stderr_truncated: stderr.truncated,
+  };
+}
+
 async function gitText(
   cwd: string,
   args: string[],
@@ -248,6 +280,132 @@ async function gitText(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { status: "failed", error: message };
+  }
+}
+
+async function runShellCommand(
+  command: string,
+  cwd: string,
+  timeoutSeconds: number,
+): Promise<{ stdout: string; stderr: string; exitCode: number; timedOut: boolean }> {
+  return await new Promise((resolve, reject) => {
+    const shell = process.platform === "win32" ? "powershell" : "/bin/sh";
+    const shellArgs =
+      process.platform === "win32"
+        ? ["-NoProfile", "-NonInteractive", "-Command", command]
+        : ["-lc", command];
+    const child = spawn(shell, shellArgs, {
+      cwd,
+      env: buildSanitizedEnvironment(process.env),
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
+      windowsHide: true,
+      shell: false,
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let settled = false;
+
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr?.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    const finish = (result: { stdout: string; stderr: string; exitCode: number; timedOut: boolean }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+
+    child.on("exit", (code) => {
+      finish({
+        stdout,
+        stderr,
+        exitCode: typeof code === "number" ? code : -1,
+        timedOut,
+      });
+    });
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      terminateProcessTree(child);
+    }, timeoutSeconds * 1000);
+  });
+}
+
+function buildSanitizedEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const allowed = new Set([
+    "COMSPEC",
+    "LANG",
+    "LC_ALL",
+    "PATH",
+    "PATHEXT",
+    "SYSTEMROOT",
+    "TEMP",
+    "TERM",
+    "TMP",
+    "TMPDIR",
+    "WINDIR",
+  ]);
+  const result: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(source)) {
+    const upper = key.toUpperCase();
+    if (allowed.has(upper) && !looksLikeSecretEnvName(upper) && typeof value === "string") {
+      result[key] = value;
+    }
+  }
+  return result;
+}
+
+function looksLikeSecretEnvName(name: string): boolean {
+  const secretTerms = [
+    "API_KEY",
+    "AWS_",
+    "AZURE_",
+    "CREDENTIAL",
+    "GITHUB_TOKEN",
+    "HF_TOKEN",
+    "HUGGINGFACE",
+    "OPENAI_",
+    "PASSWORD",
+    "PRIVATE",
+    "SECRET",
+    "TOKEN",
+  ];
+  return secretTerms.some((term) => name.includes(term));
+}
+
+function terminateProcessTree(child: import("node:child_process").ChildProcess): void {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+  if (process.platform === "win32") {
+    spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    }).unref();
+    return;
+  }
+  if (typeof child.pid === "number") {
+    try {
+      process.kill(-child.pid, "SIGTERM");
+    } catch {
+      child.kill("SIGTERM");
+    }
   }
 }
 

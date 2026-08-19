@@ -24,6 +24,7 @@ class OdessyPolicy:
         allowed_tools = self.allowed_tools or {
             "time.now",
             "terminal.run",
+            "laptop.terminal.run",
             "calculator.eval",
             "filesystem.read",
             "filesystem.list",
@@ -67,7 +68,7 @@ class OdessyPolicy:
             )
         if request.name in _READ_ONLY_TOOL_NAMES:
             return self._evaluate_read_only_tool(request)
-        if request.name == "terminal.run":
+        if request.name in {"terminal.run", "laptop.terminal.run"}:
             return self._evaluate_terminal_run(request)
         return PolicyDecision(
             action="allow",

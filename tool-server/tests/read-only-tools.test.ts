@@ -10,6 +10,7 @@ import {
   gitDiff,
   gitLog,
   gitStatus,
+  laptopTerminalRun,
   readFileTool,
   listDirectoryTool,
   findProjectTool,
@@ -143,4 +144,17 @@ test("git read-only tools use fixed argv behavior", async (t) => {
   assert.deepEqual(changed.files, ["tracked.txt"]);
   assert.equal(log.commits.length, 1);
   assert.equal(log.limit, 50);
+});
+
+test("laptop.terminal.run executes a command in the workspace", async () => {
+  const workspace = makeWorkspace();
+  const guard = createWorkspaceGuard(workspace);
+
+  const result = await laptopTerminalRun(guard, { command: "pwd" });
+
+  assert.equal(result.status, "ok");
+  assert.equal(result.cwd, path.resolve(workspace));
+  assert.equal(result.command, "pwd");
+  assert.equal(result.exit_code, 0);
+  assert.match(result.stdout, /.+/);
 });

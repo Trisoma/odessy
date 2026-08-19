@@ -17,6 +17,14 @@ TOOL_REQUEST_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["command"],
     },
+    "laptop.terminal.run": {
+        "properties": {
+            "command": {"type": "string"},
+            "cwd": {"type": "string", "optional": True},
+            "timeout": {"type": "integer", "optional": True},
+        },
+        "required": ["command"],
+    },
     "calculator.eval": {
         "properties": {
             "expression": {"type": "string"},
