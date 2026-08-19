@@ -31,6 +31,7 @@ def test_proposal_prompt_includes_terminal_run_argument_schema() -> None:
     assert "exactly one JSON object" in prompt
     assert "tool request" not in prompt.lower()
     assert '"name": "terminal.run"' in prompt
+    assert '"name": "laptop.terminal.run"' not in prompt
     assert '"command": "string"' in prompt
     assert "omit unless the user explicitly specifies it" in prompt
     assert '"cwd": "string (omit unless the user explicitly specifies it)"' in prompt
@@ -42,6 +43,7 @@ def test_proposal_prompt_includes_laptop_terminal_run_argument_schema() -> None:
 
     assert "exactly one JSON object" in prompt
     assert '"name": "laptop.terminal.run"' in prompt
+    assert '"name": "terminal.run"' not in prompt
     assert '"command": "string"' in prompt
     assert '"cwd": "string (omit unless the user explicitly specifies it)"' in prompt
     assert '"timeout": "integer (omit unless the user explicitly specifies it)"' in prompt
@@ -52,6 +54,7 @@ def test_proposal_prompt_shows_empty_arguments_for_git_status() -> None:
     prompt = _proposal_prompt("git status")
 
     assert '"name": "git.status"' in prompt
+    assert '"name": "terminal.run"' not in prompt
     assert '"arguments": {}' in prompt
 
 

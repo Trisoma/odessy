@@ -95,18 +95,55 @@ class OllamaModel:
 
 
 def _proposal_prompt(user_text: str) -> str:
+    tool_name = _proposal_tool_name_for_user_text(user_text)
+    contracts = render_tool_contract(tool_name) if tool_name is not None else render_tool_contracts()
+    intent_instruction = (
+        f"User intent maps to {tool_name}. MUST use {tool_name}."
+        if tool_name is not None
+        else "Choose the best JSON shape for the user's request."
+    )
     return (
-        "You are Odessy's local model adapter. Input: user's request; Output: exactly one JSON object.\n"
-        "For each requests, write the exact commandline command in the relevant command field.\n"
+        "Based on user's request, generate a JSON that include relevant linux command.\n"
+        "Output exactly one JSON object.\n"
+        f"{intent_instruction}\n"
+        "For command requests, write the exact commandline command in the command field.\n"
         "For normal answers: {\"type\":\"final\",\"text\":\"...\"}\n"
-        "At all time, MUST use laptop.terminal.run.\n"
-        "For laptop.terminal.run, leave `cwd` field untouched unless the user explicitly provides one.\n"
-        "Optional fields like `terminal.run.timeout` must be untouched unless the user explicitly specifies them.\n"
-        f"{render_tool_contracts()}\n"
+        "Leave `cwd` untouched. Leave optional fields untouched unless the user explicitly says them.\n"
+        f"{contracts}\n"
+        "Do not add markdown, explanation, or extra text.\n"
         "Do not decide whether a tool is safe. The Odessy runtime will validate and authorize.\n"
         f"User: {user_text}\n"
         "JSON:"
     )
+
+
+def _proposal_tool_name_for_user_text(user_text: str) -> str | None:
+    normalized = user_text.strip().lower()
+    if _is_laptop_command_intent(normalized):
+        return "laptop.terminal.run"
+    if normalized.startswith("run ") or " run " in normalized:
+        return "terminal.run"
+    if "git status" in normalized:
+        return "git.status"
+    if "git diff" in normalized:
+        return "git.diff"
+    if "git changed" in normalized or "changed files" in normalized:
+        return "git.changed_files"
+    if "git log" in normalized:
+        return "git.log"
+    if normalized.startswith("read ") or "read file" in normalized:
+        return "filesystem.read"
+    if normalized.startswith("list") or ("list" in normalized and "file" in normalized):
+        return "filesystem.list"
+    if normalized.startswith("find ") or "find file" in normalized:
+        return "project.find"
+    if normalized.startswith("grep ") or "search text" in normalized:
+        return "project.grep"
+    if normalized.startswith("calculate ") or "calculate" in normalized:
+        return "calculator.eval"
+    if "time" in normalized or "date" in normalized:
+        return "time.now"
+    return None
 
 
 def _fallback_observation_response(observation: ToolObservation) -> str:
