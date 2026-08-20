@@ -5,6 +5,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from odessy.config_file import load_config_env
+
 
 @dataclass(frozen=True)
 class VoiceConfig:
@@ -22,6 +24,7 @@ class VoiceConfig:
 
     @classmethod
     def from_env(cls) -> "VoiceConfig":
+        load_config_env()
         return cls(
             whisper_bin=os.environ.get("ODESSY_WHISPER_BIN", "whisper-cli"),
             whisper_model=os.environ.get("ODESSY_WHISPER_MODEL", "models/ggml-tiny.en.bin"),

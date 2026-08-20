@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -103,3 +104,13 @@ def _unlink_if_exists(path: Path) -> None:
         path.unlink(missing_ok=True)
     except OSError:
         pass
+
+
+def main(argv: list[str] | None = None) -> None:
+    from odessy.cli import main as odessy_main
+
+    odessy_main(["voice", *(list(sys.argv[1:] if argv is None else argv))])
+
+
+if __name__ == "__main__":
+    main()

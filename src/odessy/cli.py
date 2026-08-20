@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from odessy.agent_loop import OdessyAgent
+from odessy.config_file import load_config_env
 from odessy.fake_model import FakeModel
 from odessy.lfm_model import LlamaCppLFMModel
 from odessy.mcp_server import build_odessy_mcp_server
@@ -135,6 +136,7 @@ def _build_mcp_servers(workspace_root: Path) -> tuple[object, ...] | object:
 
 
 def main(argv: list[str] | None = None) -> None:
+    load_config_env()
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["voice"]:
         parser = argparse.ArgumentParser(description="Run one bounded local Odessy voice turn.")
