@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from odessy.ollama_model import (
+    _OllamaToolsUnsupported,
     _debug_model_repair,
     _debug_parsed_action,
     _extract_model_action_from_chat,
@@ -24,6 +25,8 @@ from odessy.ollama_model import (
     _model_output_error,
     _proposal_tool_name_for_user_text,
     _repair_prompt,
+    _select_tools,
+    _system_prompt,
     _text_system_prompt,
 )
 from odessy.types import FinalResponse, ModelAction, ToolObservation
@@ -69,7 +72,7 @@ class LlamaCppLFMModel:
         tool_name = _proposal_tool_name_for_user_text(user_text)
         prompt = _text_system_prompt(user_text, tool_name)
         try:
-            action = self._chat_text_action(user_text, prompt)
+            action = self._chat_native_action(user_text, tool_name)
         except ValueError as error:
             model_error = _model_output_error("", error, user_text, tool_name)
             repair_prompt = _repair_prompt(user_text, model_error)
@@ -94,6 +97,17 @@ class LlamaCppLFMModel:
         response = self._chat([{"role": "user", "content": prompt}])
         return _extract_model_action_from_chat(response, user_text)
 
+    def _chat_native_action(self, user_text: str, tool_name: str | None) -> ModelAction:
+        messages = [
+            {"role": "system", "content": _system_prompt(tool_name)},
+            {"role": "user", "content": user_text},
+        ]
+        try:
+            response = self._chat(messages, tools=_select_tools(tool_name))
+        except _OllamaToolsUnsupported:
+            return self._chat_text_action(user_text, _text_system_prompt(user_text, tool_name))
+        return _extract_lfm_native_action_from_chat(response, user_text)
+
     def _chat(
         self,
         messages: list[dict[str, Any]],
@@ -105,6 +119,8 @@ class LlamaCppLFMModel:
             "stream": False,
             "temperature": self.temperature,
         }
+        if tools:
+            payload["tools"] = tools
         request = urllib.request.Request(
             f"{self.endpoint.rstrip('/')}/api/chat",
             data=json.dumps(payload).encode("utf-8"),
@@ -116,6 +132,8 @@ class LlamaCppLFMModel:
                 return normalize_ollama_chat_response(json.loads(response.read().decode("utf-8")))
         except urllib.error.HTTPError as error:
             body = _read_error_body(error)
+            if "does not support tools" in body:
+                raise _OllamaToolsUnsupported(body) from error
             raise RuntimeError(
                 f"Ollama LFM API call failed ({error.code}): {body or error.reason}"
             ) from error
@@ -141,3 +159,15 @@ class LlamaCppLFMModel:
         if text and not _looks_like_generic_final_response(text):
             return FinalResponse(text=text)
         return FinalResponse(text=_fallback_observation_response(observation))
+
+
+def _extract_lfm_native_action_from_chat(response: dict[str, Any], user_text: str) -> ModelAction:
+    message = response.get("message") or {}
+    if message.get("tool_calls"):
+        return _extract_model_action_from_chat(response, user_text)
+    content = (message.get("content") or "").strip()
+    if not content:
+        raise ValueError("Ollama returned neither a tool call nor content")
+    if content.startswith("{") or content.startswith("```"):
+        return _extract_model_action_from_chat(response, user_text)
+    return FinalResponse(text=content)

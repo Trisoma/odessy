@@ -6,6 +6,7 @@ import pytest
 
 from odessy.cli import _build_model
 from odessy.lfm_model import LlamaCppLFMModel, normalize_ollama_chat_response
+from odessy.ollama_model import _OllamaToolsUnsupported
 from odessy.types import FinalResponse, ToolObservation, ToolRequest
 
 
@@ -17,7 +18,7 @@ class QueuedLFM(LlamaCppLFMModel):
         object.__setattr__(self, "calls", [])
 
     def _chat(self, messages, tools=None):
-        self.calls.append(messages)
+        self.calls.append({"messages": messages, "tools": tools})
         if not self.outputs:
             raise AssertionError("No queued LFM output available")
         return normalize_ollama_chat_response(self.outputs.pop(0))
@@ -78,6 +79,60 @@ def test_lfm_successful_tool_request_conversion() -> None:
     assert action.arguments == {"command": "pwd"}
 
 
+def test_lfm_native_tool_call_conversion() -> None:
+    model = QueuedLFM(
+        [
+            _assistant(
+                tool_calls=[
+                    {
+                        "function": {
+                            "name": "time.now",
+                            "arguments": {},
+                        }
+                    }
+                ]
+            )
+        ]
+    )
+
+    action = model.propose("what time is it?")
+
+    assert isinstance(action, ToolRequest)
+    assert action.name == "time.now"
+    assert model.calls[0]["tools"]
+
+
+def test_lfm_native_no_tool_content_is_final_response() -> None:
+    model = QueuedLFM([_assistant(content="Hello! How can I help?")])
+
+    action = model.propose("hi")
+
+    assert isinstance(action, FinalResponse)
+    assert action.text == "Hello! How can I help?"
+    assert len(model.calls) == 1
+
+
+def test_lfm_tools_unsupported_falls_back_to_text_json() -> None:
+    class UnsupportedThenText(QueuedLFM):
+        def _chat(self, messages, tools=None):
+            self.calls.append({"messages": messages, "tools": tools})
+            if tools is not None:
+                raise _OllamaToolsUnsupported("does not support tools")
+            return normalize_ollama_chat_response(self.outputs.pop(0))
+
+    model = UnsupportedThenText(
+        [_tool('{"type":"tool","name":"terminal.run","arguments":{"command":"pwd"}}')]
+    )
+
+    action = model.propose("run pwd")
+
+    assert isinstance(action, ToolRequest)
+    assert action.name == "terminal.run"
+    assert len(model.calls) == 2
+    assert model.calls[0]["tools"]
+    assert model.calls[1]["tools"] is None
+
+
 def test_lfm_normalize_ollama_response() -> None:
     normalized = normalize_ollama_chat_response(
         {
@@ -121,7 +176,16 @@ def test_lfm_repairs_malformed_json_once() -> None:
 def test_lfm_repair_fails_after_exactly_one_retry() -> None:
     model = QueuedLFM(
         [
-            _tool("not json"),
+            _assistant(
+                tool_calls=[
+                    {
+                        "function": {
+                            "name": "terminal.run",
+                            "arguments": [],
+                        }
+                    }
+                ]
+            ),
             _tool('{"type":"tool","name":"terminal.run","arguments":[]}'),
         ]
     )
