@@ -4,6 +4,7 @@ __all__ = [
     "agent_loop",
     "command_bridge",
     "fake_model",
+    "lfm_model",
     "mcp_server",
     "ollama_model",
     "policy",

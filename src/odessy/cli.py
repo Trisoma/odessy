@@ -9,6 +9,7 @@ from typing import Any
 
 from odessy.agent_loop import OdessyAgent
 from odessy.fake_model import FakeModel
+from odessy.lfm_model import LlamaCppLFMModel
 from odessy.mcp_server import build_odessy_mcp_server
 from odessy.ollama_model import OllamaModel
 from odessy.policy import OdessyPolicy
@@ -19,14 +20,41 @@ from odessy.voice.loop import VoiceLoop
 from odessy.voice.stt import WhisperCppSTT
 from odessy.voice.tts import KokoroTTS
 
+DEFAULT_LFM_ENDPOINT = "http://127.0.0.1:11434"
+DEFAULT_LFM_MODEL = "lfm2.5-thinking:1.2b-q8_0"
 
-def _build_model(use_fake_model: bool, *, ollama_model: str) -> FakeModel | OllamaModel:
+
+def _build_model(
+    use_fake_model: bool,
+    *,
+    backend: str | None = None,
+    model_name: str | None = None,
+    ollama_model: str | None = None,
+) -> FakeModel | OllamaModel | LlamaCppLFMModel:
     if use_fake_model:
         return FakeModel()
-    return OllamaModel(model=ollama_model)
+    backend = (backend or os.environ.get("ODESSY_MODEL_BACKEND", "lfm")).lower()
+    if backend == "ollama":
+        name = (
+            model_name
+            or ollama_model
+            or os.environ.get("ODESSY_MODEL_NAME")
+            or os.environ.get("ODESSY_OLLAMA_MODEL", "gemma3:1b")
+        )
+        return OllamaModel(model=name)
+    if backend == "llama_cpp":
+        backend = "lfm"
+    if backend != "lfm":
+        raise ValueError(f"Unknown model backend: {backend}")
+    name = model_name or os.environ.get("ODESSY_MODEL_NAME", DEFAULT_LFM_MODEL)
+    endpoint = os.environ.get("ODESSY_MODEL_ENDPOINT", DEFAULT_LFM_ENDPOINT)
+    return LlamaCppLFMModel(model=name, endpoint=endpoint)
 
 
-def _build_agent(workspace_root: Path, model: FakeModel | OllamaModel) -> OdessyAgent:
+def _build_agent(
+    workspace_root: Path,
+    model: FakeModel | OllamaModel | LlamaCppLFMModel,
+) -> OdessyAgent:
     return OdessyAgent(
         model=model,
         policy=OdessyPolicy(workspace_root=workspace_root),
@@ -54,12 +82,9 @@ def _summarize_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
-async def _text_async(user_text: str, use_fake_model: bool) -> None:
+async def _text_async(user_text: str, use_fake_model: bool, backend: str | None = None) -> None:
     workspace_root = Path.cwd()
-    model = _build_model(
-        use_fake_model,
-        ollama_model=os.environ.get("ODESSY_OLLAMA_MODEL", "gemma3:1b"),
-    )
+    model = _build_model(use_fake_model, backend=backend)
     agent = _build_agent(workspace_root, model)
     result = await agent.run_turn(user_text)
     print(result.final_text)
@@ -68,7 +93,7 @@ async def _text_async(user_text: str, use_fake_model: bool) -> None:
 async def _voice_async(use_fake_model: bool) -> None:
     config = VoiceConfig.from_env()
     workspace_root = Path.cwd()
-    model = _build_model(use_fake_model, ollama_model=config.ollama_model)
+    model = _build_model(use_fake_model, model_name=config.ollama_model)
     agent = _build_agent(workspace_root, model)
     loop = VoiceLoop(
         agent=agent,
@@ -125,13 +150,19 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--fake-model",
         action="store_true",
-        help="Use the deterministic fake model instead of Ollama/Gemma.",
+        help="Use the deterministic fake model instead of a real model backend.",
+    )
+    parser.add_argument(
+        "--model-backend",
+        choices=["lfm", "ollama", "llama_cpp"],
+        default=None,
+        help="Select the model backend (defaults to ODESSY_MODEL_BACKEND, then lfm).",
     )
     parser.add_argument("text", help="User text to send into the Odessy loop.")
     args = parser.parse_args(argv)
     if not args.text:
         parser.error("text is required unless using the voice subcommand")
-    asyncio.run(_text_async(args.text, use_fake_model=args.fake_model))
+    asyncio.run(_text_async(args.text, use_fake_model=args.fake_model, backend=args.model_backend))
 
 
 if __name__ == "__main__":
