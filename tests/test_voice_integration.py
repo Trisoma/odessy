@@ -108,6 +108,36 @@ async def test_voice_loop_can_drive_existing_tool_path(tmp_path: Path) -> None:
     assert result.final_text == "12 * 8 = 96"
 
 
+@pytest.mark.anyio
+async def test_voice_loop_reports_progress_phases(tmp_path: Path) -> None:
+    progress: list[str] = []
+    loop = VoiceLoop(
+        agent=OdessyAgent(
+            model=FakeModel(),
+            policy=OdessyPolicy(workspace_root=tmp_path),
+            mcp_server=build_odessy_mcp_server(workspace_root=tmp_path),
+        ),
+        audio_io=FakeAudioIO(),
+        stt=FakeSTT("calculate 12 * 8"),
+        tts=FakeTTS(),
+        tmp_dir=tmp_path,
+        status_callback=progress.append,
+    )
+
+    result = await loop.run_once()
+
+    assert result.status == "ok"
+    assert progress == [
+        "Recording started",
+        "Recording stopped",
+        "Transcribing speech",
+        "Model is thinking",
+        "MCP transferring if a tool is needed",
+        "Synthesizing speech",
+        "Playing response",
+    ]
+
+
 class FakeAudioIO:
     def __init__(self) -> None:
         self.played_path: Path | None = None

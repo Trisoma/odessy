@@ -114,6 +114,7 @@ async def _voice_async(use_fake_model: bool) -> None:
         ),
         tmp_dir=config.tmp_dir,
         seconds=config.voice_seconds,
+        status_callback=print,
     )
     result = await loop.run_once()
     if result.transcript:

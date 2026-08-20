@@ -4,7 +4,7 @@ import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from odessy.agent_loop import OdessyAgent
 
@@ -45,6 +45,7 @@ class VoiceLoop:
     tts: TTS
     tmp_dir: Path
     seconds: int = 5
+    status_callback: Callable[[str], None] | None = None
 
     async def run_once(self) -> VoiceLoopResult:
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -57,7 +58,10 @@ class VoiceLoop:
         error: str | None = None
 
         try:
+            self._status("Recording started")
             self.audio_io.record(input_audio, self.seconds)
+            self._status("Recording stopped")
+            self._status("Transcribing speech")
             stt_result = self.stt.transcribe(input_audio)
             transcript = stt_result.text
             if stt_result.status != "ok":
@@ -69,8 +73,11 @@ class VoiceLoop:
                     output_audio_path=output_audio,
                     error=stt_result.error,
                 )
+            self._status("Model is thinking")
+            self._status("MCP transferring if a tool is needed")
             turn = await self.agent.run_turn(transcript)
             final_text = turn.final_text
+            self._status("Synthesizing speech")
             tts_result = self.tts.synthesize(final_text, output_audio)
             if tts_result.status != "ok":
                 return VoiceLoopResult(
@@ -81,6 +88,7 @@ class VoiceLoop:
                     output_audio_path=output_audio,
                     error=tts_result.error,
                 )
+            self._status("Playing response")
             self.audio_io.play(output_audio)
         except Exception as exc:
             status = "failed"
@@ -97,6 +105,10 @@ class VoiceLoop:
             output_audio_path=output_audio,
             error=error,
         )
+
+    def _status(self, message: str) -> None:
+        if self.status_callback is not None:
+            self.status_callback(message)
 
 
 def _unlink_if_exists(path: Path) -> None:
