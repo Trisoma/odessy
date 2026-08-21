@@ -34,7 +34,7 @@ MODEL
 
 | Rule | Meaning |
 |---|---|
-| The model is not an authority | FakeModel or future Gemma can propose, but cannot approve or execute. |
+| The model is not an authority | FakeModel, LFM2.5, or Gemma can propose, but cannot approve or execute. |
 | MCP is not an authority | MCP is the protocol for `tools/list` and `tools/call`. |
 | Node is not an authority | Node executes bounded tool handlers and performs defense-in-depth checks. |
 | Python is the authority | Python owns validation, policy, workspace checks, process checks, and confirmation. |
@@ -59,7 +59,7 @@ git.changed_files
 git.log
 ```
 
-Write tools, voice integration, Gemma integration, GUI automation, robotics, and background autonomy remain outside this step.
+Voice integration is part of the v0.1.0 interface. GUI automation, robotics, and background autonomy remain outside this step.
 
 ## Defense In Depth
 

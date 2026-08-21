@@ -14,8 +14,8 @@ This page records the limits future agents must keep visible when changing the r
 
 | Area | Current state | Limitation |
 |---|---|---|
-| Model | Fake deterministic model adapter plus a thin Ollama adapter | Gemma 3 1B can be called through Ollama, but automated tests still use fake model behavior. Model reasoning quality and structured-output reliability are not proven yet. |
-| Voice | Initial staged voice loop is integrated in code | Whisper.cpp CPU STT and Kokoro ONNX TTS wrappers exist, but automated tests use fakes. The real Bluetooth microphone/headphone loop still needs manual Jetson verification. |
+| Model | LFM2.5-Thinking is the default Ollama backend; Gemma remains an explicit fallback | Model quality, latency, memory behavior, and long-run reliability are not fully benchmarked. |
+| Voice | Staged voice loop is integrated and has completed live Jetson turns | Automated tests still use fakes for hardware components, and physical audio quality depends on the configured device. |
 | GUI automation | Out of scope | No mouse, keyboard injection, screen capture, browser automation, desktop automation, or robotics. |
 | Multi-agent behavior | Out of scope | No delegation, background autonomy, scheduler, or multi-session agent orchestration. |
 | Writes | Out of scope after Step 7 | `filesystem.write` and `log.append` are not implemented yet. Step 8 must design confirmation semantics before adding writes. |
@@ -53,10 +53,42 @@ Current benchmark status:
 | Component | Current result | Limitation |
 |---|---|---|
 | Whisper.cpp STT | CPU-only `ggml-tiny.en.bin` transcribes an 11-second sample in about 1.1 to 1.6 seconds | CUDA Whisper currently fails during cuBLAS resource allocation, so CPU-only STT is the v0.1.0 baseline. |
-| Gemma 3 1B | Runs through Ollama with GPU usage and fits on the Jetson in the clean baseline | It consumes much of the 4GB memory budget, so other voice components should be scheduled carefully. |
+| LFM2.5-Thinking | Runs through Ollama with native tool calls on the Jetson baseline | Its latency, token rate, residency, and memory/swap behavior still need systematic benchmarking. |
 | Kokoro TTS | ONNX int8 model runs on Jetson and can generate speech | Current measured generation is about 14.8 seconds for 5.7 seconds of audio, about 2.6x real time. This is acceptable for v0.1.0 feasibility, but not natural low-latency speech. |
-| Full voice stack | STT, Gemma, and TTS are individually feasible, and Gemma + Kokoro can run together | Odessy should use a staged turn-based pipeline for v0.1.0, not require STT + Gemma + TTS to stay active in parallel. |
+| Full voice stack | STT, LFM, and TTS have completed staged live turns | Odessy should use a staged turn-based pipeline for v0.1.0, not require STT + LFM + TTS to stay active in parallel. |
 | Voice implementation | `python -m odessy voice` wires recording, STT, runtime, TTS, and playback | The command still depends on configured local binaries, model files, audio devices, and a real Jetson manual run. |
+| Blank audio handling | Whisper.cpp can emit `[BLANK_AUDIO]` for empty or unusable recording input | Odessy currently passes `[BLANK_AUDIO]` into the model instead of short-circuiting with a retry prompt. In live testing, this caused LFM to propose `terminal.run` with command `BLANK_AUDIO`, triggering confirmation or, if allowed, an unnecessary command/tool path. |
+
+### Blank Audio Failure Evidence
+
+Observed during live Jetson voice testing:
+
+```text
+python -m odessy voice
+Recording started
+Recording stopped
+Transcribing speech
+Model is thinking
+MCP transferring if a tool is needed
+Odessy needs confirmation to run terminal.run.
+Risk: medium
+Reason: terminal.run requires confirmation because the command is outside the low-risk allow rules
+Arguments: {'command': 'BLANK_AUDIO', 'cwd': './', 'timeout': 5}
+Allow this tool call? [y/N] N
+Transcript: [BLANK_AUDIO]
+Voice turn failed with status failed: Policy requires confirmation before execution: terminal.run requires confirmation because the command is outside the low-risk allow rules
+```
+
+A second run again transcribed `[BLANK_AUDIO]`; when the user allowed the command, Odessy entered the tool-observation/final-response path and was manually interrupted with `Ctrl-C`.
+
+This is a known v0.1.0 limitation:
+
+```text
+[BLANK_AUDIO] or empty transcript
+-> should not call the model
+-> should not reach MCP
+-> should return/speak a short retry message
+```
 
 Reference:
 

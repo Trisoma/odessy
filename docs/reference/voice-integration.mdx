@@ -3,7 +3,7 @@ title: "Voice Integration"
 sidebar-title: "Voice Integration"
 description: "Reference for Odessy's staged v0.1.0 voice loop, configuration, and current operating limits."
 description-agent: "Use when running or changing Odessy's voice path. Preserve the runtime authority boundary and staged Jetson voice design."
-keywords: ["odessy voice", "whisper.cpp", "kokoro", "ollama", "gemma", "jetson"]
+keywords: ["odessy voice", "whisper.cpp", "kokoro", "ollama", "lfm", "jetson"]
 content:
   type: "reference"
 ---
@@ -52,7 +52,7 @@ Then run:
 python -m odessy voice
 ```
 
-For local testing without Ollama/Gemma:
+For local testing without a live model backend:
 
 ```powershell
 python -m odessy voice --fake-model
@@ -75,7 +75,10 @@ ODESSY_WHISPER_BIN      path/name of whisper-cli
 ODESSY_WHISPER_MODEL    path to ggml-tiny.en.bin or another Whisper model
 ODESSY_KOKORO_MODEL     path to kokoro-v1.0.int8.onnx
 ODESSY_KOKORO_VOICES    path to voices-v1.0.bin
-ODESSY_OLLAMA_MODEL     Ollama model name, default gemma3:1b
+ODESSY_OLLAMA_MODEL     Ollama model name used by voice mode; default config uses LFM2.5-Thinking
+ODESSY_MODEL_NAME       Default LFM model name, lfm2.5-thinking:1.2b-q8_0
+ODESSY_MODEL_ENDPOINT   Ollama endpoint, default http://127.0.0.1:11434
+ODESSY_TOOL_SERVER_URL  Optional laptop-side MCP HTTP endpoint
 ODESSY_AUDIO_RECORDER   recorder command, default arecord
 ODESSY_AUDIO_PLAYER     player command, default aplay
 ODESSY_AUDIO_INPUT_DEVICE

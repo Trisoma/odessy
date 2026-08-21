@@ -2,6 +2,7 @@
 name = "odessy"
 version = "0.1.0"
 description = "Odessy v0.1.0 local command-line agent runtime prototype."
+readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "mcp>=2,<3",
@@ -20,3 +21,7 @@ test = [
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

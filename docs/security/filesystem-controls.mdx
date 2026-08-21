@@ -83,5 +83,4 @@ The request must be denied because the resolved target is outside the workspace.
 Odessy v0.1.0 is not a kernel sandbox, container, or VM.
 User-space path checks have inherent TOCTOU limitations if files or links change between validation and use.
 
-For v0.1.0, the goal is a serious local single-user authority boundary before Gemma integration, not complete operating-system isolation.
-
+For v0.1.0, the goal is a serious local single-user authority boundary around whichever local model backend is selected, not complete operating-system isolation.
