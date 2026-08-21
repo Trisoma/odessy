@@ -23,7 +23,7 @@ class NodeToolServerTransport(AbstractAsyncContextManager):
             StdioServerParameters(
                 command="npm",
                 args=["run", "start", "--silent"],
-                cwd=public_repo_root / "tool-server",
+                cwd=_node_tools_dir(public_repo_root),
                 env={
                     **os.environ,
                     "ODESSY_WORKSPACE_ROOT": str(Path(workspace_root).resolve()),
@@ -69,7 +69,7 @@ class NodeToolServerHttp(AbstractAsyncContextManager):
     async def __aenter__(self) -> str:
         if not node_tool_server_dependencies_installed():
             raise RuntimeError(
-                "Node tool server dependencies are not installed. Run npm install in tool-server/."
+                "Node tool server dependencies are not installed. Run npm install in tools/."
             )
 
         npm = shutil.which("npm")
@@ -87,7 +87,7 @@ class NodeToolServerHttp(AbstractAsyncContextManager):
         }
         self._process = subprocess.Popen(
             [npm, "run", "start:http", "--silent"],
-            cwd=public_repo_root / "tool-server",
+            cwd=_node_tools_dir(public_repo_root),
             env=env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -119,7 +119,7 @@ def build_node_tool_server_http(workspace_root: Path | str) -> NodeToolServerHtt
 
 
 def node_tool_server_dependencies_installed() -> bool:
-    tool_server = _public_repo_root() / "tool-server"
+    tool_server = _node_tools_dir(_public_repo_root())
     bin_dir = tool_server / "node_modules" / ".bin"
     tsc = bin_dir / ("tsc.cmd" if os.name == "nt" else "tsc")
     return (
@@ -131,6 +131,10 @@ def node_tool_server_dependencies_installed() -> bool:
 
 def _public_repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def _node_tools_dir(public_repo_root: Path) -> Path:
+    return public_repo_root / "tools"
 
 
 def _find_free_port(host: str) -> int:

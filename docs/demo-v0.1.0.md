@@ -7,7 +7,7 @@ This demo shows the release path without pretending that deferred optimization w
 From the laptop:
 
 ```powershell
-cd C:\Users\13647\OneDrive\Desktop\odessy\odessy\tool-server
+cd C:\Users\13647\OneDrive\Desktop\odessy\odessy\tools
 npm run start:http
 ```
 

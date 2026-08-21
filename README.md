@@ -126,7 +126,7 @@ Existing environment variables take precedence over values in this file.
 
 ## Laptop MCP Server
 
-From `tool-server/` on the laptop:
+From `tools/` on the laptop:
 
 ```powershell
 npm install

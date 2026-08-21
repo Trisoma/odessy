@@ -3,6 +3,7 @@ name = "odessy"
 version = "0.1.0"
 description = "Odessy v0.1.0 local command-line agent runtime prototype."
 readme = "README.md"
+license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
 dependencies = [
   "mcp>=2,<3",
