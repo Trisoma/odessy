@@ -249,7 +249,12 @@ class VoiceTurnBenchmark:
 def build_real_components(config: VoiceConfig, workspace_root: Path) -> dict[str, Any]:
     model = OllamaModel(model=config.ollama_model)
     stt = WhisperCppSTT(whisper_bin=config.whisper_bin, model_path=config.whisper_model)
-    tts = KokoroTTS(model_path=config.kokoro_model, voices_path=config.kokoro_voices)
+    tts = KokoroTTS(
+        model_path=config.kokoro_model,
+        voices_path=config.kokoro_voices,
+        provider=config.onnx_provider,
+        cache_dir=config.onnx_cache_dir,
+    )
     audio_io = CommandAudioIO(
         recorder=config.audio_recorder,
         player=config.audio_player,

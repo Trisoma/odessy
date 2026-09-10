@@ -111,6 +111,8 @@ async def _voice_async(use_fake_model: bool) -> None:
         tts=KokoroTTS(
             model_path=config.kokoro_model,
             voices_path=config.kokoro_voices,
+            provider=config.onnx_provider,
+            cache_dir=config.onnx_cache_dir,
         ),
         tmp_dir=config.tmp_dir,
         seconds=config.voice_seconds,
