@@ -25,6 +25,7 @@ Thumbs.db
 .venv/
 venv/
 build/
+benchmark/results/
 
 # Security: secrets, credentials, and keys
 *_ecdsa

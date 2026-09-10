@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,8 +16,15 @@ from odessy.voice.config import VoiceConfig
 from odessy.voice.stt import WhisperCppSTT
 from odessy.voice.tts import KokoroTTS
 
+from .adapters import (
+    RuntimeConfigurationError,
+    RuntimeInfo,
+    TTSBenchmarkEngine,
+    build_tts_engine,
+)
 from .core import BenchmarkOutcome
 from .fakes import FakeSTT, FakeTTS, NoOpAudioIO, fake_model
+from .profiles import BenchmarkProfile
 
 
 class VoiceBenchmarkAudioIO(Protocol):
@@ -132,6 +140,178 @@ class TTSBenchmark:
                 },
             },
             error=result.error,
+        )
+
+
+@dataclass
+class KokoroMatrixBenchmark:
+    profile: BenchmarkProfile
+    text: str
+    output_dir: Path
+    config: VoiceConfig | None = None
+    engine_factory: Any | None = None
+    name: str = field(default="", init=False)
+    warmup_iterations: int | None = None
+    measurement_iterations: int | None = None
+    initialization_ms: float | None = field(default=None, init=False)
+    _warm_engine: TTSBenchmarkEngine | None = field(default=None, init=False, repr=False)
+    _warm_runtime_info: RuntimeInfo | None = field(default=None, init=False, repr=False)
+    _prepare_error: Exception | None = field(default=None, init=False, repr=False)
+    _prepare_runtime_info: RuntimeInfo | None = field(default=None, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.name = self.profile.name
+
+    def prepare(self) -> None:
+        if self.profile.lifecycle != "warm" or self._warm_engine is not None:
+            return
+        started = time.perf_counter()
+        try:
+            engine = self._build_engine()
+            self._warm_runtime_info = engine.initialize()
+            self.initialization_ms = (time.perf_counter() - started) * 1000.0
+            self._warm_engine = engine
+        except Exception as exc:
+            self.initialization_ms = (time.perf_counter() - started) * 1000.0
+            self._prepare_error = exc
+            self._prepare_runtime_info = _runtime_info_from_error(exc)
+            if "engine" in locals():
+                engine.close()
+
+    def close(self) -> None:
+        if self._warm_engine is not None:
+            self._warm_engine.close()
+            self._warm_engine = None
+
+    def run_once(self, *, iteration: int, is_warmup: bool) -> BenchmarkOutcome:
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = self.output_dir / f"{self.profile.name}-{iteration}-{uuid.uuid4().hex}.wav"
+
+        if self.profile.lifecycle == "warm":
+            if self._warm_engine is None:
+                self.prepare()
+            if self._prepare_error is not None:
+                outcome = self._failed_outcome(
+                    self._prepare_error,
+                    self._prepare_runtime_info,
+                    # Warm samples exclude one-time initialization, including
+                    # failures. The duration remains in run metadata.
+                    initialization_ms=None,
+                )
+                _unlink_if_exists(output_path)
+                return outcome
+            engine = self._warm_engine
+            assert engine is not None
+            initialization_ms = None
+            runtime_info = self._warm_runtime_info
+        else:
+            started = time.perf_counter()
+            try:
+                engine = self._build_engine()
+                runtime_info = engine.initialize()
+            except Exception as exc:
+                initialization_ms = (time.perf_counter() - started) * 1000.0
+                outcome = self._failed_outcome(
+                    exc,
+                    _runtime_info_from_error(exc),
+                    initialization_ms=initialization_ms,
+                )
+                if "engine" in locals():
+                    engine.close()
+                _unlink_if_exists(output_path)
+                return outcome
+            initialization_ms = (time.perf_counter() - started) * 1000.0
+
+        try:
+            measurement = engine.synthesize(self.text, output_path)
+            inference_ms = measurement.inference_ms
+            total_ms = inference_ms + initialization_ms if initialization_ms is not None else inference_ms
+            details = self._details(
+                runtime_info,
+                initialization_ms=initialization_ms,
+                inference_ms=inference_ms,
+                total_ms=total_ms,
+                audio_duration_ms=measurement.audio_duration_ms,
+            )
+            return BenchmarkOutcome(
+                status="ok",
+                stage_ms={"synthesize_ms": inference_ms},
+                details=details,
+            )
+        except Exception as exc:
+            return self._failed_outcome(
+                exc,
+                runtime_info,
+                initialization_ms=initialization_ms,
+            )
+        finally:
+            if self.profile.lifecycle == "cold":
+                engine.close()
+            _unlink_if_exists(output_path)
+
+    def _build_engine(self) -> TTSBenchmarkEngine:
+        if self.engine_factory is not None:
+            return self.engine_factory()
+        if self.config is None:
+            raise ValueError("Kokoro matrix benchmark requires VoiceConfig or engine_factory")
+        return build_tts_engine(self.profile, self.config)
+
+    def _details(
+        self,
+        runtime_info: RuntimeInfo | None,
+        *,
+        initialization_ms: float | None,
+        inference_ms: float | None,
+        total_ms: float | None,
+        audio_duration_ms: float | None,
+    ) -> dict[str, Any]:
+        info = runtime_info or RuntimeInfo(
+            requested_provider_mode="unknown",
+            available_execution_providers=None,
+            requested_execution_providers=None,
+            session_execution_providers=None,
+            runtime_version=None,
+            provider_options={},
+            provider_selection_status="not_observable",
+        )
+        rtf = None
+        if inference_ms is not None and audio_duration_ms:
+            rtf = inference_ms / audio_duration_ms
+        return {
+            **self.profile.to_dict(),
+            "profile": self.profile.name,
+            "hardware": platform_name(),
+            "warmup_iterations": self.warmup_iterations,
+            "measurement_iterations": self.measurement_iterations,
+            "initialization_ms": initialization_ms,
+            "inference_ms": inference_ms,
+            "total_ms": total_ms,
+            "audio_duration_ms": audio_duration_ms,
+            "rtf": rtf,
+            **info.to_dict(),
+        }
+
+    def _failed_outcome(
+        self,
+        error: Exception,
+        runtime_info: RuntimeInfo | None,
+        *,
+        initialization_ms: float | None = None,
+    ) -> BenchmarkOutcome:
+        details = self._details(
+            runtime_info,
+            initialization_ms=initialization_ms,
+            inference_ms=None,
+            total_ms=initialization_ms if initialization_ms is not None else 0.0,
+            audio_duration_ms=None,
+        )
+        return BenchmarkOutcome(
+            status="failed",
+            stage_ms={"synthesize_ms": initialization_ms}
+            if initialization_ms is not None
+            else {},
+            details=details,
+            error=str(error),
         )
 
 
@@ -285,6 +465,18 @@ def _unlink_if_exists(path: Path) -> None:
 
 def _component_name(component: Any) -> str:
     return type(component).__name__
+
+
+def _runtime_info_from_error(error: Exception) -> RuntimeInfo | None:
+    if isinstance(error, RuntimeConfigurationError):
+        return error.runtime_info
+    return None
+
+
+def platform_name() -> str:
+    import platform
+
+    return platform.platform()
 
 
 def _voice_components(

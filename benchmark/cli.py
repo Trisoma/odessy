@@ -1,3 +1,4 @@
+# This is the general benchmarking client
 from __future__ import annotations
 
 import argparse
@@ -10,15 +11,16 @@ from odessy.voice.config import VoiceConfig
 from .core import BenchmarkRunner
 from .export import print_summary, write_csv, write_jsonl, write_metadata
 from .fakes import FakeSTT, FakeTTS, NoOpAudioIO, fake_model
+from .profiles import load_profiles
 from .scenarios import (
     GemmaBenchmark,
+    KokoroMatrixBenchmark,
     STTBenchmark,
     TTSBenchmark,
     VoiceTurnBenchmark,
     build_fake_components,
     build_real_components,
 )
-
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run Odessy benchmark scenarios.")
@@ -72,6 +74,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Keep generated audio artifacts instead of cleaning them up after each run.",
     )
+    parser.add_argument(
+        "--manifest",
+        default=None,
+        help="TOML manifest for the component execution-path matrix.",
+    )
+    parser.add_argument(
+        "--profile",
+        action="append",
+        default=None,
+        help="Named matrix profile to run; may be supplied more than once.",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -80,6 +93,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     config = VoiceConfig.from_env()
+    if args.manifest:
+        return _run_matrix(args, config, repo_root, workspace_root, output_dir)
+
     if args.seconds is not None:
         config = VoiceConfig(
             whisper_bin=config.whisper_bin,
@@ -123,13 +139,75 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"\nWrote benchmark data to: {output_dir}")
     return 0
 
+def _run_matrix(
+    args: argparse.Namespace,
+    config: VoiceConfig,
+    repo_root: Path,
+    workspace_root: Path,
+    output_dir: Path,
+) -> int:
+    if args.adapter != "real":
+        raise SystemExit("--manifest requires --adapter real")
+    manifest_path = Path(args.manifest)
+    if not manifest_path.is_absolute():
+        manifest_path = repo_root / manifest_path
+    profiles = load_profiles(manifest_path)
+    selected_names = args.profile or [
+        name for name, profile in profiles.items() if profile.enabled
+    ]
+    unknown = [name for name in selected_names if name not in profiles]
+    if unknown:
+        raise SystemExit(f"Unknown benchmark profile(s): {', '.join(unknown)}")
+
+    scenarios = []
+    for name in selected_names:
+        profile = profiles[name]
+        if profile.component != "tts":
+            raise SystemExit(
+                f"Unsupported matrix component {profile.component!r} in profile {name!r}"
+            )
+        scenarios.append(
+            KokoroMatrixBenchmark(
+                profile=profile,
+                text=args.text,
+                output_dir=output_dir / "artifacts",
+                config=config,
+                warmup_iterations=max(0, args.warmup),
+                measurement_iterations=max(0, args.runs),
+            )
+        )
+
+    runner = BenchmarkRunner(
+        runs=max(0, args.runs),
+        warmup_runs=max(0, args.warmup),
+        workspace_root=workspace_root,
+        output_dir=output_dir,
+        capture_memory=True,
+        extra_metadata={
+            "manifest": str(manifest_path),
+            "profiles": selected_names,
+            "scenario": "kokoro_execution_path_comparison",
+            "adapter": args.adapter,
+            "text": args.text,
+        },
+    )
+    run = runner.run(scenarios)
+    run.metadata.extra["profile_initialization_ms"] = {
+        scenario.profile.name: scenario.initialization_ms
+        for scenario in scenarios
+    }
+    write_metadata(output_dir / "metadata.json", run.metadata)
+    write_csv(output_dir / "samples.csv", run.samples)
+    write_jsonl(output_dir / "samples.jsonl", run.samples)
+    print_summary(run)
+    print(f"\nWrote benchmark data to: {output_dir}")
+    return 0
 
 def _resolve_output_dir(repo_root: Path, output_dir: str | None) -> Path:
     if output_dir:
         return Path(output_dir)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     return repo_root / "benchmark" / "results" / stamp
-
 
 def _build_scenarios(
     args: argparse.Namespace,
@@ -206,13 +284,11 @@ def _build_scenarios(
 
     return scenarios
 
-
 def _seed_fake_audio(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_bytes(b"FAKE-WAV")
     return path
-
 
 def _synthetic_observation():
     from odessy.types import ToolObservation, ToolRequest
@@ -221,7 +297,6 @@ def _synthetic_observation():
         request=ToolRequest(name="time.now", arguments={}),
         result={"iso_time": "2026-08-18T00:00:00+00:00"},
     )
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

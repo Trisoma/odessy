@@ -1,0 +1,60 @@
+# Kokoro execution-path comparison matrix.
+#
+# The profile-aware benchmark runner will select one of these entries by name.
+# Runtime-specific model paths remain in Odessy's VoiceConfig/environment.
+
+version = 1
+experiment = "kokoro_execution_path_comparison"
+component = "tts"
+
+[profiles.legacy_constructor_cold]
+execution_path = "legacy_constructor"
+lifecycle = "cold"
+requested_provider_mode = "implicit"
+provider_priority = []
+strict_provider = false
+
+[profiles.legacy_constructor_warm]
+execution_path = "legacy_constructor"
+lifecycle = "warm"
+requested_provider_mode = "implicit"
+provider_priority = []
+strict_provider = false
+
+[profiles.onnx_cpu_cold]
+execution_path = "onnx_cpu"
+lifecycle = "cold"
+requested_provider_mode = "cpu"
+provider_priority = ["CPUExecutionProvider"]
+strict_provider = true
+
+[profiles.onnx_cpu_warm]
+execution_path = "onnx_cpu"
+lifecycle = "warm"
+requested_provider_mode = "cpu"
+provider_priority = ["CPUExecutionProvider"]
+strict_provider = true
+
+[profiles.onnx_tensorrt_cold]
+execution_path = "onnx_tensorrt"
+lifecycle = "cold"
+requested_provider_mode = "tensorrt"
+provider_priority = [
+  "TensorrtExecutionProvider",
+  "CUDAExecutionProvider",
+  "CPUExecutionProvider",
+]
+strict_provider = true
+engine_cache = true
+
+[profiles.onnx_tensorrt_warm]
+execution_path = "onnx_tensorrt"
+lifecycle = "warm"
+requested_provider_mode = "tensorrt"
+provider_priority = [
+  "TensorrtExecutionProvider",
+  "CUDAExecutionProvider",
+  "CPUExecutionProvider",
+]
+strict_provider = true
+engine_cache = true

@@ -45,6 +45,10 @@ numeric_cols <- c(
   "system_swap_used_after_bytes",
   "system_swap_available_before_bytes",
   "system_swap_available_after_bytes",
+  "initialization_ms",
+  "inference_ms",
+  "audio_duration_ms",
+  "rtf",
   "record_ms",
   "transcribe_ms",
   "proposal_ms",
@@ -68,8 +72,21 @@ metadata <- if (file.exists(metadata_path)) {
 }
 
 measured <- samples %>% filter(!is_warmup)
+if (!("profile" %in% names(measured))) {
+  measured$profile <- measured$scenario
+}
 
-stage_cols <- c("record_ms", "transcribe_ms", "proposal_ms", "response_ms", "agent_ms", "synthesize_ms", "play_ms")
+stage_cols <- c(
+  "record_ms",
+  "transcribe_ms",
+  "proposal_ms",
+  "response_ms",
+  "agent_ms",
+  "synthesize_ms",
+  "initialization_ms",
+  "inference_ms",
+  "play_ms"
+)
 stage_cols <- stage_cols[stage_cols %in% names(measured)]
 
 memory_to_mb <- function(x) {
@@ -86,7 +103,7 @@ plot_memory_scope <- function(data, metrics, labels, filename, title) {
   plot <- ggplot(memory_long, aes(x = iteration, y = value_mb, color = metric, group = metric)) +
     geom_line(linewidth = 0.7) +
     geom_point(size = 1.8) +
-    facet_wrap(~scenario, scales = "free_y") +
+    facet_wrap(~profile, scales = "free_y") +
     labs(title = paste("Odessy", title), x = "Iteration", y = "Memory (MB)", color = NULL) +
     theme_minimal(base_size = 12)
 
@@ -102,7 +119,7 @@ safe_summary <- function(values, fn) {
 }
 
 summary_tbl <- measured %>%
-  group_by(scenario) %>%
+  group_by(profile, scenario) %>%
   summarise(
     runs = sum(status == "ok", na.rm = TRUE),
     failed = sum(status != "ok", na.rm = TRUE),
@@ -115,7 +132,7 @@ summary_tbl <- measured %>%
 
 write_csv(summary_tbl, file.path(output_dir, "scenario_summary.csv"))
 
-latency_plot <- ggplot(measured, aes(x = scenario, y = total_ms, fill = scenario)) +
+latency_plot <- ggplot(measured, aes(x = profile, y = total_ms, fill = profile)) +
   geom_boxplot(outlier.alpha = 0.15, width = 0.6) +
   geom_jitter(aes(color = scenario), width = 0.14, size = 1.8, alpha = 0.7, show.legend = FALSE) +
   labs(
@@ -193,10 +210,10 @@ plot_memory_scope(
 
 if (length(stage_cols) > 0) {
   stage_long <- measured %>%
-    select(scenario, iteration, all_of(stage_cols)) %>%
+    select(profile, scenario, iteration, all_of(stage_cols)) %>%
     pivot_longer(cols = all_of(stage_cols), names_to = "stage", values_to = "stage_ms") %>%
     filter(!is.na(stage_ms)) %>%
-    group_by(scenario, stage) %>%
+    group_by(profile, scenario, stage) %>%
     summarise(
       median_ms = median(stage_ms, na.rm = TRUE),
       mean_ms = mean(stage_ms, na.rm = TRUE),
@@ -205,7 +222,7 @@ if (length(stage_cols) > 0) {
 
   write_csv(stage_long, file.path(output_dir, "stage_summary.csv"))
 
-  stage_plot <- ggplot(stage_long, aes(x = stage, y = median_ms, fill = scenario)) +
+  stage_plot <- ggplot(stage_long, aes(x = stage, y = median_ms, fill = profile)) +
     geom_col(position = position_dodge(width = 0.8), width = 0.7) +
     coord_flip() +
     labs(

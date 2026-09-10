@@ -1,3 +1,4 @@
+# Export generator
 from __future__ import annotations
 
 import csv
@@ -61,6 +62,25 @@ def write_csv(path: Path, samples: list[BenchmarkSample]) -> None:
         "finished_at",
         "telemetry_notes",
         "components_invoked",
+        "profile",
+        "component",
+        "execution_path",
+        "lifecycle",
+        "success",
+        "hardware",
+        "runtime_version",
+        "model_precision",
+        "batch_size",
+        "warmup_iterations",
+        "measurement_iterations",
+        "initialization_ms",
+        "inference_ms",
+        "audio_duration_ms",
+        "rtf",
+        "available_execution_providers",
+        "requested_execution_providers",
+        "session_execution_providers",
+        "provider_selection_status",
         "notes",
         "error",
     ]
@@ -94,6 +114,31 @@ def write_csv(path: Path, samples: list[BenchmarkSample]) -> None:
                 "finished_at": sample.finished_at,
                 "telemetry_notes": sample.telemetry_notes,
                 "components_invoked": _json_cell(sample.details.get("components_invoked")),
+                "profile": sample.profile,
+                "component": sample.component,
+                "execution_path": sample.execution_path,
+                "lifecycle": sample.lifecycle,
+                "success": sample.success,
+                "hardware": sample.hardware,
+                "runtime_version": sample.runtime_version,
+                "model_precision": sample.model_precision,
+                "batch_size": sample.batch_size,
+                "warmup_iterations": sample.warmup_iterations,
+                "measurement_iterations": sample.measurement_iterations,
+                "initialization_ms": _format_number(sample.initialization_ms),
+                "inference_ms": _format_number(sample.inference_ms),
+                "audio_duration_ms": _format_number(sample.audio_duration_ms),
+                "rtf": _format_number(sample.rtf),
+                "available_execution_providers": _json_cell(
+                    sample.available_execution_providers
+                ),
+                "requested_execution_providers": _json_cell(
+                    sample.requested_execution_providers
+                ),
+                "session_execution_providers": _json_cell(
+                    sample.session_execution_providers
+                ),
+                "provider_selection_status": sample.provider_selection_status,
                 "notes": sample.notes,
                 "error": sample.error,
             }
@@ -110,17 +155,23 @@ def print_summary(run: BenchmarkRun) -> None:
 
     title = "scenario"
     print("\n=========================== benchmark summary ===========================")
-    print(f"{title:16s}  {'runs':>4s}  {'fail':>4s}  {'mean ms':>10s}  {'p95 ms':>10s}  {'min ms':>10s}  {'max ms':>10s}")
+    print(
+        f"{title:28s}  {'runs':>4s}  {'fail':>4s}  "
+        f"{'total p50':>10s}  {'total p95':>10s}  {'total p99':>10s}  "
+        f"{'infer p50':>10s}  {'infer p95':>10s}  {'init p50':>10s}"
+    )
     print("------------------------------------------------------------------------")
     for row in rows:
         print(
-            f"{row.scenario:16s}  "
+            f"{row.scenario:28s}  "
             f"{row.successful_runs:4d}  "
             f"{row.failed_runs:4d}  "
-            f"{_fmt(row.mean_ms):>10s}  "
-            f"{_fmt(row.p95_ms):>10s}  "
-            f"{_fmt(row.min_ms):>10s}  "
-            f"{_fmt(row.max_ms):>10s}"
+            f"{_fmt(row.total_p50_ms):>10s}  "
+            f"{_fmt(row.total_p95_ms):>10s}  "
+            f"{_fmt(row.total_p99_ms):>10s}  "
+            f"{_fmt(row.inference_p50_ms):>10s}  "
+            f"{_fmt(row.inference_p95_ms):>10s}  "
+            f"{_fmt(row.initialization_p50_ms):>10s}"
         )
     print("========================================================================")
 

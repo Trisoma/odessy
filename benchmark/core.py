@@ -1,6 +1,6 @@
+# This is the result template and result generator
 from __future__ import annotations
 
-import json
 import os
 import platform
 import socket
@@ -21,10 +21,8 @@ from .telemetry import (
     sample_telemetry_snapshot,
 )
 
-
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
 
 def sample_process_memory() -> dict[str, int | None]:
     """Backward-compatible benchmark-process-only memory helper."""
@@ -33,7 +31,6 @@ def sample_process_memory() -> dict[str, int | None]:
         "benchmark_process_rss_bytes": sample.rss_bytes,
         "benchmark_process_swap_bytes": sample.swap_bytes,
     }
-
 
 def _git_commit(workspace_root: Path) -> str | None:
     try:
@@ -54,7 +51,6 @@ def _git_commit(workspace_root: Path) -> str | None:
     commit = result.stdout.strip()
     return commit or None
 
-
 @dataclass
 class BenchmarkMetadata:
     created_at: str
@@ -68,7 +64,6 @@ class BenchmarkMetadata:
     cpu_count: int | None
     extra: dict[str, Any] = field(default_factory=dict)
 
-
 @dataclass
 class BenchmarkOutcome:
     status: str
@@ -76,7 +71,6 @@ class BenchmarkOutcome:
     details: dict[str, Any] = field(default_factory=dict)
     notes: str | None = None
     error: str | None = None
-
 
 @dataclass
 class BenchmarkSample:
@@ -108,7 +102,25 @@ class BenchmarkSample:
     notes: str | None = None
     error: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
-
+    profile: str | None = None
+    component: str | None = None
+    execution_path: str | None = None
+    lifecycle: str | None = None
+    success: bool = False
+    hardware: str | None = None
+    runtime_version: str | None = None
+    model_precision: str | None = None
+    batch_size: int | None = None
+    warmup_iterations: int | None = None
+    measurement_iterations: int | None = None
+    initialization_ms: float | None = None
+    inference_ms: float | None = None
+    audio_duration_ms: float | None = None
+    rtf: float | None = None
+    available_execution_providers: list[str] | None = None
+    requested_execution_providers: list[Any] | None = None
+    session_execution_providers: list[str] | None = None
+    provider_selection_status: str | None = None
 
 @dataclass
 class BenchmarkSummary:
@@ -122,7 +134,15 @@ class BenchmarkSummary:
     median_ms: float | None
     p95_ms: float | None
     max_ms: float | None
-
+    inference_p50_ms: float | None = None
+    inference_p95_ms: float | None = None
+    inference_p99_ms: float | None = None
+    total_p50_ms: float | None = None
+    total_p95_ms: float | None = None
+    total_p99_ms: float | None = None
+    initialization_p50_ms: float | None = None
+    initialization_p95_ms: float | None = None
+    initialization_p99_ms: float | None = None
 
 @dataclass
 class BenchmarkRun:
@@ -137,13 +157,11 @@ class BenchmarkRun:
             "summaries": [asdict(summary) for summary in self.summaries],
         }
 
-
 class BenchmarkScenario(Protocol):
     name: str
 
     def run_once(self, *, iteration: int, is_warmup: bool) -> BenchmarkOutcome:
         ...
-
 
 class BenchmarkRunner:
     def __init__(
@@ -179,10 +197,16 @@ class BenchmarkRunner:
 
         samples: list[BenchmarkSample] = []
         for scenario in scenarios:
+            prepare = getattr(scenario, "prepare", None)
+            if callable(prepare):
+                prepare()
             for iteration in range(self.warmup_runs):
                 samples.append(self._execute(scenario, iteration, True))
             for iteration in range(self.runs):
                 samples.append(self._execute(scenario, iteration, False))
+            close = getattr(scenario, "close", None)
+            if callable(close):
+                close()
 
         summaries = _summaries(samples, self.warmup_runs)
         return BenchmarkRun(metadata=metadata, samples=samples, summaries=summaries)
@@ -209,7 +233,11 @@ class BenchmarkRunner:
             notes = None
             error = str(exc)
             details = {}
-        total_ms = (time.perf_counter() - start) * 1000.0
+        measured_total_ms = details.get("total_ms")
+        if isinstance(measured_total_ms, (int, float)):
+            total_ms = float(measured_total_ms)
+        else:
+            total_ms = (time.perf_counter() - start) * 1000.0
         after = sample_telemetry_snapshot() if self.capture_memory else _empty_telemetry()
         return BenchmarkSample(
             scenario=scenario.name,
@@ -240,8 +268,34 @@ class BenchmarkRunner:
             notes=notes,
             error=error,
             details=details,
+            profile=_detail_value(details, "profile"),
+            component=_detail_value(details, "component"),
+            execution_path=_detail_value(details, "execution_path"),
+            lifecycle=_detail_value(details, "lifecycle"),
+            success=status == "ok",
+            hardware=_detail_value(details, "hardware"),
+            runtime_version=_detail_value(details, "runtime_version"),
+            model_precision=_detail_value(details, "model_precision"),
+            batch_size=_detail_value(details, "batch_size"),
+            warmup_iterations=_detail_value(details, "warmup_iterations"),
+            measurement_iterations=_detail_value(details, "measurement_iterations"),
+            initialization_ms=_detail_value(details, "initialization_ms"),
+            inference_ms=_detail_value(details, "inference_ms"),
+            audio_duration_ms=_detail_value(details, "audio_duration_ms"),
+            rtf=_detail_value(details, "rtf"),
+            available_execution_providers=_detail_value(
+                details, "available_execution_providers"
+            ),
+            requested_execution_providers=_detail_value(
+                details, "requested_execution_providers"
+            ),
+            session_execution_providers=_detail_value(
+                details, "session_execution_providers"
+            ),
+            provider_selection_status=_detail_value(
+                details, "provider_selection_status"
+            ),
         )
-
 
 def _summaries(samples: list[BenchmarkSample], warmup_runs: int) -> list[BenchmarkSummary]:
     by_scenario: dict[str, list[BenchmarkSample]] = {}
@@ -254,6 +308,17 @@ def _summaries(samples: list[BenchmarkSample], warmup_runs: int) -> list[Benchma
     for scenario, scenario_samples in by_scenario.items():
         successful = [sample.total_ms for sample in scenario_samples if sample.status == "ok"]
         failed = len(scenario_samples) - len(successful)
+        successful_samples = [sample for sample in scenario_samples if sample.status == "ok"]
+        inference_values = [
+            sample.inference_ms
+            for sample in successful_samples
+            if sample.inference_ms is not None
+        ]
+        initialization_values = [
+            sample.initialization_ms
+            for sample in successful_samples
+            if sample.initialization_ms is not None
+        ]
         summaries.append(
             BenchmarkSummary(
                 scenario=scenario,
@@ -266,26 +331,30 @@ def _summaries(samples: list[BenchmarkSample], warmup_runs: int) -> list[Benchma
                 median_ms=_stat_median(successful),
                 p95_ms=_stat_percentile(successful, 95.0),
                 max_ms=_stat_max(successful),
+                inference_p50_ms=_stat_percentile(inference_values, 50.0),
+                inference_p95_ms=_stat_percentile(inference_values, 95.0),
+                inference_p99_ms=_stat_percentile(inference_values, 99.0),
+                total_p50_ms=_stat_percentile(successful, 50.0),
+                total_p95_ms=_stat_percentile(successful, 95.0),
+                total_p99_ms=_stat_percentile(successful, 99.0),
+                initialization_p50_ms=_stat_percentile(initialization_values, 50.0),
+                initialization_p95_ms=_stat_percentile(initialization_values, 95.0),
+                initialization_p99_ms=_stat_percentile(initialization_values, 99.0),
             )
         )
     return sorted(summaries, key=lambda item: item.scenario)
 
-
 def _stat_min(values: list[float]) -> float | None:
     return min(values) if values else None
-
 
 def _stat_max(values: list[float]) -> float | None:
     return max(values) if values else None
 
-
 def _stat_mean(values: list[float]) -> float | None:
     return statistics.mean(values) if values else None
 
-
 def _stat_median(values: list[float]) -> float | None:
     return statistics.median(values) if values else None
-
 
 def _stat_percentile(values: list[float], percentile: float) -> float | None:
     if not values:
@@ -298,7 +367,6 @@ def _stat_percentile(values: list[float], percentile: float) -> float | None:
     upper = min(lower + 1, len(ordered) - 1)
     weight = rank - lower
     return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
-
 
 def _empty_telemetry() -> TelemetrySnapshot:
     return TelemetrySnapshot(
@@ -313,9 +381,11 @@ def _empty_telemetry() -> TelemetrySnapshot:
         telemetry_notes=None,
     )
 
-
 def _merge_notes(*notes: str | None) -> str | None:
     parts = [note.strip() for note in notes if note and note.strip()]
     if not parts:
         return None
     return "; ".join(dict.fromkeys(parts))
+
+def _detail_value(details: dict[str, Any], key: str) -> Any:
+    return details.get(key)

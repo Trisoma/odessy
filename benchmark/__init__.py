@@ -9,6 +9,7 @@ from .core import (
     BenchmarkScenario,
     BenchmarkSummary,
 )
+from .profiles import BenchmarkProfile, load_profiles
 
 __all__ = [
     "BenchmarkMetadata",
@@ -18,4 +19,6 @@ __all__ = [
     "BenchmarkSample",
     "BenchmarkScenario",
     "BenchmarkSummary",
+    "BenchmarkProfile",
+    "load_profiles",
 ]
