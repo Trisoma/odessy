@@ -1,0 +1,21 @@
+  Model
+    architecture        lfm2
+    parameters          1.2B
+    context length      128000
+    embedding length    2048
+    quantization        Q8_0
+    requires            0.14.3
+
+  Capabilities
+    completion
+    tools
+    thinking
+
+  Parameters
+    temperature    0.05
+    top_k          50
+
+  License
+    LICENSE TEXT
+    LFM Open License v1.0
+    ...
