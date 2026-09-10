@@ -1,18 +1,16 @@
-# Odessy v0.1.0
+# Odessy: A Voice-Controlled Edge-AI Personal Agent and Device Orchestration Platform
 
-> NOTE: NOTE: This version is highly experimental, completely unstable, and may be confusing. It is recommended for developers only, not regular users!!!
+> NOTE: This version (v0.1.0) is highly experimental, completely unstable, and may be confusing. It is recommended for developers only, not regular users!!!
 
 Odessy is a local, single-user edge-AI agent runtime. The Jetson hosts the model and voice loop; a laptop-side MCP server provides controlled command execution.
 
 ```text
-text or voice
-  -> local model
-  -> Odessy validation and policy
-  -> confirmation when required
-  -> MCP
-  -> controlled tool execution
-  -> observation
-  -> final response
+Voice command
+    -> local AI reasoning
+    -> policy and intent validation
+    -> device/tool orchestration
+    -> observation and feedback
+    -> spoken response
 ```
 
 The model proposes actions. Python Odessy validates and authorizes them. MCP transports them. The model is never the authority.
@@ -25,6 +23,9 @@ The model proposes actions. Python Odessy validates and authorizes them. MCP tra
 - Laptop commands use `laptop.terminal.run`.
 - Voice uses Whisper.cpp STT and Kokoro ONNX TTS.
 - Policy and confirmation remain in the Python runtime.
+
+> The long-term technical category could be:
+> Embodied Edge-AI Agent for Multimodal Device and Engineering Automation
 
 ## Deployment Roles
 
