@@ -6,7 +6,6 @@ from pathlib import Path
 from odessy.types import PolicyDecision, ToolRequest
 from odessy.workspace_authority import WorkspaceAuthority, WorkspaceAuthorityError
 
-
 @dataclass(frozen=True)
 class OdessyPolicy:
     """Deny-by-default v0.1.0 policy gate for model-proposed tool calls."""
@@ -224,14 +223,12 @@ class OdessyPolicy:
             "low",
         )
 
-
 def _matches_allow_rule(command: str, tokens: list[str]) -> bool:
     if not tokens:
         return False
     if tokens[0] in {"pwd", "ls", "dir"}:
         return True
     return len(tokens) >= 2 and tokens[:2] == ["git", "status"]
-
 
 def _matches_confirm_rule(command: str, tokens: list[str]) -> bool:
     if not tokens:
@@ -264,7 +261,6 @@ def _matches_confirm_rule(command: str, tokens: list[str]) -> bool:
     if tokens[0] == "git" and not (len(tokens) >= 2 and tokens[:2] == ["git", "status"]):
         return True
     return tokens[0] in write_commands
-
 
 def _matches_deny_rule(command: str, tokens: list[str]) -> bool:
     if not tokens:
@@ -301,7 +297,6 @@ def _matches_deny_rule(command: str, tokens: list[str]) -> bool:
         return True
     return False
 
-
 def _matches_background_or_detach_rule(command: str, tokens: list[str]) -> bool:
     if not tokens:
         return True
@@ -324,7 +319,6 @@ def _matches_background_or_detach_rule(command: str, tokens: list[str]) -> bool:
         return True
     return False
 
-
 _READ_ONLY_TOOL_NAMES = {
     "filesystem.read",
     "filesystem.list",
@@ -335,24 +329,3 @@ _READ_ONLY_TOOL_NAMES = {
     "git.changed_files",
     "git.log",
 }
-
-
-def _looks_like_secret_path(value: str) -> bool:
-    normalized = value.replace("\\", "/").lower()
-    secret_terms = {
-        ".aws",
-        ".env",
-        ".git-credentials",
-        ".gnupg",
-        ".kube",
-        ".netrc",
-        ".npmrc",
-        ".pypirc",
-        ".ssh",
-        "credentials.json",
-        "id_rsa",
-        "id_ed25519",
-        "secrets.json",
-        "token.json",
-    }
-    return any(term in normalized for term in secret_terms)

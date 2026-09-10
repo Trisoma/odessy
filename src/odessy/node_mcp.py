@@ -13,7 +13,7 @@ from typing import Any
 
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-
+# TODO: Potentially a dead code: this class and the following function code:
 class NodeToolServerTransport(AbstractAsyncContextManager):
     """MCP stdio transport for Odessy's laptop-side Node tool server."""
 
@@ -45,10 +45,8 @@ class NodeToolServerTransport(AbstractAsyncContextManager):
     ) -> bool | None:
         return await self._context.__aexit__(exc_type, exc, traceback)
 
-
 def build_node_tool_server_params(workspace_root: Path | str) -> NodeToolServerTransport:
     return NodeToolServerTransport(workspace_root)
-
 
 class NodeToolServerHttp(AbstractAsyncContextManager):
     """Lifecycle helper for Odessy's Streamable HTTP Node MCP server."""
@@ -113,10 +111,8 @@ class NodeToolServerHttp(AbstractAsyncContextManager):
             await asyncio.to_thread(self._process.wait)
         return None
 
-
 def build_node_tool_server_http(workspace_root: Path | str) -> NodeToolServerHttp:
     return NodeToolServerHttp(workspace_root)
-
 
 def node_tool_server_dependencies_installed() -> bool:
     tool_server = _node_tools_dir(_public_repo_root())
@@ -128,20 +124,16 @@ def node_tool_server_dependencies_installed() -> bool:
         and tsc.exists()
     )
 
-
 def _public_repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
-
 def _node_tools_dir(public_repo_root: Path) -> Path:
     return public_repo_root / "tools"
-
 
 def _find_free_port(host: str) -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind((host, 0))
         return int(probe.getsockname()[1])
-
 
 async def _wait_for_port(
     host: str,

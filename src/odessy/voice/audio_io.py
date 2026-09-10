@@ -4,13 +4,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-
 class AudioIOError(RuntimeError):
     pass
-
-
-Runner = subprocess.run
-
 
 @dataclass(frozen=True)
 class CommandAudioIO:
@@ -34,7 +29,6 @@ class CommandAudioIO:
             argv.extend(["-D", self.output_device])
         argv.append(str(audio_path))
         _run_audio_command(argv, timeout=120, action="play")
-
 
 def _run_audio_command(argv: list[str], *, timeout: int, action: str) -> None:
     try:
