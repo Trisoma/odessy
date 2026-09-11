@@ -51,3 +51,41 @@ This is probably from Kokoro text/phoneme alignment. The final text included raw
 
 That is unnatural TTS input, so the tokenizer or phonemizer alignment can complain. Once final responses are plain speech text, this warning should become rarer.
 
+## TensorRT Kokoro Benchmark Limitation
+
+The explicit ONNX Runtime TensorRT path has not yet completed a valid Kokoro
+benchmark on the Jetson Orin Nano Super 4GB.
+
+The observed run reached TensorRT model import but reported missing plugin
+creators for operations including:
+
+```text
+FastGelu
+SkipLayerNormalization
+DynamicQuantizeLSTM
+FusedMatMul
+```
+
+It also reported:
+
+```text
+Make sure input tokens has Int64 binding.
+```
+
+The process was then killed before the benchmark summary and samples were
+exported. The captured output does not prove whether the final termination was
+caused by memory pressure, TensorRT/plugin incompatibility, or both. Therefore,
+TensorRT must not currently be presented as a measured or production-ready
+Kokoro backend for Odessy.
+
+The current practical GPU path is explicit ONNX Runtime CUDA execution:
+
+```text
+CUDAExecutionProvider -> CPUExecutionProvider
+```
+
+Odessy keeps TensorRT profiles as an experimental follow-up. A valid TensorRT
+comparison requires successful model initialization, completed inference
+samples, and confirmation of the actual execution behavior. See
+`../docs/failures/failure-005-jetson-tensorrt-kokoro-initialization.md` for the
+captured evidence and follow-up checks.

@@ -158,13 +158,19 @@ class KokoroMatrixBenchmark:
     _warm_runtime_info: RuntimeInfo | None = field(default=None, init=False, repr=False)
     _prepare_error: Exception | None = field(default=None, init=False, repr=False)
     _prepare_runtime_info: RuntimeInfo | None = field(default=None, init=False, repr=False)
+    _prepare_attempted: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.name = self.profile.name
 
     def prepare(self) -> None:
-        if self.profile.lifecycle != "warm" or self._warm_engine is not None:
+        if (
+            self.profile.lifecycle != "warm"
+            or self._warm_engine is not None
+            or self._prepare_attempted
+        ):
             return
+        self._prepare_attempted = True
         started = time.perf_counter()
         try:
             engine = self._build_engine()

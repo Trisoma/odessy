@@ -7,21 +7,23 @@ execution-provider configurations.
 
 ## Profiles
 
-The manifest defines six profiles:
+The manifest defines eight profiles:
 
 | Execution path | Cold | Warm |
 | --- | --- | --- |
 | `legacy_constructor` | `legacy_constructor_cold` | `legacy_constructor_warm` |
 | `onnx_cpu` | `onnx_cpu_cold` | `onnx_cpu_warm` |
+| `onnx_cuda` | `onnx_cuda_cold` | `onnx_cuda_warm` |
 | `onnx_tensorrt` | `onnx_tensorrt_cold` | `onnx_tensorrt_warm` |
 
 `legacy_constructor` is a historical integration path: it constructs
 `kokoro_onnx.Kokoro(...)` directly and leaves provider selection implicit. It
 is not an equivalent execution provider.
 
-`onnx_cpu` and `onnx_tensorrt` are explicit ONNX Runtime paths. They make the
-provider request visible in the benchmark metadata so results can distinguish
-the requested configuration from the providers actually available and used.
+`onnx_cpu`, `onnx_cuda`, and `onnx_tensorrt` are explicit ONNX Runtime paths.
+They make the provider request visible in the benchmark metadata so results
+can distinguish the requested configuration from the providers actually
+available and used. The CUDA path requests CUDA first, with CPU as fallback.
 
 ## Provider Priority
 
@@ -86,7 +88,7 @@ matrix runner. The current scenario runner can still execute the existing TTS
 benchmark directly:
 
 ```powershell
-py -3.11 -m benchmark `
+py -3.10 -m benchmark `
   --scenario tts `
   --adapter real `
   --runs 10 `
@@ -97,11 +99,11 @@ py -3.11 -m benchmark `
 Use the manifest profile names with the profile-aware runner:
 
 ```powershell
-py -3.11 -m benchmark `
+py -3.10 -m benchmark `
   --manifest benchmark/profiles.toml `
   --profile legacy_constructor_cold `
   --profile onnx_cpu_cold `
-  --profile onnx_tensorrt_cold `
+  --profile onnx_cuda_cold `
   --adapter real `
   --runs 10 `
   --warmup 2 `

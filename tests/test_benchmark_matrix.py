@@ -13,6 +13,7 @@ from benchmark.adapters import (
     RuntimeConfigurationError,
     RuntimeInfo,
     TTSMeasurement,
+    build_tts_engine,
 )
 from benchmark.cli import main as benchmark_main
 from benchmark.core import BenchmarkRunner
@@ -20,7 +21,41 @@ from benchmark.profiles import BenchmarkProfile, load_profiles
 from benchmark.scenarios import KokoroMatrixBenchmark
 
 
-def test_load_profiles_reads_the_six_kokoro_execution_paths(tmp_path: Path) -> None:
+def test_load_profiles_falls_back_to_tomli_when_tomllib_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import builtins
+
+    fake_tomli = types.ModuleType("tomli")
+    fake_tomli.load = lambda handle: {
+        "profiles": {
+            "python310_profile": {
+                "component": "tts",
+                "execution_path": "onnx_cpu",
+                "lifecycle": "warm",
+            }
+        }
+    }
+    real_import = builtins.__import__
+
+    def import_without_tomllib(name: str, *args: object, **kwargs: object):
+        if name == "tomllib":
+            raise ModuleNotFoundError("No module named 'tomllib'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setitem(sys.modules, "tomli", fake_tomli)
+    monkeypatch.setattr(builtins, "__import__", import_without_tomllib)
+
+    manifest = tmp_path / "profiles.toml"
+    manifest.write_text("this content is supplied by the fake parser", encoding="utf-8")
+
+    profiles = load_profiles(manifest)
+
+    assert profiles["python310_profile"].execution_path == "onnx_cpu"
+
+
+def test_load_profiles_reads_the_kokoro_execution_paths(tmp_path: Path) -> None:
     manifest = tmp_path / "profiles.toml"
     manifest.write_text(
         """
@@ -43,6 +78,26 @@ onnx_provider = "cpu"
     assert profiles["tts_legacy_cold"].execution_path == "legacy_constructor"
     assert profiles["tts_onnx_cpu_warm"].lifecycle == "warm"
     assert profiles["tts_onnx_cpu_warm"].onnx_provider == "cpu"
+
+
+def test_build_tts_engine_maps_onnx_cuda_to_cuda_provider(tmp_path: Path) -> None:
+    profile = BenchmarkProfile(
+        name="onnx_cuda_warm",
+        component="tts",
+        execution_path="onnx_cuda",
+        lifecycle="warm",
+        onnx_provider="cuda",
+    )
+    config = types.SimpleNamespace(
+        kokoro_model="model.onnx",
+        kokoro_voices="voices.bin",
+        onnx_cache_dir=tmp_path / "ort-cache",
+    )
+
+    engine = build_tts_engine(profile, config)
+
+    assert isinstance(engine, OnnxKokoroEngine)
+    assert engine.provider_mode == "cuda"
 
 
 def test_onnx_tensorrt_records_exact_provider_order_and_selection(
@@ -292,6 +347,13 @@ def test_failed_warm_profile_excludes_one_time_initialization_from_samples(
     def failing_factory() -> RecordingEngine:
         raise RuntimeConfigurationError("TensorRT provider unavailable", runtime_info=info)
 
+    factory_calls = 0
+
+    def counted_failing_factory() -> RecordingEngine:
+        nonlocal factory_calls
+        factory_calls += 1
+        return failing_factory()
+
     profile = BenchmarkProfile(
         name="tts_onnx_tensorrt_warm",
         component="tts",
@@ -303,21 +365,23 @@ def test_failed_warm_profile_excludes_one_time_initialization_from_samples(
         profile=profile,
         text="hello",
         output_dir=tmp_path,
-        engine_factory=failing_factory,
+        engine_factory=counted_failing_factory,
     )
 
     run = BenchmarkRunner(
-        runs=1,
+        runs=3,
         warmup_runs=0,
         workspace_root=tmp_path,
         output_dir=tmp_path / "out",
         capture_memory=False,
     ).run([scenario])
 
-    sample = run.samples[0]
+    samples = run.samples
     assert scenario.initialization_ms is not None
-    assert sample.initialization_ms is None
-    assert sample.total_ms == 0.0
+    assert factory_calls == 1
+    assert len(samples) == 3
+    assert all(sample.initialization_ms is None for sample in samples)
+    assert all(sample.total_ms == 0.0 for sample in samples)
 
 
 def test_matrix_cli_writes_profile_and_provider_columns(

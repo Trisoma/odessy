@@ -1,7 +1,6 @@
 # Benchmark config parser
 from __future__ import annotations
 
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -82,7 +81,7 @@ class BenchmarkProfile:
 
 def load_profiles(path: Path) -> dict[str, BenchmarkProfile]:
     with path.open("rb") as handle:
-        raw = tomllib.load(handle)
+        raw = _load_toml(handle)
     profile_table = raw.get("profiles")
     if not isinstance(profile_table, dict):
         raise ValueError(f"Manifest {path} must contain a [profiles] table")
@@ -100,6 +99,15 @@ def load_profiles(path: Path) -> dict[str, BenchmarkProfile]:
             raise ValueError(f"Duplicate benchmark profile: {name}")
         profiles[name] = BenchmarkProfile.from_mapping(name, values, defaults=defaults)
     return profiles
+
+
+def _load_toml(handle: Any) -> dict[str, Any]:
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10 uses the tomli backport.
+        import tomli as tomllib
+    return tomllib.load(handle)
+
 
 def _required_text(raw: dict[str, Any], key: str, profile_name: str) -> str:
     value = raw.get(key)

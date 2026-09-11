@@ -234,9 +234,10 @@ def build_tts_engine(profile: BenchmarkProfile, config: VoiceConfig) -> TTSBench
     }
     if profile.execution_path == "legacy_constructor":
         return LegacyKokoroEngine(**common)
-    if profile.execution_path in {"onnx_cpu", "onnx_tensorrt"}:
+    if profile.execution_path in {"onnx_cpu", "onnx_cuda", "onnx_tensorrt"}:
         provider_mode = profile.onnx_provider or {
             "onnx_cpu": "cpu",
+            "onnx_cuda": "cuda",
             "onnx_tensorrt": "tensorrt",
         }[profile.execution_path]
         return OnnxKokoroEngine(

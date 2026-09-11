@@ -65,7 +65,7 @@ python -m odessy voice
 
 Requirements:
 
-- Python 3.11+
+- Python 3.10+
 - Ollama
 - Node.js 20+ for the laptop MCP server
 - Whisper.cpp and a Whisper model for voice

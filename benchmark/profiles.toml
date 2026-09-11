@@ -35,6 +35,26 @@ requested_provider_mode = "cpu"
 provider_priority = ["CPUExecutionProvider"]
 strict_provider = true
 
+[profiles.onnx_cuda_cold]
+execution_path = "onnx_cuda"
+lifecycle = "cold"
+requested_provider_mode = "cuda"
+provider_priority = [
+  "CUDAExecutionProvider",
+  "CPUExecutionProvider",
+]
+strict_provider = true
+
+[profiles.onnx_cuda_warm]
+execution_path = "onnx_cuda"
+lifecycle = "warm"
+requested_provider_mode = "cuda"
+provider_priority = [
+  "CUDAExecutionProvider",
+  "CPUExecutionProvider",
+]
+strict_provider = true
+
 [profiles.onnx_tensorrt_cold]
 execution_path = "onnx_tensorrt"
 lifecycle = "cold"
