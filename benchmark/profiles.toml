@@ -78,3 +78,17 @@ provider_priority = [
 ]
 strict_provider = true
 engine_cache = true
+
+[profiles.kokoro_pytorch_cold]
+execution_path = "kokoro_pytorch"
+lifecycle = "cold"
+requested_provider_mode = "pytorch"
+provider_priority = ["PyTorch"]
+strict_provider = true
+
+[profiles.kokoro_pytorch_warm]
+execution_path = "kokoro_pytorch"
+lifecycle = "warm"
+requested_provider_mode = "pytorch"
+provider_priority = ["PyTorch"]
+strict_provider = true

@@ -15,6 +15,7 @@ from benchmark.adapters import (
     TTSMeasurement,
     build_tts_engine,
 )
+from benchmark.pytorch_kokoro import PyTorchKokoroEngine
 from benchmark.cli import main as benchmark_main
 from benchmark.core import BenchmarkRunner
 from benchmark.profiles import BenchmarkProfile, load_profiles
@@ -98,6 +99,214 @@ def test_build_tts_engine_maps_onnx_cuda_to_cuda_provider(tmp_path: Path) -> Non
 
     assert isinstance(engine, OnnxKokoroEngine)
     assert engine.provider_mode == "cuda"
+
+
+def test_build_tts_engine_maps_pytorch_kokoro(tmp_path: Path) -> None:
+    profile = BenchmarkProfile(
+        name="kokoro_pytorch_warm",
+        component="tts",
+        execution_path="kokoro_pytorch",
+        lifecycle="warm",
+    )
+    config = types.SimpleNamespace(
+        kokoro_model="model.onnx",
+        kokoro_voices="voices.bin",
+        onnx_cache_dir=tmp_path / "ort-cache",
+    )
+
+    engine = build_tts_engine(profile, config)
+
+    assert isinstance(engine, PyTorchKokoroEngine)
+    assert engine.lang_code == "a"
+    assert engine.voice == "af_heart"
+
+
+def test_pytorch_kokoro_engine_uses_pipeline_and_reports_device(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state: dict[str, object] = {}
+
+    class FakeAudio:
+        def detach(self) -> "FakeAudio":
+            return self
+
+        def cpu(self) -> "FakeAudio":
+            return self
+
+        def numpy(self) -> list[float]:
+            return [0.0, 0.1, 0.0]
+
+    class FakePipeline:
+        def __init__(self, *, lang_code: str, device: str) -> None:
+            state["lang_code"] = lang_code
+            state["device"] = device
+
+        def __call__(self, text: str, *, voice: str, speed: float):
+            state["text"] = text
+            state["voice"] = voice
+            state["speed"] = speed
+            return iter([(None, None, FakeAudio())])
+
+    torch = types.ModuleType("torch")
+    torch.__version__ = "test-torch"
+    torch.cuda = types.SimpleNamespace(is_available=lambda: False)
+    kokoro = types.ModuleType("kokoro")
+    kokoro.KPipeline = FakePipeline
+    soundfile = types.ModuleType("soundfile")
+    soundfile.write = lambda path, samples, sample_rate: state.update(
+        {"path": path, "samples": samples, "sample_rate": sample_rate}
+    )
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "kokoro", kokoro)
+    monkeypatch.setitem(sys.modules, "soundfile", soundfile)
+
+    engine = PyTorchKokoroEngine()
+    info = engine.initialize()
+    output_path = tmp_path / "pytorch.wav"
+    measurement = engine.synthesize("hello", output_path)
+
+    assert state["lang_code"] == "a"
+    assert state["device"] == "cpu"
+    assert state["text"] == "hello"
+    assert state["voice"] == "af_heart"
+    assert state["path"] == output_path
+    assert state["sample_rate"] == 24000
+    assert info.runtime_version == "test-torch"
+    assert info.session_execution_providers == ["PyTorch:cpu"]
+    assert measurement.audio_duration_ms == pytest.approx(0.125)
+
+
+def test_pytorch_kokoro_engine_loads_local_voice_tensor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state: dict[str, object] = {}
+    model_dir = tmp_path / "Kokoro-82M"
+    (model_dir / "voices").mkdir(parents=True)
+    (model_dir / "config.json").write_text("{}", encoding="utf-8")
+    (model_dir / "kokoro-v1_0.pth").write_bytes(b"model")
+    voice_path = model_dir / "voices" / "af_heart.pt"
+    voice_path.write_bytes(b"voice")
+
+    class FakeTensor:
+        def detach(self) -> "FakeTensor":
+            return self
+
+        def cpu(self) -> "FakeTensor":
+            return self
+
+        def numpy(self) -> list[float]:
+            return [0.0, 0.1, 0.0]
+
+    class FakeModel:
+        def to(self, device: str) -> "FakeModel":
+            return self
+
+        def eval(self) -> "FakeModel":
+            return self
+
+    class FakePipeline:
+        def __init__(
+            self,
+            *,
+            lang_code: str,
+            model: object,
+            repo_id: str,
+            device: str,
+        ) -> None:
+            self.voices: dict[str, object] = {}
+            state["lang_code"] = lang_code
+            state["model"] = model
+            state["repo_id"] = repo_id
+            state["device"] = device
+
+        def __call__(self, text: str, *, voice: object, speed: float):
+            if voice not in self.voices:
+                raise AssertionError("KPipeline attempted a remote voice lookup")
+            state["voice"] = self.voices[voice]
+            return iter([(None, None, FakeTensor())])
+
+    torch = types.ModuleType("torch")
+    torch.__version__ = "test-torch"
+    torch.cuda = types.SimpleNamespace(is_available=lambda: True)
+    torch.load = lambda path, *, map_location, weights_only: (
+        state.update(
+            {
+                "voice_path": path,
+                "map_location": map_location,
+                "weights_only": weights_only,
+            }
+        )
+        or FakeTensor()
+    )
+    kokoro = types.ModuleType("kokoro")
+    kokoro.KModel = lambda **kwargs: FakeModel()
+    kokoro.KPipeline = FakePipeline
+    soundfile = types.ModuleType("soundfile")
+    soundfile.write = lambda *args: None
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "kokoro", kokoro)
+    monkeypatch.setitem(sys.modules, "soundfile", soundfile)
+
+    engine = PyTorchKokoroEngine(
+        device="cuda",
+        model_dir=model_dir,
+    )
+    engine.initialize()
+    engine.synthesize("hello", tmp_path / "pytorch.wav")
+
+    assert state["voice_path"] == str(voice_path)
+    assert state["map_location"] == "cuda"
+    assert state["weights_only"] is True
+    assert state["repo_id"] == "hexgrad/Kokoro-82M"
+    assert isinstance(state["voice"], FakeTensor)
+
+
+def test_pytorch_kokoro_engine_extracts_and_concatenates_result_audio(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state: dict[str, object] = {}
+
+    class FakeAudio:
+        def __init__(self, values: list[float]) -> None:
+            self.values = values
+
+        def detach(self) -> "FakeAudio":
+            return self
+
+        def cpu(self) -> "FakeAudio":
+            return self
+
+        def numpy(self) -> list[float]:
+            return self.values
+
+    class FakeResult:
+        def __init__(self, audio: FakeAudio) -> None:
+            self.audio = audio
+
+    engine = PyTorchKokoroEngine()
+    engine._pipeline = lambda text, voice, speed: iter(
+        [
+            FakeResult(FakeAudio([0.0, 1.0])),
+            FakeResult(FakeAudio([2.0, 3.0])),
+        ]
+    )
+
+    soundfile = types.ModuleType("soundfile")
+    soundfile.write = lambda path, samples, sample_rate: state.update(
+        {"path": path, "samples": samples, "sample_rate": sample_rate}
+    )
+    monkeypatch.setitem(sys.modules, "soundfile", soundfile)
+
+    output_path = tmp_path / "pytorch.wav"
+    measurement = engine.synthesize("hello", output_path)
+
+    assert state["path"] == output_path
+    assert state["sample_rate"] == 24000
+    assert list(state["samples"]) == [0.0, 1.0, 2.0, 3.0]
+    assert measurement.audio_duration_ms == pytest.approx(4 / 24000 * 1000)
 
 
 def test_onnx_tensorrt_records_exact_provider_order_and_selection(
