@@ -229,7 +229,7 @@ class OnnxKokoroEngine:
 
 def build_tts_engine(profile: BenchmarkProfile, config: VoiceConfig) -> TTSBenchmarkEngine:
     if profile.execution_path == "kokoro_pytorch":
-        from .pytorch_kokoro import PyTorchKokoroEngine
+        from .tts.pytorch_kokoro import PyTorchKokoroEngine
 
         return PyTorchKokoroEngine()
 

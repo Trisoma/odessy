@@ -33,7 +33,7 @@ class PyTorchKokoroEngine:
         self._runtime_info: Any | None = None
 
     def initialize(self) -> Any:
-        from .adapters import RuntimeConfigurationError
+        from ..adapters import RuntimeConfigurationError
 
         try:
             import torch
@@ -173,7 +173,7 @@ class PyTorchKokoroEngine:
         return self._runtime_info
 
     def synthesize(self, text: str, output_path: Path) -> Any:
-        from .adapters import TTSMeasurement
+        from ..adapters import TTSMeasurement
 
         import soundfile as sf
 
@@ -217,7 +217,7 @@ def _runtime_info(
     device: str | None,
     lang_code: str,
 ) -> Any:
-    from .adapters import RuntimeInfo
+    from ..adapters import RuntimeInfo
 
     selected = [f"PyTorch:{device}"] if device else None
     return RuntimeInfo(

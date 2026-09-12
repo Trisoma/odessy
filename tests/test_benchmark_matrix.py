@@ -15,7 +15,7 @@ from benchmark.adapters import (
     TTSMeasurement,
     build_tts_engine,
 )
-from benchmark.pytorch_kokoro import PyTorchKokoroEngine
+from benchmark.tts.pytorch_kokoro import PyTorchKokoroEngine
 from benchmark.cli import main as benchmark_main
 from benchmark.core import BenchmarkRunner
 from benchmark.profiles import BenchmarkProfile, load_profiles

@@ -1,127 +1,40 @@
 # Odessy Benchmark
 
-This directory contains the benchmark harness and the **Kokoro execution-path
-comparison** manifest in [`profiles.toml`](profiles.toml). The first matrix
-compares the historical Kokoro integration with explicit ONNX Runtime
-execution-provider configurations.
+This package contains the shared benchmark harness for Odessy.
 
-## Profiles
+## Shared Components
 
-The manifest defines ten profiles:
+- `cli.py`: command-line entry point and scenario selection.
+- `core.py`: runner, samples, outcomes, and summary calculations.
+- `scenarios.py`: reusable STT, model, TTS, voice-turn, and matrix scenarios.
+- `adapters.py`: runtime-facing benchmark adapters and common interfaces.
+- `profiles.py`: Python 3.10-compatible TOML profile loading.
+- `export.py` and `telemetry.py`: result export and resource measurements.
+- `plot_results.R`: shared result visualization script.
 
-| Execution path | Cold | Warm |
-| --- | --- | --- |
-| `legacy_constructor` | `legacy_constructor_cold` | `legacy_constructor_warm` |
-| `onnx_cpu` | `onnx_cpu_cold` | `onnx_cpu_warm` |
-| `onnx_cuda` | `onnx_cuda_cold` | `onnx_cuda_warm` |
-| `onnx_tensorrt` | `onnx_tensorrt_cold` | `onnx_tensorrt_warm` |
-| `kokoro_pytorch` | `kokoro_pytorch_cold` | `kokoro_pytorch_warm` |
-
-`legacy_constructor` is a historical integration path: it constructs
-`kokoro_onnx.Kokoro(...)` directly and leaves provider selection implicit. It
-is not an equivalent execution provider.
-
-`onnx_cpu`, `onnx_cuda`, and `onnx_tensorrt` are explicit ONNX Runtime paths.
-They make the provider request visible in the benchmark metadata so results
-can distinguish the requested configuration from the providers actually
-available and used. The CUDA path requests CUDA first, with CPU as fallback.
-
-`kokoro_pytorch` uses Kokoro's `KPipeline` directly through PyTorch. It is a
-separate implementation/runtime path and does not use the existing ONNX model
-or ONNX Runtime session. Its model loading time is included in cold
-initialization and excluded from warm steady-state samples.
-
-## Provider Priority
-
-The TensorRT path must use this exact ONNX Runtime priority order:
-
-```python
-[
-    ("TensorrtExecutionProvider", {...}),
-    ("CUDAExecutionProvider", {...}),
-    "CPUExecutionProvider",
-]
-```
-
-ONNX Runtime gives earlier providers higher priority when assigning graph
-nodes. The TensorRT profile is strict: if
-`TensorrtExecutionProvider` is unavailable, the run must record a failed
-result instead of silently measuring CUDA or CPU.
-
-Each run should record:
-
-- requested provider mode and provider options;
-- `onnxruntime.__version__`;
-- `onnxruntime.get_available_providers()`;
-- the session's `get_providers()` result;
-- provider selection status and any error.
-
-For the legacy path, an underlying session may be hidden by the wrapper. In
-that case, record the session providers as unavailable/`null` and mark the
-selection status as `not_observable`; do not infer them.
-
-## Cold And Warm Semantics
-
-**Cold** constructs and initializes a new TTS engine for every measured
-invocation. Record initialization and inference separately:
-
-```text
-total_ms = initialization_ms + inference_ms
-```
-
-**Warm** initializes one engine before warmups, reuses it for all measured
-invocations, and excludes one-time initialization from steady-state samples.
-Warm samples therefore contain `initialization_ms = null` and
-`total_ms = inference_ms`; the one-time initialization value belongs in run
-metadata.
-
-TTS inference runs through WAV output completion. Record generated audio
-duration and calculate:
-
-```text
-rtf = inference_ms / audio_duration_ms
-```
-
-Summaries should report initialization separately from steady-state
-`inference_ms` and `total_ms`, including P50, P95, and P99 where enough
-successful samples exist. Failed configurations remain in the output with
-`success = false` and an error message.
+TTS-specific profiles, adapters, historical reports, commands, and generated
+results are organized under [`tts/`](tts/). Baseline logs for other benchmark
+areas remain under [`base/`](base/).
 
 ## Usage
 
-The profile manifest is declarative configuration for the profile-aware
-matrix runner. The current scenario runner can still execute the existing TTS
-benchmark directly:
+Run a general scenario from the repository root:
+
+```powershell
+py -3.10 -m benchmark --scenario tts --adapter real
+```
+
+For the Kokoro execution-path matrix, see
+[`tts/README.md`](tts/README.md) and use its manifest:
 
 ```powershell
 py -3.10 -m benchmark `
-  --scenario tts `
-  --adapter real `
-  --runs 10 `
-  --warmup 2 `
-  --text "Odessy is a local AI assistant."
+  --manifest benchmark/tts/profiles.toml `
+  --profile kokoro_pytorch_warm `
+  --profile onnx_cpu_warm `
+  --profile onnx_cuda_warm `
+  --adapter real
 ```
 
-Use the manifest profile names with the profile-aware runner:
-
-```powershell
-py -3.10 -m benchmark `
-  --manifest benchmark/profiles.toml `
-  --profile legacy_constructor_cold `
-  --profile onnx_cpu_cold `
-  --profile onnx_cuda_cold `
-  --adapter real `
-  --runs 10 `
-  --warmup 2 `
-  --text "Odessy is a local AI assistant."
-```
-
-The matrix command requires `--adapter real` because it measures the actual
-Kokoro/runtime integration. Missing optional runtime dependencies or an
-unavailable strict provider are recorded as failed samples instead of being
-silently replaced by another provider.
-
-Generated results belong under `benchmark/results/` and are ignored by Git.
-The historical Jetson measurements remain in
-[`jetson-voice-benchmark.mdx`](jetson-voice-benchmark.mdx), while raw baseline
-logs remain under [`base/`](base/).
+TTS scenario and matrix results are written by default under
+`benchmark/tts/results/`. Explicit `--output-dir` values still take precedence.

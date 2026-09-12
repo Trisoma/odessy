@@ -89,7 +89,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     repo_root = Path(__file__).resolve().parents[1]
     workspace_root = Path(args.workspace_root) if args.workspace_root else repo_root
-    output_dir = _resolve_output_dir(repo_root, args.output_dir)
+    output_dir = _resolve_output_dir(
+        repo_root,
+        args.output_dir,
+        tts=args.manifest is not None or args.scenario == "tts",
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     config = VoiceConfig.from_env()
@@ -203,11 +207,20 @@ def _run_matrix(
     print(f"\nWrote benchmark data to: {output_dir}")
     return 0
 
-def _resolve_output_dir(repo_root: Path, output_dir: str | None) -> Path:
+def _resolve_output_dir(
+    repo_root: Path,
+    output_dir: str | None,
+    *,
+    tts: bool = False,
+) -> Path:
     if output_dir:
         return Path(output_dir)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    return repo_root / "benchmark" / "results" / stamp
+    result_root = repo_root / "benchmark"
+    if tts:
+        result_root /= "tts"
+    result_root /= "results"
+    return result_root / stamp
 
 def _build_scenarios(
     args: argparse.Namespace,

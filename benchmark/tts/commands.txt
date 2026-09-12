@@ -1,0 +1,23 @@
+env \
+    LD_LIBRARY_PATH=/opt/ros/humble/lib/aarch64-linux-gnu:/opt/ros/humble/lib:/usr/local/cuda-12.6/lib64:/usr/local/cuda-12.6/targets/aarch64-linux/lib \
+    python -m benchmark \
+        --manifest benchmark/tts/profiles.toml \
+        --profile kokoro_pytorch_warm \
+        --profile onnx_cpu_warm \
+        --profile onnx_cuda_warm \
+        --adapter real \
+        --warmup 2 \
+        --runs 10 \
+        --text "Odessy is a local edge AI assistant."
+
+env \
+    LD_LIBRARY_PATH=/opt/ros/humble/lib/aarch64-linux-gnu:/opt/ros/humble/lib:/usr/local/cuda-12.6/lib64:/usr/local/cuda-12.6/targets/aarch64-linux/lib \
+    python -m benchmark \
+        --manifest benchmark/tts/profiles.toml \
+        --profile kokoro_pytorch_cold \
+        --profile onnx_cpu_cold \
+        --profile onnx_cuda_cold \
+        --adapter real \
+        --warmup 0 \
+        --runs 5 \
+        --text "Odessy is a local edge AI assistant."
