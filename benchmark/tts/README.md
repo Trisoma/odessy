@@ -8,7 +8,7 @@ execution-provider configurations.
 
 ## Profiles
 
-The manifest defines ten profiles:
+The manifest defines fourteen profiles:
 
 | Execution path | Cold | Warm |
 | --- | --- | --- |
@@ -16,7 +16,9 @@ The manifest defines ten profiles:
 | `onnx_cpu` | `onnx_cpu_cold` | `onnx_cpu_warm` |
 | `onnx_cuda` | `onnx_cuda_cold` | `onnx_cuda_warm` |
 | `onnx_tensorrt` | `onnx_tensorrt_cold` | `onnx_tensorrt_warm` |
-| `kokoro_pytorch` | `kokoro_pytorch_cold` | `kokoro_pytorch_warm` |
+| `kokoro_pytorch` auto device | `kokoro_pytorch_cold` | `kokoro_pytorch_warm` |
+| `kokoro_pytorch` CPU | `kokoro_pytorch_cpu_cold` | `kokoro_pytorch_cpu_warm` |
+| `kokoro_pytorch` CUDA | `kokoro_pytorch_cuda_cold` | `kokoro_pytorch_cuda_warm` |
 
 `legacy_constructor` is a historical integration path: it constructs
 `kokoro_onnx.Kokoro(...)` directly and leaves provider selection implicit. It
@@ -29,8 +31,9 @@ available and used. The CUDA path requests CUDA first, with CPU as fallback.
 
 `kokoro_pytorch` uses Kokoro's `KPipeline` directly through PyTorch. It is a
 separate implementation/runtime path and does not use the existing ONNX model
-or ONNX Runtime session. Its model loading time is included in cold
-initialization and excluded from warm steady-state samples.
+or ONNX Runtime session. The `pytorch_device` profile field selects `auto`,
+`cpu`, or `cuda`. Its model loading time is included in cold initialization
+and excluded from warm steady-state samples.
 
 ## Provider Priority
 

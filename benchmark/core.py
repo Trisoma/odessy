@@ -109,6 +109,7 @@ class BenchmarkSample:
     success: bool = False
     hardware: str | None = None
     runtime_version: str | None = None
+    pytorch_device: str | None = None
     model_precision: str | None = None
     batch_size: int | None = None
     warmup_iterations: int | None = None
@@ -275,6 +276,7 @@ class BenchmarkRunner:
             success=status == "ok",
             hardware=_detail_value(details, "hardware"),
             runtime_version=_detail_value(details, "runtime_version"),
+            pytorch_device=_detail_value(details, "pytorch_device"),
             model_precision=_detail_value(details, "model_precision"),
             batch_size=_detail_value(details, "batch_size"),
             warmup_iterations=_detail_value(details, "warmup_iterations"),

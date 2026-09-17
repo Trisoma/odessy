@@ -81,6 +81,41 @@ onnx_provider = "cpu"
     assert profiles["tts_onnx_cpu_warm"].onnx_provider == "cpu"
 
 
+def test_load_profiles_reads_pytorch_device(tmp_path: Path) -> None:
+    manifest = tmp_path / "profiles.toml"
+    manifest.write_text(
+        """
+[profiles.kokoro_pytorch_cpu_warm]
+component = "tts"
+execution_path = "kokoro_pytorch"
+lifecycle = "warm"
+pytorch_device = "cpu"
+""",
+        encoding="utf-8",
+    )
+
+    profiles = load_profiles(manifest)
+
+    assert profiles["kokoro_pytorch_cpu_warm"].pytorch_device == "cpu"
+
+
+def test_load_profiles_rejects_unknown_pytorch_device(tmp_path: Path) -> None:
+    manifest = tmp_path / "profiles.toml"
+    manifest.write_text(
+        """
+[profiles.kokoro_pytorch_bad]
+component = "tts"
+execution_path = "kokoro_pytorch"
+lifecycle = "warm"
+pytorch_device = "metal"
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="pytorch_device"):
+        load_profiles(manifest)
+
+
 def test_build_tts_engine_maps_onnx_cuda_to_cuda_provider(tmp_path: Path) -> None:
     profile = BenchmarkProfile(
         name="onnx_cuda_warm",
@@ -119,6 +154,27 @@ def test_build_tts_engine_maps_pytorch_kokoro(tmp_path: Path) -> None:
     assert isinstance(engine, PyTorchKokoroEngine)
     assert engine.lang_code == "a"
     assert engine.voice == "af_heart"
+    assert engine.requested_device is None
+
+
+def test_build_tts_engine_maps_pytorch_device(tmp_path: Path) -> None:
+    profile = BenchmarkProfile(
+        name="kokoro_pytorch_cpu_warm",
+        component="tts",
+        execution_path="kokoro_pytorch",
+        lifecycle="warm",
+        pytorch_device="cpu",
+    )
+    config = types.SimpleNamespace(
+        kokoro_model="model.onnx",
+        kokoro_voices="voices.bin",
+        onnx_cache_dir=tmp_path / "ort-cache",
+    )
+
+    engine = build_tts_engine(profile, config)
+
+    assert isinstance(engine, PyTorchKokoroEngine)
+    assert engine.requested_device == "cpu"
 
 
 def test_pytorch_kokoro_engine_uses_pipeline_and_reports_device(
@@ -669,6 +725,87 @@ requested_provider_mode = "cpu"
     assert row["execution_path"] == "onnx_cpu"
     assert row["session_execution_providers"] == '["CPUExecutionProvider"]'
     assert row["provider_selection_status"] == "selected"
+
+
+def test_matrix_cli_writes_pytorch_device_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    state: dict[str, object] = {}
+
+    class FakeAudio:
+        def detach(self) -> "FakeAudio":
+            return self
+
+        def cpu(self) -> "FakeAudio":
+            return self
+
+        def numpy(self) -> list[float]:
+            return [0.0, 0.1, 0.0]
+
+    class FakePipeline:
+        def __init__(self, *, lang_code: str, device: str) -> None:
+            state["device"] = device
+
+        def __call__(self, text: str, *, voice: str, speed: float):
+            return iter([(None, None, FakeAudio())])
+
+    torch = types.ModuleType("torch")
+    torch.__version__ = "test-torch"
+    torch.cuda = types.SimpleNamespace(is_available=lambda: True)
+    kokoro = types.ModuleType("kokoro")
+    kokoro.KModel = object
+    kokoro.KPipeline = FakePipeline
+    soundfile = types.ModuleType("soundfile")
+    soundfile.write = lambda *args: None
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "kokoro", kokoro)
+    monkeypatch.setitem(sys.modules, "soundfile", soundfile)
+
+    manifest = tmp_path / "profiles.toml"
+    manifest.write_text(
+        """
+version = 1
+component = "tts"
+
+[profiles.kokoro_pytorch_cpu_warm]
+execution_path = "kokoro_pytorch"
+lifecycle = "warm"
+requested_provider_mode = "pytorch"
+pytorch_device = "cpu"
+""",
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "results"
+
+    assert benchmark_main(
+        [
+            "--manifest",
+            str(manifest),
+            "--profile",
+            "kokoro_pytorch_cpu_warm",
+            "--adapter",
+            "real",
+            "--runs",
+            "1",
+            "--warmup",
+            "0",
+            "--output-dir",
+            str(output_dir),
+            "--text",
+            "hello",
+        ]
+    ) == 0
+
+    with (output_dir / "samples.csv").open(
+        "r", encoding="utf-8", newline=""
+    ) as handle:
+        row = next(csv.DictReader(handle))
+    jsonl = (output_dir / "samples.jsonl").read_text(encoding="utf-8")
+
+    assert state["device"] == "cpu"
+    assert row["pytorch_device"] == "cpu"
+    assert '"pytorch_device": "cpu"' in jsonl
 
 
 class RecordingEngine:

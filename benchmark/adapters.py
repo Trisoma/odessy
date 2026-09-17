@@ -231,7 +231,8 @@ def build_tts_engine(profile: BenchmarkProfile, config: VoiceConfig) -> TTSBench
     if profile.execution_path == "kokoro_pytorch":
         from .tts.pytorch_kokoro import PyTorchKokoroEngine
 
-        return PyTorchKokoroEngine()
+        device = None if profile.pytorch_device in {None, "auto"} else profile.pytorch_device
+        return PyTorchKokoroEngine(device=device)
 
     common = {
         "model_path": config.kokoro_model,

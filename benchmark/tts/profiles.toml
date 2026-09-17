@@ -85,6 +85,7 @@ lifecycle = "cold"
 requested_provider_mode = "pytorch"
 provider_priority = ["PyTorch"]
 strict_provider = true
+pytorch_device = "auto"
 
 [profiles.kokoro_pytorch_warm]
 execution_path = "kokoro_pytorch"
@@ -92,3 +93,36 @@ lifecycle = "warm"
 requested_provider_mode = "pytorch"
 provider_priority = ["PyTorch"]
 strict_provider = true
+pytorch_device = "auto"
+
+[profiles.kokoro_pytorch_cpu_cold]
+execution_path = "kokoro_pytorch"
+lifecycle = "cold"
+requested_provider_mode = "pytorch"
+provider_priority = ["PyTorch:cpu"]
+strict_provider = true
+pytorch_device = "cpu"
+
+[profiles.kokoro_pytorch_cpu_warm]
+execution_path = "kokoro_pytorch"
+lifecycle = "warm"
+requested_provider_mode = "pytorch"
+provider_priority = ["PyTorch:cpu"]
+strict_provider = true
+pytorch_device = "cpu"
+
+[profiles.kokoro_pytorch_cuda_cold]
+execution_path = "kokoro_pytorch"
+lifecycle = "cold"
+requested_provider_mode = "pytorch"
+provider_priority = ["PyTorch:cuda"]
+strict_provider = true
+pytorch_device = "cuda"
+
+[profiles.kokoro_pytorch_cuda_warm]
+execution_path = "kokoro_pytorch"
+lifecycle = "warm"
+requested_provider_mode = "pytorch"
+provider_priority = ["PyTorch:cuda"]
+strict_provider = true
+pytorch_device = "cuda"
