@@ -3,12 +3,19 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
-from odessy.types import FinalResponse, ModelAction, ToolObservation, ToolRequest
+from odessy.types import (
+    FinalResponse,
+    ModelAction,
+    ModelTurnDiagnostics,
+    ToolObservation,
+    ToolRequest,
+)
 from odessy.tool_contracts import (
     TOOL_REQUEST_SCHEMAS,
     build_openai_tools,
@@ -40,14 +47,31 @@ class OllamaModel:
     timeout: int = 120
     temperature: float = 0.0
 
+    @property
+    def last_turn_diagnostics(self) -> ModelTurnDiagnostics:
+        diagnostics = getattr(self, "_last_turn_diagnostics", None)
+        if isinstance(diagnostics, ModelTurnDiagnostics):
+            return diagnostics
+        return ModelTurnDiagnostics()
+
     def propose(self, user_text: str) -> ModelAction:
+        diagnostics = ModelTurnDiagnostics()
+        object.__setattr__(self, "_last_turn_diagnostics", diagnostics)
         tool_name = _proposal_tool_name_for_user_text(user_text)
         system_prompt = _system_prompt(tool_name)
         fallback_prompt = _text_system_prompt(user_text, tool_name)
         tools = _select_tools(tool_name)
         try:
-            action = self._chat_action(user_text, system_prompt, tools, fallback_prompt)
+            action = self._chat_action(
+                user_text,
+                system_prompt,
+                tools,
+                fallback_prompt,
+                diagnostics,
+            )
         except ValueError as error:
+            diagnostics.proposal_valid = False
+            diagnostics.repair_triggered = True
             model_error = _model_output_error("", error, user_text, tool_name)
             repair_prompt = _repair_prompt(user_text, model_error)
             _debug_model_repair(
@@ -58,7 +82,14 @@ class OllamaModel:
                 ]
             )
             try:
-                action = self._chat_action(user_text, repair_prompt, tools, repair_prompt)
+                action = self._chat_action(
+                    user_text,
+                    repair_prompt,
+                    tools,
+                    repair_prompt,
+                    diagnostics,
+                    generation_field="repair_generation_ms",
+                )
             except ValueError as retry_error:
                 raise ValueError(
                     f"Model repair failed after one retry: {retry_error}"
@@ -73,16 +104,34 @@ class OllamaModel:
         system_prompt: str,
         tools: list[dict[str, Any]],
         fallback_prompt: str,
+        diagnostics: ModelTurnDiagnostics,
+        *,
+        generation_field: str = "proposal_generation_ms",
     ) -> ModelAction:
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_text},
         ]
         try:
+            started = time.perf_counter()
             response = self._chat(messages, tools=tools)
+            _add_diagnostic_ms(diagnostics, generation_field, _elapsed_ms(started))
+            _record_token_counts(diagnostics, response)
         except _OllamaToolsUnsupported:
+            started = time.perf_counter()
             response = self._chat([{"role": "user", "content": fallback_prompt}], tools=None)
-        return _extract_model_action_from_chat(response, user_text)
+            _add_diagnostic_ms(diagnostics, generation_field, _elapsed_ms(started))
+            _record_token_counts(diagnostics, response)
+        parse_started = time.perf_counter()
+        try:
+            return _extract_model_action_from_chat(response, user_text)
+        finally:
+            if generation_field == "proposal_generation_ms":
+                _add_diagnostic_ms(
+                    diagnostics,
+                    "proposal_parsing_ms",
+                    _elapsed_ms(parse_started),
+                )
 
     def _chat(
         self,
@@ -130,7 +179,12 @@ class OllamaModel:
             f"Observation: {json.dumps(observation.result)}\n"
             "Final response:"
         )
+        diagnostics = self.last_turn_diagnostics
+        started = time.perf_counter()
         response = self._chat([{"role": "user", "content": prompt}])
+        diagnostics.final_generation_ms = _elapsed_ms(started)
+        _record_token_counts(diagnostics, response)
+        object.__setattr__(self, "_last_turn_diagnostics", diagnostics)
         text = ((response.get("message") or {}).get("content") or "").strip()
         if text and not _looks_like_generic_final_response(text):
             return FinalResponse(text=text)
@@ -410,3 +464,35 @@ def _debug_parsed_action(action: ModelAction) -> None:
         print(f"[odessy:model-repair] parsed tool request:\n{payload}")
     else:
         print(f"[odessy:model-repair] parsed final response:\n{action.text}")
+
+
+def _elapsed_ms(started: float) -> float:
+    return (time.perf_counter() - started) * 1000.0
+
+
+def _add_diagnostic_ms(
+    diagnostics: ModelTurnDiagnostics,
+    field_name: str,
+    value: float,
+) -> None:
+    current = getattr(diagnostics, field_name)
+    setattr(diagnostics, field_name, value if current is None else current + value)
+
+
+def _record_token_counts(
+    diagnostics: ModelTurnDiagnostics,
+    response: dict[str, Any],
+) -> None:
+    _add_tokens(diagnostics, "prompt_tokens", response.get("prompt_eval_count"))
+    _add_tokens(diagnostics, "completion_tokens", response.get("eval_count"))
+
+
+def _add_tokens(
+    diagnostics: ModelTurnDiagnostics,
+    field_name: str,
+    value: Any,
+) -> None:
+    if not isinstance(value, int):
+        return
+    current = getattr(diagnostics, field_name)
+    setattr(diagnostics, field_name, value if current is None else current + value)

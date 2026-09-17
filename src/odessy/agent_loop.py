@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Sequence
+from dataclasses import asdict
 from typing import Any, Protocol
 
 from mcp import Client
 
 from odessy.policy import OdessyPolicy
 from odessy.types import (
+    AgentTurnMetrics,
     AgentTurnResult,
     FinalResponse,
     LogEntry,
+    ModelTurnDiagnostics,
     ModelAction,
     ToolObservation,
     ToolRequest,
@@ -44,14 +48,35 @@ class OdessyAgent:
         self._mcp_servers = _normalize_mcp_servers(mcp_server)
         self._confirm = confirm
 
-    async def run_turn(self, user_text: str) -> AgentTurnResult:
+    async def run_turn(
+        self,
+        user_text: str,
+        *,
+        status_callback: Callable[[str], None] | None = None,
+    ) -> AgentTurnResult:
+        turn_started = time.perf_counter()
+        metrics = AgentTurnMetrics()
         log: list[LogEntry] = [LogEntry("user_input", {"text": user_text})]
+        _status(status_callback, "Generating action proposal")
+        proposal_started = time.perf_counter()
         action = self._model.propose(user_text)
+        proposal_elapsed = _elapsed_ms(proposal_started)
+        _merge_model_diagnostics(
+            metrics,
+            _model_diagnostics(self._model),
+            fallback_proposal_generation_ms=proposal_elapsed,
+        )
 
         if isinstance(action, FinalResponse):
             log.append(LogEntry("model_final_response", {"text": action.text}))
-            return AgentTurnResult(final_text=action.text, log=log)
+            return _finish_turn_result(
+                final_text=action.text,
+                log=log,
+                metrics=metrics,
+                turn_started=turn_started,
+            )
 
+        metrics.tool_called = True
         log.append(
             LogEntry(
                 "model_tool_request",
@@ -59,7 +84,10 @@ class OdessyAgent:
             )
         )
 
+        _status(status_callback, "Validating action")
+        policy_started = time.perf_counter()
         preflight_decision = self._policy.evaluate(action)
+        _add_ms(metrics, "policy_validation_ms", _elapsed_ms(policy_started))
         if preflight_decision.action == "deny":
             log.append(
                 LogEntry(
@@ -73,12 +101,16 @@ class OdessyAgent:
             )
             raise PermissionError(f"Policy denied request: {preflight_decision.reason}")
 
+        mcp_started = time.perf_counter()
         tool_registry = await self._collect_tool_registry()
+        _add_ms(metrics, "mcp_execution_ms", _elapsed_ms(mcp_started))
 
+        policy_started = time.perf_counter()
         self._validate_tool_request(action, tool_registry)
         log.append(LogEntry("schema_validated", {"name": action.name}))
 
         decision = self._policy.evaluate(action)
+        _add_ms(metrics, "policy_validation_ms", _elapsed_ms(policy_started))
         if decision.action == "deny":
             raise PermissionError(f"Policy denied request: {decision.reason}")
         if decision.requires_confirmation:
@@ -120,10 +152,13 @@ class OdessyAgent:
                 )
             )
 
+        _status(status_callback, "Running tool")
+        mcp_started = time.perf_counter()
         result = await self._call_tool(action.name, action.arguments, tool_registry)
         log.append(LogEntry("mcp_tool_called", {"name": action.name}))
 
         structured_result = self._extract_structured_result(result)
+        _add_ms(metrics, "mcp_execution_ms", _elapsed_ms(mcp_started))
         observation = ToolObservation(request=action, result=structured_result)
         log.append(
             LogEntry(
@@ -132,12 +167,22 @@ class OdessyAgent:
             )
         )
 
+        _status(status_callback, "Generating response")
+        final_started = time.perf_counter()
         final = self._model.respond_to_observation(user_text, observation)
+        final_elapsed = _elapsed_ms(final_started)
+        _merge_model_diagnostics(
+            metrics,
+            _model_diagnostics(self._model),
+            fallback_final_generation_ms=final_elapsed,
+        )
         log.append(LogEntry("model_final_response", {"text": final.text}))
 
-        return AgentTurnResult(
+        return _finish_turn_result(
             final_text=final.text,
             log=log,
+            metrics=metrics,
+            turn_started=turn_started,
             tool_request=action,
             tool_result=structured_result,
         )
@@ -240,3 +285,76 @@ def _normalize_mcp_servers(mcp_server: Any) -> tuple[Any, ...]:
     if isinstance(mcp_server, Sequence) and not isinstance(mcp_server, (str, bytes, bytearray)):
         return tuple(server for server in mcp_server if server is not None)
     return (mcp_server,)
+
+
+def _status(callback: Callable[[str], None] | None, message: str) -> None:
+    if callback is not None:
+        callback(message)
+
+
+def _elapsed_ms(started: float) -> float:
+    return (time.perf_counter() - started) * 1000.0
+
+
+def _add_ms(metrics: AgentTurnMetrics, field_name: str, value: float | None) -> None:
+    if value is None:
+        return
+    current = getattr(metrics, field_name)
+    setattr(metrics, field_name, value if current is None else current + value)
+
+
+def _model_diagnostics(model: Any) -> ModelTurnDiagnostics | None:
+    diagnostics = getattr(model, "last_turn_diagnostics", None)
+    if isinstance(diagnostics, ModelTurnDiagnostics):
+        return diagnostics
+    return None
+
+
+def _merge_model_diagnostics(
+    metrics: AgentTurnMetrics,
+    diagnostics: ModelTurnDiagnostics | None,
+    *,
+    fallback_proposal_generation_ms: float | None = None,
+    fallback_final_generation_ms: float | None = None,
+) -> None:
+    if diagnostics is None:
+        _add_ms(metrics, "proposal_generation_ms", fallback_proposal_generation_ms)
+        _add_ms(metrics, "final_generation_ms", fallback_final_generation_ms)
+        return
+    for name in (
+        "proposal_generation_ms",
+        "proposal_parsing_ms",
+        "repair_generation_ms",
+        "final_generation_ms",
+    ):
+        value = getattr(diagnostics, name)
+        if value is not None:
+            setattr(metrics, name, value)
+    metrics.proposal_valid = diagnostics.proposal_valid
+    metrics.repair_triggered = diagnostics.repair_triggered
+    metrics.prompt_tokens = diagnostics.prompt_tokens
+    metrics.completion_tokens = diagnostics.completion_tokens
+    if metrics.proposal_generation_ms is None:
+        metrics.proposal_generation_ms = fallback_proposal_generation_ms
+    if metrics.final_generation_ms is None:
+        metrics.final_generation_ms = fallback_final_generation_ms
+
+
+def _finish_turn_result(
+    *,
+    final_text: str,
+    log: list[LogEntry],
+    metrics: AgentTurnMetrics,
+    turn_started: float,
+    tool_request: ToolRequest | None = None,
+    tool_result: dict[str, Any] | None = None,
+) -> AgentTurnResult:
+    metrics.agent_turn_total_ms = _elapsed_ms(turn_started)
+    log.append(LogEntry("agent_turn_metrics", asdict(metrics)))
+    return AgentTurnResult(
+        final_text=final_text,
+        log=log,
+        tool_request=tool_request,
+        tool_result=tool_result,
+        metrics=metrics,
+    )

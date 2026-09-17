@@ -77,6 +77,10 @@ def test_lfm_successful_tool_request_conversion() -> None:
     assert isinstance(action, ToolRequest)
     assert action.name == "terminal.run"
     assert action.arguments == {"command": "pwd"}
+    assert model.last_turn_diagnostics.proposal_valid is True
+    assert model.last_turn_diagnostics.repair_triggered is False
+    assert model.last_turn_diagnostics.proposal_generation_ms is not None
+    assert model.last_turn_diagnostics.proposal_parsing_ms is not None
 
 
 def test_lfm_native_tool_call_conversion() -> None:
@@ -171,6 +175,31 @@ def test_lfm_repairs_malformed_json_once() -> None:
     assert isinstance(action, ToolRequest)
     assert action.arguments == {"command": "pwd"}
     assert len(model.calls) == 2
+    assert model.last_turn_diagnostics.proposal_valid is False
+    assert model.last_turn_diagnostics.repair_triggered is True
+    assert model.last_turn_diagnostics.repair_generation_ms is not None
+
+
+def test_lfm_records_token_counts_when_available() -> None:
+    model = QueuedLFM(
+        [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "hello",
+                    "tool_calls": [],
+                },
+                "prompt_eval_count": 12,
+                "eval_count": 5,
+            }
+        ]
+    )
+
+    action = model.propose("hi")
+
+    assert isinstance(action, FinalResponse)
+    assert model.last_turn_diagnostics.prompt_tokens == 12
+    assert model.last_turn_diagnostics.completion_tokens == 5
 
 
 def test_lfm_repair_fails_after_exactly_one_retry() -> None:

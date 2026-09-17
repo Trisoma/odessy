@@ -66,10 +66,17 @@ def test_runner_writes_csv_and_jsonl(tmp_path: Path) -> None:
     assert "process_tree_rss_after_bytes" in rows[0]
     assert "system_ram_used_after_bytes" in rows[0]
     assert "components_invoked" in rows[0]
+    voice_rows = [row for row in rows if row["scenario"] == "voice_turn"]
+    assert voice_rows
+    assert voice_rows[0]["agent_turn_total_ms"]
+    assert voice_rows[0]["proposal_generation_ms"]
+    assert voice_rows[0]["tool_called"] in {"True", "False"}
 
     with (tmp_path / "out" / "samples.jsonl").open("r", encoding="utf-8") as handle:
         lines = [json.loads(line) for line in handle if line.strip()]
     assert len(lines) == len(run.samples)
+    voice_items = [item for item in lines if item["scenario"] == "voice_turn"]
+    assert voice_items[0]["agent_turn_total_ms"] is not None
 
 
 def test_voice_turn_uses_provided_audio_without_recording_copy(tmp_path: Path) -> None:

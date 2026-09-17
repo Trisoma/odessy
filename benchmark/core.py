@@ -102,6 +102,18 @@ class BenchmarkSample:
     notes: str | None = None
     error: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
+    agent_turn_total_ms: float | None = None
+    proposal_generation_ms: float | None = None
+    proposal_parsing_ms: float | None = None
+    repair_generation_ms: float | None = None
+    policy_validation_ms: float | None = None
+    mcp_execution_ms: float | None = None
+    final_generation_ms: float | None = None
+    proposal_valid: bool | None = None
+    repair_triggered: bool | None = None
+    tool_called: bool | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
     profile: str | None = None
     component: str | None = None
     execution_path: str | None = None
@@ -269,6 +281,18 @@ class BenchmarkRunner:
             notes=notes,
             error=error,
             details=details,
+            agent_turn_total_ms=_detail_value(details, "agent_turn_total_ms"),
+            proposal_generation_ms=_detail_value(details, "proposal_generation_ms"),
+            proposal_parsing_ms=_detail_value(details, "proposal_parsing_ms"),
+            repair_generation_ms=_detail_value(details, "repair_generation_ms"),
+            policy_validation_ms=_detail_value(details, "policy_validation_ms"),
+            mcp_execution_ms=_detail_value(details, "mcp_execution_ms"),
+            final_generation_ms=_detail_value(details, "final_generation_ms"),
+            proposal_valid=_detail_value(details, "proposal_valid"),
+            repair_triggered=_detail_value(details, "repair_triggered"),
+            tool_called=_detail_value(details, "tool_called"),
+            prompt_tokens=_detail_value(details, "prompt_tokens"),
+            completion_tokens=_detail_value(details, "completion_tokens"),
             profile=_detail_value(details, "profile"),
             component=_detail_value(details, "component"),
             execution_path=_detail_value(details, "execution_path"),

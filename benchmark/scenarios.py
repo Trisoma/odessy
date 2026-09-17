@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -380,6 +380,7 @@ class VoiceTurnBenchmark:
             turn = asyncio.run(self.agent.run_turn(transcript))
             stages["agent_ms"] = (time.perf_counter() - agent_begin) * 1000.0
             final_text = turn.final_text
+            agent_metrics = asdict(turn.metrics)
             if turn.tool_request is not None:
                 tool_request_name = turn.tool_request.name
 
@@ -398,6 +399,7 @@ class VoiceTurnBenchmark:
                         "transcript": transcript,
                         "final_text": final_text,
                         "tool_request_name": tool_request_name,
+                        **agent_metrics,
                         "total_ms": (time.perf_counter() - started) * 1000.0,
                         "components_invoked": components_invoked,
                     },
@@ -425,6 +427,7 @@ class VoiceTurnBenchmark:
                 "transcript": transcript,
                 "final_text": final_text,
                 "tool_request_name": tool_request_name,
+                **(agent_metrics if "agent_metrics" in locals() else {}),
                 "total_ms": (time.perf_counter() - started) * 1000.0,
                 "components_invoked": components_invoked,
             },

@@ -43,6 +43,7 @@ async def test_terminal_run_pwd_flows_through_policy_and_mcp(tmp_path: Path) -> 
         "mcp_tool_called",
         "tool_observation",
         "model_final_response",
+        "agent_turn_metrics",
     ]
 
 
