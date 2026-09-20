@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
@@ -85,6 +86,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=None,
         help="Named matrix profile to run; may be supplied more than once.",
     )
+    parser.add_argument(
+        "--ollama-num-gpu",
+        type=int,
+        default=None,
+        help="Benchmark-only Ollama num_gpu option for partial LFM GPU offload.",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -117,7 +124,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             tmp_dir=config.tmp_dir,
         )
 
-    components = build_fake_components() if args.adapter == "fake" else build_real_components(config, workspace_root)
+    ollama_num_gpu = (
+        args.ollama_num_gpu
+        if args.ollama_num_gpu is not None
+        else _optional_env_int("ODESSY_BENCHMARK_OLLAMA_NUM_GPU")
+    )
+    components = (
+        build_fake_components()
+        if args.adapter == "fake"
+        else build_real_components(config, workspace_root, ollama_num_gpu=ollama_num_gpu)
+    )
     scenarios = _build_scenarios(args, config, output_dir, components)
 
     runner = BenchmarkRunner(
@@ -132,6 +148,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "audio_path": args.audio_path,
             "prompt": args.prompt,
             "text": args.text,
+            "ollama_num_gpu": ollama_num_gpu,
         },
     )
     run = runner.run(scenarios)
@@ -221,6 +238,15 @@ def _resolve_output_dir(
         result_root /= "tts"
     result_root /= "results"
     return result_root / stamp
+
+def _optional_env_int(name: str) -> int | None:
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        raise SystemExit(f"{name} must be an integer")
 
 def _build_scenarios(
     args: argparse.Namespace,

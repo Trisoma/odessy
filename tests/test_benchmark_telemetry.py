@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from benchmark.scenarios import build_real_components
+from benchmark.scenarios import BenchmarkPartialGpuLFMModel, build_real_components
 from benchmark.telemetry import (
     sample_benchmark_process_memory,
     sample_process_tree_memory,
@@ -68,10 +69,36 @@ def test_real_voice_turn_components_are_wired(tmp_path: Path) -> None:
 
     components = build_real_components(config, tmp_path)
 
-    assert components["model"].__class__.__name__ == "OllamaModel"
+    assert components["model"].__class__.__name__ == "LlamaCppLFMModel"
     assert components["stt"].__class__.__name__ == "WhisperCppSTT"
     assert components["tts"].__class__.__name__ == "KokoroTTS"
     assert components["audio_io"].__class__.__name__ == "CommandAudioIO"
+
+
+def test_benchmark_partial_gpu_lfm_model_sends_num_gpu(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"message":{"role":"assistant","content":"ok"}}'
+
+    def fake_urlopen(request, timeout: int):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    model = BenchmarkPartialGpuLFMModel(model="lfm", endpoint="http://localhost:11434", num_gpu=12)
+
+    model._chat([{"role": "user", "content": "hello"}])
+
+    assert captured["payload"]["options"]["num_gpu"] == 12
 
 
 def _write_status(path: Path, *, pid: int, ppid: int, rss_kb: int, swap_kb: int) -> None:

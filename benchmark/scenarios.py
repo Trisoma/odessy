@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
+import urllib.error
+import urllib.request
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
 from odessy.agent_loop import OdessyAgent
-from odessy.ollama_model import OllamaModel
+from odessy.lfm_model import LlamaCppLFMModel, normalize_ollama_chat_response
 from odessy.policy import OdessyPolicy
 from odessy.types import FinalResponse, ToolObservation, ToolRequest
 from odessy.voice.audio_io import CommandAudioIO
@@ -33,6 +36,49 @@ class VoiceBenchmarkAudioIO(Protocol):
 
     def play(self, audio_path: Path) -> None:
         ...
+
+
+@dataclass(frozen=True)
+class BenchmarkPartialGpuLFMModel(LlamaCppLFMModel):
+    """Benchmark-only LFM adapter that asks Ollama for partial GPU offload."""
+
+    num_gpu: int | None = None
+
+    def _chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            "temperature": self.temperature,
+        }
+        if self.num_gpu is not None:
+            payload["options"] = {"num_gpu": self.num_gpu}
+        if tools:
+            payload["tools"] = tools
+        request = urllib.request.Request(
+            f"{self.endpoint.rstrip('/')}/api/chat",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                return normalize_ollama_chat_response(json.loads(response.read().decode("utf-8")))
+        except urllib.error.HTTPError as error:
+            body = _read_error_body(error)
+            if "does not support tools" in body:
+                from odessy.ollama_model import _OllamaToolsUnsupported
+
+                raise _OllamaToolsUnsupported(body) from error
+            raise RuntimeError(
+                f"Ollama LFM API call failed ({error.code}): {body or error.reason}"
+            ) from error
+        except urllib.error.URLError as error:
+            raise RuntimeError(f"Ollama LFM API call failed: {error}") from error
 
 
 @dataclass(frozen=True)
@@ -73,6 +119,7 @@ class GemmaBenchmark:
                 "components_invoked": {
                     "model": _component_name(self.model),
                     "ollama_model": getattr(self.model, "model", None),
+                    "ollama_num_gpu": getattr(self.model, "num_gpu", None),
                 },
             },
         )
@@ -435,8 +482,16 @@ class VoiceTurnBenchmark:
         )
 
 
-def build_real_components(config: VoiceConfig, workspace_root: Path) -> dict[str, Any]:
-    model = OllamaModel(model=config.ollama_model)
+def build_real_components(
+    config: VoiceConfig,
+    workspace_root: Path,
+    *,
+    ollama_num_gpu: int | None = None,
+) -> dict[str, Any]:
+    if ollama_num_gpu is None:
+        model = LlamaCppLFMModel(model=config.ollama_model)
+    else:
+        model = BenchmarkPartialGpuLFMModel(model=config.ollama_model, num_gpu=ollama_num_gpu)
     stt = WhisperCppSTT(whisper_bin=config.whisper_bin, model_path=config.whisper_model)
     tts = KokoroTTS(
         model_path=config.kokoro_model,
@@ -500,9 +555,17 @@ def _voice_components(
         "stt": _component_name(stt),
         "model": _component_name(model) if model is not None else None,
         "ollama_model": getattr(model, "model", None),
+        "ollama_num_gpu": getattr(model, "num_gpu", None),
         "tts": _component_name(tts),
         "whisper_bin": getattr(stt, "whisper_bin", None),
         "whisper_model": getattr(stt, "model_path", None),
         "kokoro_model": getattr(tts, "model_path", None),
         "kokoro_voices": getattr(tts, "voices_path", None),
     }
+
+
+def _read_error_body(error: urllib.error.HTTPError) -> str:
+    try:
+        return error.read().decode("utf-8", "replace")
+    except Exception:
+        return ""
