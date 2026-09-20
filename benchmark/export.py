@@ -69,6 +69,23 @@ def write_csv(path: Path, samples: list[BenchmarkSample]) -> None:
         "policy_validation_ms",
         "mcp_execution_ms",
         "final_generation_ms",
+        "model_total_duration_ms",
+        "prompt_eval_duration_ms",
+        "prompt_eval_count",
+        "eval_duration_ms",
+        "eval_count",
+        "generation_tokens_per_sec",
+        "model_call_count",
+        "thinking_exposed",
+        "thinking_chars",
+        "thinking_token_count",
+        "response_chars",
+        "configuration",
+        "model_name",
+        "think_setting",
+        "expected_tool",
+        "selected_tool",
+        "tool_selection_correct",
         "proposal_valid",
         "repair_triggered",
         "tool_called",
@@ -134,6 +151,27 @@ def write_csv(path: Path, samples: list[BenchmarkSample]) -> None:
                 "policy_validation_ms": _format_number(sample.policy_validation_ms),
                 "mcp_execution_ms": _format_number(sample.mcp_execution_ms),
                 "final_generation_ms": _format_number(sample.final_generation_ms),
+                "model_total_duration_ms": _format_number(sample.model_total_duration_ms),
+                "prompt_eval_duration_ms": _format_number(
+                    sample.prompt_eval_duration_ms
+                ),
+                "prompt_eval_count": sample.prompt_eval_count,
+                "eval_duration_ms": _format_number(sample.eval_duration_ms),
+                "eval_count": sample.eval_count,
+                "generation_tokens_per_sec": _format_number(
+                    sample.generation_tokens_per_sec
+                ),
+                "model_call_count": sample.model_call_count,
+                "thinking_exposed": sample.thinking_exposed,
+                "thinking_chars": sample.thinking_chars,
+                "thinking_token_count": sample.thinking_token_count,
+                "response_chars": sample.response_chars,
+                "configuration": sample.configuration,
+                "model_name": sample.model_name,
+                "think_setting": sample.think_setting,
+                "expected_tool": sample.expected_tool,
+                "selected_tool": sample.selected_tool,
+                "tool_selection_correct": sample.tool_selection_correct,
                 "proposal_valid": sample.proposal_valid,
                 "repair_triggered": sample.repair_triggered,
                 "tool_called": sample.tool_called,
@@ -200,6 +238,68 @@ def print_summary(run: BenchmarkRun) -> None:
             f"{_fmt(row.initialization_p50_ms):>10s}"
         )
     print("========================================================================")
+
+
+def print_lfm_comparison(run: BenchmarkRun) -> None:
+    samples_by_scenario: dict[str, list[BenchmarkSample]] = {}
+    for sample in run.samples:
+        if sample.is_warmup:
+            continue
+        if sample.scenario.startswith("lfm_compare:"):
+            samples_by_scenario.setdefault(sample.scenario, []).append(sample)
+    if not samples_by_scenario:
+        return
+
+    print("\n=========================== LFM comparison =============================")
+    print(
+        f"{'configuration':20s} {'latency ms':>12s} {'prompt ms':>11s} "
+        f"{'gen ms':>10s} {'tokens':>8s} {'tok/s':>9s} {'valid':>7s} "
+        f"{'tool':>7s} {'calls':>6s}"
+    )
+    print("------------------------------------------------------------------------")
+    for samples in samples_by_scenario.values():
+        details = [sample.details for sample in samples]
+        configuration = str(details[0].get("configuration", samples[0].scenario))
+        print(
+            f"{configuration:20.20s} "
+            f"{_fmt(_median_detail(details, 'model_total_duration_ms')):>12s} "
+            f"{_fmt(_median_detail(details, 'prompt_eval_duration_ms')):>11s} "
+            f"{_fmt(_median_detail(details, 'eval_duration_ms')):>10s} "
+            f"{_fmt_int(_median_detail(details, 'eval_count')):>8s} "
+            f"{_fmt(_median_detail(details, 'generation_tokens_per_sec')):>9s} "
+            f"{_bool_summary(details, 'proposal_valid'):>7s} "
+            f"{_bool_summary(details, 'tool_selection_correct'):>7s} "
+            f"{_fmt_int(_median_detail(details, 'model_call_count')):>6s}"
+        )
+    print("========================================================================")
+
+
+def _median_detail(details: list[dict[str, Any]], key: str) -> float | None:
+    values = [
+        float(item[key])
+        for item in details
+        if isinstance(item.get(key), (int, float))
+    ]
+    if not values:
+        return None
+    values.sort()
+    middle = len(values) // 2
+    if len(values) % 2:
+        return values[middle]
+    return (values[middle - 1] + values[middle]) / 2.0
+
+
+def _fmt_int(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return str(int(round(value)))
+
+
+def _bool_summary(details: list[dict[str, Any]], key: str) -> str:
+    values = [item.get(key) for item in details if item.get(key) is not None]
+    if not values:
+        return "-"
+    return "yes" if all(values) else "no"
 
 
 def _fmt(value: float | None) -> str:

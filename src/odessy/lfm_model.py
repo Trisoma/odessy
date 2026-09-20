@@ -53,7 +53,18 @@ def normalize_ollama_chat_response(data: dict[str, Any]) -> dict[str, Any]:
             "tool_calls": message.get("tool_calls") or [],
         }
     }
-    for key in ("prompt_eval_count", "eval_count"):
+    if "thinking" in message:
+        normalized["message"]["thinking"] = message.get("thinking")
+    for key in (
+        "total_duration",
+        "prompt_eval_duration",
+        "prompt_eval_count",
+        "eval_duration",
+        "eval_count",
+        "thinking",
+        "thinking_token_count",
+        "thinking_tokens",
+    ):
         if key in data:
             normalized[key] = data[key]
     return normalized
@@ -72,6 +83,7 @@ class LlamaCppLFMModel:
     endpoint: str = DEFAULT_LFM_ENDPOINT
     timeout: int = 120
     temperature: float = 0.0
+    think: bool | str | None = None
 
     @property
     def last_turn_diagnostics(self) -> ModelTurnDiagnostics:
@@ -122,9 +134,10 @@ class LlamaCppLFMModel:
         generation_field: str = "proposal_generation_ms",
     ) -> ModelAction:
         started = time.perf_counter()
+        _record_model_call_attempt(diagnostics)
         response = self._chat([{"role": "user", "content": prompt}])
         _add_diagnostic_ms(diagnostics, generation_field, _elapsed_ms(started))
-        _record_token_counts(diagnostics, response)
+        _record_ollama_response(diagnostics, response)
         parse_started = time.perf_counter()
         try:
             return _extract_model_action_from_chat(response, user_text)
@@ -148,9 +161,10 @@ class LlamaCppLFMModel:
         ]
         try:
             started = time.perf_counter()
+            _record_model_call_attempt(diagnostics)
             response = self._chat(messages, tools=_select_tools(tool_name))
             _add_diagnostic_ms(diagnostics, "proposal_generation_ms", _elapsed_ms(started))
-            _record_token_counts(diagnostics, response)
+            _record_ollama_response(diagnostics, response)
         except _OllamaToolsUnsupported:
             return self._chat_text_action(
                 user_text,
@@ -178,6 +192,8 @@ class LlamaCppLFMModel:
             "stream": False,
             "temperature": self.temperature,
         }
+        if self.think is not None:
+            payload["think"] = self.think
         if tools:
             payload["tools"] = tools
         request = urllib.request.Request(
@@ -215,9 +231,10 @@ class LlamaCppLFMModel:
         )
         diagnostics = self.last_turn_diagnostics
         started = time.perf_counter()
+        _record_model_call_attempt(diagnostics)
         response = self._chat([{"role": "user", "content": prompt}])
         diagnostics.final_generation_ms = _elapsed_ms(started)
-        _record_token_counts(diagnostics, response)
+        _record_ollama_response(diagnostics, response)
         object.__setattr__(self, "_last_turn_diagnostics", diagnostics)
         text = ((response.get("message") or {}).get("content") or "").strip()
         if text and not _looks_like_generic_final_response(text):
@@ -250,12 +267,62 @@ def _add_diagnostic_ms(
     setattr(diagnostics, field_name, value if current is None else current + value)
 
 
-def _record_token_counts(
+def _record_model_call_attempt(diagnostics: ModelTurnDiagnostics) -> None:
+    diagnostics.model_call_count += 1
+
+
+def _record_ollama_response(
     diagnostics: ModelTurnDiagnostics,
     response: dict[str, Any],
 ) -> None:
+    _add_duration_ms(diagnostics, "model_total_duration_ms", response.get("total_duration"))
+    _add_duration_ms(
+        diagnostics,
+        "prompt_eval_duration_ms",
+        response.get("prompt_eval_duration"),
+    )
+    _add_duration_ms(diagnostics, "eval_duration_ms", response.get("eval_duration"))
     _add_tokens(diagnostics, "prompt_tokens", response.get("prompt_eval_count"))
     _add_tokens(diagnostics, "completion_tokens", response.get("eval_count"))
+    _add_tokens(diagnostics, "prompt_eval_count", response.get("prompt_eval_count"))
+    _add_tokens(diagnostics, "eval_count", response.get("eval_count"))
+
+    message = response.get("message") or {}
+    content = message.get("content")
+    if isinstance(content, str):
+        diagnostics.response_chars += len(content)
+    thinking = message.get("thinking", response.get("thinking"))
+    if isinstance(thinking, str):
+        diagnostics.thinking_exposed = True
+        diagnostics.thinking_chars += len(thinking)
+
+    thinking_tokens = response.get("thinking_token_count")
+    if thinking_tokens is None:
+        thinking_tokens = response.get("thinking_tokens")
+    if thinking_tokens is None:
+        thinking_tokens = message.get("thinking_token_count")
+    _add_tokens(diagnostics, "thinking_token_count", thinking_tokens)
+
+    if diagnostics.eval_duration_ms and diagnostics.eval_count is not None:
+        diagnostics.generation_tokens_per_sec = diagnostics.eval_count / (
+            diagnostics.eval_duration_ms / 1000.0
+        )
+
+
+def _add_duration_ms(
+    diagnostics: ModelTurnDiagnostics,
+    field_name: str,
+    value: Any,
+) -> None:
+    if not isinstance(value, (int, float)):
+        return
+    value_ms = float(value) / 1_000_000.0
+    current = getattr(diagnostics, field_name)
+    setattr(
+        diagnostics,
+        field_name,
+        value_ms if current is None else current + value_ms,
+    )
 
 
 def _add_tokens(

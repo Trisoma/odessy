@@ -109,6 +109,23 @@ class BenchmarkSample:
     policy_validation_ms: float | None = None
     mcp_execution_ms: float | None = None
     final_generation_ms: float | None = None
+    model_total_duration_ms: float | None = None
+    prompt_eval_duration_ms: float | None = None
+    prompt_eval_count: int | None = None
+    eval_duration_ms: float | None = None
+    eval_count: int | None = None
+    generation_tokens_per_sec: float | None = None
+    model_call_count: int | None = None
+    thinking_exposed: bool | None = None
+    thinking_chars: int | None = None
+    thinking_token_count: int | None = None
+    response_chars: int | None = None
+    configuration: str | None = None
+    model_name: str | None = None
+    think_setting: bool | str | None = None
+    expected_tool: str | None = None
+    selected_tool: str | None = None
+    tool_selection_correct: bool | None = None
     proposal_valid: bool | None = None
     repair_triggered: bool | None = None
     tool_called: bool | None = None
@@ -288,6 +305,27 @@ class BenchmarkRunner:
             policy_validation_ms=_detail_value(details, "policy_validation_ms"),
             mcp_execution_ms=_detail_value(details, "mcp_execution_ms"),
             final_generation_ms=_detail_value(details, "final_generation_ms"),
+            model_total_duration_ms=_detail_value(details, "model_total_duration_ms"),
+            prompt_eval_duration_ms=_detail_value(details, "prompt_eval_duration_ms"),
+            prompt_eval_count=_detail_value(details, "prompt_eval_count"),
+            eval_duration_ms=_detail_value(details, "eval_duration_ms"),
+            eval_count=_detail_value(details, "eval_count"),
+            generation_tokens_per_sec=_detail_value(
+                details, "generation_tokens_per_sec"
+            ),
+            model_call_count=_detail_value(details, "model_call_count"),
+            thinking_exposed=_detail_value(details, "thinking_exposed"),
+            thinking_chars=_detail_value(details, "thinking_chars"),
+            thinking_token_count=_detail_value(details, "thinking_token_count"),
+            response_chars=_detail_value(details, "response_chars"),
+            configuration=_detail_value(details, "configuration"),
+            model_name=_detail_value(details, "model"),
+            think_setting=_detail_value(details, "think_setting"),
+            expected_tool=_detail_value(details, "expected_tool"),
+            selected_tool=_detail_value(details, "selected_tool"),
+            tool_selection_correct=_detail_value(
+                details, "tool_selection_correct"
+            ),
             proposal_valid=_detail_value(details, "proposal_valid"),
             repair_triggered=_detail_value(details, "repair_triggered"),
             tool_called=_detail_value(details, "tool_called"),

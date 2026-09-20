@@ -326,10 +326,22 @@ def _merge_model_diagnostics(
         "proposal_parsing_ms",
         "repair_generation_ms",
         "final_generation_ms",
+        "model_total_duration_ms",
+        "prompt_eval_duration_ms",
+        "eval_duration_ms",
+        "generation_tokens_per_sec",
     ):
         value = getattr(diagnostics, name)
         if value is not None:
             setattr(metrics, name, value)
+    for name in ("prompt_eval_count", "eval_count", "thinking_token_count"):
+        value = getattr(diagnostics, name)
+        if value is not None:
+            setattr(metrics, name, value)
+    metrics.model_call_count = diagnostics.model_call_count
+    metrics.thinking_exposed = diagnostics.thinking_exposed
+    metrics.thinking_chars = diagnostics.thinking_chars
+    metrics.response_chars = diagnostics.response_chars
     metrics.proposal_valid = diagnostics.proposal_valid
     metrics.repair_triggered = diagnostics.repair_triggered
     metrics.prompt_tokens = diagnostics.prompt_tokens

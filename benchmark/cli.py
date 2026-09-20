@@ -12,17 +12,26 @@ from typing import Sequence
 from odessy.voice.config import VoiceConfig
 
 from .core import BenchmarkRunner
-from .export import print_summary, write_csv, write_jsonl, write_metadata
+from .export import (
+    print_lfm_comparison,
+    print_summary,
+    write_csv,
+    write_jsonl,
+    write_metadata,
+)
 from .fakes import FakeSTT, FakeTTS, NoOpAudioIO, fake_model
 from .profiles import load_profiles
 from .scenarios import (
     GemmaBenchmark,
+    LFMCompareBenchmark,
     KokoroMatrixBenchmark,
     STTBenchmark,
     TTSBenchmark,
     VoiceTurnBenchmark,
+    build_lfm_compare_model,
     build_fake_components,
     build_real_components,
+    parse_lfm_variant,
 )
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -30,7 +39,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--scenario",
         default="all",
-        choices=["all", "stt", "gemma", "tts", "voice_turn"],
+        choices=["all", "stt", "gemma", "tts", "voice_turn", "lfm_compare"],
         help="Benchmark scenario to run.",
     )
     parser.add_argument("--runs", type=int, default=5, help="Measured runs per scenario.")
@@ -106,6 +115,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         default="auto",
         help="PyTorch TTS device; auto selects CUDA when available.",
     )
+    parser.add_argument(
+        "--lfm-variant",
+        action="append",
+        default=None,
+        help="LFM comparison variant NAME=MODEL[@THINK_SETTING]; repeatable.",
+    )
+    parser.add_argument(
+        "--expected-tool",
+        default=None,
+        help="Expected tool name for lfm_compare correctness scoring.",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     repo_root = Path(__file__).resolve().parents[1]
@@ -148,18 +168,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.ollama_num_gpu is not None
         else _optional_env_int("ODESSY_BENCHMARK_OLLAMA_NUM_GPU")
     )
-    components = (
-        build_fake_components()
-        if args.adapter == "fake"
-        else build_real_components(
-            config,
-            workspace_root,
+    if args.scenario == "lfm_compare":
+        scenarios = _build_lfm_compare_scenarios(
+            args,
             ollama_num_gpu=ollama_num_gpu,
-            tts_backend=args.tts_backend,
-            tts_device=args.tts_device,
         )
-    )
-    scenarios = _build_scenarios(args, config, output_dir, components)
+    else:
+        components = (
+            build_fake_components()
+            if args.adapter == "fake"
+            else build_real_components(
+                config,
+                workspace_root,
+                ollama_num_gpu=ollama_num_gpu,
+                tts_backend=args.tts_backend,
+                tts_device=args.tts_device,
+            )
+        )
+        scenarios = _build_scenarios(args, config, output_dir, components)
 
     runner = BenchmarkRunner(
         runs=max(0, args.runs),
@@ -176,6 +202,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "ollama_num_gpu": ollama_num_gpu,
             "tts_backend": args.tts_backend,
             "tts_device": args.tts_device,
+            "lfm_variants": args.lfm_variant,
+            "expected_tool": args.expected_tool,
         },
     )
     run = runner.run(scenarios)
@@ -184,6 +212,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     write_csv(output_dir / "samples.csv", run.samples)
     write_jsonl(output_dir / "samples.jsonl", run.samples)
     print_summary(run)
+    print_lfm_comparison(run)
     print(f"\nWrote benchmark data to: {output_dir}")
     return 0
 
@@ -403,6 +432,39 @@ def _build_scenarios(
         else:
             raise SystemExit(f"Unknown scenario: {scenario_name}")
 
+    return scenarios
+
+
+def _build_lfm_compare_scenarios(
+    args: argparse.Namespace,
+    *,
+    ollama_num_gpu: int | None,
+):
+    if args.adapter != "real":
+        raise SystemExit("--scenario lfm_compare requires --adapter real")
+    if not args.lfm_variant:
+        raise SystemExit("--scenario lfm_compare requires at least one --lfm-variant")
+
+    endpoint = os.environ.get("ODESSY_MODEL_ENDPOINT")
+    scenarios = []
+    for spec in args.lfm_variant:
+        try:
+            variant = parse_lfm_variant(spec)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        model = build_lfm_compare_model(
+            variant,
+            endpoint=endpoint,
+            ollama_num_gpu=ollama_num_gpu,
+        )
+        scenarios.append(
+            LFMCompareBenchmark(
+                model=model,
+                variant=variant,
+                prompt=args.prompt,
+                expected_tool=args.expected_tool,
+            )
+        )
     return scenarios
 
 def _seed_fake_audio(path: Path) -> Path:

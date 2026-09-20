@@ -38,3 +38,25 @@ py -3.10 -m benchmark `
 
 TTS scenario and matrix results are written by default under
 `benchmark/tts/results/`. Explicit `--output-dir` values still take precedence.
+
+## LFM Latency Comparison
+
+Run the proposal-only comparison without constructing STT or TTS:
+
+```bash
+python -m benchmark \
+  --scenario lfm_compare \
+  --adapter real \
+  --prompt "What time is it?" \
+  --expected-tool time.now \
+  --lfm-variant current=lfm2.5-thinking:1.2b-q8_0 \
+  --lfm-variant minimal=lfm2.5-thinking:1.2b-q8_0@false \
+  --lfm-variant low=lfm2.5-thinking:1.2b-q8_0@low \
+  --runs 3 \
+  --warmup 1
+```
+
+Each row reports Ollama model latency, prompt evaluation time, generation
+time, generated tokens, generation throughput, call count, proposal validity,
+and expected-tool correctness. Missing reasoning-token counts remain empty
+unless Ollama exposes them.

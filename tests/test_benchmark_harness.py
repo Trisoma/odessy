@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import asyncio
 from pathlib import Path
 
 from benchmark.cli import main as benchmark_main
@@ -11,14 +12,22 @@ from benchmark.fakes import FakeSTT, FakeTTS, NoOpAudioIO, fake_model
 from benchmark.scenarios import (
     BenchmarkPyTorchTTS,
     GemmaBenchmark,
+    LFMCompareBenchmark,
+    LFMVariant,
     STTBenchmark,
     TTSBenchmark,
     VoiceTurnBenchmark,
     build_real_components,
+    parse_lfm_variant,
 )
 from odessy.agent_loop import OdessyAgent
 from odessy.policy import OdessyPolicy
-from odessy.types import ToolObservation, ToolRequest
+from odessy.types import (
+    FinalResponse,
+    ModelTurnDiagnostics,
+    ToolObservation,
+    ToolRequest,
+)
 from odessy.voice.config import VoiceConfig
 
 
@@ -79,6 +88,9 @@ def test_runner_writes_csv_and_jsonl(tmp_path: Path) -> None:
     assert voice_rows[0]["agent_turn_total_ms"]
     assert voice_rows[0]["proposal_generation_ms"]
     assert voice_rows[0]["tool_called"] in {"True", "False"}
+    assert "model_total_duration_ms" in voice_rows[0]
+    assert "generation_tokens_per_sec" in voice_rows[0]
+    assert "tool_selection_correct" in voice_rows[0]
 
     with (tmp_path / "out" / "samples.jsonl").open("r", encoding="utf-8") as handle:
         lines = [json.loads(line) for line in handle if line.strip()]
@@ -175,6 +187,82 @@ def test_real_components_can_select_pytorch_cuda_tts(tmp_path: Path) -> None:
 
     assert isinstance(components["tts"], BenchmarkPyTorchTTS)
     assert components["tts"].device == "cuda"
+
+
+def test_parse_lfm_variant_supports_think_setting() -> None:
+    assert parse_lfm_variant("current=lfm2.5-thinking:1.2b-q8_0") == LFMVariant(
+        name="current",
+        model="lfm2.5-thinking:1.2b-q8_0",
+        think=None,
+    )
+    assert parse_lfm_variant("minimal=lfm2.5-thinking:1.2b-q8_0@false").think is False
+    assert parse_lfm_variant("low=lfm2.5-thinking:1.2b-q8_0@low").think == "low"
+
+
+def test_lfm_compare_records_native_metrics_and_tool_correctness() -> None:
+    class FakeLFM:
+        model = "lfm"
+        num_gpu = None
+
+        def __init__(self) -> None:
+            self.last_turn_diagnostics = ModelTurnDiagnostics(
+                model_total_duration_ms=1200.0,
+                prompt_eval_duration_ms=200.0,
+                prompt_eval_count=10,
+                eval_duration_ms=1000.0,
+                eval_count=20,
+                generation_tokens_per_sec=20.0,
+                model_call_count=1,
+                proposal_valid=True,
+                response_chars=42,
+            )
+
+        def propose(self, user_text: str) -> ToolRequest:
+            return ToolRequest(name="time.now", arguments={})
+
+    scenario = LFMCompareBenchmark(
+        model=FakeLFM(),
+        variant=LFMVariant("current", "lfm"),
+        prompt="What time is it?",
+        expected_tool="time.now",
+    )
+
+    outcome = scenario.run_once(iteration=0, is_warmup=False)
+
+    assert outcome.status == "ok"
+    assert outcome.details["model_total_duration_ms"] == 1200.0
+    assert outcome.details["eval_count"] == 20
+    assert outcome.details["tool_selection_correct"] is True
+
+
+def test_agent_result_propagates_native_lfm_metrics(tmp_path: Path) -> None:
+    class DiagnosticModel:
+        last_turn_diagnostics = ModelTurnDiagnostics(
+            model_total_duration_ms=1200.0,
+            prompt_eval_duration_ms=200.0,
+            eval_duration_ms=1000.0,
+            eval_count=20,
+            generation_tokens_per_sec=20.0,
+            model_call_count=1,
+        )
+
+        def propose(self, user_text: str) -> FinalResponse:
+            return FinalResponse(text="done")
+
+        def respond_to_observation(self, user_text: str, observation):
+            return FinalResponse(text="done")
+
+    agent = OdessyAgent(
+        model=DiagnosticModel(),
+        policy=OdessyPolicy(workspace_root=tmp_path),
+        mcp_server=None,
+    )
+
+    result = asyncio.run(agent.run_turn("hello"))
+
+    assert result.metrics.model_total_duration_ms == 1200.0
+    assert result.metrics.eval_count == 20
+    assert result.metrics.model_call_count == 1
 
 
 def _fake_audio(tmp_path: Path) -> Path:

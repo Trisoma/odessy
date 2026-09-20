@@ -92,6 +92,8 @@ class BenchmarkPartialGpuLFMModel(LlamaCppLFMModel):
         }
         if self.num_gpu is not None:
             payload["options"] = {"num_gpu": self.num_gpu}
+        if self.think is not None:
+            payload["think"] = self.think
         if tools:
             payload["tools"] = tools
         request = urllib.request.Request(
@@ -157,6 +159,99 @@ class GemmaBenchmark:
                     "ollama_num_gpu": getattr(self.model, "num_gpu", None),
                 },
             },
+        )
+
+
+LFM_THINK_SETTINGS = {"true", "false", "low", "medium", "high", "max"}
+
+
+@dataclass(frozen=True)
+class LFMVariant:
+    name: str
+    model: str
+    think: bool | str | None = None
+
+
+def parse_lfm_variant(spec: str) -> LFMVariant:
+    name, separator, value = spec.partition("=")
+    if not separator or not name.strip() or not value.strip():
+        raise ValueError(
+            "LFM variants must use NAME=MODEL[@THINK_SETTING] syntax"
+        )
+    model, separator, think_value = value.strip().partition("@")
+    if not model:
+        raise ValueError(f"LFM variant {name!r} has an empty model name")
+    if not separator:
+        return LFMVariant(name=name.strip(), model=model)
+    normalized = think_value.strip().lower()
+    if normalized not in LFM_THINK_SETTINGS:
+        raise ValueError(
+            f"LFM variant {name!r} has unsupported think setting {normalized!r}"
+        )
+    think: bool | str = normalized
+    if normalized == "true":
+        think = True
+    elif normalized == "false":
+        think = False
+    return LFMVariant(name=name.strip(), model=model, think=think)
+
+
+@dataclass(frozen=True)
+class LFMCompareBenchmark:
+    model: Any
+    variant: LFMVariant
+    prompt: str
+    expected_tool: str | None = None
+    name: str = field(default="", init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "name", f"lfm_compare:{self.variant.name}")
+
+    def run_once(self, *, iteration: int, is_warmup: bool) -> BenchmarkOutcome:
+        started = time.perf_counter()
+        action: Any | None = None
+        error: str | None = None
+        status = "ok"
+        try:
+            action = self.model.propose(self.prompt)
+        except Exception as exc:
+            error = str(exc)
+            status = "skipped" if _is_unavailable_lfm_error(error) else "failed"
+
+        diagnostics = getattr(self.model, "last_turn_diagnostics", None)
+        details = _diagnostic_details(diagnostics)
+        selected_tool = action.name if isinstance(action, ToolRequest) else None
+        proposal_valid = details.get("proposal_valid", True)
+        if error is not None:
+            proposal_valid = False
+        tool_correct = None
+        if self.expected_tool is not None:
+            tool_correct = selected_tool == self.expected_tool
+        details.update(
+            {
+                "configuration": self.variant.name,
+                "model": self.variant.model,
+                "think_setting": self.variant.think,
+                "prompt": self.prompt,
+                "expected_tool": self.expected_tool,
+                "selected_tool": selected_tool,
+                "tool_selection_correct": tool_correct,
+                "action_type": type(action).__name__ if action is not None else None,
+                "proposal_valid": proposal_valid,
+                "total_ms": (time.perf_counter() - started) * 1000.0,
+                "components_invoked": {
+                    "model": _component_name(self.model),
+                    "ollama_model": self.variant.model,
+                    "ollama_num_gpu": getattr(self.model, "num_gpu", None),
+                    "think": self.variant.think,
+                },
+            }
+        )
+        return BenchmarkOutcome(
+            status=status,
+            stage_ms={"proposal_ms": details["total_ms"]},
+            details=details,
+            error=error,
         )
 
 
@@ -556,6 +651,23 @@ def build_real_components(
     return {"model": model, "stt": stt, "tts": tts, "audio_io": audio_io, "agent": agent}
 
 
+def build_lfm_compare_model(
+    variant: LFMVariant,
+    *,
+    endpoint: str | None = None,
+    ollama_num_gpu: int | None = None,
+) -> LlamaCppLFMModel:
+    kwargs: dict[str, Any] = {
+        "model": variant.model,
+        "think": variant.think,
+    }
+    if endpoint is not None:
+        kwargs["endpoint"] = endpoint
+    if ollama_num_gpu is None:
+        return LlamaCppLFMModel(**kwargs)
+    return BenchmarkPartialGpuLFMModel(num_gpu=ollama_num_gpu, **kwargs)
+
+
 def build_fake_components() -> dict[str, Any]:
     model = fake_model()
     stt = FakeSTT()
@@ -575,6 +687,48 @@ def _unlink_if_exists(path: Path) -> None:
 
 def _component_name(component: Any) -> str:
     return type(component).__name__
+
+
+def _diagnostic_details(diagnostics: Any) -> dict[str, Any]:
+    if diagnostics is None:
+        return {}
+    names = (
+        "proposal_generation_ms",
+        "proposal_parsing_ms",
+        "repair_generation_ms",
+        "final_generation_ms",
+        "model_total_duration_ms",
+        "prompt_eval_duration_ms",
+        "prompt_eval_count",
+        "eval_duration_ms",
+        "eval_count",
+        "generation_tokens_per_sec",
+        "model_call_count",
+        "thinking_exposed",
+        "thinking_chars",
+        "thinking_token_count",
+        "response_chars",
+        "proposal_valid",
+        "repair_triggered",
+        "prompt_tokens",
+        "completion_tokens",
+    )
+    return {name: getattr(diagnostics, name) for name in names}
+
+
+def _is_unavailable_lfm_error(error: str) -> bool:
+    normalized = error.lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "model not found",
+            "model '",
+            "does not support thinking",
+            "unsupported think",
+            "invalid think",
+            "unknown model",
+        )
+    )
 
 
 def _runtime_info_from_error(error: Exception) -> RuntimeInfo | None:

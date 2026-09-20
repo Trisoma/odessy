@@ -133,6 +133,7 @@ def test_lfm_tools_unsupported_falls_back_to_text_json() -> None:
     assert isinstance(action, ToolRequest)
     assert action.name == "terminal.run"
     assert len(model.calls) == 2
+    assert model.last_turn_diagnostics.model_call_count == 2
     assert model.calls[0]["tools"]
     assert model.calls[1]["tools"] is None
 
@@ -144,12 +145,21 @@ def test_lfm_normalize_ollama_response() -> None:
                 "role": "assistant",
                 "content": "hi",
                 "tool_calls": [],
-            }
+                "thinking": "brief internal trace",
+            },
+            "total_duration": 2_500_000_000,
+            "prompt_eval_duration": 500_000_000,
+            "prompt_eval_count": 12,
+            "eval_duration": 1_000_000_000,
+            "eval_count": 5,
         }
     )
 
     assert normalized["message"]["content"] == "hi"
     assert normalized["message"]["tool_calls"] == []
+    assert normalized["message"]["thinking"] == "brief internal trace"
+    assert normalized["total_duration"] == 2_500_000_000
+    assert normalized["eval_count"] == 5
 
 
 def test_lfm_final_response_conversion() -> None:
@@ -178,6 +188,7 @@ def test_lfm_repairs_malformed_json_once() -> None:
     assert model.last_turn_diagnostics.proposal_valid is False
     assert model.last_turn_diagnostics.repair_triggered is True
     assert model.last_turn_diagnostics.repair_generation_ms is not None
+    assert model.last_turn_diagnostics.model_call_count == 2
 
 
 def test_lfm_records_token_counts_when_available() -> None:
@@ -200,6 +211,94 @@ def test_lfm_records_token_counts_when_available() -> None:
     assert isinstance(action, FinalResponse)
     assert model.last_turn_diagnostics.prompt_tokens == 12
     assert model.last_turn_diagnostics.completion_tokens == 5
+
+
+def test_lfm_records_ollama_latency_and_thinking_metadata() -> None:
+    model = QueuedLFM(
+        [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "hello",
+                    "thinking": "reasoning",
+                    "tool_calls": [],
+                },
+                "total_duration": 2_500_000_000,
+                "prompt_eval_duration": 500_000_000,
+                "prompt_eval_count": 12,
+                "eval_duration": 1_000_000_000,
+                "eval_count": 5,
+            }
+        ]
+    )
+
+    action = model.propose("hi")
+
+    assert isinstance(action, FinalResponse)
+    diagnostics = model.last_turn_diagnostics
+    assert diagnostics.model_total_duration_ms == pytest.approx(2500.0)
+    assert diagnostics.prompt_eval_duration_ms == pytest.approx(500.0)
+    assert diagnostics.prompt_eval_count == 12
+    assert diagnostics.eval_duration_ms == pytest.approx(1000.0)
+    assert diagnostics.eval_count == 5
+    assert diagnostics.generation_tokens_per_sec == pytest.approx(5.0)
+    assert diagnostics.model_call_count == 1
+    assert diagnostics.thinking_exposed is True
+    assert diagnostics.thinking_chars == len("reasoning")
+    assert diagnostics.response_chars == len("hello")
+
+
+def test_lfm_call_count_includes_final_observation_response() -> None:
+    model = QueuedLFM(
+        [
+            _assistant(content='{"type":"tool","name":"time.now","arguments":{}}'),
+            _assistant(content="It is noon."),
+        ]
+    )
+
+    action = model.propose("what time is it?")
+    assert isinstance(action, ToolRequest)
+    model.respond_to_observation(
+        "what time is it?",
+        ToolObservation(
+            request=action,
+            result={"iso_time": "2026-09-20T12:00:00+00:00"},
+        ),
+    )
+
+    assert model.last_turn_diagnostics.model_call_count == 2
+    assert model.last_turn_diagnostics.response_chars == len("It is noon.")
+
+
+def test_lfm_think_setting_is_omitted_by_default_and_sent_when_explicit(monkeypatch) -> None:
+    captured: list[dict] = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self) -> bytes:
+            return b'{"message":{"role":"assistant","content":"hello"}}'
+
+    def fake_urlopen(request, timeout):
+        import json
+
+        captured.append(json.loads(request.data.decode("utf-8")))
+        return Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    LlamaCppLFMModel(endpoint="http://localhost:11434")._chat(
+        [{"role": "user", "content": "hi"}]
+    )
+    LlamaCppLFMModel(endpoint="http://localhost:11434", think=False)._chat(
+        [{"role": "user", "content": "hi"}]
+    )
+
+    assert "think" not in captured[0]
+    assert captured[1]["think"] is False
 
 
 def test_lfm_repair_fails_after_exactly_one_retry() -> None:
