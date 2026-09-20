@@ -17,7 +17,7 @@ from odessy.types import FinalResponse, ToolObservation, ToolRequest
 from odessy.voice.audio_io import CommandAudioIO
 from odessy.voice.config import VoiceConfig
 from odessy.voice.stt import WhisperCppSTT
-from odessy.voice.tts import KokoroTTS
+from odessy.voice.tts import KokoroTTS, TTSResult
 
 from .adapters import (
     RuntimeConfigurationError,
@@ -36,6 +36,41 @@ class VoiceBenchmarkAudioIO(Protocol):
 
     def play(self, audio_path: Path) -> None:
         ...
+
+
+class BenchmarkPyTorchTTS:
+    """Warm, voice-loop-compatible wrapper around the PyTorch Kokoro engine."""
+
+    backend = "pytorch"
+
+    def __init__(self, *, device: str | None = None) -> None:
+        from .tts.pytorch_kokoro import PyTorchKokoroEngine
+
+        self.device = device
+        self._engine = PyTorchKokoroEngine(device=device)
+        self._initialized = False
+
+    @property
+    def model_dir(self) -> Path | None:
+        return self._engine.model_dir
+
+    @property
+    def effective_device(self) -> str | None:
+        return self._engine.device
+
+    def synthesize(self, text: str, output_path: Path) -> TTSResult:
+        try:
+            if not self._initialized:
+                self._engine.initialize()
+                self._initialized = True
+            self._engine.synthesize(text, output_path)
+        except Exception as exc:
+            return TTSResult(output_path=output_path, status="failed", error=str(exc))
+        return TTSResult(output_path=output_path, status="ok", error=None)
+
+    def close(self) -> None:
+        self._engine.close()
+        self._initialized = False
 
 
 @dataclass(frozen=True)
@@ -487,18 +522,29 @@ def build_real_components(
     workspace_root: Path,
     *,
     ollama_num_gpu: int | None = None,
+    tts_backend: str = "onnx",
+    tts_device: str = "auto",
 ) -> dict[str, Any]:
     if ollama_num_gpu is None:
         model = LlamaCppLFMModel(model=config.ollama_model)
     else:
         model = BenchmarkPartialGpuLFMModel(model=config.ollama_model, num_gpu=ollama_num_gpu)
     stt = WhisperCppSTT(whisper_bin=config.whisper_bin, model_path=config.whisper_model)
-    tts = KokoroTTS(
-        model_path=config.kokoro_model,
-        voices_path=config.kokoro_voices,
-        provider=config.onnx_provider,
-        cache_dir=config.onnx_cache_dir,
-    )
+    if tts_backend == "pytorch":
+        if tts_device not in {"auto", "cpu", "cuda"}:
+            raise ValueError(f"Unsupported PyTorch TTS device: {tts_device}")
+        tts = BenchmarkPyTorchTTS(
+            device=None if tts_device == "auto" else tts_device,
+        )
+    elif tts_backend == "onnx":
+        tts = KokoroTTS(
+            model_path=config.kokoro_model,
+            voices_path=config.kokoro_voices,
+            provider=config.onnx_provider,
+            cache_dir=config.onnx_cache_dir,
+        )
+    else:
+        raise ValueError(f"Unsupported TTS backend: {tts_backend}")
     audio_io = CommandAudioIO(
         recorder=config.audio_recorder,
         player=config.audio_player,
@@ -557,6 +603,9 @@ def _voice_components(
         "ollama_model": getattr(model, "model", None),
         "ollama_num_gpu": getattr(model, "num_gpu", None),
         "tts": _component_name(tts),
+        "tts_backend": getattr(tts, "backend", "onnx"),
+        "tts_device": getattr(tts, "effective_device", getattr(tts, "device", None)),
+        "kokoro_pytorch_model_dir": str(getattr(tts, "model_dir", None) or ""),
         "whisper_bin": getattr(stt, "whisper_bin", None),
         "whisper_model": getattr(stt, "model_path", None),
         "kokoro_model": getattr(tts, "model_path", None),

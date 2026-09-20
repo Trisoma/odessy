@@ -8,10 +8,18 @@ from benchmark.cli import main as benchmark_main
 from benchmark.core import BenchmarkOutcome, BenchmarkRunner
 from benchmark.export import write_csv, write_jsonl, write_metadata
 from benchmark.fakes import FakeSTT, FakeTTS, NoOpAudioIO, fake_model
-from benchmark.scenarios import GemmaBenchmark, STTBenchmark, TTSBenchmark, VoiceTurnBenchmark
+from benchmark.scenarios import (
+    BenchmarkPyTorchTTS,
+    GemmaBenchmark,
+    STTBenchmark,
+    TTSBenchmark,
+    VoiceTurnBenchmark,
+    build_real_components,
+)
 from odessy.agent_loop import OdessyAgent
 from odessy.policy import OdessyPolicy
 from odessy.types import ToolObservation, ToolRequest
+from odessy.voice.config import VoiceConfig
 
 
 def test_runner_writes_csv_and_jsonl(tmp_path: Path) -> None:
@@ -148,6 +156,25 @@ def test_cli_fake_voice_turn_smoke(tmp_path: Path, monkeypatch) -> None:
     assert rc == 0
     assert (out_dir / "samples.csv").exists()
     assert (out_dir / "samples.jsonl").exists()
+
+
+def test_real_components_can_select_pytorch_cuda_tts(tmp_path: Path) -> None:
+    config = VoiceConfig(
+        whisper_bin="whisper-cli",
+        whisper_model="tiny.bin",
+        kokoro_model="kokoro.onnx",
+        kokoro_voices="voices.bin",
+    )
+
+    components = build_real_components(
+        config,
+        tmp_path,
+        tts_backend="pytorch",
+        tts_device="cuda",
+    )
+
+    assert isinstance(components["tts"], BenchmarkPyTorchTTS)
+    assert components["tts"].device == "cuda"
 
 
 def _fake_audio(tmp_path: Path) -> Path:

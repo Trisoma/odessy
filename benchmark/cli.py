@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
@@ -92,9 +94,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=None,
         help="Benchmark-only Ollama num_gpu option for partial LFM GPU offload.",
     )
+    parser.add_argument(
+        "--tts-backend",
+        choices=["onnx", "pytorch"],
+        default="onnx",
+        help="Real TTS backend for voice/tts scenarios.",
+    )
+    parser.add_argument(
+        "--tts-device",
+        choices=["auto", "cpu", "cuda"],
+        default="auto",
+        help="PyTorch TTS device; auto selects CUDA when available.",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     repo_root = Path(__file__).resolve().parents[1]
+    _maybe_reexec_with_jetson_cuda_path(
+        args,
+        repo_root=repo_root,
+        process_entrypoint=argv is None,
+    )
     workspace_root = Path(args.workspace_root) if args.workspace_root else repo_root
     output_dir = _resolve_output_dir(
         repo_root,
@@ -132,7 +151,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     components = (
         build_fake_components()
         if args.adapter == "fake"
-        else build_real_components(config, workspace_root, ollama_num_gpu=ollama_num_gpu)
+        else build_real_components(
+            config,
+            workspace_root,
+            ollama_num_gpu=ollama_num_gpu,
+            tts_backend=args.tts_backend,
+            tts_device=args.tts_device,
+        )
     )
     scenarios = _build_scenarios(args, config, output_dir, components)
 
@@ -149,6 +174,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "prompt": args.prompt,
             "text": args.text,
             "ollama_num_gpu": ollama_num_gpu,
+            "tts_backend": args.tts_backend,
+            "tts_device": args.tts_device,
         },
     )
     run = runner.run(scenarios)
@@ -247,6 +274,61 @@ def _optional_env_int(name: str) -> int | None:
         return int(value)
     except ValueError:
         raise SystemExit(f"{name} must be an integer")
+
+
+def _maybe_reexec_with_jetson_cuda_path(
+    args: argparse.Namespace,
+    *,
+    repo_root: Path,
+    process_entrypoint: bool,
+) -> None:
+    if not process_entrypoint or args.adapter != "real":
+        return
+    if os.environ.get("ODESSY_BENCHMARK_CUDA_ENV_READY") == "1":
+        return
+    if not _requests_pytorch_cuda(args, repo_root):
+        return
+    if platform.system() != "Linux":
+        return
+
+    from .tts.cuda_env import (
+        build_jetson_native_cuda_library_path,
+        jetson_native_cuda_path_is_complete,
+    )
+
+    if jetson_native_cuda_path_is_complete():
+        return
+    environment = os.environ.copy()
+    environment["LD_LIBRARY_PATH"] = build_jetson_native_cuda_library_path()
+    environment["ODESSY_BENCHMARK_CUDA_ENV_READY"] = "1"
+    os.execvpe(
+        sys.executable,
+        [sys.executable, "-m", "benchmark", *sys.argv[1:]],
+        environment,
+    )
+
+
+def _requests_pytorch_cuda(args: argparse.Namespace, repo_root: Path) -> bool:
+    if args.manifest:
+        manifest_path = Path(args.manifest)
+        if not manifest_path.is_absolute():
+            manifest_path = repo_root / manifest_path
+        profiles = load_profiles(manifest_path)
+        selected_names = args.profile or [
+            name for name, profile in profiles.items() if profile.enabled
+        ]
+        return any(
+            name in profiles
+            and profiles[name].execution_path == "kokoro_pytorch"
+            and profiles[name].pytorch_device == "cuda"
+            for name in selected_names
+        )
+    return (
+        args.tts_backend == "pytorch"
+        and args.tts_device in {"auto", "cuda"}
+        and args.scenario in {"tts", "voice_turn", "all"}
+    )
+
 
 def _build_scenarios(
     args: argparse.Namespace,
