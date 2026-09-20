@@ -235,3 +235,71 @@ executes one bounded turn and exits. The repeated benchmark is stricter: it
 exposes runtime initialization, residency, and cleanup problems that a single
 turn can hide.
 
+## Controlled LFM Comparison
+
+A proposal-only comparison was collected on 2026-09-20 in:
+
+```text
+benchmark/model/20260920-091050
+```
+
+This run intentionally measured only the LFM proposal path. It did not invoke
+STT, TTS, playback, or MCP. The same prompt and Ollama runtime were used for
+all configurations:
+
+```text
+prompt: How are you doing?
+model: lfm2.5-thinking:1.2b-q8_0
+measured runs per configuration: 3
+warmup runs per configuration: 1
+```
+
+| Configuration | Model latency | Prompt eval | Generation eval | Generated tokens | Generation tok/s | Valid proposal |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| current/default | 11.936 s | 134 ms | 11.474 s | 179 | 16.10 | yes |
+| `think=false` | 11.693 s | 130 ms | 11.228 s | 179 | 16.32 | yes |
+| `think=low` | 11.396 s | 142 ms | 10.941 s | 176 | 16.21 | yes |
+
+All configurations made one model call per proposal. Parsing was approximately
+0.01-0.02 ms, so it is negligible compared with model generation. Prompt
+processing was also small, around 0.13-0.14 s; generation accounted for about
+10.94-11.47 s of the roughly 11.4-11.9 s model latency.
+
+The controlled result therefore confirms:
+
+```text
+The LFM delay is primarily generation/evaluation throughput.
+It is not prompt prefill.
+It is not parsing.
+It is not repair or MCP execution.
+```
+
+`think=low` was the fastest measured configuration, approximately 4.5% faster
+than the current/default setting. `think=false` was approximately 2.0% faster.
+The difference is useful but modest, not a real-time breakthrough.
+
+Thinking visibility changed as expected:
+
+```text
+current/default: thinking exposed, about 745-771 characters
+think=low:       thinking exposed, about 745 characters
+think=false:     thinking not exposed
+```
+
+However, Ollama did not expose a separate thinking-token count. The generated
+token counts remained nearly identical, so this run cannot prove how many
+hidden reasoning tokens were produced or eliminated. With `think=false`, the
+visible final response was much longer, about 821-847 characters versus about
+57 characters for the thinking-enabled variants. Proposal validity remained
+true for every measured run.
+
+Tool-selection correctness was not evaluated because this prompt required no
+tool and the benchmark was run without `--expected-tool`.
+
+## Updated LFM Recommendation
+
+The next optimization target remains the LFM generation path. The evidence
+supports testing prompt/output limits and a smaller compatible model before
+changing inference runtimes. `think=low` is the current best latency candidate
+among the tested settings, but it should be evaluated on tool-request prompts
+with an expected tool before being considered a production policy.
