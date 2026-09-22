@@ -6,7 +6,7 @@ import pytest
 
 from odessy.cli import _build_model
 from odessy.lfm_model import LlamaCppLFMModel, normalize_ollama_chat_response
-from odessy.ollama_model import _OllamaToolsUnsupported
+from odessy.ollama_model import _OllamaToolsUnsupported, _looks_like_generic_final_response
 from odessy.types import FinalResponse, ToolObservation, ToolRequest
 
 
@@ -268,6 +268,139 @@ def test_lfm_call_count_includes_final_observation_response() -> None:
 
     assert model.last_turn_diagnostics.model_call_count == 2
     assert model.last_turn_diagnostics.response_chars == len("It is noon.")
+
+
+def test_lfm_observation_can_return_a_corrected_tool_request() -> None:
+    """A rejection observation may be answered with another, corrected tool call."""
+
+    model = QueuedLFM(
+        [
+            _assistant(
+                tool_calls=[
+                    {
+                        "function": {
+                            "name": "terminal.run",
+                            "arguments": {
+                                "command": "pwd",
+                                "cwd": ".",
+                                "timeout": 10,
+                            },
+                        }
+                    }
+                ]
+            )
+        ]
+    )
+
+    action = model.respond_to_observation(
+        "run pwd",
+        ToolObservation(
+            request=ToolRequest(
+                "terminal.run",
+                {"command": "pwd", "cwd": ".", "timeout": 10, "bogus": 1},
+            ),
+            result={
+                "status": "rejected",
+                "reason": "Unexpected argument(s) for terminal.run: bogus",
+            },
+        ),
+    )
+
+    assert isinstance(action, ToolRequest)
+    assert action.name == "terminal.run"
+    assert action.arguments == {"command": "pwd", "cwd": ".", "timeout": 10}
+
+
+def test_lfm_observation_with_text_still_returns_final_response() -> None:
+    """A plain text answer keeps the historical summarisation path.
+
+    Also a regression test for the removed ``len(normalized) < 12`` heuristic:
+    "It is noon." is 11 characters and used to be discarded in favour of
+    ``_fallback_observation_response``.
+    """
+
+    model = QueuedLFM([_assistant(content="It is noon.")])
+
+    action = model.respond_to_observation(
+        "what time is it?",
+        ToolObservation(
+            request=ToolRequest("time.now", {}),
+            result={"iso_time": "2026-09-20T12:00:00+00:00"},
+        ),
+    )
+
+    assert isinstance(action, FinalResponse)
+    assert action.text == "It is noon."
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "It is noon.",      # 11 chars: the exact case the old < 12 rule broke
+        "12 files",
+        "No matches.",
+        "3",
+        "pwd",
+        "Command finished with status ok.",
+    ],
+)
+def test_short_answers_are_not_treated_as_generic(answer: str) -> None:
+    """Length is not a usable signal: terse replies are the normal voice case.
+
+    Regression for the removed ``len(normalized) < 12`` heuristic, which replaced
+    any short answer with the observation fallback.
+
+    Note: bare acknowledgements such as "Done." and "Yes." remain classified as
+    generic because they are in the explicit vocabulary below. That is a
+    deliberate pre-existing policy choice, not the length bug.
+    """
+
+    assert _looks_like_generic_final_response(answer) is False
+
+
+@pytest.mark.parametrize(
+    "filler",
+    [
+        "",
+        "   ",
+        "ok",
+        "OK.",
+        "yes",
+        "Yes!",
+        "okay",
+        "sure",
+        "done",
+        "Done.",
+        "please wait",
+        "Please wait.",
+    ],
+)
+def test_bare_acknowledgements_are_treated_as_generic(filler: str) -> None:
+    """The explicit filler vocabulary must still be caught."""
+
+    assert _looks_like_generic_final_response(filler) is True
+
+
+def test_lfm_observation_with_invalid_tool_call_degrades_instead_of_raising() -> None:
+    """An unusable tool call must not raise into the continuation loop."""
+
+    model = QueuedLFM(
+        [
+            _assistant(
+                tool_calls=[{"function": {"name": "not.a.real.tool", "arguments": {}}}]
+            )
+        ]
+    )
+
+    action = model.respond_to_observation(
+        "run pwd",
+        ToolObservation(
+            request=ToolRequest("terminal.run", {"command": "pwd"}),
+            result={"status": "rejected", "reason": "Unexpected argument(s)"},
+        ),
+    )
+
+    assert isinstance(action, FinalResponse)
 
 
 def test_lfm_think_setting_is_omitted_by_default_and_sent_when_explicit(monkeypatch) -> None:

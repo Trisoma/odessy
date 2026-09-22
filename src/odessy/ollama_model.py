@@ -169,7 +169,7 @@ class OllamaModel:
         self,
         user_text: str,
         observation: ToolObservation,
-    ) -> FinalResponse:
+    ) -> ModelAction:
         prompt = (
             "You are Odessy. Return the tool output first, then a short interpretation.\n"
             "Do not answer with filler like 'Please wait' or 'Yes'.\n"
@@ -185,10 +185,35 @@ class OllamaModel:
         diagnostics.final_generation_ms = _elapsed_ms(started)
         _record_token_counts(diagnostics, response)
         object.__setattr__(self, "_last_turn_diagnostics", diagnostics)
+        corrected = _corrected_tool_request(response, user_text)
+        if corrected is not None:
+            return corrected
         text = ((response.get("message") or {}).get("content") or "").strip()
         if text and not _looks_like_generic_final_response(text):
             return FinalResponse(text=text)
         return FinalResponse(text=_fallback_observation_response(observation))
+
+
+def _corrected_tool_request(response: dict[str, Any], user_text: str) -> ToolRequest | None:
+    """Return a ``ToolRequest`` when an observation was answered with a tool call.
+
+    The continuation loop delivers a pre-execution rejection through
+    ``respond_to_observation``, so a model that can propose a tool call must also
+    be able to propose a *corrected* one.
+
+    Only **native** tool calls are considered. A text answer keeps the historical
+    summarisation path unchanged, and anything unparseable degrades to ``None``
+    rather than raising into the loop.
+    """
+
+    message = response.get("message") or {}
+    if not (message.get("tool_calls") or []):
+        return None
+    try:
+        action = _extract_model_action_from_chat(response, user_text)
+    except (ValueError, TypeError):
+        return None
+    return action if isinstance(action, ToolRequest) else None
 
 
 def _system_prompt(tool_name: str | None) -> str:
@@ -331,13 +356,28 @@ def _fallback_observation_response(observation: ToolObservation) -> str:
     return "I received a tool result, but I cannot summarize it yet."
 
 
+#: Bare acknowledgements that carry no answer. The observation prompt tells the
+#: model not to reply with these ("Do not answer with filler like 'Please wait'
+#: or 'Yes'"), so they are matched explicitly rather than by shape.
+_GENERIC_FINAL_RESPONSES = frozenset(
+    {"yes", "no", "yeah", "yep", "ok", "okay", "sure", "done", "hello", "hi", "please wait"}
+)
+
+
 def _looks_like_generic_final_response(response: str) -> bool:
+    """Whether a final answer is filler that should be replaced by a fallback.
+
+    Filler is matched by an explicit vocabulary, **not** by length. A previous
+    ``len(normalized) < 12`` heuristic classified any answer shorter than 12
+    characters as generic, which silently discarded legitimate terse replies
+    ("It is noon.", "12 files", "No matches."). For a voice agent, terse is the
+    normal case, so length is not a usable signal here.
+    """
+
     normalized = response.strip().lower().strip(" .!`")
     if not normalized:
         return True
-    if normalized in {"yes", "please wait", "ok", "okay", "done"}:
-        return True
-    return len(normalized) < 12
+    return normalized in _GENERIC_FINAL_RESPONSES
 
 
 def _parse_model_action(raw_text: str) -> ModelAction:

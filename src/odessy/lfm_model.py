@@ -18,6 +18,7 @@ from typing import Any
 
 from odessy.ollama_model import (
     _OllamaToolsUnsupported,
+    _corrected_tool_request,
     _debug_model_repair,
     _debug_parsed_action,
     _extract_model_action_from_chat,
@@ -219,7 +220,7 @@ class LlamaCppLFMModel:
         self,
         user_text: str,
         observation: ToolObservation,
-    ) -> FinalResponse:
+    ) -> ModelAction:
         prompt = (
             "You are Odessy. Return the tool output first, then a short interpretation.\n"
             "Do not answer with filler like 'Please wait' or 'Yes'.\n"
@@ -236,6 +237,9 @@ class LlamaCppLFMModel:
         diagnostics.final_generation_ms = _elapsed_ms(started)
         _record_ollama_response(diagnostics, response)
         object.__setattr__(self, "_last_turn_diagnostics", diagnostics)
+        corrected = _corrected_tool_request(response, user_text)
+        if corrected is not None:
+            return corrected
         text = ((response.get("message") or {}).get("content") or "").strip()
         if text and not _looks_like_generic_final_response(text):
             return FinalResponse(text=text)

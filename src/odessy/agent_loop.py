@@ -8,6 +8,9 @@ from typing import Any, Protocol
 from mcp import Client
 
 from odessy.policy import OdessyPolicy
+from odessy.repeat_guard import RepeatGuard, build_guard
+from odessy.tool_contracts import validate_tool_arguments
+from odessy.tool_timeout import Deadline, ToolTimeoutPolicy
 from odessy.types import (
     AgentTurnMetrics,
     AgentTurnResult,
@@ -28,8 +31,22 @@ class ModelAdapter(Protocol):
         self,
         user_text: str,
         observation: ToolObservation,
-    ) -> FinalResponse:
+    ) -> ModelAction:
+        """Continue after a tool result or a rejection.
+
+        Returns ``FinalResponse`` to conclude the turn, or ``ToolRequest`` to
+        propose another call. A rejection is delivered through this same
+        channel, so an adapter that can propose a tool call can also propose a
+        *corrected* one.
+        """
         ...
+
+
+#: Instruction carried by a pre-execution rejection observation.
+_REJECTION_INSTRUCTION = (
+    "The tool call was rejected before execution and was NOT run. "
+    "Correct the arguments and propose the tool call again, or give a final answer."
+)
 
 
 class OdessyAgent:
@@ -42,11 +59,28 @@ class OdessyAgent:
         policy: OdessyPolicy,
         mcp_server: Any,
         confirm: Callable[[Any, ToolRequest], bool] | bool = False,
+        max_rejections: int = 2,
+        deadline_seconds: float | None = None,
+        max_model_calls: int = 4,
+        guard: RepeatGuard | None = None,
+        timeouts: ToolTimeoutPolicy | None = None,
     ) -> None:
         self._model = model
         self._policy = policy
         self._mcp_servers = _normalize_mcp_servers(mcp_server)
         self._confirm = confirm
+        #: Bounded retries on pre-execution (schema/argument) rejection. Authority
+        #: decisions never retry -- see run_turn.
+        self._max_rejections = max(0, max_rejections)
+        #: Optional shared wall-clock budget for one turn. Odessy's measured
+        #: proposal cost (70-115 s) means a count-bounded loop can otherwise
+        #: outlive the run; an unset budget preserves prior behaviour.
+        self._deadline_seconds = deadline_seconds
+        #: Hard ceiling on model generations per turn, covering rejection retries,
+        #: multi-tool continuation, and the adapter's own repair calls.
+        self._max_model_calls = max(1, max_model_calls)
+        self._guard_template = guard
+        self._timeouts = timeouts or ToolTimeoutPolicy()
 
     async def run_turn(
         self,
@@ -77,114 +111,312 @@ class OdessyAgent:
             )
 
         metrics.tool_called = True
-        log.append(
-            LogEntry(
-                "model_tool_request",
-                {"name": action.name, "arguments": action.arguments},
-            )
-        )
 
-        _status(status_callback, "Validating action")
-        policy_started = time.perf_counter()
-        preflight_decision = self._policy.evaluate(action)
-        _add_ms(metrics, "policy_validation_ms", _elapsed_ms(policy_started))
-        if preflight_decision.action == "deny":
+        # One wall-clock budget for the whole turn, shared by rejection retries
+        # and multi-tool continuation. Unset budget -> infinite, so the deadline
+        # is always present rather than conditionally checked.
+        deadline = Deadline(
+            self._deadline_seconds if self._deadline_seconds is not None else float("inf")
+        ).start()
+
+        model_calls = 1
+
+        # One guard per turn: the chain is cleared by a new user message, and a
+        # turn is the unit of user input here.
+        guard = self._guard_template or build_guard()
+
+        # Collected lazily, only after a policy preflight allows a request: a
+        # denied request must never contact MCP at all.
+        tool_registry: dict[str, tuple[Any, Any]] | None = None
+
+        rejections = 0
+        last_request: ToolRequest | None = None
+        last_result: dict[str, Any] | None = None
+        pending_reminders: list[str] = []
+
+        # Single action loop. Every model-produced action -- the first proposal,
+        # a rejection correction, or a follow-up call after a successful
+        # execution -- passes through the same validation, policy, and execution
+        # path. That is what makes a ToolRequest returned after execution safe.
+        while True:
+            reminder = guard.observe(action.name, action.arguments)
+            if reminder is not None:
+                pending_reminders.append(reminder)
+                log.append(LogEntry("repeat_tool_reminder", {"name": action.name}))
+
             log.append(
                 LogEntry(
-                    "policy_denied",
-                    {
-                        "name": action.name,
-                        "risk": preflight_decision.risk,
-                        "reason": preflight_decision.reason,
-                    },
+                    "model_tool_request",
+                    {"name": action.name, "arguments": action.arguments},
                 )
             )
-            raise PermissionError(f"Policy denied request: {preflight_decision.reason}")
 
-        mcp_started = time.perf_counter()
-        tool_registry = await self._collect_tool_registry()
-        _add_ms(metrics, "mcp_execution_ms", _elapsed_ms(mcp_started))
-
-        policy_started = time.perf_counter()
-        self._validate_tool_request(action, tool_registry)
-        log.append(LogEntry("schema_validated", {"name": action.name}))
-
-        decision = self._policy.evaluate(action)
-        _add_ms(metrics, "policy_validation_ms", _elapsed_ms(policy_started))
-        if decision.action == "deny":
-            raise PermissionError(f"Policy denied request: {decision.reason}")
-        if decision.requires_confirmation:
-            log.append(
-                LogEntry(
-                    "policy_requires_confirmation",
-                    {
-                        "name": action.name,
-                        "risk": decision.risk,
-                        "reason": decision.reason,
-                    },
+            _status(status_callback, "Validating action")
+            policy_started = time.perf_counter()
+            preflight_decision = self._policy.evaluate(action)
+            _add_ms(metrics, "policy_validation_ms", _elapsed_ms(policy_started))
+            if preflight_decision.action == "deny":
+                log.append(
+                    LogEntry(
+                        "policy_denied",
+                        {
+                            "name": action.name,
+                            "risk": preflight_decision.risk,
+                            "reason": preflight_decision.reason,
+                        },
+                    )
                 )
-            )
-            if not self._is_confirmed(decision, action):
                 raise PermissionError(
-                    f"Policy requires confirmation before execution: {decision.reason}"
+                    f"Policy denied request: {preflight_decision.reason}"
                 )
+
+            # Rejections are recoverable; authority outcomes above are not.
+            if tool_registry is None:
+                mcp_started = time.perf_counter()
+                tool_registry = await self._collect_tool_registry()
+                _add_ms(metrics, "mcp_execution_ms", _elapsed_ms(mcp_started))
+
+            try:
+                self._validate_tool_request(action, tool_registry)
+            except (ValueError, TypeError) as exc:
+                reason = str(exc)
+                rejections += 1
+                log.append(
+                    LogEntry(
+                        "schema_rejected",
+                        {"name": action.name, "reason": reason, "attempt": rejections},
+                    )
+                )
+                if not self._may_continue(
+                    rejections=rejections,
+                    model_calls=model_calls,
+                    deadline=deadline,
+                ):
+                    log.append(
+                        LogEntry("schema_rejection_exhausted", {"attempts": rejections})
+                    )
+                    return _finish_turn_result(
+                        final_text=_rejection_exhausted_text(action, reason),
+                        log=log,
+                        metrics=metrics,
+                        turn_started=turn_started,
+                        tool_request=last_request,
+                        tool_result=last_result,
+                    )
+                next_action = self._resume(
+                    user_text,
+                    ToolObservation(
+                        request=action,
+                        result={
+                            "status": "rejected",
+                            "reason": reason,
+                            "instruction": _REJECTION_INSTRUCTION,
+                            **self._drain_reminders(pending_reminders),
+                        },
+                    ),
+                    log=log,
+                    status_callback=status_callback,
+                    message="Correcting rejected tool call",
+                )
+                model_calls += 1
+                if isinstance(next_action, FinalResponse):
+                    log.append(
+                        LogEntry("model_final_response", {"text": next_action.text})
+                    )
+                    return _finish_turn_result(
+                        final_text=next_action.text,
+                        log=log,
+                        metrics=metrics,
+                        turn_started=turn_started,
+                        tool_request=last_request,
+                        tool_result=last_result,
+                    )
+                action = next_action
+                continue
+
+            log.append(LogEntry("schema_validated", {"name": action.name}))
+
+            policy_started = time.perf_counter()
+            decision = self._policy.evaluate(action)
+            _add_ms(metrics, "policy_validation_ms", _elapsed_ms(policy_started))
+            if decision.action == "deny":
+                raise PermissionError(f"Policy denied request: {decision.reason}")
+            if decision.requires_confirmation:
+                log.append(
+                    LogEntry(
+                        "policy_requires_confirmation",
+                        {
+                            "name": action.name,
+                            "risk": decision.risk,
+                            "reason": decision.reason,
+                        },
+                    )
+                )
+                if not self._is_confirmed(decision, action):
+                    raise PermissionError(
+                        f"Policy requires confirmation before execution: {decision.reason}"
+                    )
+                log.append(
+                    LogEntry(
+                        "policy_confirmed",
+                        {
+                            "name": action.name,
+                            "risk": decision.risk,
+                            "reason": decision.reason,
+                        },
+                    )
+                )
+            if not decision.allowed and not decision.requires_confirmation:
+                raise PermissionError(decision.reason)
+            if decision.allowed:
+                log.append(
+                    LogEntry(
+                        "policy_allowed",
+                        {
+                            "name": action.name,
+                            "risk": decision.risk,
+                            "reason": decision.reason,
+                        },
+                    )
+                )
+
+            _status(status_callback, "Running tool")
+            mcp_started = time.perf_counter()
+            result = await self._call_tool(action.name, action.arguments, tool_registry)
+            log.append(LogEntry("mcp_tool_called", {"name": action.name}))
+
+            structured_result = self._extract_structured_result(result)
+            _add_ms(metrics, "mcp_execution_ms", _elapsed_ms(mcp_started))
+            last_request = action
+            last_result = structured_result
+
+            timeout_info = self._classify_timeout(action.name, structured_result)
+            if timeout_info is not None:
+                log.append(
+                    LogEntry("tool_timeout", {"name": action.name, **timeout_info})
+                )
+
+            observation = ToolObservation(request=action, result=structured_result)
             log.append(
                 LogEntry(
-                    "policy_confirmed",
-                    {
-                        "name": action.name,
-                        "risk": decision.risk,
-                        "reason": decision.reason,
-                    },
-                )
-            )
-        if not decision.allowed and not decision.requires_confirmation:
-            raise PermissionError(decision.reason)
-        if decision.allowed:
-            log.append(
-                LogEntry(
-                    "policy_allowed",
-                    {
-                        "name": action.name,
-                        "risk": decision.risk,
-                        "reason": decision.reason,
-                    },
+                    "tool_observation",
+                    {"name": action.name, "result": structured_result},
                 )
             )
 
-        _status(status_callback, "Running tool")
-        mcp_started = time.perf_counter()
-        result = await self._call_tool(action.name, action.arguments, tool_registry)
-        log.append(LogEntry("mcp_tool_called", {"name": action.name}))
+            _status(status_callback, "Generating response")
+            final_started = time.perf_counter()
+            next_action = self._model.respond_to_observation(user_text, observation)
+            final_elapsed = _elapsed_ms(final_started)
+            _merge_model_diagnostics(
+                metrics,
+                _model_diagnostics(self._model),
+                fallback_final_generation_ms=final_elapsed,
+            )
+            model_calls += 1
 
-        structured_result = self._extract_structured_result(result)
-        _add_ms(metrics, "mcp_execution_ms", _elapsed_ms(mcp_started))
-        observation = ToolObservation(request=action, result=structured_result)
+            # A ToolRequest here is a legitimate multi-tool continuation, not a
+            # final answer. It re-enters the loop above for validation, policy,
+            # and execution like any other action.
+            if isinstance(next_action, FinalResponse):
+                log.append(LogEntry("model_final_response", {"text": next_action.text}))
+                return _finish_turn_result(
+                    final_text=next_action.text,
+                    log=log,
+                    metrics=metrics,
+                    turn_started=turn_started,
+                    tool_request=last_request,
+                    tool_result=last_result,
+                )
+
+            log.append(
+                LogEntry(
+                    "model_tool_request",
+                    {"name": next_action.name, "arguments": next_action.arguments},
+                )
+            )
+            if not self._may_continue(
+                rejections=rejections, model_calls=model_calls, deadline=deadline
+            ):
+                log.append(LogEntry("continuation_budget_exhausted", {"model_calls": model_calls}))
+                return _finish_turn_result(
+                    final_text=_observation_exhausted_text(action, structured_result),
+                    log=log,
+                    metrics=metrics,
+                    turn_started=turn_started,
+                    tool_request=last_request,
+                    tool_result=last_result,
+                )
+            action = next_action
+
+    def _may_continue(
+        self,
+        *,
+        rejections: int,
+        model_calls: int,
+        deadline: Deadline,
+    ) -> bool:
+        """Whether another model round-trip is permitted this turn.
+
+        Bounds the whole chain: rejection retries and multi-tool continuation
+        share one budget, and the adapter's own repair calls are counted because
+        ``model_call_count`` includes them.
+        """
+        if deadline.expired:
+            return False
+        if rejections > self._max_rejections:
+            return False
+        return self._observed_model_calls(model_calls) < self._max_model_calls
+
+    def _observed_model_calls(self, loop_count: int) -> int:
+        """Total model calls, including adapter repair retries.
+
+        The adapter tracks every generation it performs, so its counter is the
+        authoritative figure when present; the loop's own count is a floor.
+        """
+        diagnostics = _model_diagnostics(self._model)
+        if diagnostics is not None and diagnostics.model_call_count:
+            return max(diagnostics.model_call_count, loop_count)
+        return loop_count
+
+    def _resume(
+        self,
+        user_text: str,
+        observation: ToolObservation,
+        *,
+        log: list[LogEntry],
+        status_callback: Callable[[str], None] | None,
+        message: str,
+    ) -> ModelAction:
         log.append(
             LogEntry(
-                "tool_observation",
-                {"name": action.name, "result": structured_result},
+                "tool_rejection_observation",
+                {"name": observation.request.name, "delivered": True},
             )
         )
+        _status(status_callback, message)
+        return self._model.respond_to_observation(user_text, observation)
 
-        _status(status_callback, "Generating response")
-        final_started = time.perf_counter()
-        final = self._model.respond_to_observation(user_text, observation)
-        final_elapsed = _elapsed_ms(final_started)
-        _merge_model_diagnostics(
-            metrics,
-            _model_diagnostics(self._model),
-            fallback_final_generation_ms=final_elapsed,
-        )
-        log.append(LogEntry("model_final_response", {"text": final.text}))
+    @staticmethod
+    def _drain_reminders(pending: list[str]) -> dict[str, Any]:
+        if not pending:
+            return {}
+        items = list(pending)
+        pending.clear()
+        return {"repeat_reminder": " ".join(items)}
 
-        return _finish_turn_result(
-            final_text=final.text,
-            log=log,
-            metrics=metrics,
-            turn_started=turn_started,
-            tool_request=action,
-            tool_result=structured_result,
+    def _classify_timeout(
+        self, tool_name: str, structured_result: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Tag a result the execution layer reported as timed out."""
+        status = structured_result.get("status")
+        if not isinstance(status, str):
+            return None
+        elapsed = structured_result.get("duration")
+        return self._timeouts.classify(
+            tool_name=tool_name,
+            status=status,
+            elapsed_seconds=float(elapsed) if isinstance(elapsed, (int, float)) else 0.0,
         )
 
     def _is_confirmed(self, decision: Any, request: ToolRequest) -> bool:
@@ -219,37 +451,25 @@ class OdessyAgent:
             return await client.call_tool(name, arguments)
 
     def _validate_tool_request(self, request: ToolRequest, tools: dict[str, tuple[Any, Any]]) -> None:
-        entry = tools.get(request.name)
-        if entry is None:
+        """Validate a tool call, with one authoritative schema implementation.
+
+        Invariant: ``tool_contracts.TOOL_REQUEST_SCHEMAS`` is the **model-facing**
+        contract. The model is only ever offered tools from that registry --
+        ``_select_tools`` renders them for Ollama via ``build_openai_tools``, and
+        ``render_tool_contracts`` renders the same set into the system prompt.
+        Validating proposals against it therefore checks the model against
+        exactly what it was told, which is why static validation is intentional
+        rather than a narrowing.
+
+        Registry *membership* is checked here because whether a tool is actually
+        mounted is dynamic: it depends on which MCP servers are attached. A tool
+        that a server exposes but the registry omits is not proposable in the
+        first place, since the model is never told about it.
+        """
+
+        if request.name not in tools:
             raise ValueError(f"Unknown MCP tool requested: {request.name}")
-        tool, _server = entry
-
-        input_schema = _get_tool_input_schema(tool)
-        if not isinstance(request.arguments, dict):
-            raise TypeError("Tool arguments must be a JSON object")
-        if input_schema is None:
-            return
-
-        properties = input_schema.get("properties", {})
-        required = set(input_schema.get("required", []))
-        missing = required.difference(request.arguments)
-        if missing:
-            names = ", ".join(sorted(missing))
-            raise ValueError(f"Missing required argument(s) for {request.name}: {names}")
-
-        unexpected = set(request.arguments).difference(properties)
-        if unexpected:
-            names = ", ".join(sorted(unexpected))
-            raise ValueError(f"Unexpected argument(s) for {request.name}: {names}")
-
-        for argument_name, argument_value in request.arguments.items():
-            expected = properties.get(argument_name, {}).get("type")
-            if expected == "string" and not isinstance(argument_value, str):
-                raise TypeError(f"{argument_name} must be a string")
-            if expected == "integer" and not isinstance(argument_value, int):
-                raise TypeError(f"{argument_name} must be an integer")
-            if expected == "boolean" and not isinstance(argument_value, bool):
-                raise TypeError(f"{argument_name} must be a boolean")
+        validate_tool_arguments(request.name, request.arguments)
 
     def _extract_structured_result(self, result: Any) -> dict[str, Any]:
         is_error = getattr(result, "is_error", getattr(result, "isError", False))
@@ -266,19 +486,6 @@ class OdessyAgent:
         return structured
 
 
-def _get_tool_input_schema(tool: Any) -> dict[str, Any] | None:
-    schema = getattr(tool, "input_schema", None)
-    if schema is None:
-        schema = getattr(tool, "inputSchema", None)
-    if schema is None:
-        return None
-    if hasattr(schema, "model_dump"):
-        schema = schema.model_dump(by_alias=True)
-    if not isinstance(schema, dict):
-        raise TypeError(f"Unsupported MCP tool schema type: {type(schema).__name__}")
-    return schema
-
-
 def _normalize_mcp_servers(mcp_server: Any) -> tuple[Any, ...]:
     if mcp_server is None:
         return ()
@@ -290,6 +497,24 @@ def _normalize_mcp_servers(mcp_server: Any) -> tuple[Any, ...]:
 def _status(callback: Callable[[str], None] | None, message: str) -> None:
     if callback is not None:
         callback(message)
+
+
+def _rejection_exhausted_text(request: ToolRequest, reason: str) -> str:
+    """Honest final text when a rejected tool call ran out of correction budget."""
+
+    return (
+        f"I could not form a valid call to `{request.name}` before running out of "
+        f"correction attempts. The last rejection was: {reason}"
+    )
+
+
+def _observation_exhausted_text(request: ToolRequest, result: dict[str, Any]) -> str:
+    """Honest final text when a multi-tool chain hit the per-turn call ceiling."""
+
+    return (
+        f"I stopped after `{request.name}` because this turn reached its limit on "
+        f"model calls without a final answer. The last result was: {result}"
+    )
 
 
 def _elapsed_ms(started: float) -> float:
