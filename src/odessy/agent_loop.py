@@ -72,9 +72,18 @@ class OdessyAgent:
         #: Bounded retries on pre-execution (schema/argument) rejection. Authority
         #: decisions never retry -- see run_turn.
         self._max_rejections = max(0, max_rejections)
-        #: Optional shared wall-clock budget for one turn. Odessy's measured
-        #: proposal cost (70-115 s) means a count-bounded loop can otherwise
-        #: outlive the run; an unset budget preserves prior behaviour.
+        #: Optional shared wall-clock budget for one turn.
+        #:
+        #: INTENTIONALLY DEFAULTED TO None. This is a deliberate freeze
+        #: decision, not an oversight. `None` becomes an infinite budget, so the
+        #: deadline never expires and `max_model_calls` is the only default
+        #: protection.
+        #:
+        #: Why no default yet: a wrong value silently truncates legitimate
+        #: turns, and no measured distribution of turn durations exists to pick
+        #: one from. Odessy's proposal cost is 78-115 s on a real tool request
+        #: against a 120 s HTTP timeout, so the default has to be chosen
+        #: together with that timeout rather than in isolation.
         self._deadline_seconds = deadline_seconds
         #: Hard ceiling on model generations per turn, covering rejection retries,
         #: multi-tool continuation, and the adapter's own repair calls.

@@ -6,7 +6,7 @@ import re
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from odessy.types import (
@@ -27,6 +27,114 @@ from odessy.tool_contracts import (
 OLLAMA_BASE_URL = os.environ.get("ODESSY_OLLAMA_URL", "http://127.0.0.1:11434")
 
 
+#: Maximum seconds of silence allowed between streamed chunks from Ollama.
+#:
+#: This is an IDLE timeout, not a generation budget. The timer resets on every
+#: received chunk, so a healthy model may generate for minutes. The socket
+#: timeout handed to urlopen applies per read rather than to the whole
+#: transfer, which is exactly this semantic -- so no separate timer is needed.
+DEFAULT_PROGRESS_TIMEOUT_SECONDS = 120
+
+#: Env var carrying the progress timeout, in seconds.
+PROGRESS_TIMEOUT_ENV = "ODESSY_MODEL_PROGRESS_TIMEOUT"
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _default_progress_timeout() -> int:
+    """Progress timeout in seconds, honouring ``ODESSY_MODEL_PROGRESS_TIMEOUT``."""
+
+    return _env_int(PROGRESS_TIMEOUT_ENV, DEFAULT_PROGRESS_TIMEOUT_SECONDS)
+
+
+class _OllamaStreamTimeout(RuntimeError):
+    """Raised when no streamed chunk arrives within the progress timeout."""
+
+
+#: Metadata fields carried by the terminal chunk of a streamed response.
+_STREAM_METADATA_KEYS = (
+    "done",
+    "done_reason",
+    "model",
+    "created_at",
+    "total_duration",
+    "load_duration",
+    "prompt_eval_count",
+    "prompt_eval_duration",
+    "eval_count",
+    "eval_duration",
+)
+
+
+def _accumulate_stream(response: Any) -> dict[str, Any]:
+    """Fold a streamed NDJSON chat response into a single response dict.
+
+    The returned shape matches the non-streamed ``/api/chat`` body, so existing
+    parsing, tool-call extraction, and token accounting are unchanged.
+
+    Reads inherit the connection's socket timeout, which applies per read rather
+    than to the whole transfer. That is precisely the intended semantic: the
+    timeout measures silence between chunks, not total generation time.
+    """
+
+    content: list[str] = []
+    thinking: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
+    metadata: dict[str, Any] = {}
+
+    for raw_line in response:
+        line = raw_line.decode("utf-8", "replace").strip()
+        if not line:
+            continue
+        try:
+            chunk = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(chunk, dict):
+            continue
+
+        message = chunk.get("message")
+        if isinstance(message, dict):
+            piece = message.get("content")
+            if piece:
+                content.append(piece)
+            piece = message.get("thinking")
+            if piece:
+                thinking.append(piece)
+            calls = message.get("tool_calls")
+            if calls:
+                tool_calls.extend(calls)
+
+        for key in _STREAM_METADATA_KEYS:
+            if key in chunk:
+                metadata[key] = chunk[key]
+
+        if chunk.get("done"):
+            break
+
+    merged_message: dict[str, Any] = {
+        "role": "assistant",
+        "content": "".join(content),
+    }
+    if thinking:
+        merged_message["thinking"] = "".join(thinking)
+    if tool_calls:
+        merged_message["tool_calls"] = tool_calls
+
+    result = dict(metadata)
+    result["message"] = merged_message
+    return result
+
+
 class _OllamaToolsUnsupported(RuntimeError):
     """Raised when the selected model does not support native function calling."""
 
@@ -44,7 +152,8 @@ class OllamaModel:
     """Minimal Gemma/Ollama adapter for Odessy's existing ModelAdapter protocol."""
 
     model: str = "gemma3:1b"
-    timeout: int = 120
+    #: Seconds of allowed silence between streamed chunks. Not a total budget.
+    timeout: int = field(default_factory=_default_progress_timeout)
     temperature: float = 0.0
 
     @property
@@ -141,7 +250,7 @@ class OllamaModel:
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "stream": False,
+            "stream": True,
             "options": {"temperature": self.temperature},
         }
         if tools:
@@ -154,7 +263,7 @@ class OllamaModel:
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
+                return _accumulate_stream(response)
         except urllib.error.HTTPError as error:
             body = _read_error_body(error)
             if "does not support tools" in body:
@@ -162,7 +271,17 @@ class OllamaModel:
             raise RuntimeError(
                 f"Ollama API call failed ({error.code}): {body or error.reason}"
             ) from error
+        except TimeoutError as error:
+            raise _OllamaStreamTimeout(
+                f"no chunk received within {self.timeout}s "
+                f"({PROGRESS_TIMEOUT_ENV})"
+            ) from error
         except urllib.error.URLError as error:
+            if isinstance(error.reason, TimeoutError):
+                raise _OllamaStreamTimeout(
+                    f"no chunk received within {self.timeout}s "
+                    f"({PROGRESS_TIMEOUT_ENV})"
+                ) from error
             raise RuntimeError(f"Ollama API call failed: {error}") from error
 
     def respond_to_observation(
@@ -177,11 +296,18 @@ class OllamaModel:
             f"Tool: {observation.request.name}\n"
             f"Arguments: {json.dumps(observation.request.arguments)}\n"
             f"Observation: {json.dumps(observation.result)}\n"
+            "If the task is not finished, call another tool instead of answering.\n"
             "Final response:"
         )
         diagnostics = self.last_turn_diagnostics
         started = time.perf_counter()
-        response = self._chat([{"role": "user", "content": prompt}])
+        # Advertise the same tool set the proposal path uses. Without an
+        # advertised list the response cannot carry a native tool_call, so
+        # _corrected_tool_request can never fire and continuation is inert.
+        response = self._chat(
+            [{"role": "user", "content": prompt}],
+            tools=_select_tools(_proposal_tool_name_for_user_text(user_text)),
+        )
         diagnostics.final_generation_ms = _elapsed_ms(started)
         _record_token_counts(diagnostics, response)
         object.__setattr__(self, "_last_turn_diagnostics", diagnostics)

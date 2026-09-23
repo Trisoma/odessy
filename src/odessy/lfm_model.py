@@ -13,14 +13,17 @@ import os
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from odessy.ollama_model import (
+    _OllamaStreamTimeout,
     _OllamaToolsUnsupported,
+    _accumulate_stream,
     _corrected_tool_request,
     _debug_model_repair,
     _debug_parsed_action,
+    _default_progress_timeout,
     _extract_model_action_from_chat,
     _fallback_observation_response,
     _looks_like_generic_final_response,
@@ -30,6 +33,7 @@ from odessy.ollama_model import (
     _select_tools,
     _system_prompt,
     _text_system_prompt,
+    PROGRESS_TIMEOUT_ENV,
 )
 from odessy.types import FinalResponse, ModelAction, ModelTurnDiagnostics, ToolObservation
 
@@ -82,7 +86,8 @@ class LlamaCppLFMModel:
 
     model: str = DEFAULT_LFM_MODEL
     endpoint: str = DEFAULT_LFM_ENDPOINT
-    timeout: int = 120
+    #: Seconds of allowed silence between streamed chunks. Not a total budget.
+    timeout: int = field(default_factory=_default_progress_timeout)
     temperature: float = 0.0
     think: bool | str | None = None
 
@@ -190,7 +195,7 @@ class LlamaCppLFMModel:
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "stream": False,
+            "stream": True,
             "temperature": self.temperature,
         }
         if self.think is not None:
@@ -205,7 +210,7 @@ class LlamaCppLFMModel:
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return normalize_ollama_chat_response(json.loads(response.read().decode("utf-8")))
+                return normalize_ollama_chat_response(_accumulate_stream(response))
         except urllib.error.HTTPError as error:
             body = _read_error_body(error)
             if "does not support tools" in body:
@@ -213,7 +218,17 @@ class LlamaCppLFMModel:
             raise RuntimeError(
                 f"Ollama LFM API call failed ({error.code}): {body or error.reason}"
             ) from error
+        except TimeoutError as error:
+            raise _OllamaStreamTimeout(
+                f"no chunk received within {self.timeout}s "
+                f"({PROGRESS_TIMEOUT_ENV})"
+            ) from error
         except urllib.error.URLError as error:
+            if isinstance(error.reason, TimeoutError):
+                raise _OllamaStreamTimeout(
+                    f"no chunk received within {self.timeout}s "
+                    f"({PROGRESS_TIMEOUT_ENV})"
+                ) from error
             raise RuntimeError(f"Ollama LFM API call failed: {error}") from error
 
     def respond_to_observation(
@@ -228,12 +243,19 @@ class LlamaCppLFMModel:
             f"Tool: {observation.request.name}\n"
             f"Arguments: {json.dumps(observation.request.arguments)}\n"
             f"Observation: {json.dumps(observation.result)}\n"
+            "If the task is not finished, call another tool instead of answering.\n"
             "Final response:"
         )
         diagnostics = self.last_turn_diagnostics
         started = time.perf_counter()
         _record_model_call_attempt(diagnostics)
-        response = self._chat([{"role": "user", "content": prompt}])
+        # Advertise the same tool set the proposal path uses. Without an
+        # advertised list the response cannot carry a native tool_call, so
+        # _corrected_tool_request can never fire and continuation is inert.
+        response = self._chat(
+            [{"role": "user", "content": prompt}],
+            tools=_select_tools(_proposal_tool_name_for_user_text(user_text)),
+        )
         diagnostics.final_generation_ms = _elapsed_ms(started)
         _record_ollama_response(diagnostics, response)
         object.__setattr__(self, "_last_turn_diagnostics", diagnostics)

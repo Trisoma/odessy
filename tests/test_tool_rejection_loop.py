@@ -7,6 +7,7 @@ a corrected ``ToolRequest``. Authority outcomes are NOT retryable.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -81,11 +82,13 @@ def build_agent(
     *,
     max_rejections: int = 2,
     deadline_seconds: float | None = None,
+    confirm: bool = False,
 ) -> OdessyAgent:
     return OdessyAgent(
         model=model,
         policy=OdessyPolicy(workspace_root=workspace_root),
         mcp_server=build_odessy_mcp_server(workspace_root=workspace_root),
+        confirm=confirm,
         max_rejections=max_rejections,
         deadline_seconds=deadline_seconds,
     )
@@ -347,3 +350,44 @@ def test_non_timeout_results_are_not_classified(tmp_path: Path) -> None:
     )
     # A result without a recognisable status is left alone too.
     assert agent._classify_timeout("terminal.run", {}) is None
+
+
+def _slow_command() -> str:
+    """A command that outlives a 1 s budget, on either platform."""
+
+    return "Start-Sleep -Seconds 5" if os.name == "nt" else "sleep 5"
+
+
+@pytest.mark.anyio
+async def test_tool_timeout_is_classified_through_live_execution(tmp_path: Path) -> None:
+    """A real execution that exceeds its budget is tagged on the live path.
+
+    This exercises the integration rather than the classifier in isolation: the
+    model calls `terminal.run` with a 1 s budget, the command sleeps past it, the
+    bridge reports `status: "timeout"`, and the loop tags it with TOOL_TIMEOUT.
+    """
+
+    model = ScriptedModel(
+        [
+            ToolRequest(
+                name="terminal.run",
+                arguments={"command": _slow_command(), "cwd": ".", "timeout": 1},
+            ),
+            FinalResponse(text="That command timed out."),
+        ]
+    )
+    # A sleep command falls outside the low-risk allow rules, so the turn passes
+    # through confirmation. That gate is not what this test is about.
+    agent = build_agent(tmp_path, model, confirm=True)
+
+    response = await agent.run_turn("run a slow command")
+
+    # The bridge reported the timeout, and the loop classified it.
+    assert response.tool_result is not None
+    assert response.tool_result["status"] == "timeout"
+    assert response.tool_result["timed_out"] is True
+
+    timeout_entries = [e for e in response.log if e.event == "tool_timeout"]
+    assert len(timeout_entries) == 1
+    assert timeout_entries[0].detail["name"] == "terminal.run"
+    assert timeout_entries[0].detail["error"]["info"]["code"] == TOOL_TIMEOUT

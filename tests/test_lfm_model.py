@@ -403,6 +403,87 @@ def test_lfm_observation_with_invalid_tool_call_degrades_instead_of_raising() ->
     assert isinstance(action, FinalResponse)
 
 
+def test_lfm_observation_advertises_tools() -> None:
+    """Regression: the observation call must advertise tool definitions.
+
+    Without an advertised list the model has no functions to call, so the
+    response cannot carry a native `tool_call` and `_corrected_tool_request`
+    always returns None. This is the one assertion that detects that: scripted
+    doubles return ToolRequests regardless of whether tools were advertised, so
+    every loop-level test passes while the feature is inert.
+    """
+
+    model = QueuedLFM([_assistant(content="It is noon.")])
+
+    model.respond_to_observation(
+        "what time is it?",
+        ToolObservation(
+            request=ToolRequest("time.now", {}),
+            result={"iso_time": "2026-09-20T12:00:00+00:00"},
+        ),
+    )
+
+    assert model.calls[-1]["tools"]
+
+
+def test_lfm_observation_and_proposal_advertise_the_same_tool_list() -> None:
+    """The continuation path must use the same construction as the proposal path."""
+
+    model = QueuedLFM(
+        [
+            _assistant(
+                tool_calls=[{"function": {"name": "time.now", "arguments": {}}}]
+            ),
+            _assistant(content="It is noon."),
+        ]
+    )
+
+    action = model.propose("what time is it?")
+    assert isinstance(action, ToolRequest)
+    model.respond_to_observation(
+        "what time is it?",
+        ToolObservation(request=action, result={"iso_time": "2026-09-20T12:00:00+00:00"}),
+    )
+
+    assert model.calls[0]["tools"] == model.calls[1]["tools"]
+
+
+def test_lfm_observation_parses_a_native_second_tool_request() -> None:
+    """A native tool_call in an observation response becomes the next ToolRequest.
+
+    This is the adapter half of multi-tool continuation: with tools advertised,
+    the response can name a *different* tool and the existing parsing path turns
+    it into a ToolRequest the loop can execute.
+    """
+
+    model = QueuedLFM(
+        [
+            _assistant(
+                tool_calls=[
+                    {
+                        "function": {
+                            "name": "calculator.eval",
+                            "arguments": {"expression": "2 + 2"},
+                        }
+                    }
+                ]
+            )
+        ]
+    )
+
+    action = model.respond_to_observation(
+        "what time is it, and what is 2 + 2?",
+        ToolObservation(
+            request=ToolRequest("time.now", {}),
+            result={"iso_time": "2026-09-20T12:00:00+00:00"},
+        ),
+    )
+
+    assert isinstance(action, ToolRequest)
+    assert action.name == "calculator.eval"
+    assert action.arguments == {"expression": "2 + 2"}
+
+
 def test_lfm_think_setting_is_omitted_by_default_and_sent_when_explicit(monkeypatch) -> None:
     captured: list[dict] = []
 
@@ -413,8 +494,9 @@ def test_lfm_think_setting_is_omitted_by_default_and_sent_when_explicit(monkeypa
         def __exit__(self, *args):
             return None
 
-        def read(self) -> bytes:
-            return b'{"message":{"role":"assistant","content":"hello"}}'
+        def __iter__(self):
+            yield b'{"message":{"role":"assistant","content":"hello"},"done":false}\n'
+            yield b'{"message":{"role":"assistant","content":""},"done":true}\n'
 
     def fake_urlopen(request, timeout):
         import json
