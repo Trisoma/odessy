@@ -86,9 +86,17 @@ Policy detection is paired with execution-level timeout and cleanup controls.
 ## Output Bounds
 
 Terminal stdout and stderr are bounded.
-If a command produces too much output, Odessy truncates deterministically and marks the result with structured truncation flags.
+Output at or under the inline budget is returned unchanged.
+Larger output keeps both a head and a tail window, so build and test failures at the end of a long run stay visible, and the result carries a structured truncation flag, an exact omitted-byte count, and a locator.
 
-This prevents a model-requested command from flooding logs, observations, or model context.
+The full text is written to `.odessy/spill/` inside the workspace before the inline preview replaces it, so nothing is silently discarded.
+If that write fails, the untruncated original is returned rather than a lossy cut.
+
+This prevents a model-requested command from flooding logs, observations, or model context without destroying the output it bounded.
+
+Output is also redacted for credential-shaped values before it is exposed or spilled.
+That redaction is name-based and covers this `terminal.run` path; it does not cover MCP tool results in general.
+See `docs/security/credential-handling.mdx`.
 
 ## Current Limitations
 

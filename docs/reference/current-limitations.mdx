@@ -30,7 +30,8 @@ This page records the limits future agents must keep visible when changing the r
 | Command parsing | Policy denies destructive, credential-seeking, and obvious detached/background patterns | Odessy does not implement a full shell parser. Execution-level timeout cleanup is a backstop, not a universal containment proof. |
 | Timeout cleanup | Windows uses process-tree termination; POSIX uses process-group termination where practical | Cleanup is best effort. Intentionally detached descendants may evade request-scoped cleanup without stronger OS primitives. |
 | Environment isolation | `terminal.run` receives a sanitized allowlisted environment | Some legitimate tools may require additional non-secret environment variables later. Additions must be explicit and reviewed. |
-| Output bounds | stdout/stderr are truncated deterministically | Output truncation is not the same as semantic secret redaction. Git diffs or command output may still contain secrets unless redaction is added before exposure. |
+| Output bounds | stdout/stderr are bounded with head-and-tail retention; the full text is spilled to `.odessy/spill/` and replaced inline with a preview, an exact omitted-byte count, and a locator | Truncation is no longer lossy, but bounded is not the same as sanitized. See the credential handling row below for what is and is not redacted. |
+| Credential handling | Policy is **defined but not enforced**; name-based redaction is applied on some surfaces | There is no credential store, vault, or reference resolver. Redaction does not cover MCP tool results in general (including `laptop.terminal.run`, `filesystem.read`, and the Git tools), nor the `command` metadata field, which is preserved byte-for-byte by design. Detection is name-based and misses unrecognised secret shapes. See `docs/security/credential-handling.mdx`. |
 | MCP server exposure | Node HTTP transport is intended for local/controlled use | There is no production authentication layer for a LAN-exposed MCP endpoint yet. Prefer loopback or SSH tunneling for Jetson/laptop development. |
 
 ## Tooling Limits
@@ -39,9 +40,9 @@ This page records the limits future agents must keep visible when changing the r
 |---|---|---|
 | `terminal.run` | Workspace-cwd-bound, policy-gated, sanitized env, timeout, output caps | It still invokes a shell, so policy cannot perfectly infer all command behavior from text. |
 | Read-only Node tools | `filesystem.read`, `filesystem.list`, `project.find`, `project.grep`, Git read-only tools | They are useful for project understanding, but they are not a broad file manager or search platform. |
-| Git tools | Fixed-argv read-only commands | Git output is captured/truncated, but not fully semantically redacted. |
+| Git tools | Fixed-argv read-only commands | Git output is captured and bounded, and the full output is recoverable from a spill locator, but it is not redacted: these tools return over MCP, which is outside the redaction boundary. |
 | Schema validation | Basic MCP schema validation in the Python loop | Validation is intentionally small and type-focused. It does not yet implement full JSON Schema semantics. |
-| Observations | Structured tool result objects | Observation formatting and redaction are still basic. Step 8+ should avoid feeding raw large or secret-bearing outputs to the model. |
+| Observations | Structured tool result objects | Output from the Python `terminal.run` path is redacted before exposure and before spill. Observations carrying results from other MCP tools are not redacted. Large outputs are bounded and recoverable rather than truncated away. |
 
 ## Jetson Voice Benchmark Limits
 
