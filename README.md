@@ -1,6 +1,6 @@
 # Odessy: A Voice-Controlled Edge-AI Personal Agent and Device Orchestration Platform
 
-> NOTE: This version (v0.1.0) is highly experimental, completely unstable, and may be confusing. It is recommended for developers only, not regular users!!!
+> NOTE: This version (v0.2.0, under development) is highly experimental, completely unstable, and may be confusing. It is recommended for developers only, not regular users!!!
 
 Odessy is a local, single-user edge-AI agent runtime. The Jetson hosts the model and voice loop; a laptop-side MCP server provides controlled command execution.
 
@@ -15,7 +15,7 @@ Voice command
 
 The model proposes actions. Python Odessy validates and authorizes them. MCP transports them. The model is never the authority.
 
-## Current v0.1.0
+## Current v0.2.0 (under development)
 
 - LFM2.5-Thinking 1.2B through Ollama is the default model path.
 - Gemma 3 1B remains available with `--model-backend ollama`.
@@ -228,6 +228,6 @@ The benchmark suite includes fake hardware-free scenarios and real Jetson scenar
 
 ## Known Limits
 
-See `docs/reference/current-limitations.mdx`. v0.1.0 is not a kernel sandbox, production network service, always-on voice assistant, or autonomous background agent.
+See `docs/reference/current-limitations.mdx`. v0.2.0 is not a kernel sandbox, production network service, always-on voice assistant, or autonomous background agent.
 
 The current policy and authority rules are introduced in `policy/README.md`.

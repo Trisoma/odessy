@@ -1,0 +1,28 @@
+(.venv) jaimef@ubuntu:~/odessy$ python -m benchmark \
+  --scenario lfm_compare \
+  --adapter real \
+  --prompt "on my laptop, run pwd" \
+  --expected-tool laptop.terminal.run \
+  --lfm-variant current=lfm2.5-thinking:1.2b-q8_0 \
+  --lfm-variant minimal=lfm2.5-thinking:1.2b-q8_0@false \
+  --lfm-variant low=lfm2.5-thinking:1.2b-q8_0@low \
+  --runs 4 \
+  --warmup 1
+
+=========================== benchmark summary ===========================
+scenario                      runs  fail   total p50   total p95   total p99   infer p50   infer p95    init p50
+------------------------------------------------------------------------
+lfm_compare:current              4     0    25000.26    27523.44    27627.86           -           -           -
+lfm_compare:low                  4     0    24596.29    27629.89    28047.90           -           -           -
+lfm_compare:minimal              4     0    25312.43    30198.81    30775.02           -           -           -
+========================================================================
+
+=========================== LFM comparison =============================
+configuration          latency ms   prompt ms     gen ms   tokens     tok/s   valid    tool  calls
+------------------------------------------------------------------------
+current                  24998.44       85.64   24538.11      432     17.61     yes     yes      1
+minimal                  25310.54       83.95   24863.67      437     17.58     yes     yes      1
+low                      24594.15       83.03   24144.34      423     17.57     yes     yes      1
+========================================================================
+
+Wrote benchmark data to: /home/jaimef/odessy/benchmark/results/20260923-075345

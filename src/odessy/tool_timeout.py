@@ -121,11 +121,18 @@ class ToolTimeoutPolicy:
 class Deadline:
     """A shared wall-clock budget for one turn.
 
-    Odessy's measured cost makes this necessary rather than decorative: a single
-    LFM tool proposal was observed at 70-115 s (``benchmark/model/20260922-073735``)
-    against a 120 s Ollama HTTP timeout. A retry loop bounded only by attempt
-    count can therefore outlive the run that contains it. The loop must spend
-    from a shared budget and stop when it is gone.
+    Odessy's measured cost made this necessary rather than decorative: a single
+    LFM tool proposal was observed at 70-115 s
+    (``benchmark/model/20260922-073735``), against what was then a 120 s
+    whole-request Ollama HTTP timeout. A retry loop bounded only by attempt count
+    could therefore outlive the run containing it.
+
+    NOTE: that 120 s whole-request timeout no longer exists. Both adapters now
+    stream, and ``ODESSY_MODEL_PROGRESS_TIMEOUT`` bounds silence between chunks
+    rather than total generation, so proposal generation is no longer capped at
+    120 s and a healthy generation may run indefinitely. This deadline machinery
+    remains for callers that opt in via ``deadline_seconds``; it is inert by
+    default. See ``odessy/LIMITATION.md``.
     """
 
     budget_seconds: float

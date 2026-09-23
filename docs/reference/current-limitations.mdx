@@ -1,13 +1,13 @@
 ---
-title: "Current v0.1.0 Limitations"
+title: "Current v0.2.0 Limitations"
 sidebar-title: "Current Limitations"
-description: "Reference for Odessy's current implementation limits, security limits, and intentionally deferred v0.1.0 capabilities."
+description: "Reference for Odessy's current implementation limits, security limits, and intentionally deferred v0.2.0 capabilities."
 description-agent: "Use before claiming Odessy is sandboxed, autonomous, voice-ready, Gemma-integrated, or production-secure. Lists current known limitations and deferred work."
-keywords: ["odessy limitations", "v0.1.0 scope", "security limitations", "deferred work"]
+keywords: ["odessy limitations", "v0.2.0 scope", "security limitations", "deferred work"]
 content:
   type: "reference"
 ---
-Odessy v0.1.0 currently has a real local command-line authority boundary, but it is not a complete operating-system sandbox or finished product.
+Odessy v0.2.0 currently has a real local command-line authority boundary, but it is not a complete operating-system sandbox or finished product.
 This page records the limits future agents must keep visible when changing the runtime, tools, policy, MCP integration, or public documentation.
 
 ## Product Scope Limits
@@ -53,10 +53,10 @@ Current benchmark status:
 
 | Component | Current result | Limitation |
 |---|---|---|
-| Whisper.cpp STT | CPU-only `ggml-tiny.en.bin` transcribes an 11-second sample in about 1.1 to 1.6 seconds | CUDA Whisper currently fails during cuBLAS resource allocation, so CPU-only STT is the v0.1.0 baseline. |
+| Whisper.cpp STT | CPU-only `ggml-tiny.en.bin` transcribes an 11-second sample in about 1.1 to 1.6 seconds | CUDA Whisper currently fails during cuBLAS resource allocation, so CPU-only STT is the v0.2.0 baseline. |
 | LFM2.5-Thinking | Runs through Ollama with native tool calls on the Jetson baseline | Its latency, token rate, residency, and memory/swap behavior still need systematic benchmarking. |
-| Kokoro TTS | ONNX int8 model runs on Jetson and can generate speech | Current measured generation is about 14.8 seconds for 5.7 seconds of audio, about 2.6x real time. This is acceptable for v0.1.0 feasibility, but not natural low-latency speech. |
-| Full voice stack | STT, LFM, and TTS have completed staged live turns | Odessy should use a staged turn-based pipeline for v0.1.0, not require STT + LFM + TTS to stay active in parallel. |
+| Kokoro TTS | ONNX int8 model runs on Jetson and can generate speech | Current measured generation is about 14.8 seconds for 5.7 seconds of audio, about 2.6x real time. This is acceptable for v0.2.0 feasibility, but not natural low-latency speech. |
+| Full voice stack | STT, LFM, and TTS have completed staged live turns | Odessy should use a staged turn-based pipeline for v0.2.0, not require STT + LFM + TTS to stay active in parallel. |
 | Voice implementation | `python -m odessy voice` wires recording, STT, runtime, TTS, and playback | The command still depends on configured local binaries, model files, audio devices, and a real Jetson manual run. |
 | Blank audio handling | Whisper.cpp can emit `[BLANK_AUDIO]` for empty or unusable recording input | Odessy currently passes `[BLANK_AUDIO]` into the model instead of short-circuiting with a retry prompt. In live testing, this caused LFM to propose `terminal.run` with command `BLANK_AUDIO`, triggering confirmation or, if allowed, an unnecessary command/tool path. |
 
@@ -82,7 +82,7 @@ Voice turn failed with status failed: Policy requires confirmation before execut
 
 A second run again transcribed `[BLANK_AUDIO]`; when the user allowed the command, Odessy entered the tool-observation/final-response path and was manually interrupted with `Ctrl-C`.
 
-This is a known v0.1.0 limitation:
+This is a known v0.2.0 limitation:
 
 ```text
 [BLANK_AUDIO] or empty transcript

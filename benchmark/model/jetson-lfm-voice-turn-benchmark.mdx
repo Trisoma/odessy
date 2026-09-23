@@ -35,6 +35,73 @@ The successful run also confirmed that the repeated benchmark is stable when
 Kokoro ONNX is forced to CPU. Earlier failures with ONNX Runtime auto mode
 were caused by TensorRT/CUDA memory pressure, not by the LFM agent path.
 
+## Addendum: Proposal-Path Re-run After Streaming (2026-09-23)
+
+Date: 2026-09-23
+Result directory: `benchmark/model/20260923-075345`
+Scenario: `lfm_compare` (proposal-only; no STT, TTS, or playback)
+Status: successful, 15/15 rows `ok`
+
+This re-run followed the replacement of the whole-request 120 s HTTP timeout
+with a per-chunk idle timeout (`ODESSY_MODEL_PROGRESS_TIMEOUT`, default 120 s).
+See `docs/optimization/tool-harness-design.md`.
+
+### Command
+
+```bash
+python -m benchmark \
+  --scenario lfm_compare --adapter real \
+  --prompt "on my laptop, run pwd" --expected-tool laptop.terminal.run \
+  --lfm-variant current=lfm2.5-thinking:1.2b-q8_0 \
+  --lfm-variant minimal=lfm2.5-thinking:1.2b-q8_0@false \
+  --lfm-variant low=lfm2.5-thinking:1.2b-q8_0@low \
+  --runs 4 --warmup 1
+```
+
+### Results
+
+```text
+rows                    15 (3 warmup + 12 measured)
+status                  ok for all 15
+timeouts                0
+total_ms                22640 - 30919 (variant medians 24.6 / 25.0 / 25.3 s)
+throughput              ~17.6 tok/s
+eval tokens             392 - 536
+selected_tool           laptop.terminal.run, 15/15
+tool_selection_correct  True, 15/15
+model_call_count        1 per sample
+proposal_valid          True, 15/15
+thinking_chars          current ~1601-1968 | minimal 0 | low ~1684-1962
+```
+
+### What this establishes
+
+Tool selection is correct on the real model: every sample chose
+`laptop.terminal.run`, every proposal validated on the first model call, and no
+repair was triggered.
+
+`think=false` zeroed `thinking_chars` while leaving token counts materially
+unchanged, consistent with the earlier finding that it removes reasoning text but
+not generation work.
+
+The three variants are indistinguishable on this prompt (medians within 2%). The
+earlier ranking, in which `think=low` was worst on tool prompts, does not appear
+here.
+
+No timeout occurred, so nothing in this run contradicts the streaming change.
+
+### What this does NOT establish
+
+**It does not validate that the 120 s failures are gone.** The earlier failing
+run generated 1004-1824 tokens over 70-115 s. This run generates 392-536 tokens
+over 22-31 s. The workload is roughly a third the size and never approached the
+120 s boundary, so the absence of timeouts is not evidence that the boundary was
+removed.
+
+Demonstrating that would need a single generation pushed past 120 s that then
+completes cleanly. Recording the distinction explicitly because "no timeouts"
+reads like a fix and is not one.
+
 ## Architecture Context
 
 The measured voice-turn path was:

@@ -74,16 +74,23 @@ class OdessyAgent:
         self._max_rejections = max(0, max_rejections)
         #: Optional shared wall-clock budget for one turn.
         #:
-        #: INTENTIONALLY DEFAULTED TO None. This is a deliberate freeze
-        #: decision, not an oversight. `None` becomes an infinite budget, so the
-        #: deadline never expires and `max_model_calls` is the only default
-        #: protection.
+        #: INTENTIONALLY DEFAULTED TO None. This is a deliberate decision, not
+        #: an oversight. `None` becomes an infinite budget, so the deadline never
+        #: expires and `max_model_calls` is the only default protection.
         #:
-        #: Why no default yet: a wrong value silently truncates legitimate
-        #: turns, and no measured distribution of turn durations exists to pick
-        #: one from. Odessy's proposal cost is 78-115 s on a real tool request
-        #: against a 120 s HTTP timeout, so the default has to be chosen
-        #: together with that timeout rather than in isolation.
+        #: Why no default: a wrong value silently truncates legitimate turns, and
+        #: no measured distribution of turn durations exists to pick one from.
+        #:
+        #: This is NOT the mechanism that bounds model generation. That job
+        #: belongs to ODESSY_MODEL_PROGRESS_TIMEOUT, which is an inter-chunk
+        #: progress timeout: its timer resets on every streaming chunk received,
+        #: so it limits the maximum silence between chunks rather than total
+        #: generation duration. A healthy generation may therefore run
+        #: indefinitely as long as chunks keep arriving.
+        #:
+        #: (An earlier revision of this comment justified the absent default by
+        #: a 120 s whole-request HTTP timeout. That timeout no longer exists;
+        #: it was replaced by the per-chunk progress timeout described above.)
         self._deadline_seconds = deadline_seconds
         #: Hard ceiling on model generations per turn, covering rejection retries,
         #: multi-tool continuation, and the adapter's own repair calls.

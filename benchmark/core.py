@@ -21,6 +21,20 @@ from .telemetry import (
     sample_telemetry_snapshot,
 )
 
+def odessy_version() -> str:
+    """Runtime version for benchmark metadata.
+
+    Read from the single source in ``odessy.__init__`` rather than repeated as a
+    literal. It previously was a literal, which is why recorded metadata said
+    ``0.1.0`` while the project had moved on.
+    """
+
+    try:
+        from odessy import __version__
+    except Exception:
+        return "unknown"
+    return __version__
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -219,7 +233,7 @@ class BenchmarkRunner:
             host=socket.gethostname(),
             platform=platform.platform(),
             python_version=sys.version.split()[0],
-            odessy_version="0.1.0",
+            odessy_version=odessy_version(),
             git_commit=_git_commit(self.workspace_root),
             cpu_count=os.cpu_count(),
             extra=dict(self.extra_metadata),

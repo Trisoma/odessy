@@ -1,0 +1,22 @@
+(.venv) jaimef@ubuntu:~/odessy$ python -m benchmark   --scenario lfm_compare   --adapter real   --prompt "Run command `ls` on my laptop"   --lfm-variant current=lfm2.5-thinking:1.2b-q8_0   --lfm-variant minimal=lfm2.5-thinking:1.2b-q8_0@false   --lfm-variant low=lfm2.5-thinking:1.2b-q8_0@low   --lfm-variant q6=lfm2.5-thinking:q6   --expected-tool laptop.term
+inal.run   --runs 3   --warmup 1
+
+=========================== benchmark summary ===========================
+scenario                      runs  fail   total p50   total p95   total p99   infer p50   infer p95    init p50
+------------------------------------------------------------------------
+lfm_compare:current              3     0    78315.96    93074.46    94386.32           -           -           -
+lfm_compare:low                  2     1    79697.61    88031.40    88772.18           -           -           -
+lfm_compare:minimal              3     0    77262.70    91700.44    92983.79           -           -           -
+lfm_compare:q6                   2     1    86060.26    98698.68    99822.10           -           -           -
+========================================================================
+
+=========================== LFM comparison =============================
+configuration          latency ms   prompt ms     gen ms   tokens     tok/s   valid    tool  calls
+------------------------------------------------------------------------
+current                  78313.43      113.43   77873.79     1284     16.49     yes     yes      1
+minimal                  77259.82      107.31   76790.44     1267     16.50     yes     yes      1
+low                      88954.87      504.65   88453.48     1443     16.43      no      no      1
+q6                       86057.50      101.77   85639.83     1288     15.04      no      no      1
+========================================================================
+
+Wrote benchmark data to: /home/jaimef/odessy/benchmark/results/20260922-081436

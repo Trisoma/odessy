@@ -62,11 +62,11 @@ On Windows, cleanup uses the platform process tree tool.
 On POSIX platforms, cleanup uses the process group where practical.
 
 This is not a universal process jail.
-It is a v0.1.0 local single-user lifecycle boundary.
+It is a v0.2.0 local single-user lifecycle boundary.
 
 ## Background And Detached Execution
 
-Odessy v0.1.0 is request-scoped.
+Odessy v0.2.0 is request-scoped.
 Intentional background or detached execution is outside the authority model.
 
 The policy layer denies obvious detachment patterns such as:
@@ -100,7 +100,7 @@ See `docs/security/credential-handling.mdx`.
 
 ## Current Limitations
 
-Odessy process control is a local v0.1.0 authority boundary, not a complete OS sandbox.
+Odessy process control is a local v0.2.0 authority boundary, not a complete OS sandbox.
 Timeout cleanup is best effort, shell command parsing is intentionally limited, and intentionally detached descendants may require stronger OS primitives in a future version.
 
 For the full current limitation register, see `docs/reference/current-limitations.mdx`.
