@@ -18,10 +18,14 @@ from pathlib import Path
 
 import pytest
 
+from odessy.agent_loop import OdessyAgent
 from odessy.command_bridge import CommandBridge, TerminalRunResult
+from odessy.mcp_server import build_odessy_mcp_server
 from odessy.output_retention import TextRetainer, format_retention_notice
+from odessy.policy import OdessyPolicy
 from odessy.redaction import REDACTED, looks_like_secret_name, redact_text
 from odessy.spill import SpillLocator, SpillStore
+from odessy.types import FinalResponse, ToolObservation, ToolRequest
 from odessy.workspace_authority import WorkspaceAuthorityError
 
 
@@ -375,3 +379,86 @@ def test_secret_absent_from_observation_spill_and_debug_log(
 
     _debug_model_repair([("raw output", payload)])
     assert secret not in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# The boundary at the model, not just at the bridge
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
+
+
+class _RecordingModel:
+    """Records the observation the loop would hand to the model."""
+
+    def __init__(self, call: ToolRequest) -> None:
+        self._call = call
+        self.observations: list[ToolObservation] = []
+
+    def propose(self, user_text: str) -> ToolRequest:
+        return self._call
+
+    def respond_to_observation(self, user_text: str, observation: ToolObservation) -> FinalResponse:
+        self.observations.append(observation)
+        return FinalResponse(text="done")
+
+
+@pytest.mark.anyio
+async def test_live_observation_is_bounded_and_redacted(tmp_path: Path) -> None:
+    """The output/observation boundary at the live path.
+
+    The other tests in this file assert the boundary at ``CommandBridge`` and at
+    ``_prepare_output``. Neither proves what the *model* is shown, and the model
+    is the surface the policy actually protects. This drives a real turn: real
+    policy, real execution, real MCP, and a real bridge.
+    """
+
+    secret = "sk-abcdef1234567890abcdef"
+    emitter = tmp_path / "emit.py"
+    emitter.write_text(
+        "print('API_KEY=%s')\nprint('x' * 100000)\n" % secret, encoding="utf-8"
+    )
+    command = f'& "{sys.executable}" emit.py' if os.name == "nt" else f'"{sys.executable}" emit.py'
+
+    model = _RecordingModel(
+        ToolRequest(name="terminal.run", arguments={"command": command, "cwd": ".", "timeout": 60})
+    )
+    agent = OdessyAgent(
+        model=model,
+        policy=OdessyPolicy(workspace_root=tmp_path),
+        mcp_server=build_odessy_mcp_server(workspace_root=tmp_path),
+        confirm=True,
+    )
+
+    await agent.run_turn("run the emitter")
+
+    assert model.observations, "the loop must deliver an observation to the model"
+    result = model.observations[0].result
+
+    # Bounded: the model receives the configured 64 000-character inline budget
+    # plus the retention notice, not the 100 000 characters the command produced.
+    assert result["stdout_truncated"] is True
+    assert 64_000 <= len(result["stdout"]) < 66_000
+    assert "omitted" in result["stdout"]
+    assert result["stdout_spill"] is not None
+    # The spilled copy is the whole output, minus the redacted secret.
+    assert result["stdout_spill"]["byte_count"] > 99_000
+
+    # Redacted: the credential never reaches the model.
+    assert secret not in result["stdout"]
+    assert "<redacted>" in result["stdout"]
+
+    # And the persisted copy the model can recover from is redacted too.
+    spilled = Path(result["stdout_spill"]["path"]).read_text(encoding="utf-8")
+    assert secret not in spilled
+    assert "<redacted>" in spilled
+
+    # Metadata is untouched, so the loop can still reason about the result.
+    assert result["exit_code"] == 0
+    assert result["status"] == "ok"
+    assert result["timed_out"] is False
+    assert result["command"] == command
+    assert result["cwd"] == str(tmp_path)

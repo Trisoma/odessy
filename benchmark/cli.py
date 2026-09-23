@@ -204,6 +204,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             "tts_device": args.tts_device,
             "lfm_variants": args.lfm_variant,
             "expected_tool": args.expected_tool,
+            # The model-call progress timeout materially changes what a run can
+            # prove: with a 5 s budget, a completed 25 s generation is evidence
+            # that the timeout is per-chunk rather than total. It was previously
+            # recoverable only from the free-text command transcript, so a
+            # machine-readable record could not distinguish a 5 s run from a
+            # 120 s one.
+            "model_progress_timeout_seconds": os.environ.get(
+                "ODESSY_MODEL_PROGRESS_TIMEOUT", "120"
+            ),
         },
     )
     run = runner.run(scenarios)
