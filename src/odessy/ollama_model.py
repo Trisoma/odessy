@@ -9,6 +9,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
+from odessy.redaction import redact_for_log
 from odessy.types import (
     FinalResponse,
     ModelAction,
@@ -378,8 +379,14 @@ def _text_system_prompt(user_text: str, tool_name: str | None) -> str:
 
 
 def _read_error_body(error: urllib.error.HTTPError) -> str:
+    """Read an HTTP error body for diagnostics, redacted at the boundary.
+
+    Error bodies are rendered into RuntimeError messages that surface in logs and
+    sometimes in model-facing observations, so they are redacted on the way in.
+    """
+
     try:
-        return error.read().decode("utf-8", "replace")
+        return redact_for_log(error.read().decode("utf-8", "replace"))
     except Exception:
         return ""
 
@@ -619,7 +626,7 @@ def _debug_model_repair(entries: list[tuple[str, str]]) -> None:
     if os.environ.get("ODESSY_DEBUG_MODEL_REPAIR") != "1":
         return
     for label, value in entries:
-        print(f"[odessy:model-repair] {label}:\n{value}")
+        print(f"[odessy:model-repair] {label}:\n{redact_for_log(value)}")
 
 
 def _debug_parsed_action(action: ModelAction) -> None:
@@ -627,9 +634,9 @@ def _debug_parsed_action(action: ModelAction) -> None:
         return
     if isinstance(action, ToolRequest):
         payload = json.dumps({"name": action.name, "arguments": action.arguments}, ensure_ascii=True)
-        print(f"[odessy:model-repair] parsed tool request:\n{payload}")
+        print(f"[odessy:model-repair] parsed tool request:\n{redact_for_log(payload)}")
     else:
-        print(f"[odessy:model-repair] parsed final response:\n{action.text}")
+        print(f"[odessy:model-repair] parsed final response:\n{redact_for_log(action.text)}")
 
 
 def _elapsed_ms(started: float) -> float:

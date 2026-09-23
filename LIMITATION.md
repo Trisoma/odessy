@@ -78,6 +78,65 @@ caused by memory pressure, TensorRT/plugin incompatibility, or both. Therefore,
 TensorRT must not currently be presented as a measured or production-ready
 Kokoro backend for Odessy.
 
+## No Total Wall-Clock Deadline On An Agent Turn
+
+**Status: intentional. Supersedes the earlier "set a default `deadline_seconds`"
+roadmap item (2026-09-23).**
+
+`OdessyAgent` has no total turn deadline by default:
+
+```python
+deadline_seconds: float | None = None   # -> Deadline(float("inf"))
+```
+
+The deadline never expires unless a caller passes a value. `max_model_calls`
+(default 4) is the only default protection on total work.
+
+### Why there is no default
+
+The deadline was originally introduced to bound one specific hang: a single LFM
+proposal measured at 70-115 s against a 120 s HTTP timeout, which meant a
+multi-attempt turn could spend several minutes in generation. That reason no
+longer applies. Both adapters now stream (`stream: true`) and the HTTP timeout
+measures **silence between chunks** rather than total generation, so a stalled
+model is cut off in seconds instead of exhausting a whole-request budget.
+
+With the hang bounded at the source, a second, coarser bound over the whole turn
+would duplicate `max_model_calls` without adding a guarantee. A total deadline
+was therefore dropped rather than given a number that no measurement supports.
+
+### What this actually limits
+
+This is a real limitation, not only a decision. The three bounds protect
+different things and do not compose into a total-time guarantee:
+
+```text
+model call      bounded by silence between chunks (idle timeout)
+tool execution  bounded per tool (ToolTimeoutPolicy)
+turn            bounded by max_model_calls (count), NOT by wall clock
+```
+
+So a turn can still be long in aggregate: up to `max_model_calls` legitimate
+generations, each of which may run for minutes as long as chunks keep arriving,
+plus their tool executions. Nothing bounds that sum. On a voice path where a
+user is waiting, a turn that is healthy by every individual measure can still be
+too slow as a whole, and Odessy has no mechanism to cut it short.
+
+If a total bound is ever needed, it should be chosen from a measured
+distribution of turn durations. No such measurement exists, which is why the
+original item was deferred rather than decided.
+
+### Carrying It Forward
+
+Both bounds are intentional and should not be "fixed" by adding a default
+deadline:
+
+- **A cold model load counts as silence.** The idle timeout will fire during a
+  cold load if it is set too low. `ODESSY_MODEL_PROGRESS_TIMEOUT` (default 120 s)
+  exists to tolerate the load gap; tuning it is not the same as bounding a turn.
+- **`response_chars` accumulates across calls**, so it reports a turn total, not
+  a single response. Do not read it as per-call output size.
+
 The current practical GPU path is explicit ONNX Runtime CUDA execution:
 
 ```text

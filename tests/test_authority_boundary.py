@@ -130,7 +130,15 @@ def test_command_bridge_bounds_stdout(tmp_path: Path) -> None:
     result = bridge.run(command=command, timeout=10)
 
     assert result["stdout_truncated"] is True
-    assert len(result["stdout"]) < 200
+    # Still bounded, but no longer by the old head-only cut. The inline preview
+    # keeps both ends and carries a spill locator plus an exact omission count,
+    # so the inline size is deliberately larger than max_stdout_chars. Asserting
+    # a bound well below the original is the invariant that matters; the old
+    # "< 200" encoded the previous mechanism rather than the requirement.
+    assert len(result["stdout"]) < 400
+    # The withheld remainder is recoverable instead of discarded.
+    assert result["stdout_spill"] is not None
+    assert result["stdout_spill"]["byte_count"] > 900
 
 
 def test_command_bridge_times_out_request_scoped_process(tmp_path: Path) -> None:

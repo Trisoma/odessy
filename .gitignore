@@ -28,6 +28,10 @@ build/
 benchmark/results/
 benchmark/tts/results/
 
+# Runtime spill storage. Written by CommandBridge when tool output exceeds the
+# inline budget; contains redacted tool output, never intended for git.
+.odessy/
+
 # Security: secrets, credentials, and keys
 *_ecdsa
 *_ed25519
