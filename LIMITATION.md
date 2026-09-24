@@ -148,3 +148,33 @@ comparison requires successful model initialization, completed inference
 samples, and confirmation of the actual execution behavior. See
 `../docs/failures/failure-005-jetson-tensorrt-kokoro-initialization.md` for the
 captured evidence and follow-up checks.
+
+## LFM GPU / Offload Configuration Is Unexplored
+
+**Status: deferred to v0.3.0 (decided 2026-09-24). Not measured.**
+
+The capability exists and has never been used:
+`benchmark/scenarios.py` defines `num_gpu`, `BenchmarkPartialGpuLFMModel` sends it
+as an Ollama option, and `benchmark/cli.py` exposes `--ollama-num-gpu` /
+`ODESSY_BENCHMARK_OLLAMA_NUM_GPU`.
+
+Every recorded run has `"ollama_num_gpu": null` — all of `benchmark/model/*`. The
+LFM has therefore only ever been measured with Ollama's default layer split, on a
+board where a 1.2 GB model competes with the OS for roughly 3.6 GB.
+
+Why it matters: with `max_model_calls=4` and ~17.6 tok/s, model generation
+dominates the cost of a turn, and layer placement is the largest untuned lever on
+it.
+
+Why deferred: it needs the Jetson, because `num_gpu` is an Ollama setting and
+Ollama runs there. The v0.2 budget is better spent closing verification gaps than
+opening a new unmeasured tuning axis.
+
+When it is run, the experiment is one command varying one number:
+
+```text
+--ollama-num-gpu 0 | 8 | 16 | 99
+```
+
+on the fixed `lfm_compare` prompt, with warmups, comparing tok/s and latency.
+`ollama_num_gpu` is written into `metadata.json`, so the runs are comparable.
