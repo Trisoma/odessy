@@ -21,6 +21,20 @@ from .telemetry import (
     sample_telemetry_snapshot,
 )
 
+def odessy_version() -> str:
+    """Runtime version for benchmark metadata.
+
+    Read from the single source in ``odessy.__init__`` rather than repeated as a
+    literal. It previously was a literal, which is why recorded metadata said
+    ``0.1.0`` while the project had moved on.
+    """
+
+    try:
+        from odessy import __version__
+    except Exception:
+        return "unknown"
+    return __version__
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -102,6 +116,35 @@ class BenchmarkSample:
     notes: str | None = None
     error: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
+    agent_turn_total_ms: float | None = None
+    proposal_generation_ms: float | None = None
+    proposal_parsing_ms: float | None = None
+    repair_generation_ms: float | None = None
+    policy_validation_ms: float | None = None
+    mcp_execution_ms: float | None = None
+    final_generation_ms: float | None = None
+    model_total_duration_ms: float | None = None
+    prompt_eval_duration_ms: float | None = None
+    prompt_eval_count: int | None = None
+    eval_duration_ms: float | None = None
+    eval_count: int | None = None
+    generation_tokens_per_sec: float | None = None
+    model_call_count: int | None = None
+    thinking_exposed: bool | None = None
+    thinking_chars: int | None = None
+    thinking_token_count: int | None = None
+    response_chars: int | None = None
+    configuration: str | None = None
+    model_name: str | None = None
+    think_setting: bool | str | None = None
+    expected_tool: str | None = None
+    selected_tool: str | None = None
+    tool_selection_correct: bool | None = None
+    proposal_valid: bool | None = None
+    repair_triggered: bool | None = None
+    tool_called: bool | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
     profile: str | None = None
     component: str | None = None
     execution_path: str | None = None
@@ -109,6 +152,7 @@ class BenchmarkSample:
     success: bool = False
     hardware: str | None = None
     runtime_version: str | None = None
+    pytorch_device: str | None = None
     model_precision: str | None = None
     batch_size: int | None = None
     warmup_iterations: int | None = None
@@ -189,7 +233,7 @@ class BenchmarkRunner:
             host=socket.gethostname(),
             platform=platform.platform(),
             python_version=sys.version.split()[0],
-            odessy_version="0.1.0",
+            odessy_version=odessy_version(),
             git_commit=_git_commit(self.workspace_root),
             cpu_count=os.cpu_count(),
             extra=dict(self.extra_metadata),
@@ -268,6 +312,39 @@ class BenchmarkRunner:
             notes=notes,
             error=error,
             details=details,
+            agent_turn_total_ms=_detail_value(details, "agent_turn_total_ms"),
+            proposal_generation_ms=_detail_value(details, "proposal_generation_ms"),
+            proposal_parsing_ms=_detail_value(details, "proposal_parsing_ms"),
+            repair_generation_ms=_detail_value(details, "repair_generation_ms"),
+            policy_validation_ms=_detail_value(details, "policy_validation_ms"),
+            mcp_execution_ms=_detail_value(details, "mcp_execution_ms"),
+            final_generation_ms=_detail_value(details, "final_generation_ms"),
+            model_total_duration_ms=_detail_value(details, "model_total_duration_ms"),
+            prompt_eval_duration_ms=_detail_value(details, "prompt_eval_duration_ms"),
+            prompt_eval_count=_detail_value(details, "prompt_eval_count"),
+            eval_duration_ms=_detail_value(details, "eval_duration_ms"),
+            eval_count=_detail_value(details, "eval_count"),
+            generation_tokens_per_sec=_detail_value(
+                details, "generation_tokens_per_sec"
+            ),
+            model_call_count=_detail_value(details, "model_call_count"),
+            thinking_exposed=_detail_value(details, "thinking_exposed"),
+            thinking_chars=_detail_value(details, "thinking_chars"),
+            thinking_token_count=_detail_value(details, "thinking_token_count"),
+            response_chars=_detail_value(details, "response_chars"),
+            configuration=_detail_value(details, "configuration"),
+            model_name=_detail_value(details, "model"),
+            think_setting=_detail_value(details, "think_setting"),
+            expected_tool=_detail_value(details, "expected_tool"),
+            selected_tool=_detail_value(details, "selected_tool"),
+            tool_selection_correct=_detail_value(
+                details, "tool_selection_correct"
+            ),
+            proposal_valid=_detail_value(details, "proposal_valid"),
+            repair_triggered=_detail_value(details, "repair_triggered"),
+            tool_called=_detail_value(details, "tool_called"),
+            prompt_tokens=_detail_value(details, "prompt_tokens"),
+            completion_tokens=_detail_value(details, "completion_tokens"),
             profile=_detail_value(details, "profile"),
             component=_detail_value(details, "component"),
             execution_path=_detail_value(details, "execution_path"),
@@ -275,6 +352,7 @@ class BenchmarkRunner:
             success=status == "ok",
             hardware=_detail_value(details, "hardware"),
             runtime_version=_detail_value(details, "runtime_version"),
+            pytorch_device=_detail_value(details, "pytorch_device"),
             model_precision=_detail_value(details, "model_precision"),
             batch_size=_detail_value(details, "batch_size"),
             warmup_iterations=_detail_value(details, "warmup_iterations"),

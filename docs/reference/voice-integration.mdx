@@ -1,14 +1,14 @@
 ---
 title: "Voice Integration"
 sidebar-title: "Voice Integration"
-description: "Reference for Odessy's staged v0.1.0 voice loop, configuration, and current operating limits."
+description: "Reference for Odessy's staged v0.2.0 voice loop, configuration, and current operating limits."
 description-agent: "Use when running or changing Odessy's voice path. Preserve the runtime authority boundary and staged Jetson voice design."
 keywords: ["odessy voice", "whisper.cpp", "kokoro", "ollama", "lfm", "jetson"]
 content:
   type: "reference"
 ---
 
-Odessy v0.1.0 adds voice as an interface around the existing runtime.
+Odessy v0.2.0 adds voice as an interface around the existing runtime.
 Voice does not replace the policy, MCP, workspace authority, process authority, or confirmation path.
 
 ## Architecture
@@ -89,7 +89,7 @@ ODESSY_VOICE_TMPDIR     controlled temporary audio directory
 
 ## Jetson Baseline
 
-For v0.1.0, Whisper.cpp should use CPU inference with `-ng`.
+For v0.2.0, Whisper.cpp should use CPU inference with `-ng`.
 CUDA Whisper remains a separate unresolved optimization because the benchmark saw cuBLAS resource-allocation failure.
 
 Kokoro ONNX int8 works on the Jetson but is slow in the current benchmark:

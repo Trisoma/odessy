@@ -1,0 +1,18 @@
+(.venv) jaimef@ubuntu:~/odessy$ export ODESSY_MODEL_PROGRESS_TIMEOUT=5
+python -m benchmark --scenario lfm_compare --adapter real \
+  --prompt "on my laptop, run pwd" --expected-tool laptop.terminal.run \
+  --lfm-variant current=lfm2.5-thinking:1.2b-q8_0 --runs 1 --warmup 0
+
+=========================== benchmark summary ===========================
+scenario                      runs  fail   total p50   total p95   total p99   infer p50   infer p95    init p50
+------------------------------------------------------------------------
+lfm_compare:current              1     0    28637.85    28637.85    28637.85           -           -           -
+========================================================================
+
+=========================== LFM comparison =============================
+configuration          latency ms   prompt ms     gen ms   tokens     tok/s   valid    tool  calls
+------------------------------------------------------------------------
+current                  28633.49      342.78   25021.82      437     17.46     yes     yes      1
+========================================================================
+
+Wrote benchmark data to: /home/jaimef/odessy/benchmark/results/20260923-092009

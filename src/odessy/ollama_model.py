@@ -3,12 +3,20 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
-from odessy.types import FinalResponse, ModelAction, ToolObservation, ToolRequest
+from odessy.redaction import redact_for_log
+from odessy.types import (
+    FinalResponse,
+    ModelAction,
+    ModelTurnDiagnostics,
+    ToolObservation,
+    ToolRequest,
+)
 from odessy.tool_contracts import (
     TOOL_REQUEST_SCHEMAS,
     build_openai_tools,
@@ -18,6 +26,114 @@ from odessy.tool_contracts import (
 )
 
 OLLAMA_BASE_URL = os.environ.get("ODESSY_OLLAMA_URL", "http://127.0.0.1:11434")
+
+
+#: Maximum seconds of silence allowed between streamed chunks from Ollama.
+#:
+#: This is an IDLE timeout, not a generation budget. The timer resets on every
+#: received chunk, so a healthy model may generate for minutes. The socket
+#: timeout handed to urlopen applies per read rather than to the whole
+#: transfer, which is exactly this semantic -- so no separate timer is needed.
+DEFAULT_PROGRESS_TIMEOUT_SECONDS = 120
+
+#: Env var carrying the progress timeout, in seconds.
+PROGRESS_TIMEOUT_ENV = "ODESSY_MODEL_PROGRESS_TIMEOUT"
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _default_progress_timeout() -> int:
+    """Progress timeout in seconds, honouring ``ODESSY_MODEL_PROGRESS_TIMEOUT``."""
+
+    return _env_int(PROGRESS_TIMEOUT_ENV, DEFAULT_PROGRESS_TIMEOUT_SECONDS)
+
+
+class _OllamaStreamTimeout(RuntimeError):
+    """Raised when no streamed chunk arrives within the progress timeout."""
+
+
+#: Metadata fields carried by the terminal chunk of a streamed response.
+_STREAM_METADATA_KEYS = (
+    "done",
+    "done_reason",
+    "model",
+    "created_at",
+    "total_duration",
+    "load_duration",
+    "prompt_eval_count",
+    "prompt_eval_duration",
+    "eval_count",
+    "eval_duration",
+)
+
+
+def _accumulate_stream(response: Any) -> dict[str, Any]:
+    """Fold a streamed NDJSON chat response into a single response dict.
+
+    The returned shape matches the non-streamed ``/api/chat`` body, so existing
+    parsing, tool-call extraction, and token accounting are unchanged.
+
+    Reads inherit the connection's socket timeout, which applies per read rather
+    than to the whole transfer. That is precisely the intended semantic: the
+    timeout measures silence between chunks, not total generation time.
+    """
+
+    content: list[str] = []
+    thinking: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
+    metadata: dict[str, Any] = {}
+
+    for raw_line in response:
+        line = raw_line.decode("utf-8", "replace").strip()
+        if not line:
+            continue
+        try:
+            chunk = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(chunk, dict):
+            continue
+
+        message = chunk.get("message")
+        if isinstance(message, dict):
+            piece = message.get("content")
+            if piece:
+                content.append(piece)
+            piece = message.get("thinking")
+            if piece:
+                thinking.append(piece)
+            calls = message.get("tool_calls")
+            if calls:
+                tool_calls.extend(calls)
+
+        for key in _STREAM_METADATA_KEYS:
+            if key in chunk:
+                metadata[key] = chunk[key]
+
+        if chunk.get("done"):
+            break
+
+    merged_message: dict[str, Any] = {
+        "role": "assistant",
+        "content": "".join(content),
+    }
+    if thinking:
+        merged_message["thinking"] = "".join(thinking)
+    if tool_calls:
+        merged_message["tool_calls"] = tool_calls
+
+    result = dict(metadata)
+    result["message"] = merged_message
+    return result
 
 
 class _OllamaToolsUnsupported(RuntimeError):
@@ -37,17 +153,35 @@ class OllamaModel:
     """Minimal Gemma/Ollama adapter for Odessy's existing ModelAdapter protocol."""
 
     model: str = "gemma3:1b"
-    timeout: int = 120
+    #: Seconds of allowed silence between streamed chunks. Not a total budget.
+    timeout: int = field(default_factory=_default_progress_timeout)
     temperature: float = 0.0
 
+    @property
+    def last_turn_diagnostics(self) -> ModelTurnDiagnostics:
+        diagnostics = getattr(self, "_last_turn_diagnostics", None)
+        if isinstance(diagnostics, ModelTurnDiagnostics):
+            return diagnostics
+        return ModelTurnDiagnostics()
+
     def propose(self, user_text: str) -> ModelAction:
+        diagnostics = ModelTurnDiagnostics()
+        object.__setattr__(self, "_last_turn_diagnostics", diagnostics)
         tool_name = _proposal_tool_name_for_user_text(user_text)
         system_prompt = _system_prompt(tool_name)
         fallback_prompt = _text_system_prompt(user_text, tool_name)
         tools = _select_tools(tool_name)
         try:
-            action = self._chat_action(user_text, system_prompt, tools, fallback_prompt)
+            action = self._chat_action(
+                user_text,
+                system_prompt,
+                tools,
+                fallback_prompt,
+                diagnostics,
+            )
         except ValueError as error:
+            diagnostics.proposal_valid = False
+            diagnostics.repair_triggered = True
             model_error = _model_output_error("", error, user_text, tool_name)
             repair_prompt = _repair_prompt(user_text, model_error)
             _debug_model_repair(
@@ -58,7 +192,14 @@ class OllamaModel:
                 ]
             )
             try:
-                action = self._chat_action(user_text, repair_prompt, tools, repair_prompt)
+                action = self._chat_action(
+                    user_text,
+                    repair_prompt,
+                    tools,
+                    repair_prompt,
+                    diagnostics,
+                    generation_field="repair_generation_ms",
+                )
             except ValueError as retry_error:
                 raise ValueError(
                     f"Model repair failed after one retry: {retry_error}"
@@ -73,16 +214,34 @@ class OllamaModel:
         system_prompt: str,
         tools: list[dict[str, Any]],
         fallback_prompt: str,
+        diagnostics: ModelTurnDiagnostics,
+        *,
+        generation_field: str = "proposal_generation_ms",
     ) -> ModelAction:
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_text},
         ]
         try:
+            started = time.perf_counter()
             response = self._chat(messages, tools=tools)
+            _add_diagnostic_ms(diagnostics, generation_field, _elapsed_ms(started))
+            _record_token_counts(diagnostics, response)
         except _OllamaToolsUnsupported:
+            started = time.perf_counter()
             response = self._chat([{"role": "user", "content": fallback_prompt}], tools=None)
-        return _extract_model_action_from_chat(response, user_text)
+            _add_diagnostic_ms(diagnostics, generation_field, _elapsed_ms(started))
+            _record_token_counts(diagnostics, response)
+        parse_started = time.perf_counter()
+        try:
+            return _extract_model_action_from_chat(response, user_text)
+        finally:
+            if generation_field == "proposal_generation_ms":
+                _add_diagnostic_ms(
+                    diagnostics,
+                    "proposal_parsing_ms",
+                    _elapsed_ms(parse_started),
+                )
 
     def _chat(
         self,
@@ -92,7 +251,7 @@ class OllamaModel:
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "stream": False,
+            "stream": True,
             "options": {"temperature": self.temperature},
         }
         if tools:
@@ -105,7 +264,7 @@ class OllamaModel:
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
+                return _accumulate_stream(response)
         except urllib.error.HTTPError as error:
             body = _read_error_body(error)
             if "does not support tools" in body:
@@ -113,14 +272,24 @@ class OllamaModel:
             raise RuntimeError(
                 f"Ollama API call failed ({error.code}): {body or error.reason}"
             ) from error
+        except TimeoutError as error:
+            raise _OllamaStreamTimeout(
+                f"no chunk received within {self.timeout}s "
+                f"({PROGRESS_TIMEOUT_ENV})"
+            ) from error
         except urllib.error.URLError as error:
+            if isinstance(error.reason, TimeoutError):
+                raise _OllamaStreamTimeout(
+                    f"no chunk received within {self.timeout}s "
+                    f"({PROGRESS_TIMEOUT_ENV})"
+                ) from error
             raise RuntimeError(f"Ollama API call failed: {error}") from error
 
     def respond_to_observation(
         self,
         user_text: str,
         observation: ToolObservation,
-    ) -> FinalResponse:
+    ) -> ModelAction:
         prompt = (
             "You are Odessy. Return the tool output first, then a short interpretation.\n"
             "Do not answer with filler like 'Please wait' or 'Yes'.\n"
@@ -128,13 +297,50 @@ class OllamaModel:
             f"Tool: {observation.request.name}\n"
             f"Arguments: {json.dumps(observation.request.arguments)}\n"
             f"Observation: {json.dumps(observation.result)}\n"
+            "If the task is not finished, call another tool instead of answering.\n"
             "Final response:"
         )
-        response = self._chat([{"role": "user", "content": prompt}])
+        diagnostics = self.last_turn_diagnostics
+        started = time.perf_counter()
+        # Advertise the same tool set the proposal path uses. Without an
+        # advertised list the response cannot carry a native tool_call, so
+        # _corrected_tool_request can never fire and continuation is inert.
+        response = self._chat(
+            [{"role": "user", "content": prompt}],
+            tools=_select_tools(_proposal_tool_name_for_user_text(user_text)),
+        )
+        diagnostics.final_generation_ms = _elapsed_ms(started)
+        _record_token_counts(diagnostics, response)
+        object.__setattr__(self, "_last_turn_diagnostics", diagnostics)
+        corrected = _corrected_tool_request(response, user_text)
+        if corrected is not None:
+            return corrected
         text = ((response.get("message") or {}).get("content") or "").strip()
         if text and not _looks_like_generic_final_response(text):
             return FinalResponse(text=text)
         return FinalResponse(text=_fallback_observation_response(observation))
+
+
+def _corrected_tool_request(response: dict[str, Any], user_text: str) -> ToolRequest | None:
+    """Return a ``ToolRequest`` when an observation was answered with a tool call.
+
+    The continuation loop delivers a pre-execution rejection through
+    ``respond_to_observation``, so a model that can propose a tool call must also
+    be able to propose a *corrected* one.
+
+    Only **native** tool calls are considered. A text answer keeps the historical
+    summarisation path unchanged, and anything unparseable degrades to ``None``
+    rather than raising into the loop.
+    """
+
+    message = response.get("message") or {}
+    if not (message.get("tool_calls") or []):
+        return None
+    try:
+        action = _extract_model_action_from_chat(response, user_text)
+    except (ValueError, TypeError):
+        return None
+    return action if isinstance(action, ToolRequest) else None
 
 
 def _system_prompt(tool_name: str | None) -> str:
@@ -173,8 +379,14 @@ def _text_system_prompt(user_text: str, tool_name: str | None) -> str:
 
 
 def _read_error_body(error: urllib.error.HTTPError) -> str:
+    """Read an HTTP error body for diagnostics, redacted at the boundary.
+
+    Error bodies are rendered into RuntimeError messages that surface in logs and
+    sometimes in model-facing observations, so they are redacted on the way in.
+    """
+
     try:
-        return error.read().decode("utf-8", "replace")
+        return redact_for_log(error.read().decode("utf-8", "replace"))
     except Exception:
         return ""
 
@@ -277,13 +489,28 @@ def _fallback_observation_response(observation: ToolObservation) -> str:
     return "I received a tool result, but I cannot summarize it yet."
 
 
+#: Bare acknowledgements that carry no answer. The observation prompt tells the
+#: model not to reply with these ("Do not answer with filler like 'Please wait'
+#: or 'Yes'"), so they are matched explicitly rather than by shape.
+_GENERIC_FINAL_RESPONSES = frozenset(
+    {"yes", "no", "yeah", "yep", "ok", "okay", "sure", "done", "hello", "hi", "please wait"}
+)
+
+
 def _looks_like_generic_final_response(response: str) -> bool:
+    """Whether a final answer is filler that should be replaced by a fallback.
+
+    Filler is matched by an explicit vocabulary, **not** by length. A previous
+    ``len(normalized) < 12`` heuristic classified any answer shorter than 12
+    characters as generic, which silently discarded legitimate terse replies
+    ("It is noon.", "12 files", "No matches."). For a voice agent, terse is the
+    normal case, so length is not a usable signal here.
+    """
+
     normalized = response.strip().lower().strip(" .!`")
     if not normalized:
         return True
-    if normalized in {"yes", "please wait", "ok", "okay", "done"}:
-        return True
-    return len(normalized) < 12
+    return normalized in _GENERIC_FINAL_RESPONSES
 
 
 def _parse_model_action(raw_text: str) -> ModelAction:
@@ -399,7 +626,7 @@ def _debug_model_repair(entries: list[tuple[str, str]]) -> None:
     if os.environ.get("ODESSY_DEBUG_MODEL_REPAIR") != "1":
         return
     for label, value in entries:
-        print(f"[odessy:model-repair] {label}:\n{value}")
+        print(f"[odessy:model-repair] {label}:\n{redact_for_log(value)}")
 
 
 def _debug_parsed_action(action: ModelAction) -> None:
@@ -407,6 +634,38 @@ def _debug_parsed_action(action: ModelAction) -> None:
         return
     if isinstance(action, ToolRequest):
         payload = json.dumps({"name": action.name, "arguments": action.arguments}, ensure_ascii=True)
-        print(f"[odessy:model-repair] parsed tool request:\n{payload}")
+        print(f"[odessy:model-repair] parsed tool request:\n{redact_for_log(payload)}")
     else:
-        print(f"[odessy:model-repair] parsed final response:\n{action.text}")
+        print(f"[odessy:model-repair] parsed final response:\n{redact_for_log(action.text)}")
+
+
+def _elapsed_ms(started: float) -> float:
+    return (time.perf_counter() - started) * 1000.0
+
+
+def _add_diagnostic_ms(
+    diagnostics: ModelTurnDiagnostics,
+    field_name: str,
+    value: float,
+) -> None:
+    current = getattr(diagnostics, field_name)
+    setattr(diagnostics, field_name, value if current is None else current + value)
+
+
+def _record_token_counts(
+    diagnostics: ModelTurnDiagnostics,
+    response: dict[str, Any],
+) -> None:
+    _add_tokens(diagnostics, "prompt_tokens", response.get("prompt_eval_count"))
+    _add_tokens(diagnostics, "completion_tokens", response.get("eval_count"))
+
+
+def _add_tokens(
+    diagnostics: ModelTurnDiagnostics,
+    field_name: str,
+    value: Any,
+) -> None:
+    if not isinstance(value, int):
+        return
+    current = getattr(diagnostics, field_name)
+    setattr(diagnostics, field_name, value if current is None else current + value)

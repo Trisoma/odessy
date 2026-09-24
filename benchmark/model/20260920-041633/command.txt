@@ -1,0 +1,15 @@
+(.venv) jaimef@ubuntu:~/odessy$ ODESSY_ONNX_PROVIDER=cpu python -m benchmark \
+  --scenario voice_turn \
+  --adapter real \
+  --audio-path /home/jaimef/odessy/output.wav \
+  --runs 3 \
+  --warmup 1
+2026-09-20 12:16:52.530716660 [W:onnxruntime:Default, device_discovery.cc:211 DiscoverDevicesForPlatform] GPU device discovery failed: device_discovery.cc:91 ReadFileContents Failed to open file: "/sys/class/drm/card1/device/vendor"
+
+=========================== benchmark summary ===========================
+scenario                      runs  fail   total p50   total p95   total p99   infer p50   infer p95    init p50
+------------------------------------------------------------------------
+voice_turn                       3     0    30428.47    34855.02    35248.49           -           -           -
+========================================================================
+
+Wrote benchmark data to: /home/jaimef/odessy/benchmark/results/20260920-041633

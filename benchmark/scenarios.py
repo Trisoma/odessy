@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
+import urllib.error
+import urllib.request
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
 from odessy.agent_loop import OdessyAgent
-from odessy.ollama_model import OllamaModel
+from odessy.lfm_model import LlamaCppLFMModel, normalize_ollama_chat_response
 from odessy.policy import OdessyPolicy
 from odessy.types import FinalResponse, ToolObservation, ToolRequest
 from odessy.voice.audio_io import CommandAudioIO
 from odessy.voice.config import VoiceConfig
 from odessy.voice.stt import WhisperCppSTT
-from odessy.voice.tts import KokoroTTS
+from odessy.voice.tts import KokoroTTS, TTSResult
 
 from .adapters import (
     RuntimeConfigurationError,
@@ -33,6 +36,86 @@ class VoiceBenchmarkAudioIO(Protocol):
 
     def play(self, audio_path: Path) -> None:
         ...
+
+
+class BenchmarkPyTorchTTS:
+    """Warm, voice-loop-compatible wrapper around the PyTorch Kokoro engine."""
+
+    backend = "pytorch"
+
+    def __init__(self, *, device: str | None = None) -> None:
+        from .tts.pytorch_kokoro import PyTorchKokoroEngine
+
+        self.device = device
+        self._engine = PyTorchKokoroEngine(device=device)
+        self._initialized = False
+
+    @property
+    def model_dir(self) -> Path | None:
+        return self._engine.model_dir
+
+    @property
+    def effective_device(self) -> str | None:
+        return self._engine.device
+
+    def synthesize(self, text: str, output_path: Path) -> TTSResult:
+        try:
+            if not self._initialized:
+                self._engine.initialize()
+                self._initialized = True
+            self._engine.synthesize(text, output_path)
+        except Exception as exc:
+            return TTSResult(output_path=output_path, status="failed", error=str(exc))
+        return TTSResult(output_path=output_path, status="ok", error=None)
+
+    def close(self) -> None:
+        self._engine.close()
+        self._initialized = False
+
+
+@dataclass(frozen=True)
+class BenchmarkPartialGpuLFMModel(LlamaCppLFMModel):
+    """Benchmark-only LFM adapter that asks Ollama for partial GPU offload."""
+
+    num_gpu: int | None = None
+
+    def _chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+            "temperature": self.temperature,
+        }
+        if self.num_gpu is not None:
+            payload["options"] = {"num_gpu": self.num_gpu}
+        if self.think is not None:
+            payload["think"] = self.think
+        if tools:
+            payload["tools"] = tools
+        request = urllib.request.Request(
+            f"{self.endpoint.rstrip('/')}/api/chat",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                return normalize_ollama_chat_response(json.loads(response.read().decode("utf-8")))
+        except urllib.error.HTTPError as error:
+            body = _read_error_body(error)
+            if "does not support tools" in body:
+                from odessy.ollama_model import _OllamaToolsUnsupported
+
+                raise _OllamaToolsUnsupported(body) from error
+            raise RuntimeError(
+                f"Ollama LFM API call failed ({error.code}): {body or error.reason}"
+            ) from error
+        except urllib.error.URLError as error:
+            raise RuntimeError(f"Ollama LFM API call failed: {error}") from error
 
 
 @dataclass(frozen=True)
@@ -73,8 +156,102 @@ class GemmaBenchmark:
                 "components_invoked": {
                     "model": _component_name(self.model),
                     "ollama_model": getattr(self.model, "model", None),
+                    "ollama_num_gpu": getattr(self.model, "num_gpu", None),
                 },
             },
+        )
+
+
+LFM_THINK_SETTINGS = {"true", "false", "low", "medium", "high", "max"}
+
+
+@dataclass(frozen=True)
+class LFMVariant:
+    name: str
+    model: str
+    think: bool | str | None = None
+
+
+def parse_lfm_variant(spec: str) -> LFMVariant:
+    name, separator, value = spec.partition("=")
+    if not separator or not name.strip() or not value.strip():
+        raise ValueError(
+            "LFM variants must use NAME=MODEL[@THINK_SETTING] syntax"
+        )
+    model, separator, think_value = value.strip().partition("@")
+    if not model:
+        raise ValueError(f"LFM variant {name!r} has an empty model name")
+    if not separator:
+        return LFMVariant(name=name.strip(), model=model)
+    normalized = think_value.strip().lower()
+    if normalized not in LFM_THINK_SETTINGS:
+        raise ValueError(
+            f"LFM variant {name!r} has unsupported think setting {normalized!r}"
+        )
+    think: bool | str = normalized
+    if normalized == "true":
+        think = True
+    elif normalized == "false":
+        think = False
+    return LFMVariant(name=name.strip(), model=model, think=think)
+
+
+@dataclass(frozen=True)
+class LFMCompareBenchmark:
+    model: Any
+    variant: LFMVariant
+    prompt: str
+    expected_tool: str | None = None
+    name: str = field(default="", init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "name", f"lfm_compare:{self.variant.name}")
+
+    def run_once(self, *, iteration: int, is_warmup: bool) -> BenchmarkOutcome:
+        started = time.perf_counter()
+        action: Any | None = None
+        error: str | None = None
+        status = "ok"
+        try:
+            action = self.model.propose(self.prompt)
+        except Exception as exc:
+            error = str(exc)
+            status = "skipped" if _is_unavailable_lfm_error(error) else "failed"
+
+        diagnostics = getattr(self.model, "last_turn_diagnostics", None)
+        details = _diagnostic_details(diagnostics)
+        selected_tool = action.name if isinstance(action, ToolRequest) else None
+        proposal_valid = details.get("proposal_valid", True)
+        if error is not None:
+            proposal_valid = False
+        tool_correct = None
+        if self.expected_tool is not None:
+            tool_correct = selected_tool == self.expected_tool
+        details.update(
+            {
+                "configuration": self.variant.name,
+                "model": self.variant.model,
+                "think_setting": self.variant.think,
+                "prompt": self.prompt,
+                "expected_tool": self.expected_tool,
+                "selected_tool": selected_tool,
+                "tool_selection_correct": tool_correct,
+                "action_type": type(action).__name__ if action is not None else None,
+                "proposal_valid": proposal_valid,
+                "total_ms": (time.perf_counter() - started) * 1000.0,
+                "components_invoked": {
+                    "model": _component_name(self.model),
+                    "ollama_model": self.variant.model,
+                    "ollama_num_gpu": getattr(self.model, "num_gpu", None),
+                    "think": self.variant.think,
+                },
+            }
+        )
+        return BenchmarkOutcome(
+            status=status,
+            stage_ms={"proposal_ms": details["total_ms"]},
+            details=details,
+            error=error,
         )
 
 
@@ -380,6 +557,7 @@ class VoiceTurnBenchmark:
             turn = asyncio.run(self.agent.run_turn(transcript))
             stages["agent_ms"] = (time.perf_counter() - agent_begin) * 1000.0
             final_text = turn.final_text
+            agent_metrics = asdict(turn.metrics)
             if turn.tool_request is not None:
                 tool_request_name = turn.tool_request.name
 
@@ -398,6 +576,7 @@ class VoiceTurnBenchmark:
                         "transcript": transcript,
                         "final_text": final_text,
                         "tool_request_name": tool_request_name,
+                        **agent_metrics,
                         "total_ms": (time.perf_counter() - started) * 1000.0,
                         "components_invoked": components_invoked,
                     },
@@ -425,6 +604,7 @@ class VoiceTurnBenchmark:
                 "transcript": transcript,
                 "final_text": final_text,
                 "tool_request_name": tool_request_name,
+                **(agent_metrics if "agent_metrics" in locals() else {}),
                 "total_ms": (time.perf_counter() - started) * 1000.0,
                 "components_invoked": components_invoked,
             },
@@ -432,15 +612,34 @@ class VoiceTurnBenchmark:
         )
 
 
-def build_real_components(config: VoiceConfig, workspace_root: Path) -> dict[str, Any]:
-    model = OllamaModel(model=config.ollama_model)
+def build_real_components(
+    config: VoiceConfig,
+    workspace_root: Path,
+    *,
+    ollama_num_gpu: int | None = None,
+    tts_backend: str = "onnx",
+    tts_device: str = "auto",
+) -> dict[str, Any]:
+    if ollama_num_gpu is None:
+        model = LlamaCppLFMModel(model=config.ollama_model)
+    else:
+        model = BenchmarkPartialGpuLFMModel(model=config.ollama_model, num_gpu=ollama_num_gpu)
     stt = WhisperCppSTT(whisper_bin=config.whisper_bin, model_path=config.whisper_model)
-    tts = KokoroTTS(
-        model_path=config.kokoro_model,
-        voices_path=config.kokoro_voices,
-        provider=config.onnx_provider,
-        cache_dir=config.onnx_cache_dir,
-    )
+    if tts_backend == "pytorch":
+        if tts_device not in {"auto", "cpu", "cuda"}:
+            raise ValueError(f"Unsupported PyTorch TTS device: {tts_device}")
+        tts = BenchmarkPyTorchTTS(
+            device=None if tts_device == "auto" else tts_device,
+        )
+    elif tts_backend == "onnx":
+        tts = KokoroTTS(
+            model_path=config.kokoro_model,
+            voices_path=config.kokoro_voices,
+            provider=config.onnx_provider,
+            cache_dir=config.onnx_cache_dir,
+        )
+    else:
+        raise ValueError(f"Unsupported TTS backend: {tts_backend}")
     audio_io = CommandAudioIO(
         recorder=config.audio_recorder,
         player=config.audio_player,
@@ -450,6 +649,23 @@ def build_real_components(config: VoiceConfig, workspace_root: Path) -> dict[str
     policy = OdessyPolicy(workspace_root=workspace_root)
     agent = OdessyAgent(model=model, policy=policy, mcp_server=None)
     return {"model": model, "stt": stt, "tts": tts, "audio_io": audio_io, "agent": agent}
+
+
+def build_lfm_compare_model(
+    variant: LFMVariant,
+    *,
+    endpoint: str | None = None,
+    ollama_num_gpu: int | None = None,
+) -> LlamaCppLFMModel:
+    kwargs: dict[str, Any] = {
+        "model": variant.model,
+        "think": variant.think,
+    }
+    if endpoint is not None:
+        kwargs["endpoint"] = endpoint
+    if ollama_num_gpu is None:
+        return LlamaCppLFMModel(**kwargs)
+    return BenchmarkPartialGpuLFMModel(num_gpu=ollama_num_gpu, **kwargs)
 
 
 def build_fake_components() -> dict[str, Any]:
@@ -471,6 +687,48 @@ def _unlink_if_exists(path: Path) -> None:
 
 def _component_name(component: Any) -> str:
     return type(component).__name__
+
+
+def _diagnostic_details(diagnostics: Any) -> dict[str, Any]:
+    if diagnostics is None:
+        return {}
+    names = (
+        "proposal_generation_ms",
+        "proposal_parsing_ms",
+        "repair_generation_ms",
+        "final_generation_ms",
+        "model_total_duration_ms",
+        "prompt_eval_duration_ms",
+        "prompt_eval_count",
+        "eval_duration_ms",
+        "eval_count",
+        "generation_tokens_per_sec",
+        "model_call_count",
+        "thinking_exposed",
+        "thinking_chars",
+        "thinking_token_count",
+        "response_chars",
+        "proposal_valid",
+        "repair_triggered",
+        "prompt_tokens",
+        "completion_tokens",
+    )
+    return {name: getattr(diagnostics, name) for name in names}
+
+
+def _is_unavailable_lfm_error(error: str) -> bool:
+    normalized = error.lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "model not found",
+            "model '",
+            "does not support thinking",
+            "unsupported think",
+            "invalid think",
+            "unknown model",
+        )
+    )
 
 
 def _runtime_info_from_error(error: Exception) -> RuntimeInfo | None:
@@ -497,9 +755,20 @@ def _voice_components(
         "stt": _component_name(stt),
         "model": _component_name(model) if model is not None else None,
         "ollama_model": getattr(model, "model", None),
+        "ollama_num_gpu": getattr(model, "num_gpu", None),
         "tts": _component_name(tts),
+        "tts_backend": getattr(tts, "backend", "onnx"),
+        "tts_device": getattr(tts, "effective_device", getattr(tts, "device", None)),
+        "kokoro_pytorch_model_dir": str(getattr(tts, "model_dir", None) or ""),
         "whisper_bin": getattr(stt, "whisper_bin", None),
         "whisper_model": getattr(stt, "model_path", None),
         "kokoro_model": getattr(tts, "model_path", None),
         "kokoro_voices": getattr(tts, "voices_path", None),
     }
+
+
+def _read_error_body(error: urllib.error.HTTPError) -> str:
+    try:
+        return error.read().decode("utf-8", "replace")
+    except Exception:
+        return ""

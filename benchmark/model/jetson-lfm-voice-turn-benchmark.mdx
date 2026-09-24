@@ -1,0 +1,372 @@
+---
+title: "Jetson LFM Voice-Turn Benchmark"
+sidebar-title: "Jetson LFM Benchmark"
+description: "Benchmark report for Odessy v0.1.0 LFM voice-turn latency and stage attribution on Jetson Orin Nano Super 4GB."
+description-agent: "Use when reasoning about Odessy's Jetson-side LFM/agent latency, voice-turn timing, ONNX CPU TTS stability, and MCP-vs-model delay diagnosis."
+keywords: ["odessy benchmark", "jetson", "lfm", "voice turn", "ollama", "agent instrumentation"]
+content:
+  type: "reference"
+---
+
+# Odessy v0.1.0 Jetson LFM Voice-Turn Benchmark
+
+Date: 2026-09-20
+System under test: Jetson Orin Nano Super 4GB
+Benchmark area: real voice-turn path with instrumented agent timing
+Result directory: `benchmark/model/20260920-041633`
+Status: successful benchmark completed
+
+## Executive Summary
+
+This benchmark evaluated the delay inside Odessy's real voice-turn path after
+agent turn instrumentation was added.
+
+The key result is:
+
+```text
+The slow agent gap is LFM proposal generation.
+It is not MCP transfer.
+It is not proposal parsing.
+It is not repair generation.
+It is not tool execution.
+```
+
+The successful run also confirmed that the repeated benchmark is stable when
+Kokoro ONNX is forced to CPU. Earlier failures with ONNX Runtime auto mode
+were caused by TensorRT/CUDA memory pressure, not by the LFM agent path.
+
+## Addendum: Proposal-Path Re-run After Streaming (2026-09-23)
+
+Date: 2026-09-23
+Result directory: `benchmark/model/20260923-075345`
+Scenario: `lfm_compare` (proposal-only; no STT, TTS, or playback)
+Status: successful, 15/15 rows `ok`
+
+This re-run followed the replacement of the whole-request 120 s HTTP timeout
+with a per-chunk idle timeout (`ODESSY_MODEL_PROGRESS_TIMEOUT`, default 120 s).
+See `docs/optimization/tool-harness-design.md`.
+
+### Command
+
+```bash
+python -m benchmark \
+  --scenario lfm_compare --adapter real \
+  --prompt "on my laptop, run pwd" --expected-tool laptop.terminal.run \
+  --lfm-variant current=lfm2.5-thinking:1.2b-q8_0 \
+  --lfm-variant minimal=lfm2.5-thinking:1.2b-q8_0@false \
+  --lfm-variant low=lfm2.5-thinking:1.2b-q8_0@low \
+  --runs 4 --warmup 1
+```
+
+### Results
+
+```text
+rows                    15 (3 warmup + 12 measured)
+status                  ok for all 15
+timeouts                0
+total_ms                22640 - 30919 (variant medians 24.6 / 25.0 / 25.3 s)
+throughput              ~17.6 tok/s
+eval tokens             392 - 536
+selected_tool           laptop.terminal.run, 15/15
+tool_selection_correct  True, 15/15
+model_call_count        1 per sample
+proposal_valid          True, 15/15
+thinking_chars          current ~1601-1968 | minimal 0 | low ~1684-1962
+```
+
+### What this establishes
+
+Tool selection is correct on the real model: every sample chose
+`laptop.terminal.run`, every proposal validated on the first model call, and no
+repair was triggered.
+
+`think=false` zeroed `thinking_chars` while leaving token counts materially
+unchanged, consistent with the earlier finding that it removes reasoning text but
+not generation work.
+
+The three variants are indistinguishable on this prompt (medians within 2%). The
+earlier ranking, in which `think=low` was worst on tool prompts, does not appear
+here.
+
+No timeout occurred, so nothing in this run contradicts the streaming change.
+
+### What this does NOT establish
+
+**It does not validate that the 120 s failures are gone.** The earlier failing
+run generated 1004-1824 tokens over 70-115 s. This run generates 392-536 tokens
+over 22-31 s. The workload is roughly a third the size and never approached the
+120 s boundary, so the absence of timeouts is not evidence that the boundary was
+removed.
+
+Demonstrating that would need a single generation pushed past 120 s that then
+completes cleanly. Recording the distinction explicitly because "no timeouts"
+reads like a fix and is not one.
+
+## Architecture Context
+
+The measured voice-turn path was:
+
+```text
+fixed input WAV
+  -> Whisper.cpp STT
+  -> Odessy agent turn
+  -> LFM2.5 through Ollama-compatible API
+  -> Kokoro ONNX TTS
+  -> audio playback command
+```
+
+The agent runtime remains model-independent:
+
+```text
+model proposes
+  -> Odessy parses and validates
+  -> policy checks
+  -> optional MCP tool execution
+  -> final text
+```
+
+For this benchmark input, no tool was called.
+
+## Benchmark Command
+
+The stable run used the real benchmark adapter with a fixed audio file:
+
+```bash
+ODESSY_ONNX_PROVIDER=cpu python -m benchmark \
+  --scenario voice_turn \
+  --adapter real \
+  --audio-path /home/jaimef/odessy/output.wav \
+  --runs 3 \
+  --warmup 1
+```
+
+The benchmark metadata recorded:
+
+```text
+scenario: voice_turn
+adapter: real
+audio_path: /home/jaimef/odessy/output.wav
+platform: Linux-5.15.148-tegra-aarch64-with-glibc2.35
+python: 3.10.12
+cpu_count: 6
+model: LlamaCppLFMModel
+ollama_model: lfm2.5-thinking:1.2b-q8_0
+ollama_num_gpu: null
+stt: WhisperCppSTT
+tts: KokoroTTS
+```
+
+## Measured Results
+
+The benchmark produced one warmup turn and three measured turns. All measured
+turns succeeded.
+
+| Metric | Run 0 | Run 1 | Run 2 | Median |
+| --- | ---: | ---: | ---: | ---: |
+| Total turn | 30.43 s | 23.61 s | 35.35 s | 30.43 s |
+| STT | 1.78 s | 1.44 s | 1.43 s | 1.44 s |
+| Agent / LFM | 18.83 s | 11.93 s | 12.93 s | 12.93 s |
+| TTS synthesis | 6.47 s | 6.81 s | 12.57 s | 6.81 s |
+| Playback | 3.35 s | 3.43 s | 8.42 s | 3.43 s |
+
+The warmup turn completed successfully but was excluded from the measured
+median values.
+
+## Agent Turn Breakdown
+
+The agent instrumentation showed:
+
+| Metric | Run 0 | Run 1 | Run 2 | Median |
+| --- | ---: | ---: | ---: | ---: |
+| `agent_turn_total_ms` | 18823.95 | 11924.68 | 12926.14 | 12926.14 |
+| `proposal_generation_ms` | 18823.72 | 11924.48 | 12925.91 | 12925.91 |
+| `proposal_parsing_ms` | 0.02 | 0.02 | 0.02 | 0.02 |
+| `prompt_tokens` | 948 | 948 | 948 | 948 |
+| `completion_tokens` | 280 | 177 | 191 | 191 |
+
+The qualitative flags were:
+
+```text
+proposal_valid: true
+repair_triggered: false
+tool_called: false
+repair_generation_ms: null
+policy_validation_ms: null
+mcp_execution_ms: null
+final_generation_ms: null
+```
+
+Interpretation:
+
+The agent turn was one direct LFM generation. There was no repair retry and no
+tool path. The earlier progress line that suggested MCP transfer was therefore
+misleading; the real delay was model generation.
+
+## Memory Observations
+
+Process memory stayed stable after warmup:
+
+```text
+benchmark process RSS after measured runs:
+  run 0: about 230 MB
+  run 1: about 252 MB
+  run 2: about 254 MB
+  median: about 252 MB
+```
+
+System memory after measured runs:
+
+```text
+RAM used median: about 3.06 GB
+RAM available median: about 722 MB
+swap used median: about 1.03 GB
+```
+
+The warmup turn showed a large system memory increase:
+
+```text
+system RAM used before warmup: about 1.17 GB
+system RAM used after warmup: about 3.12 GB
+```
+
+This is consistent with runtime/model residency being established during the
+first turn. The measured turns did not show uncontrolled process RSS growth.
+
+## ONNX Runtime Diagnosis
+
+Earlier repeated voice-turn attempts with ONNX provider auto mode produced
+ONNX Runtime and TensorRT/CUDA errors:
+
+```text
+CUDA failure 2: out of memory
+Falling back to ['CPUExecutionProvider']
+Cannot find plugin: FastGelu
+Cannot find plugin: SkipLayerNormalization
+Cannot find plugin: DynamicQuantizeLSTM
+Killed
+```
+
+The successful result in this report was collected after forcing:
+
+```text
+ODESSY_ONNX_PROVIDER=cpu
+```
+
+This strongly indicates that the instability was in the ONNX Runtime
+auto/TensorRT/CUDA path under Jetson memory pressure. It was not a failure of
+the LFM agent path.
+
+## Current Engineering Conclusion
+
+The current stable Jetson voice-turn configuration is:
+
+```text
+STT: Whisper.cpp CPU
+Agent/model: LFM2.5 through Odessy LlamaCppLFMModel
+TTS: Kokoro ONNX CPU
+Pipeline: sequential voice turn
+```
+
+The main latency contributors are:
+
+```text
+1. LFM proposal generation: median about 12.93 s
+2. Kokoro ONNX CPU synthesis: median about 6.81 s
+3. Audio playback: median about 3.43 s
+4. Whisper.cpp STT: median about 1.44 s
+```
+
+The highest-value optimization targets are therefore:
+
+- reduce LFM prompt and response cost;
+- keep the TTS engine warm across turns;
+- continue evaluating PyTorch Kokoro CUDA as the low-latency TTS candidate;
+- keep ONNX Runtime TensorRT/CUDA disabled for repeated voice-turn benchmarks
+  until the memory and plugin issues are resolved.
+
+## Practical Recommendation
+
+For stable repeated benchmarks on the 4GB Jetson, use:
+
+```bash
+ODESSY_ONNX_PROVIDER=cpu python -m benchmark \
+  --scenario voice_turn \
+  --adapter real \
+  --audio-path /home/jaimef/odessy/output.wav \
+  --runs 3 \
+  --warmup 1
+```
+
+For single live smoke tests, `python -m odessy voice` remains useful because it
+executes one bounded turn and exits. The repeated benchmark is stricter: it
+exposes runtime initialization, residency, and cleanup problems that a single
+turn can hide.
+
+## Controlled LFM Comparison
+
+A proposal-only comparison was collected on 2026-09-20 in:
+
+```text
+benchmark/model/20260920-091050
+```
+
+This run intentionally measured only the LFM proposal path. It did not invoke
+STT, TTS, playback, or MCP. The same prompt and Ollama runtime were used for
+all configurations:
+
+```text
+prompt: How are you doing?
+model: lfm2.5-thinking:1.2b-q8_0
+measured runs per configuration: 3
+warmup runs per configuration: 1
+```
+
+| Configuration | Model latency | Prompt eval | Generation eval | Generated tokens | Generation tok/s | Valid proposal |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| current/default | 11.936 s | 134 ms | 11.474 s | 179 | 16.10 | yes |
+| `think=false` | 11.693 s | 130 ms | 11.228 s | 179 | 16.32 | yes |
+| `think=low` | 11.396 s | 142 ms | 10.941 s | 176 | 16.21 | yes |
+
+All configurations made one model call per proposal. Parsing was approximately
+0.01-0.02 ms, so it is negligible compared with model generation. Prompt
+processing was also small, around 0.13-0.14 s; generation accounted for about
+10.94-11.47 s of the roughly 11.4-11.9 s model latency.
+
+The controlled result therefore confirms:
+
+```text
+The LFM delay is primarily generation/evaluation throughput.
+It is not prompt prefill.
+It is not parsing.
+It is not repair or MCP execution.
+```
+
+`think=low` was the fastest measured configuration, approximately 4.5% faster
+than the current/default setting. `think=false` was approximately 2.0% faster.
+The difference is useful but modest, not a real-time breakthrough.
+
+Thinking visibility changed as expected:
+
+```text
+current/default: thinking exposed, about 745-771 characters
+think=low:       thinking exposed, about 745 characters
+think=false:     thinking not exposed
+```
+
+However, Ollama did not expose a separate thinking-token count. The generated
+token counts remained nearly identical, so this run cannot prove how many
+hidden reasoning tokens were produced or eliminated. With `think=false`, the
+visible final response was much longer, about 821-847 characters versus about
+57 characters for the thinking-enabled variants. Proposal validity remained
+true for every measured run.
+
+Tool-selection correctness was not evaluated because this prompt required no
+tool and the benchmark was run without `--expected-tool`.
+
+## Updated LFM Recommendation
+
+The next optimization target remains the LFM generation path. The evidence
+supports testing prompt/output limits and a smaller compatible model before
+changing inference runtimes. `think=low` is the current best latency candidate
+among the tested settings, but it should be evaluated on tool-request prompts
+with an expected tool before being considered a production policy.

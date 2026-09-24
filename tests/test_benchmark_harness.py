@@ -2,16 +2,33 @@ from __future__ import annotations
 
 import csv
 import json
+import asyncio
 from pathlib import Path
 
 from benchmark.cli import main as benchmark_main
 from benchmark.core import BenchmarkOutcome, BenchmarkRunner
 from benchmark.export import write_csv, write_jsonl, write_metadata
 from benchmark.fakes import FakeSTT, FakeTTS, NoOpAudioIO, fake_model
-from benchmark.scenarios import GemmaBenchmark, STTBenchmark, TTSBenchmark, VoiceTurnBenchmark
+from benchmark.scenarios import (
+    BenchmarkPyTorchTTS,
+    GemmaBenchmark,
+    LFMCompareBenchmark,
+    LFMVariant,
+    STTBenchmark,
+    TTSBenchmark,
+    VoiceTurnBenchmark,
+    build_real_components,
+    parse_lfm_variant,
+)
 from odessy.agent_loop import OdessyAgent
 from odessy.policy import OdessyPolicy
-from odessy.types import ToolObservation, ToolRequest
+from odessy.types import (
+    FinalResponse,
+    ModelTurnDiagnostics,
+    ToolObservation,
+    ToolRequest,
+)
+from odessy.voice.config import VoiceConfig
 
 
 def test_runner_writes_csv_and_jsonl(tmp_path: Path) -> None:
@@ -66,10 +83,20 @@ def test_runner_writes_csv_and_jsonl(tmp_path: Path) -> None:
     assert "process_tree_rss_after_bytes" in rows[0]
     assert "system_ram_used_after_bytes" in rows[0]
     assert "components_invoked" in rows[0]
+    voice_rows = [row for row in rows if row["scenario"] == "voice_turn"]
+    assert voice_rows
+    assert voice_rows[0]["agent_turn_total_ms"]
+    assert voice_rows[0]["proposal_generation_ms"]
+    assert voice_rows[0]["tool_called"] in {"True", "False"}
+    assert "model_total_duration_ms" in voice_rows[0]
+    assert "generation_tokens_per_sec" in voice_rows[0]
+    assert "tool_selection_correct" in voice_rows[0]
 
     with (tmp_path / "out" / "samples.jsonl").open("r", encoding="utf-8") as handle:
         lines = [json.loads(line) for line in handle if line.strip()]
     assert len(lines) == len(run.samples)
+    voice_items = [item for item in lines if item["scenario"] == "voice_turn"]
+    assert voice_items[0]["agent_turn_total_ms"] is not None
 
 
 def test_voice_turn_uses_provided_audio_without_recording_copy(tmp_path: Path) -> None:
@@ -141,6 +168,101 @@ def test_cli_fake_voice_turn_smoke(tmp_path: Path, monkeypatch) -> None:
     assert rc == 0
     assert (out_dir / "samples.csv").exists()
     assert (out_dir / "samples.jsonl").exists()
+
+
+def test_real_components_can_select_pytorch_cuda_tts(tmp_path: Path) -> None:
+    config = VoiceConfig(
+        whisper_bin="whisper-cli",
+        whisper_model="tiny.bin",
+        kokoro_model="kokoro.onnx",
+        kokoro_voices="voices.bin",
+    )
+
+    components = build_real_components(
+        config,
+        tmp_path,
+        tts_backend="pytorch",
+        tts_device="cuda",
+    )
+
+    assert isinstance(components["tts"], BenchmarkPyTorchTTS)
+    assert components["tts"].device == "cuda"
+
+
+def test_parse_lfm_variant_supports_think_setting() -> None:
+    assert parse_lfm_variant("current=lfm2.5-thinking:1.2b-q8_0") == LFMVariant(
+        name="current",
+        model="lfm2.5-thinking:1.2b-q8_0",
+        think=None,
+    )
+    assert parse_lfm_variant("minimal=lfm2.5-thinking:1.2b-q8_0@false").think is False
+    assert parse_lfm_variant("low=lfm2.5-thinking:1.2b-q8_0@low").think == "low"
+
+
+def test_lfm_compare_records_native_metrics_and_tool_correctness() -> None:
+    class FakeLFM:
+        model = "lfm"
+        num_gpu = None
+
+        def __init__(self) -> None:
+            self.last_turn_diagnostics = ModelTurnDiagnostics(
+                model_total_duration_ms=1200.0,
+                prompt_eval_duration_ms=200.0,
+                prompt_eval_count=10,
+                eval_duration_ms=1000.0,
+                eval_count=20,
+                generation_tokens_per_sec=20.0,
+                model_call_count=1,
+                proposal_valid=True,
+                response_chars=42,
+            )
+
+        def propose(self, user_text: str) -> ToolRequest:
+            return ToolRequest(name="time.now", arguments={})
+
+    scenario = LFMCompareBenchmark(
+        model=FakeLFM(),
+        variant=LFMVariant("current", "lfm"),
+        prompt="What time is it?",
+        expected_tool="time.now",
+    )
+
+    outcome = scenario.run_once(iteration=0, is_warmup=False)
+
+    assert outcome.status == "ok"
+    assert outcome.details["model_total_duration_ms"] == 1200.0
+    assert outcome.details["eval_count"] == 20
+    assert outcome.details["tool_selection_correct"] is True
+
+
+def test_agent_result_propagates_native_lfm_metrics(tmp_path: Path) -> None:
+    class DiagnosticModel:
+        last_turn_diagnostics = ModelTurnDiagnostics(
+            model_total_duration_ms=1200.0,
+            prompt_eval_duration_ms=200.0,
+            eval_duration_ms=1000.0,
+            eval_count=20,
+            generation_tokens_per_sec=20.0,
+            model_call_count=1,
+        )
+
+        def propose(self, user_text: str) -> FinalResponse:
+            return FinalResponse(text="done")
+
+        def respond_to_observation(self, user_text: str, observation):
+            return FinalResponse(text="done")
+
+    agent = OdessyAgent(
+        model=DiagnosticModel(),
+        policy=OdessyPolicy(workspace_root=tmp_path),
+        mcp_server=None,
+    )
+
+    result = asyncio.run(agent.run_turn("hello"))
+
+    assert result.metrics.model_total_duration_ms == 1200.0
+    assert result.metrics.eval_count == 20
+    assert result.metrics.model_call_count == 1
 
 
 def _fake_audio(tmp_path: Path) -> Path:

@@ -132,7 +132,10 @@ async def test_voice_loop_reports_progress_phases(tmp_path: Path) -> None:
         "Recording stopped",
         "Transcribing speech",
         "Model is thinking",
-        "MCP transferring if a tool is needed",
+        "Generating action proposal",
+        "Validating action",
+        "Running tool",
+        "Generating response",
         "Synthesizing speech",
         "Playing response",
     ]

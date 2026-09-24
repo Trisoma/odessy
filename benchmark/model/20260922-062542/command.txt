@@ -1,0 +1,17 @@
+(.venv) jaimef@ubuntu:~/odessy$ python -m benchmark   --scenario lfm_compare   --adapter real   --runs 3 --warmup 1   --lfm-variant q8=lfm2.5-thinking:1.2b-q8_0   --lfm-variant q6=lfm2.5-thinking:q6   --prompt "Hi, how are you doing?"
+
+=========================== benchmark summary ===========================
+scenario                      runs  fail   total p50   total p95   total p99   infer p50   infer p95    init p50
+------------------------------------------------------------------------
+lfm_compare:q6                   3     0    32416.98    48143.63    49541.55           -           -           -
+lfm_compare:q8                   1     2    14193.23    14193.23    14193.23           -           -           -
+========================================================================
+
+=========================== LFM comparison =============================
+configuration          latency ms   prompt ms     gen ms   tokens     tok/s   valid    tool  calls
+------------------------------------------------------------------------
+q8                       14187.94     1252.64    8865.75      156     17.60      no       -      1
+q6                       32414.43      103.69   31981.42      481     15.04     yes       -      1
+========================================================================
+
+Wrote benchmark data to: /home/jaimef/odessy/benchmark/results/20260922-062542

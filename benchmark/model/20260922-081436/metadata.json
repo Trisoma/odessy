@@ -1,0 +1,28 @@
+{
+  "created_at": "2026-09-22T08:14:36.633375+00:00",
+  "workspace_root": "/home/jaimef/odessy",
+  "output_dir": "/home/jaimef/odessy/benchmark/results/20260922-081436",
+  "host": "ubuntu",
+  "platform": "Linux-5.15.148-tegra-aarch64-with-glibc2.35",
+  "python_version": "3.10.12",
+  "odessy_version": "0.1.0",
+  "git_commit": null,
+  "cpu_count": 6,
+  "extra": {
+    "scenario": "lfm_compare",
+    "adapter": "real",
+    "audio_path": null,
+    "prompt": "Run command agent\nbenchmark\nconfig\ndocs\nLICENSE\nLIMITATION.md\nllm\noutput.wav\npolicy\npyproject.toml\nq6.modelfile\nq8.modelfile\nREADME.md\nruntime\nSKILL.md\nsrc\ntests\nTHIRD-PARTY-LICENSES\nTHIRD-PARTY-NOTICES.md\ntools\ntool-server\nvoice on my laptop",
+    "text": "Odessy is a local AI assistant.",
+    "ollama_num_gpu": null,
+    "tts_backend": "onnx",
+    "tts_device": "auto",
+    "lfm_variants": [
+      "current=lfm2.5-thinking:1.2b-q8_0",
+      "minimal=lfm2.5-thinking:1.2b-q8_0@false",
+      "low=lfm2.5-thinking:1.2b-q8_0@low",
+      "q6=lfm2.5-thinking:q6"
+    ],
+    "expected_tool": "laptop.terminal.run"
+  }
+}

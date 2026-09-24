@@ -74,8 +74,7 @@ class VoiceLoop:
                     error=stt_result.error,
                 )
             self._status("Model is thinking")
-            self._status("MCP transferring if a tool is needed")
-            turn = await self.agent.run_turn(transcript)
+            turn = await self.agent.run_turn(transcript, status_callback=self._status)
             final_text = turn.final_text
             self._status("Synthesizing speech")
             tts_result = self.tts.synthesize(final_text, output_audio)

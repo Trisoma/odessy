@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import os
+import platform
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
@@ -9,17 +12,26 @@ from typing import Sequence
 from odessy.voice.config import VoiceConfig
 
 from .core import BenchmarkRunner
-from .export import print_summary, write_csv, write_jsonl, write_metadata
+from .export import (
+    print_lfm_comparison,
+    print_summary,
+    write_csv,
+    write_jsonl,
+    write_metadata,
+)
 from .fakes import FakeSTT, FakeTTS, NoOpAudioIO, fake_model
 from .profiles import load_profiles
 from .scenarios import (
     GemmaBenchmark,
+    LFMCompareBenchmark,
     KokoroMatrixBenchmark,
     STTBenchmark,
     TTSBenchmark,
     VoiceTurnBenchmark,
+    build_lfm_compare_model,
     build_fake_components,
     build_real_components,
+    parse_lfm_variant,
 )
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -27,7 +39,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--scenario",
         default="all",
-        choices=["all", "stt", "gemma", "tts", "voice_turn"],
+        choices=["all", "stt", "gemma", "tts", "voice_turn", "lfm_compare"],
         help="Benchmark scenario to run.",
     )
     parser.add_argument("--runs", type=int, default=5, help="Measured runs per scenario.")
@@ -85,9 +97,43 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=None,
         help="Named matrix profile to run; may be supplied more than once.",
     )
+    parser.add_argument(
+        "--ollama-num-gpu",
+        type=int,
+        default=None,
+        help="Benchmark-only Ollama num_gpu option for partial LFM GPU offload.",
+    )
+    parser.add_argument(
+        "--tts-backend",
+        choices=["onnx", "pytorch"],
+        default="onnx",
+        help="Real TTS backend for voice/tts scenarios.",
+    )
+    parser.add_argument(
+        "--tts-device",
+        choices=["auto", "cpu", "cuda"],
+        default="auto",
+        help="PyTorch TTS device; auto selects CUDA when available.",
+    )
+    parser.add_argument(
+        "--lfm-variant",
+        action="append",
+        default=None,
+        help="LFM comparison variant NAME=MODEL[@THINK_SETTING]; repeatable.",
+    )
+    parser.add_argument(
+        "--expected-tool",
+        default=None,
+        help="Expected tool name for lfm_compare correctness scoring.",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     repo_root = Path(__file__).resolve().parents[1]
+    _maybe_reexec_with_jetson_cuda_path(
+        args,
+        repo_root=repo_root,
+        process_entrypoint=argv is None,
+    )
     workspace_root = Path(args.workspace_root) if args.workspace_root else repo_root
     output_dir = _resolve_output_dir(
         repo_root,
@@ -117,8 +163,29 @@ def main(argv: Sequence[str] | None = None) -> int:
             tmp_dir=config.tmp_dir,
         )
 
-    components = build_fake_components() if args.adapter == "fake" else build_real_components(config, workspace_root)
-    scenarios = _build_scenarios(args, config, output_dir, components)
+    ollama_num_gpu = (
+        args.ollama_num_gpu
+        if args.ollama_num_gpu is not None
+        else _optional_env_int("ODESSY_BENCHMARK_OLLAMA_NUM_GPU")
+    )
+    if args.scenario == "lfm_compare":
+        scenarios = _build_lfm_compare_scenarios(
+            args,
+            ollama_num_gpu=ollama_num_gpu,
+        )
+    else:
+        components = (
+            build_fake_components()
+            if args.adapter == "fake"
+            else build_real_components(
+                config,
+                workspace_root,
+                ollama_num_gpu=ollama_num_gpu,
+                tts_backend=args.tts_backend,
+                tts_device=args.tts_device,
+            )
+        )
+        scenarios = _build_scenarios(args, config, output_dir, components)
 
     runner = BenchmarkRunner(
         runs=max(0, args.runs),
@@ -132,6 +199,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             "audio_path": args.audio_path,
             "prompt": args.prompt,
             "text": args.text,
+            "ollama_num_gpu": ollama_num_gpu,
+            "tts_backend": args.tts_backend,
+            "tts_device": args.tts_device,
+            "lfm_variants": args.lfm_variant,
+            "expected_tool": args.expected_tool,
+            # The model-call progress timeout materially changes what a run can
+            # prove: with a 5 s budget, a completed 25 s generation is evidence
+            # that the timeout is per-chunk rather than total. It was previously
+            # recoverable only from the free-text command transcript, so a
+            # machine-readable record could not distinguish a 5 s run from a
+            # 120 s one.
+            "model_progress_timeout_seconds": os.environ.get(
+                "ODESSY_MODEL_PROGRESS_TIMEOUT", "120"
+            ),
         },
     )
     run = runner.run(scenarios)
@@ -140,6 +221,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     write_csv(output_dir / "samples.csv", run.samples)
     write_jsonl(output_dir / "samples.jsonl", run.samples)
     print_summary(run)
+    print_lfm_comparison(run)
     print(f"\nWrote benchmark data to: {output_dir}")
     return 0
 
@@ -222,6 +304,70 @@ def _resolve_output_dir(
     result_root /= "results"
     return result_root / stamp
 
+def _optional_env_int(name: str) -> int | None:
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        raise SystemExit(f"{name} must be an integer")
+
+
+def _maybe_reexec_with_jetson_cuda_path(
+    args: argparse.Namespace,
+    *,
+    repo_root: Path,
+    process_entrypoint: bool,
+) -> None:
+    if not process_entrypoint or args.adapter != "real":
+        return
+    if os.environ.get("ODESSY_BENCHMARK_CUDA_ENV_READY") == "1":
+        return
+    if not _requests_pytorch_cuda(args, repo_root):
+        return
+    if platform.system() != "Linux":
+        return
+
+    from .tts.cuda_env import (
+        build_jetson_native_cuda_library_path,
+        jetson_native_cuda_path_is_complete,
+    )
+
+    if jetson_native_cuda_path_is_complete():
+        return
+    environment = os.environ.copy()
+    environment["LD_LIBRARY_PATH"] = build_jetson_native_cuda_library_path()
+    environment["ODESSY_BENCHMARK_CUDA_ENV_READY"] = "1"
+    os.execvpe(
+        sys.executable,
+        [sys.executable, "-m", "benchmark", *sys.argv[1:]],
+        environment,
+    )
+
+
+def _requests_pytorch_cuda(args: argparse.Namespace, repo_root: Path) -> bool:
+    if args.manifest:
+        manifest_path = Path(args.manifest)
+        if not manifest_path.is_absolute():
+            manifest_path = repo_root / manifest_path
+        profiles = load_profiles(manifest_path)
+        selected_names = args.profile or [
+            name for name, profile in profiles.items() if profile.enabled
+        ]
+        return any(
+            name in profiles
+            and profiles[name].execution_path == "kokoro_pytorch"
+            and profiles[name].pytorch_device == "cuda"
+            for name in selected_names
+        )
+    return (
+        args.tts_backend == "pytorch"
+        and args.tts_device in {"auto", "cuda"}
+        and args.scenario in {"tts", "voice_turn", "all"}
+    )
+
+
 def _build_scenarios(
     args: argparse.Namespace,
     config: VoiceConfig,
@@ -295,6 +441,39 @@ def _build_scenarios(
         else:
             raise SystemExit(f"Unknown scenario: {scenario_name}")
 
+    return scenarios
+
+
+def _build_lfm_compare_scenarios(
+    args: argparse.Namespace,
+    *,
+    ollama_num_gpu: int | None,
+):
+    if args.adapter != "real":
+        raise SystemExit("--scenario lfm_compare requires --adapter real")
+    if not args.lfm_variant:
+        raise SystemExit("--scenario lfm_compare requires at least one --lfm-variant")
+
+    endpoint = os.environ.get("ODESSY_MODEL_ENDPOINT")
+    scenarios = []
+    for spec in args.lfm_variant:
+        try:
+            variant = parse_lfm_variant(spec)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        model = build_lfm_compare_model(
+            variant,
+            endpoint=endpoint,
+            ollama_num_gpu=ollama_num_gpu,
+        )
+        scenarios.append(
+            LFMCompareBenchmark(
+                model=model,
+                variant=variant,
+                prompt=args.prompt,
+                expected_tool=args.expected_tool,
+            )
+        )
     return scenarios
 
 def _seed_fake_audio(path: Path) -> Path:

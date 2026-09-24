@@ -32,6 +32,56 @@ class LogEntry:
     detail: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class ModelTurnDiagnostics:
+    proposal_generation_ms: float | None = None
+    proposal_parsing_ms: float | None = None
+    repair_generation_ms: float | None = None
+    final_generation_ms: float | None = None
+    model_total_duration_ms: float | None = None
+    prompt_eval_duration_ms: float | None = None
+    prompt_eval_count: int | None = None
+    eval_duration_ms: float | None = None
+    eval_count: int | None = None
+    generation_tokens_per_sec: float | None = None
+    model_call_count: int = 0
+    thinking_exposed: bool = False
+    thinking_chars: int = 0
+    thinking_token_count: int | None = None
+    response_chars: int = 0
+    proposal_valid: bool = True
+    repair_triggered: bool = False
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
+
+@dataclass
+class AgentTurnMetrics:
+    agent_turn_total_ms: float | None = None
+    proposal_generation_ms: float | None = None
+    proposal_parsing_ms: float | None = None
+    repair_generation_ms: float | None = None
+    policy_validation_ms: float | None = None
+    mcp_execution_ms: float | None = None
+    final_generation_ms: float | None = None
+    model_total_duration_ms: float | None = None
+    prompt_eval_duration_ms: float | None = None
+    prompt_eval_count: int | None = None
+    eval_duration_ms: float | None = None
+    eval_count: int | None = None
+    generation_tokens_per_sec: float | None = None
+    model_call_count: int = 0
+    thinking_exposed: bool = False
+    thinking_chars: int = 0
+    thinking_token_count: int | None = None
+    response_chars: int = 0
+    proposal_valid: bool = True
+    repair_triggered: bool = False
+    tool_called: bool = False
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
+
 @dataclass(frozen=True)
 class PolicyDecision:
     action: Literal["allow", "confirm", "deny"]
@@ -53,3 +103,4 @@ class AgentTurnResult:
     log: list[LogEntry]
     tool_request: ToolRequest | None = None
     tool_result: dict[str, Any] | None = None
+    metrics: AgentTurnMetrics = field(default_factory=AgentTurnMetrics)

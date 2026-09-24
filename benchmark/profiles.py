@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+PYTORCH_DEVICE_MODES = {"auto", "cpu", "cuda"}
+
 @dataclass(frozen=True)
 class BenchmarkProfile:
     name: str
@@ -16,6 +18,7 @@ class BenchmarkProfile:
     provider_priority: list[str] | None = None
     strict_provider: bool = False
     engine_cache: bool = False
+    pytorch_device: str | None = None
     model_backend: str | None = None
     model_name: str | None = None
     model_precision: str | None = None
@@ -40,6 +43,15 @@ class BenchmarkProfile:
         batch_size = merged.get("batch_size")
         if batch_size is not None and (not isinstance(batch_size, int) or batch_size < 1):
             raise ValueError(f"Profile {name!r} batch_size must be a positive integer")
+        pytorch_device = _optional_text(merged, "pytorch_device")
+        if pytorch_device is None and execution_path == "kokoro_pytorch":
+            pytorch_device = "auto"
+        if pytorch_device is not None:
+            pytorch_device = pytorch_device.lower()
+            if pytorch_device not in PYTORCH_DEVICE_MODES:
+                raise ValueError(
+                    f"Profile {name!r} has unsupported pytorch_device {pytorch_device!r}"
+                )
         return cls(
             name=name,
             component=component,
@@ -54,6 +66,7 @@ class BenchmarkProfile:
             provider_priority=_optional_list(merged, "provider_priority"),
             strict_provider=bool(merged.get("strict_provider", False)),
             engine_cache=bool(merged.get("engine_cache", False)),
+            pytorch_device=pytorch_device,
             model_backend=_optional_text(merged, "model_backend"),
             model_name=_optional_text(merged, "model_name"),
             model_precision=_optional_text(merged, "model_precision"),
@@ -72,6 +85,7 @@ class BenchmarkProfile:
             "provider_priority": self.provider_priority,
             "strict_provider": self.strict_provider,
             "engine_cache": self.engine_cache,
+            "pytorch_device": self.pytorch_device,
             "model_backend": self.model_backend,
             "model_name": self.model_name,
             "model_precision": self.model_precision,

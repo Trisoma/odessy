@@ -1,0 +1,19 @@
+(.venv) jaimef@ubuntu:~/odessy$ python -m benchmark   --scenario lfm_compare   --adapter real   --prompt "How are you doing?"   --lfm-variant current=lfm2.5-thinking:1.2b-q8_0   --lfm-variant minimal=lfm2.5-thinking:1.2b-q8_0@false   --lfm-variant low=lfm2.5-thinking:1.2b-q8_0@low   --runs 3   --warmup 1
+
+=========================== benchmark summary ===========================
+scenario                      runs  fail   total p50   total p95   total p99   infer p50   infer p95    init p50
+------------------------------------------------------------------------
+lfm_compare:current              3     0    11920.87    11937.44    11938.91           -           -           -
+lfm_compare:low                  3     0    11361.13    11394.97    11397.98           -           -           -
+lfm_compare:minimal              3     0    11422.93    11668.72    11690.57           -           -           -
+========================================================================
+
+=========================== LFM comparison =============================
+configuration          latency ms   prompt ms     gen ms   tokens     tok/s   valid    tool  calls
+------------------------------------------------------------------------
+current                  11917.87      127.47   11454.94      176     15.36     yes       -      1
+minimal                  11419.80      129.28   11064.44      176     15.94     yes       -      1
+low                      11358.46      134.70   10898.22      176     16.15     yes       -      1
+========================================================================
+
+Wrote benchmark data to: /home/jaimef/odessy/benchmark/results/20260920-091050

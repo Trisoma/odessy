@@ -55,6 +55,7 @@ async def test_calculator_eval_flows_through_policy_and_mcp(
         "mcp_tool_called",
         "tool_observation",
         "model_final_response",
+        "agent_turn_metrics",
     ]
 
 
