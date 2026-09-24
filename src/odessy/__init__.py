@@ -5,11 +5,11 @@ that needs to stamp a version -- benchmark metadata in particular -- must read i
 from here rather than repeat the literal, which is how the version previously
 drifted out of step with ``pyproject.toml`` and the README.
 
-The ``.dev0`` suffix is deliberate: v0.2.0 is under development and not released.
-Bump to ``0.2.0`` only when the release gate is actually passed.
+The ``.dev0`` suffix is dropped because the v0.2.0 release gate was passed on
+2026-09-24. Reinstate it (``0.3.0.dev0``) for the next development cycle.
 """
 
-__version__ = "0.2.0.dev0"
+__version__ = "0.2.0"
 
 __all__ = [
     "agent_loop",

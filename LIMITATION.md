@@ -178,3 +178,86 @@ When it is run, the experiment is one command varying one number:
 
 on the fixed `lfm_compare` prompt, with warmups, comparing tok/s and latency.
 `ollama_num_gpu` is written into `metadata.json`, so the runs are comparable.
+
+## No Isolation Sandbox
+
+**Status: intentional. v0.2 ships without containment.**
+
+Odessy enforces an **authority** boundary, not an **isolation** boundary.
+
+```text
+Authority    "the model proposes, Odessy decides" -- enforced in-process.
+Isolation    "an allowed command cannot exceed a stated blast radius" -- NOT
+             enforced. Not in v0.2.
+```
+
+Everything Odessy does today is authority: `WorkspaceAuthority` path confinement,
+sensitive-path denial, the sanitized environment allowlist, policy denial of
+destructive / detached / credential-seeking commands, confirmation for
+non-low-risk calls, execution timeouts with process-tree cleanup, and bounded plus
+redacted output.
+
+A command that passes policy runs as a normal child process with the user's full
+privileges. It can read and write anything that user can, and reach the network.
+Policy reduces what Odessy will *launch*; it does not constrain what a launched
+program does. The Windows Node MCP server applies a path guard but no OS-level
+restriction.
+
+Why no sandbox now: Landlock is unavailable on this board
+(`CONFIG_SECURITY_LANDLOCK is not set` in the L4T kernel -- a kernel build
+decision by NVIDIA, not a runtime toggle). Every remaining route needs a kernel
+rebuild, a Windows restricted token, or a container: real work with unproven
+payoff for a local single-user agent.
+
+Odessy must not be described as sandboxed, jailed, or contained. Options and
+prototype gates for a future version: `SANDBOX-PLAN.md`.
+
+## Multi-Tool Continuation Deferred To v0.3
+
+**Status: implemented, wired, and does not fire with a real model.**
+
+The observation call advertises tools, and the loop can accept a second tool
+request. Offline the same loop makes 3 model calls with tools advertised on calls
+2 and 3. Against the real model it does not:
+
+```text
+"on my laptop, run pwd, then run whoami"   -> 1 tool executed, then prose
+"on my laptop, run pwd, then run ls"       -> 1 tool executed, then prose
+```
+
+Even with an explicit "then run X", the model summarises and stops. The prompt
+line asking it to continue is a nudge, not an enforcement: the loop can decline to
+accept an answer, but cannot demand a tool call.
+
+**v0.2 ships single-tool turns.** This is a model-behaviour limitation, not a
+wiring defect. The continuation machinery is retained but inert pending v0.3.
+
+## Known Failing Tests
+
+**Status: quarantined, not fixed. 5 tests fail on every run.**
+
+They are unrelated to v0.2's deliverable. Recorded so that a red suite is a
+documented state rather than a surprise, and so nobody assumes the suite is clean.
+
+```text
+test_benchmark_matrix.py::test_pytorch_kokoro_engine_uses_pipeline_and_reports_device
+test_benchmark_matrix.py::test_onnx_tensorrt_records_exact_provider_order_and_selection
+test_benchmark_matrix.py::test_matrix_cli_writes_pytorch_device_metadata
+test_onnx_runtime_wiring.py::test_build_kokoro_uses_tensorrt_with_fallbacks
+    All four assert ONNX Runtime provider configs. They expect
+    ('CUDAExecutionProvider', {'device_id': 0}) while the runtime now supplies
+    ('CUDAExecutionProvider', {'device_id': 0, 'gpu_mem_limit': 536870912}).
+    Either the expectations are stale, or an intentional memory-limit change was
+    never propagated. NOT DETERMINED.
+
+test_lfm_model.py::test_lfm_call_count_includes_final_observation_response
+    Asserts response_chars == 11 for a single call. The field accumulates across
+    calls (response_chars += len(content)), so a two-call turn records 59. The
+    test is stale relative to the field's behaviour, but whether the field or the
+    test is wrong has never been decided.
+```
+
+Neither group may be deleted to make the suite green. Both need a decision first:
+is the code or the expectation correct? Editing the expectation without settling
+that would hide a possible regression.
+
