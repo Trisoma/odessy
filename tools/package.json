@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build --silent && node dist/tests/read-only-tools.test.js",
+    "test": "npm run build --silent && node --test \"dist/tests/*.test.js\"",
     "start": "npm run build --silent && node dist/src/server.js",
     "start:http": "npm run build --silent && node dist/src/server.js --http"
   },

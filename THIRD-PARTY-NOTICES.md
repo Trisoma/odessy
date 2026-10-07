@@ -1,11 +1,12 @@
 # Third-Party Notices And Licenses
 
-Odessy includes original code plus selected tool-handler code and implementation patterns adapted from permissively licensed open-source references. Adapted code is limited to laptop-side read-only tool-handler behavior. Odessy's runtime architecture, authority model, Python policy layer, confirmation boundary, and MCP integration remain project-specific.
+Odessy includes original code plus selected tool-handler and process-confinement code and implementation patterns adapted from permissively licensed open-source references. Odessy's runtime architecture, authority model, Python policy layer, confirmation boundary, and MCP integration remain project-specific.
 
 Full upstream license texts are included in:
 
 - `THIRD-PARTY-LICENSES/OpenClaw-MIT.txt`
 - `THIRD-PARTY-LICENSES/NemoClaw-Apache-2.0.txt`
+- `THIRD-PARTY-LICENSES/DeepSeek-Harness-MIT.txt`
 
 ## OpenClaw
 
@@ -88,3 +89,67 @@ Use in Odessy:
 - No direct code copied in Step 6.
 
 Because Hermes was used as an architectural reference only, no Hermes license text is required for copied code in Step 6. If future Odessy work copies or closely adapts Hermes code, this notice file must be updated and the relevant license text must be included.
+
+## DeepSeek Harness (dsh)
+
+Source: `C:\Users\13647\OneDrive\Desktop\MiMundo\GitHub\odessy\deepseek-harness-master`
+
+Upstream repository: `deepseek-ai/deepseek-harness`
+
+License: MIT
+
+Copyright notice retained from upstream:
+
+```text
+Copyright (c) 2026 DeepSeek
+```
+
+License text included at:
+
+```text
+THIRD-PARTY-LICENSES/DeepSeek-Harness-MIT.txt
+```
+
+Adapted source files:
+
+- `packages/sandbox/sandbox/src/roots.ts`
+- `packages/sandbox/sandbox/src/diagnostics.ts`
+- `packages/sandbox/sandbox/src/escalation.ts`
+- `packages/sandbox/sandbox/src/index.ts`
+- `packages/sandbox/sandbox-local/src/profiles.ts`
+- `packages/sandbox/sandbox-local/src/index.ts`
+- `packages/sandbox/sandbox-policy/src/index.ts`
+- `packages/sandbox/sandbox-windows-acl/src/acl.ts`
+- `packages/sandbox/sandbox-windows-acl/src/ffi.ts`
+- `packages/sandbox/sandbox-windows-acl/src/grant.ts`
+- `packages/sandbox/sandbox-windows-acl/src/index.ts`
+- `packages/sandbox/sandbox-windows-acl/src/path-boundary.ts`
+- `packages/sandbox/sandbox-windows-acl/src/runner.ts`
+- `packages/sandbox/sandbox-windows-acl/src/spawn.ts`
+- `packages/sandbox/sandbox-windows-acl/src/token.ts`
+- `packages/sandbox/sandbox-windows-acl/src/win32-abi.ts`
+- `packages/sandbox/sandbox-windows-acl/src/workspace-sid.ts`
+- `packages/subprocess/win32-process/src/abi.ts`
+- `packages/subprocess/win32-process/src/control-stdio.ts`
+- `packages/subprocess/win32-process/src/errors.ts`
+- `packages/subprocess/win32-process/src/ffi.ts`
+- `packages/subprocess/win32-process/src/index.ts`
+- `packages/subprocess/win32-process/src/koffi.ts`
+- `packages/subprocess/win32-process/src/process.ts`
+- `packages/util/lazy-require/src/index.ts`
+
+Changes made for Odessy:
+
+- Moved the same-world process-confinement contract and its backends into Odessy as
+  project-owned infrastructure. There is no runtime dependency on dsh or on Cordis.
+- Reimplemented the Cordis `Service` base as a Python protocol and a TypeScript interface.
+- Replaced dsh's static per-platform runner table with capability-driven runtime discovery.
+- Removed dsh session, invariant, and config-schema integration; Odessy has no session model.
+- Removed the `dsh-subprocess/control` file-descriptor feature from the Windows runner;
+  Odessy owns its own process timeout and termination.
+- Removed dsh's `tsx` source-launch fallback for the Windows runner; Odessy ships built output.
+- Kept the backend denial dialects, runner-failure rules, and the Windows ACL restricted-token
+  implementation behaviourally unchanged.
+
+Per-file verdicts, line counts, and the reasoning for each decision are recorded in
+`docs/execution/PORT-MANIFEST.md`.

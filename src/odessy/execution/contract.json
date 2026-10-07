@@ -1,0 +1,46 @@
+{
+  "$comment": [
+    "Cross-language vocabulary and protocol strings for Odessy's execution provider layer.",
+    "This file holds NAMES and byte-exact protocol strings ONLY. It is deliberately NOT the",
+    "semantic definition of the provider layer. Provider behaviour, ABI-to-limitation mapping,",
+    "probe logic, selection policy, and per-provider guarantees belong in code and tests.",
+    "The Python implementation loads this file at runtime; the TypeScript implementation loads",
+    "it at runtime as well, and a parity test in each language asserts agreement."
+  ],
+  "version": 1,
+
+  "modes": ["read-only", "workspace-write", "danger-full-access"],
+  "confined_modes": ["read-only", "workspace-write"],
+  "wider_modes": {
+    "read-only": ["workspace-write", "danger-full-access"],
+    "workspace-write": ["danger-full-access"]
+  },
+  "escalation_targets": ["workspace-write", "danger-full-access"],
+  "escalation_outcomes": ["allowed-once", "rejected", "cancelled", "unavailable"],
+  "escalation_subjects": ["command", "operation"],
+
+  "enforcement_levels": ["full", "partial", "none"],
+  "isolation_requirements": ["required", "preferred", "not-required"],
+
+  "capabilities": ["process-exec", "fs-read", "fs-write", "network", "process-visibility"],
+  "device_capabilities": ["gpio", "pwm", "adc", "serial", "spi", "i2c", "can", "usb", "camera"],
+
+  "limitations": [
+    "cannot_deny_truncate",
+    "cannot_restrict_rename_between_dirs",
+    "cannot_restrict_reads",
+    "cannot_restrict_network",
+    "cannot_restrict_ioctl",
+    "cannot_restrict_process_visibility",
+    "cannot_restrict_device_access",
+    "cannot_restrict_hardlink_alias",
+    "reliance_on_everyone_ace",
+    "no_console_isolation",
+    "host_kernel_shared"
+  ],
+
+  "markers": {
+    "denial": "[sandbox: file access denied under {mode} mode]",
+    "escalation_hint": "[sandbox: escalation available — retry this exact {subject} once with sandbox_permissions (the narrowest wider mode that suffices) + justification; the approval prompt asks the user]"
+  }
+}
