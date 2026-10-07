@@ -5,10 +5,11 @@ import asyncio
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from odessy.agent_loop import OdessyAgent
+from odessy.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.config_file import load_config_env
+from odessy.execution.contract import ISOLATION_REQUIREMENTS, IsolationRequirement
 from odessy.fake_model import FakeModel
 from odessy.lfm_model import LlamaCppLFMModel
 from odessy.mcp_server import build_odessy_mcp_server
@@ -58,10 +59,30 @@ def _build_agent(
 ) -> OdessyAgent:
     return OdessyAgent(
         model=model,
-        policy=OdessyPolicy(workspace_root=workspace_root),
+        policy=OdessyPolicy(
+            workspace_root=workspace_root,
+            isolation=_isolation_from_env(),
+        ),
         mcp_server=_build_mcp_servers(workspace_root),
         confirm=_confirm_tool_call,
     )
+
+
+def _isolation_from_env() -> IsolationRequirement:
+    """How strict this deployment is about isolation.
+
+    Defaults to ``preferred``, which is the behaviour every existing caller already has.
+    It is deliberately **not** ``required`` by default: a host with no confinement backend
+    would then refuse every process-spawning command, including on this machine, where
+    the Python side has no Windows backend. Raising it is a deployment decision, so it is
+    configuration rather than a constant.
+    """
+
+    raw = (os.environ.get("ODESSY_ISOLATION") or "preferred").strip().lower()
+    if raw not in ISOLATION_REQUIREMENTS:
+        allowed = ", ".join(ISOLATION_REQUIREMENTS)
+        raise SystemExit(f"ODESSY_ISOLATION must be one of: {allowed} (got {raw!r})")
+    return cast(IsolationRequirement, raw)
 
 
 def _confirm_tool_call(decision: PolicyDecision, request: ToolRequest) -> bool:
@@ -128,13 +149,19 @@ async def _voice_async(use_fake_model: bool) -> None:
 
 
 def _build_mcp_servers(workspace_root: Path) -> tuple[object, ...] | object:
-    servers: list[object] = [build_odessy_mcp_server(workspace_root=workspace_root)]
+    # Wrapped in `ExecutionTarget` because this IS the authorization act: the composition
+    # root names the servers it means to execute on. A server that is merely reachable --
+    # discovered, or supplied by a future dynamic source -- is not executable, so trust is
+    # never inherited from construction.
+    servers: list[object] = [
+        ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root))
+    ]
     extra_urls = os.environ.get("ODESSY_MCP_SERVER_URLS") or os.environ.get("ODESSY_TOOL_SERVER_URL")
     if extra_urls:
         for raw_url in extra_urls.replace(";", ",").split(","):
             url = raw_url.strip()
             if url:
-                servers.append(url)
+                servers.append(ExecutionTarget(url))
     return tuple(servers) if len(servers) > 1 else servers[0]
 
 

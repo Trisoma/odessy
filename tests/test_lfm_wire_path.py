@@ -35,7 +35,7 @@ from pathlib import Path
 
 import pytest
 
-from odessy.agent_loop import OdessyAgent
+from odessy.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.lfm_model import LlamaCppLFMModel
 from odessy.mcp_server import build_odessy_mcp_server
 from odessy.policy import OdessyPolicy
@@ -263,7 +263,7 @@ async def test_real_adapter_drives_a_second_tool_call_through_the_loop(
     agent = OdessyAgent(
         model=model,
         policy=OdessyPolicy(workspace_root=tmp_path),
-        mcp_server=build_odessy_mcp_server(workspace_root=tmp_path),
+        mcp_server=ExecutionTarget(build_odessy_mcp_server(workspace_root=tmp_path)),
         confirm=True,
     )
 

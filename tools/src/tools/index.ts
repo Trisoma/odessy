@@ -21,6 +21,7 @@ import { DEFAULT_MAX_BYTES, normalizeLimit, truncateUtf8 } from "../output/trunc
 import { prepareOutput } from "../output/prepare.js";
 import { SpillStore } from "../output/spill.js";
 import { confineArgv, type Confinement, type SandboxReport } from "../execution/seam.js";
+import { ISOLATION_REQUIREMENTS, MODES } from "../execution/contract.js";
 import type { WorkspaceGuard } from "../workspace/path-guard.js";
 
 const execFileAsync = promisify(execFile);
@@ -68,6 +69,23 @@ export const laptopTerminalRunInputSchema = {
   command: z.string(),
   cwd: z.string().optional(),
   timeout: z.number().int().min(1).max(30).optional(),
+  /**
+   * The sandbox mode the *authority layer* resolved for this call.
+   *
+   * Sent by the Odessy agent after policy and any escalation, never by a model. The
+   * host does not decide it; it selects a provider that satisfies it. Omitting it
+   * means the caller resolved no mode, and the run is reported as unconfined rather
+   * than assumed to be confined.
+   *
+   * Declared with the closed vocabulary so an unknown mode is rejected here instead of
+   * being silently dropped. That silent drop was a real defect: the agent logged a
+   * resolved mode, the host discarded it, and the record claimed a boundary that did
+   * not exist.
+   */
+  mode: z.enum(MODES).optional(),
+  /** How strict the peer is about isolation. `required` cannot be satisfied by a
+   * mode that provides no confinement. */
+  isolation: z.enum(ISOLATION_REQUIREMENTS).optional(),
 };
 
 export const filesystemWriteInputSchema = {

@@ -16,9 +16,12 @@ import {
   type Enforcement,
   type ExecutionPolicy,
   type ExecutionProvider,
+  type IsolationRequirement,
   type Limitation,
+  type Mode,
 } from "./contract.js";
 import { UnconfinedProvider } from "./providers/unconfined.js";
+import type { ProviderRegistry } from "./registry.js";
 
 /** A backend together with the policy it confines under. */
 export interface Confinement {
@@ -79,4 +82,68 @@ export function confineArgv(
       limitations: [...result.limitations].sort(),
     },
   };
+}
+
+/**
+ * Build a host-side confinement from the mode the *authority layer* sent with the call.
+ *
+ * The host does **not** decide the mode. It answers one question: *can I actually
+ * confine under this, and how completely?* That keeps the authority on the peer and
+ * this side responsible only for satisfying it — and it is why the mode arrives as
+ * data rather than being re-derived from the command here.
+ *
+ * Selection is necessarily host-side, because only the host knows its own
+ * capabilities. When nothing satisfies the requirement this **throws**, which is the
+ * fail-closed answer: `isolation: "required"` with `danger-full-access` therefore
+ * raises instead of quietly running the command unconfined.
+ */
+export function confinementFromRegistry(
+  mode: Mode,
+  isolation: IsolationRequirement,
+  workspaceRoot: string,
+  registry: ProviderRegistry,
+): Confinement {
+  const selection = registry.select({
+    policy: { mode, workspaceRoot, deviceGrants: [] },
+    isolation,
+    capabilities: ["process-exec"],
+  });
+  return { provider: selection.provider, policy: selection.requirement.policy };
+}
+
+/** What the peer sent about how this call should be confined. */
+export interface ConfinementRequest {
+  readonly mode?: Mode;
+  readonly isolation?: IsolationRequirement;
+}
+
+/**
+ * Resolve the confinement a call asked for, or `undefined` when it asked for none.
+ *
+ * **The requirement is never inferred.** A `mode` without an `isolation` is refused,
+ * rather than defaulted, because the only thing a default could mean is this host
+ * guessing how strict the peer is — and a host that guesses permissively has weakened
+ * the authority layer's decision. A `required` demand answered with a `partial`
+ * backend is precisely that failure, and it is silent.
+ *
+ * Returning `undefined` is not the same as guessing: it is the honest answer for a
+ * caller that expressed no requirement at all, and the run reports `enforcement: "none"`
+ * rather than implying a boundary.
+ */
+export function resolveHostConfinement(
+  request: ConfinementRequest,
+  workspaceRoot: string,
+  registry: ProviderRegistry,
+): Confinement | undefined {
+  if (request.mode === undefined && request.isolation === undefined) {
+    return undefined;
+  }
+  if (request.mode === undefined || request.isolation === undefined) {
+    throw new Error(
+      "confinement requires mode and isolation together: a mode alone would leave this " +
+        "host to infer how strict the caller is, and inferring permissively would weaken " +
+        "a requirement this host was sent with",
+    );
+  }
+  return confinementFromRegistry(request.mode, request.isolation, workspaceRoot, registry);
 }

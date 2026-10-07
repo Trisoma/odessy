@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from odessy.agent_loop import OdessyAgent
+from odessy.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.mcp_server import build_odessy_mcp_server
 from odessy.policy import OdessyPolicy
 from odessy.types import FinalResponse, ModelAction, ToolRequest
@@ -87,7 +87,7 @@ def build_agent(
     return OdessyAgent(
         model=model,
         policy=OdessyPolicy(workspace_root=workspace_root),
-        mcp_server=build_odessy_mcp_server(workspace_root=workspace_root),
+        mcp_server=ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root)),
         confirm=confirm,
         max_rejections=max_rejections,
         deadline_seconds=deadline_seconds,
@@ -212,7 +212,13 @@ async def test_policy_denial_is_not_retryable(tmp_path: Path) -> None:
 
 @pytest.mark.anyio
 async def test_valid_call_is_unaffected(tmp_path: Path) -> None:
-    """The success path must be byte-identical to pre-change behaviour."""
+    """The rejection machinery must not perturb the success path.
+
+    The event list is asserted exactly so that adding a rejection branch cannot
+    quietly change what a valid call does. One entry was added deliberately: the
+    authority layer now records the execution mode it resolved, which is the audit
+    trail for what the command actually ran under.
+    """
 
     model = ScriptedModel([_good_call(), FinalResponse(text="ok")])
     agent = build_agent(tmp_path, model)
@@ -225,6 +231,7 @@ async def test_valid_call_is_unaffected(tmp_path: Path) -> None:
         "model_tool_request",
         "schema_validated",
         "policy_allowed",
+        "execution_mode_resolved",
         "mcp_tool_called",
         "tool_observation",
         "model_final_response",

@@ -30,9 +30,26 @@ import {
   readInputSchema,
 } from "./tools/index.js";
 import { createWorkspaceGuard } from "./workspace/path-guard.js";
-import type { Confinement } from "./execution/seam.js";
+import { resolveHostConfinement } from "./execution/seam.js";
+import { defaultExecutionProviders } from "./execution/providers/index.js";
+import { withUnconfinedFallback, type ProviderRegistry } from "./execution/registry.js";
 
 const workspaceRoot = process.env.ODESSY_WORKSPACE_ROOT || process.cwd();
+
+/**
+ * The host's execution targets, as a registry.
+ *
+ * Built once and cached: provider selection reads *host facts*, which discovery
+ * gathers by probing (and on Windows, by running the confinement runner once), so it
+ * must not be redone per call. The registry is what makes selection a fact about this
+ * host rather than a guess.
+ */
+let executionRegistry: ProviderRegistry | undefined;
+
+function executionProviders(): ProviderRegistry {
+  executionRegistry ??= withUnconfinedFallback(defaultExecutionProviders());
+  return executionRegistry;
+}
 
 type StructuredResult = Record<string, unknown>;
 
@@ -47,14 +64,17 @@ function resultPayload(result: object) {
 /**
  * Build the tool server.
  *
- * `confinement` is threaded through to the terminal tool rather than built here:
- * which backend this host can offer, and which mode an action resolves to, are
- * decisions belonging to the composition root, not to the tool surface. Omitting
- * it is legal and runs every command unconfined, with each result reporting
- * `enforcement: "none"` so the absence is visible rather than implied.
+ * `registry` is injectable so a test can pin the provider set. Production uses the
+ * host's real providers.
+ *
+ * The terminal tool resolves its confinement **per call** from the `mode` the authority
+ * layer sent with that call, rather than from a single confinement fixed at startup —
+ * because the mode is a property of the action, not of the host. The host does not
+ * choose it; it selects a provider that satisfies it, and throws when none does.
  */
-function buildServer(confinement?: Confinement): McpServer {
+function buildServer(registry?: ProviderRegistry): McpServer {
   const guard = createWorkspaceGuard(workspaceRoot);
+  const providers = registry ?? executionProviders();
   const server = new McpServer({
     name: "odessy-tool-server",
     version: "0.1.0",
@@ -147,7 +167,14 @@ function buildServer(confinement?: Confinement): McpServer {
       description: "Run a laptop-side command in the Odessy workspace.",
       inputSchema: laptopTerminalRunInputSchema,
     },
-    async (input) => resultPayload(await laptopTerminalRun(guard, input, confinement)),
+    async (input) => {
+      // No requirement means the caller expressed none: run unconfined and SAY so. A
+      // requirement means the authority layer decided it, so this side selects a
+      // provider for it and fails closed when none satisfies it. The requirement is
+      // never inferred from the mode -- see `resolveHostConfinement`.
+      const confinement = resolveHostConfinement(input, guard.root, providers);
+      return resultPayload(await laptopTerminalRun(guard, input, confinement));
+    },
   );
 
   server.registerTool(

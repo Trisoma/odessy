@@ -3,6 +3,12 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from odessy.execution.contract import ESCALATION_TARGETS
+
+#: Spec keys that describe Odessy's own rendering rather than the JSON Schema, and so
+#: must not be forwarded to a model API verbatim.
+_NON_SCHEMA_KEYS = frozenset({"optional", "model_requested"})
+
 
 TOOL_REQUEST_SCHEMAS: dict[str, dict[str, Any]] = {
     "time.now": {
@@ -14,6 +20,26 @@ TOOL_REQUEST_SCHEMAS: dict[str, dict[str, Any]] = {
             "command": {"type": "string"},
             "cwd": {"type": "string", "optional": True},
             "timeout": {"type": "integer", "optional": True},
+            "sandbox_permissions": {
+                "type": "string",
+                "enum": list(ESCALATION_TARGETS),
+                "optional": True,
+                "model_requested": True,
+                "description": (
+                    "Request a wider sandbox mode for this one call. Must be strictly "
+                    "wider than the mode the command would otherwise run under, and "
+                    "must be accompanied by a justification. The user is asked to approve."
+                ),
+            },
+            "justification": {
+                "type": "string",
+                "optional": True,
+                "model_requested": True,
+                "description": (
+                    "One sentence explaining why the wider mode is needed. Only valid "
+                    "together with sandbox_permissions."
+                ),
+            },
         },
         "required": ["command"],
     },
@@ -22,6 +48,26 @@ TOOL_REQUEST_SCHEMAS: dict[str, dict[str, Any]] = {
             "command": {"type": "string"},
             "cwd": {"type": "string", "optional": True},
             "timeout": {"type": "integer", "optional": True},
+            "sandbox_permissions": {
+                "type": "string",
+                "enum": list(ESCALATION_TARGETS),
+                "optional": True,
+                "model_requested": True,
+                "description": (
+                    "Request a wider sandbox mode for this one call. Must be strictly "
+                    "wider than the mode the command would otherwise run under, and "
+                    "must be accompanied by a justification. The user is asked to approve."
+                ),
+            },
+            "justification": {
+                "type": "string",
+                "optional": True,
+                "model_requested": True,
+                "description": (
+                    "One sentence explaining why the wider mode is needed. Only valid "
+                    "together with sandbox_permissions."
+                ),
+            },
         },
         "required": ["command"],
     },
@@ -164,7 +210,7 @@ def build_openai_tools(names: list[str] | None = None) -> list[dict[str, Any]]:
 def _to_openai_tool(name: str, schema: dict[str, Any]) -> dict[str, Any]:
     properties: dict[str, dict[str, Any]] = {}
     for key, spec in schema["properties"].items():
-        properties[key] = {k: v for k, v in spec.items() if k != "optional"}
+        properties[key] = {k: v for k, v in spec.items() if k not in _NON_SCHEMA_KEYS}
     return {
         "type": "function",
         "function": {
@@ -210,7 +256,12 @@ def _render_tool_request_shape(name: str, schema: dict[str, Any]) -> str:
     arguments: dict[str, str] = {}
     for argument_name, spec in properties.items():
         label = _render_type_label(spec)
-        if argument_name not in required:
+        if spec.get("model_requested"):
+            # The model raises this one on its own initiative. The stock note below
+            # would tell it to stay silent unless the user asked first, which would
+            # make the mechanism unreachable.
+            label = f"{label} (request this only when the command genuinely needs it)"
+        elif argument_name not in required:
             label = f"{label} (omit unless the user explicitly specifies it)"
         arguments[argument_name] = label
     return json.dumps(

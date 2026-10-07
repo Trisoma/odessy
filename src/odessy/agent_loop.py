@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
-from dataclasses import asdict
+import uuid
+from collections.abc import Callable, Collection, Sequence
+from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
 from mcp import Client
 
+from odessy.execution.escalation import EscalationApproval, EscalationApprover
 from odessy.policy import OdessyPolicy
 from odessy.repeat_guard import RepeatGuard, build_guard
 from odessy.tool_contracts import validate_tool_arguments
@@ -21,6 +23,26 @@ from odessy.types import (
     ToolObservation,
     ToolRequest,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionTarget:
+    """A server this deployment has explicitly authorized for execution.
+
+    Authorization belongs to the **target**, not to the agent's construction. An agent
+    that reads "I was handed this" as "this is authorized" holds no authorization at all,
+    only a tautology -- and anything that can influence construction (an environment
+    variable, a plugin, a discovery step) then influences authorization.
+
+    Because this is a distinct type that nothing produces incidentally, holding one *is*
+    the authorization: a server that is merely reachable is not executable.
+
+    Nothing here establishes trust. There is no identity, no key, no persistence, no
+    revocation. It marks the seat that pairing will occupy, and its value is that the
+    default is no longer "trusted because supplied".
+    """
+
+    server: Any
 
 
 class ModelAdapter(Protocol):
@@ -59,6 +81,7 @@ class OdessyAgent:
         policy: OdessyPolicy,
         mcp_server: Any,
         confirm: Callable[[Any, ToolRequest], bool] | bool = False,
+        approver: EscalationApprover | None = None,
         max_rejections: int = 2,
         deadline_seconds: float | None = None,
         max_model_calls: int = 4,
@@ -67,8 +90,16 @@ class OdessyAgent:
     ) -> None:
         self._model = model
         self._policy = policy
-        self._mcp_servers = _normalize_mcp_servers(mcp_server)
+        self._mcp_servers, self._authorized_targets = _split_mcp_servers(mcp_server)
         self._confirm = confirm
+        #: The human approval channel for a *sandbox escalation* request. Distinct from
+        #: `confirm`, which answers the authority question "may this action run at
+        #: all?". This one answers only "did the human approve the wider sandbox mode?".
+        #:
+        #: It decides nothing else: it does not judge safety and does not pick a
+        #: provider. A missing approver fails closed, so an escalation that cannot be
+        #: asked for is an escalation that cannot be granted.
+        self._approver = approver
         #: Bounded retries on pre-execution (schema/argument) rejection. Authority
         #: decisions never retry -- see run_turn.
         self._max_rejections = max(0, max_rejections)
@@ -296,9 +327,47 @@ class OdessyAgent:
                     )
                 )
 
+            self._assert_execution_target(action.name, tool_registry)
+
+            # Isolation is resolved HERE, on the authority side, before anything
+            # executes. The granted mode travels with the call; the model never sets
+            # it, because a model-settable mode would make escalation bypassable in a
+            # single argument.
+            call_arguments = dict(action.arguments)
+            if self._policy.requirement_for(action, decision) is not None:
+                resolved_mode = await self._policy.resolve_execution_mode(
+                    action,
+                    decision,
+                    approval=EscalationApproval(
+                        approver=self._approver,
+                        agent=self,
+                        call_id=uuid.uuid4().hex[:12],
+                        tool_name=action.name,
+                    ),
+                )
+                # `sandbox_permissions` and `justification` are the escalating
+                # requester's vocabulary and stay on this side. Only the GRANTED mode
+                # crosses to the executor, so the executor never re-decides and never
+                # even sees what was asked for.
+                call_arguments.pop("sandbox_permissions", None)
+                call_arguments.pop("justification", None)
+                call_arguments["mode"] = resolved_mode
+                # The requirement travels WITH the mode. Sending only the mode would
+                # leave the executor to infer how strict this side is, and inferring
+                # permissively would be the executor weakening the authority layer's
+                # requirement -- a `required` demand silently satisfied by a `partial`
+                # backend. They are a pair, like the escalation arguments themselves.
+                call_arguments["isolation"] = self._policy.isolation
+                log.append(
+                    LogEntry(
+                        "execution_mode_resolved",
+                        {"name": action.name, "mode": resolved_mode},
+                    )
+                )
+
             _status(status_callback, "Running tool")
             mcp_started = time.perf_counter()
-            result = await self._call_tool(action.name, action.arguments, tool_registry)
+            result = await self._call_tool(action.name, call_arguments, tool_registry)
             log.append(LogEntry("mcp_tool_called", {"name": action.name}))
 
             structured_result = self._extract_structured_result(result)
@@ -440,6 +509,27 @@ class OdessyAgent:
             return bool(self._confirm(decision, request))
         return bool(self._confirm)
 
+    def _assert_execution_target(
+        self, name: str, registry: dict[str, tuple[Any, Any]]
+    ) -> None:
+        """Refuse to act on a server that is not a declared execution target.
+
+        The action is refused in full, not merely sent unconfined: an undeclared target
+        is not an execution target at all, and running there without a boundary would be
+        the same as treating reachability as trust.
+        """
+
+        entry = registry.get(name)
+        if entry is None:
+            # An unknown tool is `_call_tool`'s error to report, not this one's.
+            return
+        _, server = entry
+        if not any(server is target for target in self._authorized_targets):
+            raise PermissionError(
+                f"{name} would act on a server that is not a declared execution target; "
+                "wrap the server in ExecutionTarget at the composition root to authorize it"
+            )
+
     async def _collect_tool_registry(self) -> dict[str, tuple[Any, Any]]:
         if not self._mcp_servers:
             return {}
@@ -500,6 +590,19 @@ class OdessyAgent:
         if not isinstance(structured, dict):
             raise TypeError("MCP tool result did not include structured content")
         return structured
+
+
+def _split_mcp_servers(mcp_server: Any) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
+    """Return the servers to talk to, and the subset authorized for execution.
+
+    Both are derived from one input so they cannot drift: authorization is read off the
+    type, never off a parallel list someone has to remember to update.
+    """
+
+    raw = _normalize_mcp_servers(mcp_server)
+    authorized = tuple(item.server for item in raw if isinstance(item, ExecutionTarget))
+    servers = tuple(item.server if isinstance(item, ExecutionTarget) else item for item in raw)
+    return servers, authorized
 
 
 def _normalize_mcp_servers(mcp_server: Any) -> tuple[Any, ...]:

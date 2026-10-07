@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from odessy.agent_loop import OdessyAgent
+from odessy.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.fake_model import FakeModel
 from odessy.mcp_server import build_odessy_mcp_server
 from odessy.policy import OdessyPolicy
@@ -17,7 +17,7 @@ def build_agent(workspace_root: Path, confirm=False) -> OdessyAgent:
     return OdessyAgent(
         model=FakeModel(),
         policy=OdessyPolicy(workspace_root=workspace_root),
-        mcp_server=build_odessy_mcp_server(workspace_root=workspace_root),
+        mcp_server=ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root)),
         confirm=confirm,
     )
 
@@ -40,11 +40,16 @@ async def test_terminal_run_pwd_flows_through_policy_and_mcp(tmp_path: Path) -> 
         "model_tool_request",
         "schema_validated",
         "policy_allowed",
+        # The authority layer now records the mode it resolved, before the tool
+        # runs. `pwd` is a read-only command, so that is the mode it reports.
+        "execution_mode_resolved",
         "mcp_tool_called",
         "tool_observation",
         "model_final_response",
         "agent_turn_metrics",
     ]
+    resolved = [e for e in response.log if e.event == "execution_mode_resolved"]
+    assert resolved[0].detail["mode"] == "read-only"
 
 
 @pytest.mark.anyio
@@ -112,7 +117,7 @@ async def test_terminal_run_denies_workspace_escape(tmp_path: Path) -> None:
     agent = OdessyAgent(
         model=FakeModel(),
         policy=OdessyPolicy(workspace_root=tmp_path),
-        mcp_server=build_odessy_mcp_server(workspace_root=tmp_path),
+        mcp_server=ExecutionTarget(build_odessy_mcp_server(workspace_root=tmp_path)),
     )
 
     with pytest.raises(PermissionError, match="outside the allowed workspace"):

@@ -4,11 +4,19 @@ import os
 import signal
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, TypedDict
 
-from odessy.execution.contract import ConfineResult, ExecutionPolicy, ExecutionProvider
+from odessy.execution.contract import (
+    ConfineResult,
+    ExecutionPolicy,
+    ExecutionProvider,
+    IsolationRequirement,
+    Mode,
+    ProviderUnavailableError,
+    Requirement,
+)
 from odessy.execution.providers import UnconfinedProvider
 from odessy.output_retention import TextRetainer, format_retention_notice
 from odessy.redaction import looks_like_secret_name, redact_text
@@ -86,7 +94,15 @@ class CommandBridge:
                 "policy has no mode to confine under"
             )
 
-    def run(self, *, command: str, cwd: str = ".", timeout: int = 10) -> TerminalRunResult:
+    def run(
+        self,
+        *,
+        command: str,
+        cwd: str = ".",
+        timeout: int = 10,
+        mode: Mode | None = None,
+        isolation: IsolationRequirement | None = None,
+    ) -> TerminalRunResult:
         resolved_cwd = self.resolve_cwd(cwd)
         effective_timeout = min(max(1, timeout), self.max_timeout)
         # Confinement happens before anything is spawned, and it raises rather than
@@ -94,7 +110,7 @@ class CommandBridge:
         # unconfined run instead. `ProviderUnavailableError`, the
         # `danger-full-access` refusal, and a policy that no backend satisfies all
         # therefore propagate out of `run()`.
-        argv, sandbox = self._confine(_shell_command(command))
+        argv, sandbox = self._confine(_shell_command(command), mode, isolation)
         start = time.monotonic()
         process: subprocess.Popen[str] | None = None
 
@@ -174,11 +190,22 @@ class CommandBridge:
     def resolve_cwd(self, cwd: str) -> Path:
         return WorkspaceAuthority(self.workspace_root).resolve_cwd(cwd)
 
-    def _confine(self, argv: list[str]) -> tuple[list[str], dict[str, Any]]:
+    def _confine(
+        self,
+        argv: list[str],
+        mode: Mode | None = None,
+        isolation: IsolationRequirement | None = None,
+    ) -> tuple[list[str], dict[str, Any]]:
         """Route the argv through the configured backend.
 
-        With no backend configured this still calls `confine()` — through the named
-        unconfined provider — so every run states its own enforcement instead of
+        ``mode`` is the mode the *authority layer* resolved for this one call, and
+        ``isolation`` is how strict it was about that. They are supplied per call rather
+        than read off ``self.policy`` because a decision taken per action cannot live in a
+        per-bridge field. ``None`` keeps the bridge's own policy, which is what a caller
+        that has not resolved one gets.
+
+        With no backend configured this still calls `confine()` -- through the named
+        unconfined provider -- so every run states its own enforcement instead of
         silently reporting nothing. The inert mode passed in that case is
         `read-only`, chosen because it is the most restrictive value: should a
         backend ever be configured without an explicit policy, the default must
@@ -194,7 +221,24 @@ class CommandBridge:
             return list(result.argv), _sandbox_report(result)
 
         assert self.policy is not None  # `__post_init__` pairs the two fields.
-        result = self.provider.confine(argv, self.policy)
+        policy = self.policy if mode is None else replace(self.policy, mode=mode)
+
+        if isolation == "required":
+            # This side both decides and executes, so there is no trust boundary to
+            # cross -- but a `required` demand still has to be answered. Satisfying it
+            # with a partial or absent backend here would be the same silent downgrade
+            # the executor refuses on the other side of the boundary.
+            evaluation = self.provider.evaluate(Requirement(policy=policy, isolation="required"))
+            if not evaluation.satisfied:
+                # (mode, detail), not a single message: the first argument is the mode the
+                # backend could not satisfy, and the detail explains why.
+                raise ProviderUnavailableError(
+                    policy.mode,
+                    f"required isolation is not met: {self.provider.provider_id} reports "
+                    f"{evaluation.enforcement} enforcement ({evaluation.reason})",
+                )
+
+        result = self.provider.confine(argv, policy)
         return list(result.argv), _sandbox_report(result)
 
     def _spill_store(self) -> SpillStore:

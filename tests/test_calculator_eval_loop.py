@@ -1,6 +1,6 @@
 import pytest
 
-from odessy.agent_loop import OdessyAgent
+from odessy.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.fake_model import FakeModel
 from odessy.mcp_server import build_odessy_mcp_server
 from odessy.policy import OdessyPolicy
@@ -18,7 +18,7 @@ def build_agent() -> OdessyAgent:
             workspace_root=".",
             allowed_tools={"calculator.eval"},
         ),
-        mcp_server=build_odessy_mcp_server(),
+        mcp_server=ExecutionTarget(build_odessy_mcp_server()),
     )
 
 

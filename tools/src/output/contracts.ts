@@ -92,7 +92,7 @@ export interface TerminalRunResult {
    */
   exit_code: number | null;
   duration: number;
-  status: "ok" | "failed" | "timeout";
+  status: "ok" | "failed" | "timeout" | "refused";
   command: string;
   cwd: string;
   timed_out: boolean;
