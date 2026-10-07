@@ -213,6 +213,47 @@ Two further facts were taken from the same source and shape the implementation:
   Odessy's bwrap probe was strengthened to match, attempting a prohibited write
   and requiring it to be denied.
 
+## Port Sequence
+
+The Windows ACL stack is the highest-risk part of this port. It is the only
+backend that cannot be reimplemented from its documentation, and it is a security
+boundary Odessy will own outright.
+
+The sequence is therefore fixed, and mixing its steps is the failure mode it
+exists to prevent:
+
+```text
+1. dsh source
+2. Odessy moved source            byte-identical where possible
+3. minimal dependency rewiring    imports only
+4. tests pass                     run, not merely present
+5. Odessy-specific cleanup
+```
+
+Step 2 moves files with no behavioural change. Step 3 changes only what must
+change to resolve a dependency:
+
+- the two `dsh-subprocess/control` constants, dropped along with the control-fd
+  feature, because Odessy owns its own process timeout and termination;
+- the `dsh-win32-process` imports, repointed at the vendored copy;
+- the `tsx/esm/api` source-launch fallback, dropped because Odessy ships built
+  output.
+
+**Step 5 does not begin in the same commit as steps 2 to 4.** Architectural
+refactoring mixed into a provenance-sensitive Windows security port destroys the
+attribution that makes a later failure diagnosable: it would be impossible to say
+whether something broke because of the port or because of the redesign.
+
+## Deferred To Later Steps
+
+Two things are intentionally incomplete, recorded here so neither is mistaken for
+an oversight:
+
+| Item | Status | Why |
+|---|---|---|
+| The TypeScript Landlock ABI | Deferred to the Windows ACL step | Node cannot read the ABI: it is obtainable only through the `landlock_create_ruleset` syscall, and `landlock-run --probe` reports full or partial but never *which* right is missing. Both facts are needed, so the ABI is reported as unknown rather than guessed. `koffi` arrives with the Windows port, and only `probe.ts` needs to change; the provider logic is already verified across ABIs 1 to 5 with an injected value. **The injection is a test seam, not a permanent escape hatch.** |
+| `escalation.ts` | Not mirrored, permanently | The escalation choreography is a policy-layer concern, and Odessy's policy layer is Python. Mirroring it would create two authorities for one approval decision. The TypeScript side gets the vocabulary and the mechanism, not the approval boundary. |
+
 ## Facts Preserved Verbatim
 
 The following are carried across unchanged, because each exists for a specific failure

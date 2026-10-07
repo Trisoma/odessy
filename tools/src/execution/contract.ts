@@ -197,6 +197,65 @@ export const LIMITATIONS = [
   "host_kernel_shared",
 ] as const satisfies readonly Limitation[];
 
+/**
+ * Narrow a mode to the ones a confining profile exists for.
+ *
+ * A type predicate rather than a membership test, because the const tuple
+ * narrows `includes` to its own literals and would reject a widened `Mode`.
+ */
+export function isConfinedMode(mode: Mode): mode is ConfinedMode {
+  return mode === "read-only" || mode === "workspace-write";
+}
+
+/**
+ * Which capability a scope limitation defeats.
+ *
+ * A limitation only blocks a request that actually asks for the dimension it
+ * concerns: a backend that cannot restrict network is perfectly adequate for a
+ * request that never claimed to need network confinement.
+ */
+const CAPABILITY_LIMITATIONS: readonly (readonly [Capability, Limitation])[] = [
+  ["network", "cannot_restrict_network"],
+  ["process-visibility", "cannot_restrict_process_visibility"],
+];
+
+/**
+ * The subset of `limitations` that defeats *this* request.
+ *
+ * Device grants are deliberately not consulted yet. Whether an inability to
+ * restrict device access defeats a request depends on the device-grant
+ * semantics, which are defined with the device layer; inventing them now would
+ * be guessing.
+ */
+export function blockingLimitations(
+  requirement: Requirement,
+  limitations: readonly Limitation[],
+): readonly Limitation[] {
+  return CAPABILITY_LIMITATIONS.filter(
+    ([capability, limitation]) =>
+      requirement.capabilities.includes(capability) && limitations.includes(limitation),
+  )
+    .map(([, limitation]) => limitation)
+    .sort();
+}
+
+/**
+ * Whether `enforcement` honours a *required* isolation request.
+ *
+ * `partial` means the backend governs only a subset of the effects the mode
+ * promises. That is an acceptable answer to a request that merely prefers
+ * isolation, and an unacceptable one to a request that requires it.
+ */
+export function requiredIsolationIsMet(
+  requirement: Requirement,
+  enforcement: Enforcement,
+): boolean {
+  if (requirement.isolation !== "required") {
+    return true;
+  }
+  return enforcement === "full";
+}
+
 // --------------------------------------------------------------------------
 // Failure modes
 // --------------------------------------------------------------------------
