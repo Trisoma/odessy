@@ -465,7 +465,11 @@ def _fallback_observation_response(observation: ToolObservation) -> str:
     if name == "terminal.run":
         command = result.get("command", observation.request.arguments.get("command", "the command"))
         status = result.get("status", "ok")
-        exit_code = result.get("exit_code", 0)
+        # No default worth inventing: a timed-out command has no exit status, and
+        # assuming 0 would read to the model as success.
+        exit_code = result.get("exit_code")
+        if exit_code is None:
+            return f"Command `{command}` finished with status {status} (no exit code)."
         return f"Command `{command}` finished with status {status} and exit code {exit_code}."
     if name == "calculator.eval":
         expression = result.get("expression", observation.request.arguments.get("expression", "the expression"))

@@ -9,6 +9,7 @@ from mcp.server import MCPServer
 
 from odessy.calculator import CalculatorEvalResult, evaluate_arithmetic_expression
 from odessy.command_bridge import CommandBridge, TerminalRunResult
+from odessy.execution.contract import ExecutionPolicy, ExecutionProvider
 
 
 class TimeNowResult(TypedDict):
@@ -27,10 +28,26 @@ def build_odessy_mcp_server(
     *,
     clock: Clock | None = None,
     workspace_root: Path | str | None = None,
+    provider: ExecutionProvider | None = None,
+    policy: ExecutionPolicy | None = None,
 ) -> MCPServer:
+    """Build the Odessy tool server.
+
+    ``provider`` and ``policy`` are threaded through to the `CommandBridge` rather
+    than built here: which backend this host can offer and which mode an action
+    resolves to are decisions that belong to the caller's composition root, not to
+    the tool surface. Omitting both is legal and runs every command unconfined,
+    with each result reporting ``enforcement: "none"`` so the absence is visible
+    rather than implied.
+    """
+
     server = MCPServer("odessy-v0.1.0")
     now = clock or _local_clock
-    bridge = CommandBridge(Path(workspace_root or ".").resolve())
+    bridge = CommandBridge(
+        Path(workspace_root or ".").resolve(),
+        provider=provider,
+        policy=policy,
+    )
 
     @server.tool(name="time.now")
     def time_now() -> TimeNowResult:

@@ -61,6 +61,12 @@ class FakeModel:
             command = result["command"]
             status = result["status"]
             exit_code = result["exit_code"]
+            # A timed-out command has no exit status of its own, so there is no number
+            # to print. Saying "exit code None" would be worse than saying nothing.
+            if exit_code is None:
+                return FinalResponse(
+                    text=f"Command `{command}` finished with status {status} (no exit code)."
+                )
             return FinalResponse(
                 text=f"Command `{command}` finished with status {status} and exit code {exit_code}."
             )

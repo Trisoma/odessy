@@ -327,7 +327,7 @@ def test_timeout_result_is_classified_as_tool_timeout(tmp_path: Path) -> None:
     agent = build_agent(tmp_path, ScriptedModel([_good_call()]))
 
     info = agent._classify_timeout(
-        "terminal.run", {"status": "timeout", "duration": 30.0, "exit_code": -1}
+        "terminal.run", {"status": "timeout", "duration": 30.0, "exit_code": None}
     )
 
     assert info is not None

@@ -18,6 +18,9 @@ import type {
   TerminalRunResult,
 } from "../output/contracts.js";
 import { DEFAULT_MAX_BYTES, normalizeLimit, truncateUtf8 } from "../output/truncate.js";
+import { prepareOutput } from "../output/prepare.js";
+import { SpillStore } from "../output/spill.js";
+import { confineArgv, type Confinement, type SandboxReport } from "../execution/seam.js";
 import type { WorkspaceGuard } from "../workspace/path-guard.js";
 
 const execFileAsync = promisify(execFile);
@@ -254,17 +257,37 @@ export async function gitLog(
 export async function laptopTerminalRun(
   guard: WorkspaceGuard,
   input: { command: string; cwd?: string; timeout?: number },
+  confinement?: Confinement,
 ): Promise<TerminalRunResult> {
   const resolvedCwd = await guard.resolveExisting(input.cwd ?? ".");
   const effectiveTimeout = Math.min(Math.max(1, input.timeout ?? 10), 30);
   const start = Date.now();
-  const result = await runShellCommand(input.command, resolvedCwd, effectiveTimeout);
+  const result = await runShellCommand(
+    input.command,
+    resolvedCwd,
+    effectiveTimeout,
+    confinement,
+    guard.root,
+  );
   const duration = (Date.now() - start) / 1000;
-  const stdout = truncateUtf8(result.stdout, 64 * 1024);
-  const stderr = truncateUtf8(result.stderr, 32 * 1024);
+  // One store per call, shared by both streams, so a run's captured output lands
+  // in a single session directory. Redact -> retain -> spill, in that order: a
+  // secret must never reach the spill file, because once it is on disk it cannot
+  // be recalled.
+  const spill = new SpillStore(guard.root);
+  const stdout = prepareOutput(result.stdout, {
+    label: "stdout",
+    maxChars: 64 * 1024,
+    spill,
+  });
+  const stderr = prepareOutput(result.stderr, {
+    label: "stderr",
+    maxChars: 32 * 1024,
+    spill,
+  });
   return {
-    stdout: stdout.content,
-    stderr: stderr.content,
+    stdout: stdout.text,
+    stderr: stderr.text,
     exit_code: result.exitCode,
     duration,
     status: result.timedOut ? "timeout" : result.exitCode === 0 ? "ok" : "failed",
@@ -273,6 +296,9 @@ export async function laptopTerminalRun(
     timed_out: result.timedOut,
     stdout_truncated: stdout.truncated,
     stderr_truncated: stderr.truncated,
+    stdout_spill: stdout.spill,
+    stderr_spill: stderr.spill,
+    sandbox: result.sandbox,
   };
 }
 
@@ -331,14 +357,33 @@ async function runShellCommand(
   command: string,
   cwd: string,
   timeoutSeconds: number,
-): Promise<{ stdout: string; stderr: string; exitCode: number; timedOut: boolean }> {
+  confinement: Confinement | undefined,
+  workspaceRoot: string,
+): Promise<{
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  timedOut: boolean;
+  sandbox: SandboxReport;
+}> {
+  const shell = process.platform === "win32" ? "powershell" : "/bin/sh";
+  const shellArgs =
+    process.platform === "win32"
+      ? ["-NoProfile", "-NonInteractive", "-Command", command]
+      : ["-lc", command];
+
+  // Confinement happens before anything is spawned, and it throws rather than
+  // falling back: a caller that asked for a boundary must never receive an
+  // unconfined run instead, because the record would be indistinguishable from one
+  // where the boundary held. The argv below is the one `confineArgv` returned.
+  const confined = confineArgv(confinement, [shell, ...shellArgs], workspaceRoot);
+  const [executable, ...args] = confined.argv;
+  if (executable === undefined) {
+    throw new Error("confinement returned an empty argv");
+  }
+
   return await new Promise((resolve, reject) => {
-    const shell = process.platform === "win32" ? "powershell" : "/bin/sh";
-    const shellArgs =
-      process.platform === "win32"
-        ? ["-NoProfile", "-NonInteractive", "-Command", command]
-        : ["-lc", command];
-    const child = spawn(shell, shellArgs, {
+    const child = spawn(executable, args, {
       cwd,
       env: buildSanitizedEnvironment(process.env),
       stdio: ["ignore", "pipe", "pipe"],
@@ -361,11 +406,16 @@ async function runShellCommand(
       stderr += chunk;
     });
 
-    const finish = (result: { stdout: string; stderr: string; exitCode: number; timedOut: boolean }) => {
+    const finish = (result: {
+      stdout: string;
+      stderr: string;
+      exitCode: number | null;
+      timedOut: boolean;
+    }) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve(result);
+      resolve({ ...result, sandbox: confined.sandbox });
     };
 
     child.on("error", (error) => {
@@ -379,7 +429,10 @@ async function runShellCommand(
       finish({
         stdout,
         stderr,
-        exitCode: typeof code === "number" ? code : -1,
+        // `null` when there is no status to report. A process the executor killed has
+        // no exit code of its own, and a signal name is not a process exit status
+        // either, so neither is flattened into a number that would read as an outcome.
+        exitCode: timedOut || typeof code !== "number" ? null : code,
         timedOut,
       });
     });

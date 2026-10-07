@@ -30,6 +30,7 @@ import {
   readInputSchema,
 } from "./tools/index.js";
 import { createWorkspaceGuard } from "./workspace/path-guard.js";
+import type { Confinement } from "./execution/seam.js";
 
 const workspaceRoot = process.env.ODESSY_WORKSPACE_ROOT || process.cwd();
 
@@ -43,7 +44,16 @@ function resultPayload(result: object) {
   };
 }
 
-function buildServer(): McpServer {
+/**
+ * Build the tool server.
+ *
+ * `confinement` is threaded through to the terminal tool rather than built here:
+ * which backend this host can offer, and which mode an action resolves to, are
+ * decisions belonging to the composition root, not to the tool surface. Omitting
+ * it is legal and runs every command unconfined, with each result reporting
+ * `enforcement: "none"` so the absence is visible rather than implied.
+ */
+function buildServer(confinement?: Confinement): McpServer {
   const guard = createWorkspaceGuard(workspaceRoot);
   const server = new McpServer({
     name: "odessy-tool-server",
@@ -137,7 +147,7 @@ function buildServer(): McpServer {
       description: "Run a laptop-side command in the Odessy workspace.",
       inputSchema: laptopTerminalRunInputSchema,
     },
-    async (input) => resultPayload(await laptopTerminalRun(guard, input)),
+    async (input) => resultPayload(await laptopTerminalRun(guard, input, confinement)),
   );
 
   server.registerTool(
