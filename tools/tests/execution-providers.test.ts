@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -15,12 +18,15 @@ import {
   bwrapProbeScript,
   classifyBwrapAvailability,
   interpretBwrapProbe,
+  interpretWindowsAclProbe,
+  windowsAclProbeArgv,
   type BwrapAvailability,
   type HostFacts,
 } from "../src/execution/probe.js";
 import { BwrapProvider } from "../src/execution/providers/bwrap.js";
 import { LandlockProvider } from "../src/execution/providers/landlock.js";
 import { SeatbeltProvider } from "../src/execution/providers/seatbelt.js";
+import { WindowsAclProvider } from "../src/execution/providers/windowsAcl.js";
 
 const LAUNCHER = "/usr/bin/landlock-run";
 
@@ -32,6 +38,8 @@ interface FactsOptions {
   bwrapPath?: string | null;
   seatbeltAvailable?: boolean;
   seatbeltPath?: string | null;
+  windowsAclAvailable?: boolean;
+  windowsAclRunnerEntry?: string | null;
 }
 
 function makeFacts(options: FactsOptions = {}): HostFacts {
@@ -43,6 +51,8 @@ function makeFacts(options: FactsOptions = {}): HostFacts {
     bwrapPath = null,
     seatbeltAvailable = false,
     seatbeltPath = null,
+    windowsAclAvailable = false,
+    windowsAclRunnerEntry = null,
   } = options;
 
   return {
@@ -64,6 +74,11 @@ function makeFacts(options: FactsOptions = {}): HostFacts {
       detail: "stub bwrap",
     },
     seatbelt: { available: seatbeltAvailable, path: seatbeltPath, detail: "stub seatbelt" },
+    windowsAcl: {
+      available: windowsAclAvailable,
+      runnerEntry: windowsAclRunnerEntry,
+      detail: "stub windows acl",
+    },
     userNamespaces: {
       unprivilegedUsernsClone: null,
       maxUserNamespaces: null,
@@ -102,6 +117,15 @@ function usableSeatbelt(): SeatbeltProvider {
   return new SeatbeltProvider(
     makeFacts({ seatbeltAvailable: true, seatbeltPath: "/usr/bin/sandbox-exec" }),
     "/usr/bin/sandbox-exec",
+  );
+}
+
+const RUNNER = "C:\\runner\\runner.js";
+
+function usableWindowsAcl(options: FactsOptions = {}): WindowsAclProvider {
+  return new WindowsAclProvider(
+    makeFacts({ windowsAclAvailable: true, windowsAclRunnerEntry: RUNNER, ...options }),
+    RUNNER,
   );
 }
 
@@ -212,6 +236,7 @@ test("an unusable backend refuses to confine", () => {
     new LandlockProvider(makeFacts({ abi: null, launcherEnforcement: null, launcherPath: null })),
     new LandlockProvider(makeFacts({ abi: 5, launcherEnforcement: null })),
     new SeatbeltProvider(makeFacts({ seatbeltAvailable: false })),
+    new WindowsAclProvider(makeFacts({ windowsAclAvailable: false })),
   ];
 
   for (const provider of unusable) {
@@ -343,4 +368,240 @@ test("bwrap availability maps to four distinguishable states", () => {
   assert.equal(classifyBwrapAvailability("/usr/bin/bwrap", 0, true), "available_setuid_root");
   assert.equal(classifyBwrapAvailability("/usr/bin/bwrap", 1, false), "unavailable_binary_unusable");
   assert.equal(classifyBwrapAvailability("/usr/bin/bwrap", null, false), "unavailable_binary_unusable");
+});
+
+// --------------------------------------------------------------------------
+// The Windows ACL backend is available and incomplete
+// --------------------------------------------------------------------------
+
+test("the Windows backend is the first to report partial while available", () => {
+  // Every other backend is either complete or unavailable. This one is both
+  // available and short of what the mode promises, and that combination is the
+  // whole reason `enforcement` is a reported fact rather than a boolean.
+  const provider = usableWindowsAcl();
+  const evaluation = provider.evaluate(requirement());
+
+  assert.equal(provider.probe().available, true);
+  assert.equal(evaluation.satisfied, true);
+  assert.equal(evaluation.enforcement, "partial");
+});
+
+test("both documented Windows boundaries are named as gaps", () => {
+  const result = usableWindowsAcl().confine(["echo"], {
+    mode: "read-only",
+    workspaceRoot: "/work",
+    deviceGrants: [],
+  });
+
+  // Everyone must stay in both restricting lists (early DLL init dies with
+  // 0xC0000142 without it), and NTFS hard links alias a file object rather than
+  // a path. Both are promises the mode makes and this backend cannot keep.
+  assert.ok(result.limitations.includes("reliance_on_everyone_ace"));
+  assert.ok(result.limitations.includes("cannot_restrict_hardlink_alias"));
+  assert.equal(result.enforcement, "partial");
+});
+
+test("the Windows scope notes match the backend's documented reach", () => {
+  const result = usableWindowsAcl().confine(["echo"], {
+    mode: "read-only",
+    workspaceRoot: "/work",
+    deviceGrants: [],
+  });
+
+  for (const note of [
+    "cannot_restrict_reads",
+    "cannot_restrict_network",
+    "cannot_restrict_process_visibility",
+    "no_console_isolation",
+    "host_kernel_shared",
+  ] as const) {
+    assert.ok(result.limitations.includes(note), `${note} is missing`);
+  }
+});
+
+test("inferred device and ioctl limitations stay out of the formal set", () => {
+  // Both follow from the documented mechanism, but neither is a boundary this
+  // backend's documentation states — and a limitation set is read as a considered
+  // statement about the host, so an inference must not be promoted into evidence.
+  //
+  // The hazard is concrete: `CAPABILITY_LIMITATIONS` maps a capability to the
+  // limitation that defeats it, and device grants are omitted from that map until
+  // the device layer defines what a device grant means. A device limitation in this
+  // list would be one map entry away from deciding whether a future device-access
+  // request is granted or refused. Phase 9 makes that call; until then the reasoning
+  // lives in prose.
+  const result = usableWindowsAcl().confine(["echo"], {
+    mode: "read-only",
+    workspaceRoot: "/work",
+    deviceGrants: [],
+  });
+
+  assert.equal(result.limitations.includes("cannot_restrict_device_access"), false);
+  assert.equal(result.limitations.includes("cannot_restrict_ioctl"), false);
+});
+
+test("required isolation rejects the partial Windows backend", () => {
+  const provider = usableWindowsAcl();
+
+  assert.equal(provider.evaluate(requirement({ isolation: "required" })).satisfied, false);
+  assert.equal(provider.evaluate(requirement({ isolation: "preferred" })).satisfied, true);
+});
+
+test("the runner invocation follows the stable argv contract", () => {
+  const result = usableWindowsAcl().confine(["echo", "hi"], {
+    mode: "read-only",
+    workspaceRoot: "/work",
+    deviceGrants: [],
+  });
+
+  assert.deepEqual(result.argv, [
+    process.execPath,
+    RUNNER,
+    "--workspace",
+    "/work",
+    "--temp",
+    tmpdir(),
+    "--mode",
+    "read-only",
+    "--",
+    "echo",
+    "hi",
+  ]);
+});
+
+test("the agentless flow passes no capability SID pair", () => {
+  // Odessy's policy carries no session identity, which maps to the runner's
+  // standalone flow: `--temp` names a root and the runner derives, grants, and
+  // revokes the private child's own capability. Emitting the seam's
+  // `--write-sid`/`--temp-write-sid` pair here would claim grants nobody
+  // materialized.
+  const result = usableWindowsAcl().confine(["echo"], {
+    mode: "workspace-write",
+    workspaceRoot: mkdtempSync(join(tmpdir(), "odessy-ws-")),
+    deviceGrants: [],
+  });
+
+  assert.equal(result.argv.includes("--write-sid"), false);
+  assert.equal(result.argv.includes("--temp-write-sid"), false);
+  assert.deepEqual(result.argv.slice(-2), ["--", "echo"]);
+});
+
+test("a workspace-write temp root is checked for overlap", () => {
+  // The workspace is created *inside* the ambient temp root, so this test fails
+  // if the two arguments are ever swapped: the check would then ask whether the
+  // temp root contains the workspace, which it does.
+  const workspace = mkdtempSync(join(tmpdir(), "odessy-ws-"));
+
+  assert.doesNotThrow(() =>
+    usableWindowsAcl().confine(["echo"], {
+      mode: "workspace-write",
+      workspaceRoot: workspace,
+      deviceGrants: [],
+    }),
+  );
+});
+
+test("a runner failure needs both the exit code and the signature", () => {
+  const result = usableWindowsAcl().confine(["echo"], {
+    mode: "read-only",
+    workspaceRoot: "/work",
+    deviceGrants: [],
+  });
+
+  const rule = result.runnerFailureRules[0];
+  assert.ok(rule);
+  assert.deepEqual(rule.allowedExitCodes, [127]);
+  assert.deepEqual(rule.fatalSignatures, ["windows-acl-run: "]);
+
+  // Both together: the runner failed before running the command.
+  assert.notEqual(
+    classifyRunnerFailure(127, "windows-acl-run: --workspace is not an existing directory\n", result.runnerFailureRules),
+    undefined,
+  );
+  // The signature alone, on a status the runner never reserves: a confined
+  // command that merely printed it ran successfully.
+  assert.equal(classifyRunnerFailure(1, "windows-acl-run: decoy\n", result.runnerFailureRules), undefined);
+  // The exit code alone: a confined command legitimately exiting 127.
+  assert.equal(classifyRunnerFailure(127, "command not found\n", result.runnerFailureRules), undefined);
+});
+
+test("the Windows denial dialect carries all four spellings", () => {
+  const result = usableWindowsAcl().confine(["echo"], {
+    mode: "read-only",
+    workspaceRoot: "/work",
+    deviceGrants: [],
+  });
+
+  // Four layers report the same denial differently: PowerShell/.NET, cmd, and
+  // Node's EACCES and EPERM.
+  assert.deepEqual(result.denialSignatures, [
+    "access is denied",
+    "access to the path",
+    "permission denied",
+    "operation not permitted",
+  ]);
+});
+
+// --------------------------------------------------------------------------
+// The Windows probe is a functional verdict, not a presence check
+// --------------------------------------------------------------------------
+
+test("the Windows probe runs the runner in read-only mode", () => {
+  const argv = windowsAclProbeArgv(RUNNER);
+
+  // Read-only because it applies zero grants and mutates no DACL, so probing
+  // cannot alter the machine while still exercising token creation and spawn.
+  assert.deepEqual(argv, [
+    RUNNER,
+    "--workspace",
+    tmpdir(),
+    "--temp",
+    tmpdir(),
+    "--mode",
+    "read-only",
+    "--",
+    "cmd",
+    "/c",
+    "exit",
+    "0",
+  ]);
+});
+
+test("the Windows probe verdict distinguishes present from usable", () => {
+  const ok = interpretWindowsAclProbe({ status: 0, stdout: "", stderr: "" }, RUNNER);
+  assert.equal(ok.available, true);
+  assert.equal(ok.runnerEntry, RUNNER);
+
+  // Present but unable to confine must report unavailable, or the failure would
+  // surface on the user's own command instead of in the report.
+  const refused = interpretWindowsAclProbe(
+    {
+      status: 127,
+      stdout: "",
+      stderr: "windows-acl-run: CreateRestrictedToken failed (Win32 5)\n",
+    },
+    RUNNER,
+  );
+  assert.equal(refused.available, false);
+  assert.match(refused.detail, /CreateRestrictedToken/);
+
+  // The runner's diagnostic is on the second line here; only the first is quoted,
+  // so the report stays one line.
+  const noisy = interpretWindowsAclProbe(
+    { status: 127, stdout: "", stderr: "some warning\nwindows-acl-run: bad args\n" },
+    RUNNER,
+  );
+  assert.equal(noisy.available, false);
+  assert.match(noisy.detail, /some warning/);
+
+  const timedOut = interpretWindowsAclProbe(
+    { status: null, stdout: "", stderr: "ETIMEDOUT" },
+    RUNNER,
+  );
+  assert.equal(timedOut.available, false);
+  assert.match(timedOut.detail, /did not complete/);
+
+  const silent = interpretWindowsAclProbe({ status: 3, stdout: "", stderr: "" }, RUNNER);
+  assert.equal(silent.available, false);
+  assert.match(silent.detail, /no diagnostic on stderr/);
 });

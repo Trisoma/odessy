@@ -28,6 +28,7 @@ import { spawnSync } from "node:child_process";
 import {
   accessSync,
   constants,
+  existsSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -39,6 +40,7 @@ import { join } from "node:path";
 
 import type { DeviceCapability, Enforcement, ExecutionPolicy } from "./contract.js";
 import { bwrapProfileArgs } from "./profiles.js";
+import { RUNNER_ENTRY } from "./win32/runner-entry.js";
 
 /** Matches upstream's `probeTimeoutMs` default. */
 export const PROBE_TIMEOUT_MS = 5_000;
@@ -112,6 +114,21 @@ export interface SeatbeltFacts {
   readonly detail: string;
 }
 
+/**
+ * The Windows restricted-token backend's facts.
+ *
+ * `available` is a *functional* verdict, not a presence check: it is the result of
+ * running the runner in read-only mode — zero grants, no DACL mutation — around
+ * `cmd /c exit 0`. A runner that exists but cannot create its token reports
+ * unavailable, which is the distinction that stops a broken backend from being
+ * selected and then failing on the user's own command.
+ */
+export interface WindowsAclFacts {
+  readonly available: boolean;
+  readonly runnerEntry: string | null;
+  readonly detail: string;
+}
+
 export interface LandlockLauncherFacts {
   readonly path: string | null;
   readonly enforcement: Enforcement | null;
@@ -127,6 +144,7 @@ export interface HostFacts {
   readonly landlockLauncher: LandlockLauncherFacts;
   readonly bwrap: BwrapFacts;
   readonly seatbelt: SeatbeltFacts;
+  readonly windowsAcl: WindowsAclFacts;
   readonly userNamespaces: UserNamespaceFacts;
   readonly deviceNodes: Readonly<Partial<Record<DeviceCapability, readonly string[]>>>;
 }
@@ -135,7 +153,7 @@ export interface HostFacts {
 // Small helpers
 // --------------------------------------------------------------------------
 
-interface ProbeOutput {
+export interface ProbeOutput {
   readonly status: number | null;
   readonly stdout: string;
   readonly stderr: string;
@@ -198,9 +216,21 @@ function readMaybe(path: string): string | null {
  * second decides which limitations are real.
  *
  * Reporting a guessed ABI, or deriving it from the kernel release, would break
- * the rule that `partial` must describe a *known* limitation. So the ABI is
- * reported as unknown and the Landlock provider stays unavailable on this side
- * until a native FFI binding is available to read it.
+ * rule that `partial` must describe a *known* limitation. So the ABI is reported as
+ * unknown and the Landlock provider stays unavailable on this side.
+ *
+ * **State of play.** The provider and its ABI-dependent limitation derivation are
+ * complete and fully tested against an injected ABI; only this input is missing. So
+ * production host discovery reports Landlock unavailable on every Linux host, and
+ * the injection used by tests remains a test seam rather than an escape hatch.
+ *
+ * Making it live means binding libc's `syscall`. `koffi` cannot issue a bare
+ * syscall, so the declaration must be fixed-arity —
+ * `long syscall(long, void*, size_t, unsigned int)` — called as
+ * `syscall(444, NULL, 0, LANDLOCK_CREATE_RULESET_VERSION)`. That declaration must be
+ * verified on both x86_64 and arm64 before being trusted: a wrong FFI signature
+ * yields a wrong ABI, which yields a wrong limitation set that still reads as a
+ * considered statement about the host.
  */
 export function probeLandlock(): LandlockFacts {
   if (process.platform !== "linux") {
@@ -555,6 +585,106 @@ export function probeDeviceNodes(): Partial<Record<DeviceCapability, readonly st
 }
 
 // --------------------------------------------------------------------------
+// Windows: the restricted-token ACL runner
+// --------------------------------------------------------------------------
+
+/**
+ * The runner invocation the read-only probe uses.
+ *
+ * Read-only is chosen deliberately: it applies zero capability grants and mutates
+ * no DACL, so probing cannot alter the machine. What it does exercise is the part
+ * that fails on an otherwise-present runner — opening the process token,
+ * deriving a restricted token from it, and spawning a child under that token.
+ *
+ * `tmpdir()` serves as both roots. Read-only never applies the workspace/temp
+ * disjointness rule, which exists to stop two *write* capabilities merging, and
+ * read-only carries none.
+ */
+export function windowsAclProbeArgv(runnerEntry: string): string[] {
+  return [
+    runnerEntry,
+    "--workspace",
+    tmpdir(),
+    "--temp",
+    tmpdir(),
+    "--mode",
+    "read-only",
+    "--",
+    "cmd",
+    "/c",
+    "exit",
+    "0",
+  ];
+}
+
+/**
+ * Turn a probe execution into facts.
+ *
+ * Pure, so the verdict is testable without spawning the runner. The distinction
+ * that matters is between *present* and *usable*: a runner that exists but cannot
+ * create its token must report unavailable here, because a presence check would
+ * call it available and its failure would then surface on the user's own command
+ * rather than in the report.
+ */
+export function interpretWindowsAclProbe(
+  output: ProbeOutput,
+  runnerEntry: string,
+): WindowsAclFacts {
+  if (output.status === 0) {
+    return {
+      available: true,
+      runnerEntry,
+      detail: "restricted token created and a child spawned under it (read-only probe)",
+    };
+  }
+
+  const diagnostic = output.stderr.trim().split("\n")[0] ?? "";
+  if (output.status === null) {
+    return {
+      available: false,
+      runnerEntry,
+      detail: `probe did not complete: ${diagnostic === "" ? "unknown error" : diagnostic}`,
+    };
+  }
+  return {
+    available: false,
+    runnerEntry,
+    detail:
+      `probe exited ${output.status}: ` +
+      `${diagnostic === "" ? "no diagnostic on stderr" : diagnostic}`,
+  };
+}
+
+/**
+ * Whether this host can confine through the runner.
+ *
+ * The runner is a *script*: `runner.ts` calls `main()` at module scope, so
+ * importing it would confine and spawn a process as a side effect of a module
+ * load. It is therefore referenced by path and never imported — see
+ * `win32/runner-entry.ts`.
+ */
+export function probeWindowsAcl(): WindowsAclFacts {
+  if (process.platform !== "win32") {
+    return {
+      available: false,
+      runnerEntry: null,
+      detail: `the ACL runner is Windows-only; host is ${process.platform}`,
+    };
+  }
+  if (!existsSync(RUNNER_ENTRY)) {
+    return {
+      available: false,
+      runnerEntry: null,
+      detail: `runner entry not found: ${RUNNER_ENTRY}`,
+    };
+  }
+  return interpretWindowsAclProbe(
+    runProbe(process.execPath, windowsAclProbeArgv(RUNNER_ENTRY)),
+    RUNNER_ENTRY,
+  );
+}
+
+// --------------------------------------------------------------------------
 // Composition
 // --------------------------------------------------------------------------
 
@@ -568,6 +698,7 @@ function discover(): HostFacts {
     landlockLauncher: probeLandlockLauncher(),
     bwrap: probeBwrap(),
     seatbelt: probeSeatbelt(),
+    windowsAcl: probeWindowsAcl(),
     userNamespaces: probeUserNamespaces(),
     deviceNodes: probeDeviceNodes(),
   };
@@ -619,6 +750,7 @@ export function renderHostFacts(facts: HostFacts): string {
   }
 
   lines.push(`  seatbelt        ${facts.seatbelt.detail}`);
+  lines.push(`  windows acl     ${facts.windowsAcl.detail}`);
 
   const namespaces = facts.userNamespaces;
   lines.push(
