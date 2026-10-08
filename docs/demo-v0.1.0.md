@@ -1,5 +1,9 @@
 # Odessy v0.1.0 Demo
 
+> **Historical.** This is the v0.1.0 release demo, preserved as a record. Paths, environment
+> variable names, and commands below reflect v0.1.0 and have not been updated to v0.3.0.
+> For current behaviour see `docs/reference/current-limitations.mdx`.
+
 This demo shows the release path without pretending that deferred optimization work is complete.
 
 ## 1. Start The Laptop MCP Server

@@ -179,38 +179,92 @@ When it is run, the experiment is one command varying one number:
 on the fixed `lfm_compare` prompt, with warmups, comparing tok/s and latency.
 `ollama_num_gpu` is written into `metadata.json`, so the runs are comparable.
 
-## No Isolation Sandbox
+## Isolation: Implemented In v0.3.0, Largely Inactive On This Board
 
-**Status: intentional. v0.2 ships without containment.**
+**Status: the layer exists. Do not describe this board as sandboxed.**
 
-Odessy enforces an **authority** boundary, not an **isolation** boundary.
+Odessy enforced only an **authority** boundary through v0.2. v0.3.0 adds an
+**isolation** layer. The distinction is still the one that matters:
 
 ```text
 Authority    "the model proposes, Odessy decides" -- enforced in-process.
-Isolation    "an allowed command cannot exceed a stated blast radius" -- NOT
-             enforced. Not in v0.2.
+             Reduces what Odessy will LAUNCH.
+Isolation    "an allowed command cannot exceed a stated blast radius" -- now
+             implemented, and enforced by the platform where a backend exists.
+             Constrains what a launched program CAN REACH.
 ```
 
-Everything Odessy does today is authority: `WorkspaceAuthority` path confinement,
-sensitive-path denial, the sanitized environment allowlist, policy denial of
-destructive / detached / credential-seeking commands, confirmation for
-non-low-risk calls, execution timeouts with process-tree cleanup, and bounded plus
-redacted output.
+### What was built
 
-A command that passes policy runs as a normal child process with the user's full
-privileges. It can read and write anything that user can, and reach the network.
-Policy reduces what Odessy will *launch*; it does not constrain what a launched
-program does. The Windows Node MCP server applies a path guard but no OS-level
-restriction.
+Provider-selected confinement, with the backend chosen by *what the host can
+actually enforce* rather than by platform name:
 
-Why no sandbox now: Landlock is unavailable on this board
-(`CONFIG_SECURITY_LANDLOCK is not set` in the L4T kernel -- a kernel build
-decision by NVIDIA, not a runtime toggle). Every remaining route needs a kernel
-rebuild, a Windows restricted token, or a container: real work with unproven
-payoff for a local single-user agent.
+```text
+bwrap            Linux, namespaces
+landlock         Linux, kernel LSM      (needs the landlock-run launcher)
+seatbelt         macOS
+windows-acl      Windows, restricted token + ACL   -> PARTIAL enforcement
+```
 
-Odessy must not be described as sandboxed, jailed, or contained. Options and
-prototype gates for a future version: `SANDBOX-PLAN.md`.
+Every executor routes commands through `confine()`, including runs with no backend
+configured, so a run always **states** its enforcement rather than leaving it to be
+inferred. `required` isolation can never be satisfied by a mode that provides no
+confinement — not by selection, not by escalation, not by omission.
+
+### Why this board is still not contained
+
+**This is the part that must not be lost.** Implementing the layer does not confine
+the Jetson:
+
+- **Landlock is off in this kernel.** `CONFIG_SECURITY_LANDLOCK is not set` in the
+  L4T build — a kernel decision by NVIDIA, not a runtime toggle. The Python Landlock
+  provider therefore reports unavailable.
+- **Odessy ships no `landlock-run` launcher.** The Python Landlock backend needs a
+  native launcher on `PATH`; without one it reports unavailable even where Landlock
+  is compiled in.
+- **The Node side cannot read the ABI.** Node cannot issue
+  `landlock_create_ruleset`, so the TypeScript provider reports the ABI as unknown on
+  every Linux host rather than guessing it.
+- **Python has no Windows backend.** On Windows the Python bridge reports
+  `unconfined`, while the TypeScript host can genuinely confine.
+
+The practical result: **`bwrap` is the only backend with a real chance of confining
+on this board**, and only if it is installed and can actually sandbox. Everything
+else reports unavailable, which is the intended behaviour — an unavailable backend is
+a fact the report states, not a failure to conceal.
+
+### What the Windows backend does not cover
+
+`windows-acl` reports **`partial`**, and the gaps are named rather than implied:
+
+1. `WRITE_RESTRICTED` must retain `Everyone` for process initialisation, so an
+   external object whose DACL grants Everyone a write right stays writable.
+2. NTFS hard links alias a *file object*, so a granted workspace file is writable
+   through an external alias.
+
+Reads, network, and process visibility are **not restricted** on Windows. Derived but
+undocumented device and ioctl boundaries are deliberately excluded from the reported
+limitation set.
+
+### Still absent
+
+- **Host pairing.** The host is a local subprocess; there is nothing remote to pair
+  with. A server must be explicitly marked an `ExecutionTarget` to be executable.
+- **Any device backend.** ESP32 / STM32 / RP2040 are declared and unbacked.
+- **A total wall-clock turn deadline.** Unchanged from the section above.
+
+### How to describe it
+
+```text
+Allowed              "Odessy has an isolation layer; its coverage depends on the
+                      host, and each run reports what it achieved."
+Not allowed          "Odessy is sandboxed", "jailed", or "contained" -- without the
+                      qualifier, because on this board it would be false.
+```
+
+Full inventory of what is declared and unbacked:
+`docs/execution/PROVIDER-PLACEHOLDERS.md`. Design detail:
+`docs/execution-layer-design.md` in the repository root.
 
 ## Multi-Tool Continuation Deferred To v0.3
 

@@ -228,6 +228,8 @@ The benchmark suite includes fake hardware-free scenarios and real Jetson scenar
 
 ## Known Limits
 
-See `docs/reference/current-limitations.mdx`. v0.2.0 is not a kernel sandbox, production network service, always-on voice assistant, or autonomous background agent.
+See `docs/reference/current-limitations.mdx`. v0.3.0 is not a production network service, always-on voice assistant, or autonomous background agent.
+
+It has an isolation layer, and that is **not** the same as being sandboxed. Coverage depends on the host: on the Jetson board most backends report unavailable, and each run states the enforcement it actually achieved rather than implying one. Do not describe Odessy as sandboxed, jailed, or contained without that qualifier.
 
 The current policy and authority rules are introduced in `policy/README.md`.
