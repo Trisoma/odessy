@@ -19,6 +19,9 @@ test = [
   "pytest>=8",
   "anyio>=4",
 ]
+cloud = [
+  "anthropic>=1.15",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

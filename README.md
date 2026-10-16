@@ -214,6 +214,18 @@ Gemma fallback:
 python -m odessy --model-backend ollama "what time is it?"
 ```
 
+Optional cloud model (Claude, GPT, DeepSeek, Qwen, Kimi, or any OpenAI-compatible
+API). The cloud model only proposes; policy and confirmation still run locally, and
+requests plus redacted tool output are sent to the provider:
+
+```bash
+pip install -e .[cloud]   # needed for Claude only
+export DEEPSEEK_API_KEY=...
+python -m odessy --model-backend deepseek "on my laptop, run pwd"
+```
+
+Providers, settings, and the data-flow details are in `docs/reference/cloud-models.mdx`.
+
 ## Demo
 
 The reproducible release demonstration is documented in `docs/demo-v0.1.0.md`.

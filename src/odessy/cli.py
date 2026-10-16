@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from odessy.agent_loop import ExecutionTarget, OdessyAgent
+from odessy.cloud_model import CLOUD_PROVIDERS, CloudModel, CloudModelConfigError, build_cloud_model
 from odessy.config_file import load_config_env
 from odessy.execution.contract import ISOLATION_REQUIREMENTS, IsolationRequirement
 from odessy.fake_model import FakeModel
@@ -24,6 +25,10 @@ from odessy.voice.tts import KokoroTTS
 
 DEFAULT_LFM_ENDPOINT = "http://127.0.0.1:11434"
 DEFAULT_LFM_MODEL = "lfm2.5-thinking:1.2b-q8_0"
+LOCAL_BACKENDS = ("lfm", "ollama", "llama_cpp")
+MODEL_BACKENDS = (*LOCAL_BACKENDS, *CLOUD_PROVIDERS)
+
+Model = FakeModel | OllamaModel | LlamaCppLFMModel | CloudModel
 
 
 def _build_model(
@@ -32,10 +37,17 @@ def _build_model(
     backend: str | None = None,
     model_name: str | None = None,
     ollama_model: str | None = None,
-) -> FakeModel | OllamaModel | LlamaCppLFMModel:
+) -> Model:
     if use_fake_model:
         return FakeModel()
     backend = (backend or os.environ.get("ODESSY_MODEL_BACKEND", "lfm")).lower()
+    if backend in CLOUD_PROVIDERS:
+        # Cloud models ignore model_name: callers pass Ollama names, and the cloud
+        # model is configured separately through ODESSY_CLOUD_MODEL.
+        try:
+            return build_cloud_model(backend)
+        except CloudModelConfigError as error:
+            raise SystemExit(str(error)) from error
     if backend == "ollama":
         name = (
             model_name
@@ -55,7 +67,7 @@ def _build_model(
 
 def _build_agent(
     workspace_root: Path,
-    model: FakeModel | OllamaModel | LlamaCppLFMModel,
+    model: Model,
 ) -> OdessyAgent:
     return OdessyAgent(
         model=model,
@@ -107,15 +119,17 @@ def _summarize_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
 async def _text_async(user_text: str, use_fake_model: bool, backend: str | None = None) -> None:
     workspace_root = Path.cwd()
     model = _build_model(use_fake_model, backend=backend)
+    _announce_cloud(model)
     agent = _build_agent(workspace_root, model)
     result = await agent.run_turn(user_text)
     print(result.final_text)
 
 
-async def _voice_async(use_fake_model: bool) -> None:
+async def _voice_async(use_fake_model: bool, backend: str | None = None) -> None:
     config = VoiceConfig.from_env()
     workspace_root = Path.cwd()
-    model = _build_model(use_fake_model, model_name=config.ollama_model)
+    model = _build_model(use_fake_model, backend=backend, model_name=config.ollama_model)
+    _announce_cloud(model)
     agent = _build_agent(workspace_root, model)
     loop = VoiceLoop(
         agent=agent,
@@ -148,6 +162,28 @@ async def _voice_async(use_fake_model: bool) -> None:
         raise SystemExit(f"Voice turn failed with status {result.status}: {result.error}")
 
 
+def _announce_cloud(model: object) -> None:
+    """Say plainly, once per run, that this turn leaves the machine."""
+    if isinstance(model, CloudModel):
+        print(
+            f"[odessy] cloud model {model.provider}/{model.model}: your request and "
+            "redacted tool output are sent to the provider.",
+            file=sys.stderr,
+        )
+
+
+def _model_backend_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--model-backend",
+        choices=MODEL_BACKENDS,
+        default=None,
+        help=(
+            "Select the model backend (defaults to ODESSY_MODEL_BACKEND, then lfm). "
+            "Cloud backends: " + ", ".join(CLOUD_PROVIDERS) + "."
+        ),
+    )
+
+
 def _build_mcp_servers(workspace_root: Path) -> tuple[object, ...] | object:
     # Wrapped in `ExecutionTarget` because this IS the authorization act: the composition
     # root names the servers it means to execute on. A server that is merely reachable --
@@ -175,8 +211,9 @@ def main(argv: list[str] | None = None) -> None:
             action="store_true",
             help="Use the deterministic fake model instead of Ollama/Gemma.",
         )
+        _model_backend_argument(parser)
         args = parser.parse_args(argv[1:])
-        asyncio.run(_voice_async(use_fake_model=args.fake_model))
+        asyncio.run(_voice_async(use_fake_model=args.fake_model, backend=args.model_backend))
         return
     parser = argparse.ArgumentParser(description="Run the Odessy text loop.")
     parser.add_argument(
@@ -184,12 +221,7 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Use the deterministic fake model instead of a real model backend.",
     )
-    parser.add_argument(
-        "--model-backend",
-        choices=["lfm", "ollama", "llama_cpp"],
-        default=None,
-        help="Select the model backend (defaults to ODESSY_MODEL_BACKEND, then lfm).",
-    )
+    _model_backend_argument(parser)
     parser.add_argument("text", help="User text to send into the Odessy loop.")
     args = parser.parse_args(argv)
     if not args.text:
