@@ -76,6 +76,8 @@ class NodeToolServerHttp(AbstractAsyncContextManager):
 
         port = self._port or _find_free_port(self._host)
         public_repo_root = _public_repo_root()
+        tools_dir = _node_tools_dir(public_repo_root)
+        node = shutil.which("node")
         env = {
             **os.environ,
             "ODESSY_WORKSPACE_ROOT": str(self._workspace_root),
@@ -83,9 +85,13 @@ class NodeToolServerHttp(AbstractAsyncContextManager):
             "ODESSY_MCP_PORT": str(port),
             "ODESSY_MCP_TRANSPORT": "http",
         }
+        if node is not None and _build_is_current(tools_dir):
+            command = [node, str(_built_server_entry(tools_dir)), "--http"]
+        else:
+            command = [npm, "run", "start:http", "--silent"]
         self._process = subprocess.Popen(
-            [npm, "run", "start:http", "--silent"],
-            cwd=_node_tools_dir(public_repo_root),
+            command,
+            cwd=tools_dir,
             env=env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -130,6 +136,38 @@ def _public_repo_root() -> Path:
 def _node_tools_dir(public_repo_root: Path) -> Path:
     return public_repo_root / "tools"
 
+def _built_server_entry(tools_dir: Path) -> Path:
+    return tools_dir / "dist" / "src" / "server.js"
+
+def _build_is_current(tools_dir: Path) -> bool:
+    """True when the built server exists and no build input is newer than it.
+
+    ``npm run start:http`` is ``npm run build && node dist/src/server.js``, so every
+    start pays a full ``tsc`` compile before the server even listens. That compile —
+    not startup — dominates the wait: about 10 s on a warm machine, and longer on a
+    loaded or shared one. When the build is already current we run the built entry
+    directly and skip npm and tsc entirely; when it is not, we fall back to the npm
+    script, so editing a source file still takes effect without anyone remembering to
+    rebuild.
+
+    The inputs are every TypeScript source tsc compiles, plus the two files that
+    configure the compile itself. ``tsconfig.json`` and ``package.json`` change what is
+    emitted without touching any ``.ts`` file, so leaving them out would let a
+    config-only change sit behind a stale ``dist`` that still read as current.
+    """
+    entry = _built_server_entry(tools_dir)
+    if not entry.exists():
+        return False
+    newest_input = 0.0
+    for pattern in ("src/**/*.ts", "tests/**/*.ts", "vendor/**/*.ts"):
+        for source in tools_dir.glob(pattern):
+            newest_input = max(newest_input, source.stat().st_mtime)
+    for name in ("tsconfig.json", "package.json"):
+        config = tools_dir / name
+        if config.exists():
+            newest_input = max(newest_input, config.stat().st_mtime)
+    return entry.stat().st_mtime >= newest_input
+
 def _find_free_port(host: str) -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind((host, 0))
@@ -140,8 +178,12 @@ async def _wait_for_port(
     port: int,
     process: subprocess.Popen[bytes],
     *,
-    timeout: float = 15.0,
+    timeout: float = 60.0,
 ) -> None:
+    # The generous ceiling is for the fallback path only: when no current build exists,
+    # the server's npm script runs a full TypeScript compile first. A server that dies
+    # is still reported immediately by the poll() check below, so this is not a 60 s
+    # wait on failure -- only on being genuinely slow.
     deadline = asyncio.get_running_loop().time() + timeout
     while asyncio.get_running_loop().time() < deadline:
         if process.poll() is not None:

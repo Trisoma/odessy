@@ -289,9 +289,13 @@ def bwrap_probe_script(target: str) -> str:
     to start is exactly the common case this probe exists to catch.
     """
 
+    # The write runs in a subshell. `:` is a special built-in, and POSIX makes a
+    # redirection error on one fatal to a non-interactive shell; dash (/bin/sh on
+    # Debian and Ubuntu) exits there, so without the subshell a denied write printed
+    # neither marker and read as "bwrap never ran the command".
     quoted = shlex.quote(target)
     return (
-        f"if : > {quoted} 2>/dev/null; then "
+        f"if (: > {quoted}) 2>/dev/null; then "
         f"echo {PROBE_MARKER_WRITABLE}; "
         f"else echo {PROBE_MARKER_READONLY}; fi"
     )

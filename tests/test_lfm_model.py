@@ -249,9 +249,10 @@ def test_lfm_records_ollama_latency_and_thinking_metadata() -> None:
 
 
 def test_lfm_call_count_includes_final_observation_response() -> None:
+    proposal = '{"type":"tool","name":"time.now","arguments":{}}'
     model = QueuedLFM(
         [
-            _assistant(content='{"type":"tool","name":"time.now","arguments":{}}'),
+            _assistant(content=proposal),
             _assistant(content="It is noon."),
         ]
     )
@@ -267,7 +268,7 @@ def test_lfm_call_count_includes_final_observation_response() -> None:
     )
 
     assert model.last_turn_diagnostics.model_call_count == 2
-    assert model.last_turn_diagnostics.response_chars == len("It is noon.")
+    assert model.last_turn_diagnostics.response_chars == len(proposal) + len("It is noon.")
 
 
 def test_lfm_observation_can_return_a_corrected_tool_request() -> None:

@@ -53,6 +53,36 @@ test("filesystem.read reads workspace file with structured content", async () =>
   assert.equal(result.truncated, false);
 });
 
+test("a workspace given by its 8.3 short name still contains itself", async (t) => {
+  if (process.platform !== "win32") {
+    t.skip("8.3 short names are Windows-only");
+    return;
+  }
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "odessy-long-workspace-name-"));
+  fs.writeFileSync(path.join(workspace, "README.md"), "short name\n", "utf8");
+  const parent = path.dirname(workspace);
+  const leaf = path.basename(workspace);
+  // Only the leaf goes through cmd, so a non-ASCII parent is never re-encoded.
+  const shortLeaf = execFileSync("cmd", ["/d", "/c", `for %I in (${leaf}) do @echo %~snxI`], {
+    cwd: parent,
+    encoding: "utf8",
+  }).trim();
+  if (shortLeaf.toLowerCase() === leaf.toLowerCase()) {
+    t.skip("8.3 short names are disabled on this volume");
+    return;
+  }
+
+  const guard = createWorkspaceGuard(path.join(parent, shortLeaf));
+
+  assert.equal(await guard.resolveExisting("."), guard.root);
+  const result = await readFileTool(guard, { path: "README.md" });
+  assert.equal(result.status, "ok");
+  assert.equal(result.content, "short name\n");
+  // filesystem.write reports its path through the lexical (short-name) route.
+  const written = await filesystemWriteTool(guard, { path: "notes.txt", content: "x" });
+  assert.equal(written.path, "notes.txt");
+});
+
 test("filesystem.read denies workspace escape", async () => {
   const workspace = makeWorkspace();
   const guard = createWorkspaceGuard(workspace);
@@ -155,7 +185,9 @@ test("laptop.terminal.run executes a command in the workspace", async () => {
   const result = await laptopTerminalRun(guard, { command: "pwd" });
 
   assert.equal(result.status, "ok");
-  assert.equal(result.cwd, path.resolve(workspace));
+  // The canonical root: on Windows runners the temp path is an 8.3 short name
+  // (RUNNER~1) that canonicalization expands.
+  assert.equal(result.cwd, guard.root);
   assert.equal(result.command, "pwd");
   assert.equal(result.exit_code, 0);
   assert.match(result.stdout, /.+/);

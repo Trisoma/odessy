@@ -60,7 +60,10 @@ function assertNotSecretPath(root: string, absolutePath: string): void {
 
 export function createWorkspaceGuard(workspaceRoot: string): WorkspaceGuard {
   const lexicalRoot = path.resolve(workspaceRoot);
-  const realRoot = fs.realpathSync(lexicalRoot);
+  // Native, to match `fs.promises.realpath` below. The JavaScript `realpathSync`
+  // keeps Windows 8.3 short names (`RUNNER~1`) that the native call expands, so the
+  // workspace root would otherwise not contain itself.
+  const realRoot = fs.realpathSync.native(lexicalRoot);
 
   function resolveCandidate(candidate = "."): string {
     const normalized = normalizeCandidate(candidate);
@@ -90,7 +93,14 @@ export function createWorkspaceGuard(workspaceRoot: string): WorkspaceGuard {
       return realPath;
     },
     relative(absolutePath: string) {
-      const relative = path.relative(realRoot, absolutePath).replaceAll(path.sep, "/");
+      // resolveCandidate returns lexical paths and resolveExisting real ones, and the
+      // two roots can differ (a symlinked root, a Windows 8.3 short name), so measure
+      // from whichever root actually contains the path.
+      const base =
+        !isContainedPath(realRoot, absolutePath) && isContainedPath(lexicalRoot, absolutePath)
+          ? lexicalRoot
+          : realRoot;
+      const relative = path.relative(base, absolutePath).replaceAll(path.sep, "/");
       return relative || ".";
     },
   };

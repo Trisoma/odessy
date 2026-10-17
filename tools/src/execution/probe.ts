@@ -303,8 +303,12 @@ function shQuote(value: string): string {
  * is exactly the common case this probe exists to catch.
  */
 export function bwrapProbeScript(target: string): string {
+  // The write runs in a subshell. `:` is a special built-in, and POSIX makes a
+  // redirection error on one fatal to a non-interactive shell; dash (/bin/sh on
+  // Debian and Ubuntu) exits there, so without the subshell a denied write printed
+  // neither marker and read as "bwrap never ran the command".
   return (
-    `if : > ${shQuote(target)} 2>/dev/null; then echo ${PROBE_MARKER_WRITABLE}; ` +
+    `if (: > ${shQuote(target)}) 2>/dev/null; then echo ${PROBE_MARKER_WRITABLE}; ` +
     `else echo ${PROBE_MARKER_READONLY}; fi`
   );
 }
