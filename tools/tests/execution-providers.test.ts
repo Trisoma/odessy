@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -336,6 +337,22 @@ test("the probe script reports both outcomes distinguishably", () => {
   assert.ok(script.includes(PROBE_MARKER_READONLY));
   assert.ok(script.includes(PROBE_MARKER_WRITABLE));
   assert.notEqual(PROBE_MARKER_READONLY, PROBE_MARKER_WRITABLE);
+});
+
+test("the probe script reports a failed write under the system shell", (t) => {
+  if (!existsSync("/bin/sh")) {
+    t.skip("needs a POSIX /bin/sh");
+    return;
+  }
+  // /bin/sh is dash on Debian and Ubuntu, where a redirection error on the special
+  // built-in `:` exits the shell unless it is confined to a subshell. A missing
+  // parent directory stands in for the read-only file system bwrap provides.
+  const scratch = mkdtempSync(join(tmpdir(), "odessy-probe-script-"));
+  const run = (target: string) =>
+    spawnSync("/bin/sh", ["-c", bwrapProbeScript(target)], { encoding: "utf8" }).stdout.trim();
+
+  assert.equal(run(join(scratch, "missing-dir", "write")), PROBE_MARKER_READONLY);
+  assert.equal(run(join(scratch, "write")), PROBE_MARKER_WRITABLE);
 });
 
 test("the probe script quotes the target", () => {

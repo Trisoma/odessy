@@ -7,7 +7,9 @@ Landlock ABI that is reported rather than reduced to a boolean.
 
 from __future__ import annotations
 
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -122,6 +124,35 @@ def test_bwrap_probe_script_reports_both_outcomes_distinguishably() -> None:
     assert PROBE_MARKER_READONLY in script
     assert PROBE_MARKER_WRITABLE in script
     assert PROBE_MARKER_READONLY != PROBE_MARKER_WRITABLE
+
+
+@pytest.mark.skipif(not Path("/bin/sh").exists(), reason="needs a POSIX /bin/sh")
+@pytest.mark.parametrize(
+    ("make_target", "expected"),
+    [
+        (lambda tmp: tmp / "missing-dir" / "write", PROBE_MARKER_READONLY),
+        (lambda tmp: tmp / "write", PROBE_MARKER_WRITABLE),
+    ],
+)
+def test_bwrap_probe_script_reports_a_failed_write_under_the_system_shell(
+    tmp_path: Path, make_target, expected: str
+) -> None:
+    """A failed write must print the read-only marker, not kill the shell.
+
+    Runs the real script under /bin/sh, which is dash on Debian and Ubuntu: there a
+    redirection error on the special built-in `:` exits the shell unless it is
+    confined to a subshell. A missing parent directory stands in for the read-only
+    file system bwrap provides.
+    """
+
+    result = subprocess.run(
+        ["/bin/sh", "-c", bwrap_probe_script(str(make_target(tmp_path)))],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.stdout.strip() == expected
 
 
 def test_bwrap_probe_script_quotes_the_target() -> None:
