@@ -160,7 +160,7 @@ benchmark/tts/jetson-voice-benchmark.mdx
 
 | Area | Current state | Limitation |
 |---|---|---|
-| Python tests | 487 passed, 5 failed, 1 skipped locally at v0.3.0 | The 5 failures are the pre-existing quarantined ONNX and LFM benchmark/runtime-wiring tests, documented in `LIMITATION.md`. Tests cover important adversarial cases, but not every shell, filesystem race, or platform-specific reparse behavior. |
+| Python tests | 530 passed, 3 skipped locally on 2026-10-17 | The five previously quarantined ONNX and LFM tests are resolved — see `LIMITATION.md`. Tests cover important adversarial cases, but not every shell, filesystem race, or platform-specific reparse behavior. |
 | Node tests | `npm run typecheck` passes; 170 tests pass, 0 failed, 0 skipped | Earlier records cite "6/6 tests"; that was the Step 7 read-only tool count and is historical. In a restricted sandbox the Git test may skip because Node subprocess spawning is restricted, so normal Windows PowerShell is the source of truth. |
 | Process cleanup tests | Timeout result is tested | Tests verify timeout reporting, but do not deeply inspect every possible descendant-process cleanup scenario. |
 

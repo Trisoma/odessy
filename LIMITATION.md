@@ -320,12 +320,13 @@ accept an answer, but cannot demand a tool call.
 **v0.2 ships single-tool turns.** This is a model-behaviour limitation, not a
 wiring defect. The continuation machinery is retained but inert pending v0.3.
 
-## Known Failing Tests
+## Previously Failing Tests: Resolved
 
-**Status: quarantined, not fixed. 5 tests fail on every run.**
+**Status: resolved. The suite is green.**
 
-They are unrelated to v0.2's deliverable. Recorded so that a red suite is a
-documented state rather than a surprise, and so nobody assumes the suite is clean.
+These five were quarantined rather than fixed. In each case the stale side was the
+expectation, not the runtime, and the expectations now match. Kept as a record of what
+was decided, not as outstanding work.
 
 ```text
 test_benchmark_matrix.py::test_pytorch_kokoro_engine_uses_pipeline_and_reports_device
@@ -335,17 +336,19 @@ test_onnx_runtime_wiring.py::test_build_kokoro_uses_tensorrt_with_fallbacks
     All four assert ONNX Runtime provider configs. They expect
     ('CUDAExecutionProvider', {'device_id': 0}) while the runtime now supplies
     ('CUDAExecutionProvider', {'device_id': 0, 'gpu_mem_limit': 536870912}).
-    Either the expectations are stale, or an intentional memory-limit change was
-    never propagated. NOT DETERMINED.
+    Resolved as stale expectations: the memory limit is part of the runtime's
+    provider configuration, and these tests exist to pin provider order and
+    selection. They now assert the limit as well.
 
 test_lfm_model.py::test_lfm_call_count_includes_final_observation_response
     Asserts response_chars == 11 for a single call. The field accumulates across
-    calls (response_chars += len(content)), so a two-call turn records 59. The
-    test is stale relative to the field's behaviour, but whether the field or the
-    test is wrong has never been decided.
+    calls (response_chars += len(content)), so a two-call turn records 59.
+    Resolved as a stale test: the field records the whole turn, so a two-call turn
+    legitimately reports both responses. The assertion now sums them.
 ```
 
-Neither group may be deleted to make the suite green. Both need a decision first:
-is the code or the expectation correct? Editing the expectation without settling
-that would hide a possible regression.
+Neither group was deleted to make the suite green; both were decided first. The rule
+still holds for future failures: settle whether the code or the expectation is wrong
+before editing either, because editing an expectation without settling that hides a
+possible regression.
 

@@ -93,11 +93,13 @@ The adversarial tests cover:
 Current verification (v0.3.0):
 
 ```text
-Python tests: 487 passed, 5 failed (pre-existing, quarantined ONNX and LFM benchmark
-              tests -- documented in LIMITATION.md), 1 skipped
+Python tests: 530 passed, 0 failed, 3 skipped
 Node typecheck: passed
-Node tests: 170 passed, 0 failed, 0 skipped
+Node tests: 171 passed, 0 failed, 1 skipped
 ```
+
+The five ONNX and LFM tests that used to be quarantined here are resolved; see
+`LIMITATION.md` for how each was settled.
 
 The Step 7 snapshot this section previously carried -- "Python tests: 39 passed; Node
 read-only tool tests: 6 passed" -- was accurate for Step 7 and is historical, not the
