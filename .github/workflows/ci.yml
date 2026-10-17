@@ -60,6 +60,38 @@ jobs:
       - name: Install Odessy
         run: python -m pip install -e ".[test]"
 
+      # TEMPORARY: measure why PowerShell commands time out on Windows runners.
+      - name: Diagnose PowerShell startup
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: python
+        run: |
+          import os, subprocess, sys, time
+          sys.path.insert(0, "src")
+          from odessy.command_bridge import build_sanitized_environment
+          base = build_sanitized_environment(os.environ)
+          extra = lambda *names: {**base, **{n: os.environ[n] for n in names if n in os.environ}}
+          variants = {
+              "sanitized": base,
+              "+LOCALAPPDATA": extra("LOCALAPPDATA"),
+              "+USERPROFILE,APPDATA,LOCALAPPDATA": extra("USERPROFILE", "APPDATA", "LOCALAPPDATA"),
+              "+PSModulePath": extra("PSModulePath"),
+              "full": dict(os.environ),
+          }
+          print("PSModulePath =", os.environ.get("PSModulePath"))
+          for label, env in variants.items():
+              for attempt in (1, 2):
+                  start = time.monotonic()
+                  try:
+                      r = subprocess.run(
+                          ["powershell", "-NoProfile", "-NonInteractive", "-Command", "echo hi"],
+                          env=env, capture_output=True, text=True, timeout=90,
+                      )
+                      outcome = f"exit={r.returncode} out={r.stdout.strip()!r} err={r.stderr.strip()[:200]!r}"
+                  except subprocess.TimeoutExpired:
+                      outcome = "TIMEOUT"
+                  print(f"{label:40s} try{attempt} {time.monotonic() - start:6.2f}s {outcome}")
+
       - name: Run tests
         run: python -m pytest -q
 
@@ -91,6 +123,17 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: tools/package-lock.json
+
+      # Give the Linux runner a real confinement backend, so the host test asserts
+      # confinement instead of finding none. Ubuntu 24.04 blocks the unprivileged
+      # user namespaces bwrap needs unless AppArmor's restriction is lifted.
+      - name: Enable bubblewrap
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - run: npm ci --no-audit --no-fund
 

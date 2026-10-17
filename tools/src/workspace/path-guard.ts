@@ -60,7 +60,10 @@ function assertNotSecretPath(root: string, absolutePath: string): void {
 
 export function createWorkspaceGuard(workspaceRoot: string): WorkspaceGuard {
   const lexicalRoot = path.resolve(workspaceRoot);
-  const realRoot = fs.realpathSync(lexicalRoot);
+  // Native, to match `fs.promises.realpath` below. The JavaScript `realpathSync`
+  // keeps Windows 8.3 short names (`RUNNER~1`) that the native call expands, so the
+  // workspace root would otherwise not contain itself.
+  const realRoot = fs.realpathSync.native(lexicalRoot);
 
   function resolveCandidate(candidate = "."): string {
     const normalized = normalizeCandidate(candidate);
