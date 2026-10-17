@@ -2,7 +2,7 @@
 
 > NOTE: This version (v0.2.0, under development) is highly experimental, completely unstable, and may be confusing. It is recommended for developers only, not regular users!!!
 
-Odessy is a local, single-user edge-AI agent runtime. The Jetson hosts the model and voice loop; a laptop-side MCP server provides controlled command execution.
+Odessy is a local, single-user edge-AI agent runtime. By default the Jetson hosts the model and voice loop, and a laptop-side MCP server provides controlled command execution. An optional cloud model backend can replace the local model; policy, authorization, and confirmation stay local in every configuration. See `docs/reference/cloud-models.mdx`.
 
 ```text
 Voice command

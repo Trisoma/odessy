@@ -58,6 +58,17 @@ For local testing without a live model backend:
 python -m odessy voice --fake-model
 ```
 
+Voice mode accepts the same `--model-backend` selection as the text loop, so a cloud
+backend can be used here too:
+
+```powershell
+python -m odessy voice --model-backend deepseek
+```
+
+With a cloud backend the transcript and that turn's tool observations leave the machine.
+The voice pipeline itself is unchanged — the same authority invariant and the same
+tool path still apply. See `docs/reference/cloud-models.mdx` for the data flow and limits.
+
 The existing text loop remains available:
 
 ```powershell
@@ -75,6 +86,7 @@ ODESSY_WHISPER_BIN      path/name of whisper-cli
 ODESSY_WHISPER_MODEL    path to ggml-tiny.en.bin or another Whisper model
 ODESSY_KOKORO_MODEL     path to kokoro-v1.0.int8.onnx
 ODESSY_KOKORO_VOICES    path to voices-v1.0.bin
+ODESSY_MODEL_BACKEND    local (lfm|ollama|llama_cpp) or a cloud provider; default lfm
 ODESSY_OLLAMA_MODEL     Ollama model name used by voice mode; default config uses LFM2.5-Thinking
 ODESSY_MODEL_NAME       Default LFM model name, lfm2.5-thinking:1.2b-q8_0
 ODESSY_MODEL_ENDPOINT   Ollama endpoint, default http://127.0.0.1:11434

@@ -2,7 +2,7 @@
 title: "Current v0.3.0 Limitations"
 sidebar-title: "Current Limitations"
 description: "Reference for Odessy's current implementation limits, security limits, per-host isolation coverage, and intentionally deferred v0.3.0 capabilities."
-description-agent: "Use before claiming Odessy is sandboxed, paired, autonomous, voice-ready, or production-secure. Lists current known limitations, per-host isolation coverage, and deferred work."
+description-agent: "Use before claiming Odessy is sandboxed, paired, autonomous, voice-ready, local-only, or production-secure. Lists current known limitations, per-host isolation coverage, data egress, and deferred work."
 keywords: ["odessy limitations", "v0.3.0 scope", "security limitations", "isolation coverage", "deferred work"]
 content:
   type: "reference"
@@ -15,7 +15,7 @@ This page records the limits future agents must keep visible when changing the r
 
 | Area | Current state | Limitation |
 |---|---|---|
-| Model | LFM2.5-Thinking is the default Ollama backend; Gemma remains an explicit fallback | Model quality, latency, memory behavior, and long-run reliability are not fully benchmarked. |
+| Model | LFM2.5-Thinking is the default Ollama backend; Gemma remains an explicit fallback; an optional cloud backend (Claude, or any OpenAI-compatible API) can replace both | Model quality, latency, memory behavior, and long-run reliability are not fully benchmarked on any backend. The cloud backend is opt-in and off by default — see **Data egress** below. |
 | Voice | Staged voice loop is integrated and has completed live Jetson turns | Automated tests still use fakes for hardware components, and physical audio quality depends on the configured device. |
 | GUI automation | Out of scope | No mouse, keyboard injection, screen capture, browser automation, desktop automation, or robotics. |
 | Multi-agent behavior | Out of scope | No delegation, background autonomy, scheduler, or multi-session agent orchestration. |
@@ -33,6 +33,7 @@ This page records the limits future agents must keep visible when changing the r
 | Environment isolation | `terminal.run` receives a sanitized allowlisted environment | Some legitimate tools may require additional non-secret environment variables later. Additions must be explicit and reviewed. |
 | Output bounds | stdout/stderr are bounded with head-and-tail retention; the full text is spilled to `.odessy/spill/` and replaced inline with a preview, an exact omitted-byte count, and a locator | Truncation is no longer lossy, but bounded is not the same as sanitized. See the credential handling row below for what is and is not redacted. |
 | Credential handling | Policy is **defined but not enforced**; name-based redaction now covers **both** terminal executors (Python, and Node since v0.3.0) | There is no credential store, vault, or reference resolver. Redaction still does not cover MCP tool results in general — `filesystem.read`, `project.grep`, and the Git tools return unredacted — nor the `command` metadata field, which is preserved byte-for-byte by design. Detection is name-based and misses unrecognised secret shapes. See `docs/security/credential-handling.mdx`. |
+| Data egress | Nothing leaves the machine under a local backend. Selecting a cloud backend sends the user's text and redacted tool observations to that provider. | Under a cloud backend this is the boundary where data stops being local, and redaction there is **best effort** — name-based, and it misses unrecognised secret shapes. No policy states what may leave the host, so *which backend is selected* is currently the only control over egress. See `docs/reference/cloud-models.mdx`. |
 | MCP server exposure | Node HTTP transport is intended for local/controlled use | There is no production authentication layer for a LAN-exposed MCP endpoint yet. Prefer loopback or SSH tunneling for Jetson/laptop development. |
 
 ## Isolation Layer
