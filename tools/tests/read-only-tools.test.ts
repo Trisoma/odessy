@@ -185,7 +185,9 @@ test("laptop.terminal.run executes a command in the workspace", async () => {
   const result = await laptopTerminalRun(guard, { command: "pwd" });
 
   assert.equal(result.status, "ok");
-  assert.equal(result.cwd, path.resolve(workspace));
+  // The canonical root: on Windows runners the temp path is an 8.3 short name
+  // (RUNNER~1) that canonicalization expands.
+  assert.equal(result.cwd, guard.root);
   assert.equal(result.command, "pwd");
   assert.equal(result.exit_code, 0);
   assert.match(result.stdout, /.+/);
