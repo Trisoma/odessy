@@ -266,6 +266,40 @@ Full inventory of what is declared and unbacked:
 `docs/execution/PROVIDER-PLACEHOLDERS.md`. Design detail:
 `docs/execution-layer-design.md` in the repository root.
 
+## Cloud Model Backends Are Optional And Off By Default
+
+**Status: implemented, opt-in, off by default.**
+
+A cloud backend (Claude, or any OpenAI-compatible API) can replace the local LFM/Gemma
+model. It is a stronger *proposer*, never a stronger authority: tool-call validation,
+workspace authority, policy, and confirmation still run in the Python runtime, and a
+cloud tool call passes through the same validation functions the local adapter uses.
+
+What changes is where data goes, not who decides.
+
+```text
+Local backend (default)   Nothing leaves the machine.
+Cloud backend selected    The user's text and that turn's tool observations are sent to
+                          the provider, after passing through redact_text.
+```
+
+The redaction on that path is the same best-effort, name-based filter described above.
+It does widen coverage, because MCP tool results are otherwise unredacted — but it is
+still a filter, not a policy.
+
+**What this does not establish:** no requirement states what may leave the host.
+Until one does, the only control over egress is *which backend was selected*, and every
+run prints a notice on stderr saying the request is leaving the machine.
+
+```text
+Allowed              "Odessy is local by default; selecting a cloud backend sends the
+                      request and redacted tool output to that provider."
+Not allowed          "Odessy runs locally", unqualified, once a cloud backend is selected.
+```
+
+Reference: `docs/reference/cloud-models.mdx`. Published register:
+`docs/reference/current-limitations.mdx` (the **Data egress** row).
+
 ## Multi-Tool Continuation Deferred To v0.3
 
 **Status: implemented, wired, and does not fire with a real model.**

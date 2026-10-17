@@ -1,0 +1,104 @@
+---
+title: "Cloud Model Backends"
+sidebar-title: "Cloud Models"
+description: "Reference for Odessy's optional cloud model backends (Claude, GPT, DeepSeek, Qwen, Kimi, and any OpenAI-compatible API): configuration, data flow, and limits."
+description-agent: "Use when selecting, configuring, or changing a cloud model backend. A cloud model only proposes; policy and authorization stay local. Keep the redaction-before-sending boundary."
+keywords: ["odessy cloud", "claude", "openai", "deepseek", "qwen", "kimi", "model backend"]
+content:
+  type: "reference"
+---
+
+Odessy can use a cloud model in place of the local LFM or Gemma model. This is
+opt-in and off by default. A cloud model is a stronger **proposer**, not a stronger
+authority: every tool call it proposes still passes tool-contract validation,
+workspace authority, policy, and human confirmation in the local Python runtime.
+
+## Providers
+
+| Backend | Provider | Protocol | API key variable | Default model |
+|---|---|---|---|---|
+| `claude` | Anthropic | Anthropic Messages API (official `anthropic` SDK) | `ANTHROPIC_API_KEY` | `claude-opus-5-5` |
+| `openai` | OpenAI | OpenAI Chat Completions | `OPENAI_API_KEY` | `gpt-5` |
+| `deepseek` | DeepSeek | OpenAI-compatible | `DEEPSEEK_API_KEY` | `deepseek-chat` |
+| `qwen` | Alibaba Cloud DashScope | OpenAI-compatible | `DASHSCOPE_API_KEY` | `qwen-plus` |
+| `kimi` | Moonshot AI | OpenAI-compatible | `MOONSHOT_API_KEY` | `kimi-k2-turbo-preview` |
+| `custom` | Any OpenAI-compatible endpoint | OpenAI-compatible | `ODESSY_CLOUD_API_KEY` | none, set `ODESSY_CLOUD_MODEL` |
+
+Provider model catalogs change. If a default model is retired, set
+`ODESSY_CLOUD_MODEL` instead of editing code.
+
+## Setup
+
+The Claude backend needs the optional SDK:
+
+```bash
+pip install -e .[cloud]
+```
+
+Export the provider's key in your shell. Do not put keys in `config/odessy.env`,
+which is committed.
+
+```bash
+export DEEPSEEK_API_KEY=...
+python -m odessy --model-backend deepseek "on my laptop, run pwd"
+python -m odessy voice --model-backend claude
+```
+
+Or select the backend persistently with `ODESSY_MODEL_BACKEND=claude`.
+
+## Settings
+
+| Variable | Applies to | Meaning |
+|---|---|---|
+| `ODESSY_MODEL_BACKEND` | all | `claude`, `openai`, `deepseek`, `qwen`, `kimi`, or `custom` selects a cloud backend |
+| `ODESSY_CLOUD_MODEL` | all | Overrides the provider's default model |
+| `ODESSY_CLOUD_BASE_URL` | all | Overrides the endpoint; required for `custom`. Use `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` for Qwen outside mainland China, `https://api.moonshot.ai/v1` for Kimi's international endpoint |
+| `ODESSY_CLOUD_API_KEY` | all | Overrides the provider's own key variable |
+| `ODESSY_CLOUD_TIMEOUT` | all | Seconds per request, default 120 |
+| `ODESSY_CLOUD_MAX_TOKENS` | Claude | `max_tokens` per request, default 16000 |
+| `ODESSY_CLOUD_EFFORT` | Claude | `output_config.effort`: `low`, `medium`, `high`, `xhigh`, or `max`. Unset keeps the model default. `low` cuts latency for simple voice commands |
+| `ODESSY_CLOUD_FALLBACKS` | Claude | `on` (default) enables server-side refusal fallbacks on models that support them; `off` disables |
+
+## How it differs from the local backends
+
+- **All tools are offered.** The local adapters pre-select one tool from keywords
+  in the user's text, because a 1B model cannot choose reliably from the full
+  list. Cloud models receive every tool and choose themselves. The one rule kept
+  from the local path: a request that says "on my laptop" must use
+  `laptop.terminal.run`.
+- **Native tool-result messages.** Tool results go back as `tool` / `tool_result`
+  messages tied to the call id, so the model sees the whole turn.
+- **One tool call per step.** Claude is asked for one call at a time
+  (`disable_parallel_tool_use`). If an OpenAI-compatible model returns several,
+  Odessy runs the first and answers the rest as "not executed".
+- **One repair.** An invalid proposal (unknown tool, bad arguments, malformed
+  JSON) is sent back as an error tool result once. A second invalid proposal
+  fails the turn, as with the local adapters.
+- **Tool names are encoded.** Neither API accepts dots in function names, so
+  `laptop.terminal.run` is sent as `laptop__terminal__run` and decoded on return.
+
+## Data that leaves the machine
+
+With a cloud backend selected, each turn sends to the provider:
+
+- the user's text (the speech transcript in voice mode);
+- the tool list and the system prompt;
+- every tool result in that turn, which can include file contents, command
+  output, and Git diffs.
+
+The user text and every tool result pass through `redact_text` first. That
+redaction is name-based plus a few known token shapes; it is best effort and
+misses unrecognized secrets (see `docs/security/credential-handling.mdx`). Do not
+point a cloud backend at a workspace whose files you would not send to that
+provider.
+
+Odessy prints a notice on stderr at startup when a cloud backend is active.
+
+## Not covered yet
+
+- No streaming: each request waits for the full reply.
+- No automatic fallback to the local model when the network or provider fails;
+  the turn fails with the provider's (redacted) error.
+- No cost tracking beyond the token counts recorded in turn metrics.
+- The benchmark harness has no cloud adapter yet.
+- Tests run against recorded response shapes, not live provider APIs.
