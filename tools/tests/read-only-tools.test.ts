@@ -78,6 +78,9 @@ test("a workspace given by its 8.3 short name still contains itself", async (t) 
   const result = await readFileTool(guard, { path: "README.md" });
   assert.equal(result.status, "ok");
   assert.equal(result.content, "short name\n");
+  // filesystem.write reports its path through the lexical (short-name) route.
+  const written = await filesystemWriteTool(guard, { path: "notes.txt", content: "x" });
+  assert.equal(written.path, "notes.txt");
 });
 
 test("filesystem.read denies workspace escape", async () => {

@@ -93,7 +93,14 @@ export function createWorkspaceGuard(workspaceRoot: string): WorkspaceGuard {
       return realPath;
     },
     relative(absolutePath: string) {
-      const relative = path.relative(realRoot, absolutePath).replaceAll(path.sep, "/");
+      // resolveCandidate returns lexical paths and resolveExisting real ones, and the
+      // two roots can differ (a symlinked root, a Windows 8.3 short name), so measure
+      // from whichever root actually contains the path.
+      const base =
+        !isContainedPath(realRoot, absolutePath) && isContainedPath(lexicalRoot, absolutePath)
+          ? lexicalRoot
+          : realRoot;
+      const relative = path.relative(base, absolutePath).replaceAll(path.sep, "/");
       return relative || ".";
     },
   };
