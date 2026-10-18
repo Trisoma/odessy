@@ -1,0 +1,27 @@
+# Deployment
+
+Odessy can run entirely on a laptop; a Jetson is optional. Set
+`ODESSY_DEPLOYMENT=single` to run the model, Python runtime, and Node tools on
+one computer. The CLI starts Node on loopback for the duration of the run.
+With Node installed, the model has 13 tools, including files, search, Git,
+calculator, time, and `terminal.run` on this computer.
+
+Without the Node dependencies, only `time.now`, `calculator.eval`, and the Python
+`terminal.run` are mounted and advertised. Keyword routing and repair prompts use
+the same available set. The CLI warns that commands have no confinement backend;
+results report `enforcement: "none"`. Run `python -m odessy doctor` for setup steps.
+
+Set `ODESSY_DEPLOYMENT=split` for the Jetson/laptop layout. Configure
+`ODESSY_TOOL_SERVER_URL` (or `ODESSY_MCP_SERVER_URLS`) for the remote Node server.
+Here `terminal.run` runs locally and `laptop.terminal.run` runs on the remote laptop.
+When deployment is unset, a configured remote URL selects split; otherwise single
+is the default.
+
+`ODESSY_LOCAL_OS` overrides local OS detection. `ODESSY_LAPTOP_OS` describes the
+remote laptop in split mode. Both accept `windows`, `linux`, or `macos`.
+Put comments on separate lines in the env file; inline comments are read as values.
+
+This deployment change does not add peripheral drivers. Peripheral access still
+depends on the available tools, OS support, permissions, and policy checks.
+
+See the [setup guide](../../README.md) and [current limitations](current-limitations.mdx).

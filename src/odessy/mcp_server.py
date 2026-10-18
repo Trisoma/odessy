@@ -56,8 +56,12 @@ def build_odessy_mcp_server(
     workspace_root: Path | str | None = None,
     provider: ExecutionProvider | None = None,
     policy: ExecutionPolicy | None = None,
+    include_terminal: bool = True,
 ) -> MCPServer:
     """Build the Odessy tool server.
+
+    ``include_terminal=False`` leaves out ``terminal.run``, for a deployment where
+    another server (the local Node tool server, in ``single`` mode) provides it.
 
     ``provider`` and ``policy`` are threaded through to the `CommandBridge` rather
     than built here: which backend this host can offer and which mode an action
@@ -84,7 +88,6 @@ def build_odessy_mcp_server(
             "timezone": "local",
         }
 
-    @server.tool(name="terminal.run")
     def terminal_run(
         command: str,
         cwd: str = ".",
@@ -118,6 +121,9 @@ def build_odessy_mcp_server(
             # either way. What changes is that the caller can now see WHY it did not run
             # and act on it, instead of receiving an opaque failure.
             return _refusal_result(command=command, cwd=cwd, reason=str(exc))
+
+    if include_terminal:
+        server.tool(name="terminal.run")(terminal_run)
 
     @server.tool(name="calculator.eval")
     def calculator_eval(expression: str) -> CalculatorEvalResult:

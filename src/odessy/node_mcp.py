@@ -6,10 +6,12 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
+from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import IO, Any
 
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
@@ -57,11 +59,14 @@ class NodeToolServerHttp(AbstractAsyncContextManager):
         *,
         host: str = "127.0.0.1",
         port: int = 0,
+        extra_env: Mapping[str, str] | None = None,
     ) -> None:
         self._workspace_root = Path(workspace_root).resolve()
         self._host = host
         self._port = port
+        self._extra_env = dict(extra_env or {})
         self._process: subprocess.Popen[bytes] | None = None
+        self._stderr: IO[bytes] | None = None
         self.url: str | None = None
 
     async def __aenter__(self) -> str:
@@ -84,21 +89,34 @@ class NodeToolServerHttp(AbstractAsyncContextManager):
             "ODESSY_MCP_HOST": self._host,
             "ODESSY_MCP_PORT": str(port),
             "ODESSY_MCP_TRANSPORT": "http",
+            **self._extra_env,
         }
         if node is not None and _build_is_current(tools_dir):
             command = [node, str(_built_server_entry(tools_dir)), "--http"]
         else:
             command = [npm, "run", "start:http", "--silent"]
+        # stderr goes to a file, not a pipe: nobody drains a pipe while the server runs,
+        # and a full pipe would block it. The file is read only if startup fails.
+        self._stderr = tempfile.TemporaryFile()
         self._process = subprocess.Popen(
             command,
             cwd=tools_dir,
             env=env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=self._stderr,
         )
         self.url = f"http://{self._host}:{port}/mcp"
-        await _wait_for_port(self._host, port, self._process)
+        try:
+            await _wait_for_port(self._host, port, self._process)
+        except BaseException as error:
+            # `async with` does not call __aexit__ when __aenter__ raises, so a server
+            # that is slow rather than dead would otherwise be left running.
+            detail = self._stderr_tail()
+            await self._stop()
+            if detail and isinstance(error, (RuntimeError, TimeoutError)):
+                raise type(error)(f"{error}. Server output:\n{detail}") from error
+            raise
         return self.url
 
     async def __aexit__(
@@ -107,15 +125,31 @@ class NodeToolServerHttp(AbstractAsyncContextManager):
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool | None:
-        if self._process is None:
-            return None
-        self._process.terminate()
-        try:
-            await asyncio.to_thread(self._process.wait, timeout=5)
-        except subprocess.TimeoutExpired:
-            self._process.kill()
-            await asyncio.to_thread(self._process.wait)
+        await self._stop()
         return None
+
+    async def _stop(self) -> None:
+        process, self._process = self._process, None
+        if process is not None:
+            process.terminate()
+            try:
+                await asyncio.to_thread(process.wait, timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                await asyncio.to_thread(process.wait)
+        if self._stderr is not None:
+            self._stderr.close()
+            self._stderr = None
+
+    def _stderr_tail(self, limit: int = 2000) -> str:
+        if self._stderr is None:
+            return ""
+        try:
+            self._stderr.seek(0)
+            text = self._stderr.read().decode("utf-8", "replace")
+        except (OSError, ValueError):
+            return ""
+        return text.strip()[-limit:]
 
 def build_node_tool_server_http(workspace_root: Path | str) -> NodeToolServerHttp:
     return NodeToolServerHttp(workspace_root)

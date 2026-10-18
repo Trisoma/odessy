@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from odessy.deployment import deployment_mode, model_tool_names, tool_is_available
 from odessy.execution.contract import ESCALATION_TARGETS
 
 #: Spec keys that describe Odessy's own rendering rather than the JSON Schema, and so
@@ -158,9 +159,9 @@ def render_tool_contracts() -> str:
         "Use only these exact JSON shapes.",
         "If a tool has no arguments, emit \"arguments\": {}.",
     ]
-    for name, schema in TOOL_REQUEST_SCHEMAS.items():
+    for name in model_tool_names():
         lines.append(f"{name}:")
-        lines.append(_render_tool_request_shape(name, schema))
+        lines.append(_render_tool_request_shape(name, TOOL_REQUEST_SCHEMAS[name]))
     return "\n".join(lines)
 
 
@@ -168,6 +169,8 @@ def render_tool_contract(name: str) -> str:
     schema = TOOL_REQUEST_SCHEMAS.get(name)
     if schema is None:
         raise ValueError(f"Unknown tool contract requested: {name}")
+    if not tool_is_available(name):
+        return render_tool_contracts()
     return "\n".join(
         [
             "Use this exact JSON shape.",
@@ -194,12 +197,29 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
     "git.log": "Return recent commit summaries.",
 }
 
+#: Descriptions that differ in ``single`` mode, where there is only one machine.
+_SINGLE_MACHINE_DESCRIPTIONS: dict[str, str] = {
+    "terminal.run": "Run a shell command on the user's computer and return structured output.",
+}
+
+
+def tool_description(name: str) -> str:
+    if deployment_mode() == "single" and name in _SINGLE_MACHINE_DESCRIPTIONS:
+        return _SINGLE_MACHINE_DESCRIPTIONS[name]
+    return _TOOL_DESCRIPTIONS.get(name, name)
+
 
 def build_openai_tools(names: list[str] | None = None) -> list[dict[str, Any]]:
-    """Render tool schemas in OpenAI function-calling format for Ollama's /api/chat."""
-    selected = names if names is not None else list(TOOL_REQUEST_SCHEMAS)
+    """Render tool schemas in OpenAI function-calling format for Ollama's /api/chat.
+
+    With no ``names``, renders the tools this deployment offers
+    (``deployment.model_tool_names``), not every tool in the registry.
+    """
+    selected = names if names is not None else model_tool_names()
     tools: list[dict[str, Any]] = []
     for name in selected:
+        if not tool_is_available(name):
+            continue
         schema = TOOL_REQUEST_SCHEMAS.get(name)
         if schema is None:
             continue
@@ -215,7 +235,7 @@ def _to_openai_tool(name: str, schema: dict[str, Any]) -> dict[str, Any]:
         "type": "function",
         "function": {
             "name": name,
-            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "description": tool_description(name),
             "parameters": {
                 "type": "object",
                 "properties": properties,

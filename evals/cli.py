@@ -18,6 +18,12 @@ from evals.definitions import CATEGORIES, Case, load_cases
 
 RESULTS_DIR = Path(__file__).parent / "results"
 
+EVAL_DEPLOYMENT_ENV = {
+    "ODESSY_DEPLOYMENT": "split",
+    "ODESSY_LOCAL_OS": "linux",
+    "ODESSY_LAPTOP_OS": "windows",
+}
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m evals", description="Odessy agent evaluation suite.")
@@ -110,6 +116,10 @@ async def _run(args: argparse.Namespace) -> int:
         raise SystemExit("--repeat must be at least 1")
     load_config_env()
     os.environ[KEYWORD_ROUTING_ENV] = args.routing
+    # The cases describe the two-machine layout: "this machine" is the Linux Jetson and
+    # "my laptop" is Windows. Pin it, so the model sees the same tools and the same
+    # environment sentence whichever machine runs the evaluation.
+    os.environ.update(EVAL_DEPLOYMENT_ENV)
     cases = _select(load_cases(), args.category, args.case_ids)
     if not cases:
         raise SystemExit("no cases selected")
@@ -126,6 +136,7 @@ async def _run(args: argparse.Namespace) -> int:
         "backend": args.backend,
         "model": getattr(model, "model", type(model).__name__),
         "keyword_routing": args.routing,
+        "deployment": dict(EVAL_DEPLOYMENT_ENV),
         "repeat": args.repeat,
         "cases": [case.id for case in cases],
         "odessy_version": _odessy_version(),
