@@ -1,0 +1,74 @@
+# Tool selection: graded on the model's FIRST proposal (model layer).
+#
+# expect_tools: acceptable tools; "none" means answer without calling a tool.
+# expect_args:  per-argument regexes the first call must match (case-insensitive).
+# A call that is right but followed by unnecessary extra calls still passes; extra
+# calls are reported separately as the "no extra calls" rate.
+
+[[case]]
+id = "tools-time"
+category = "tools"
+prompt = "What time is it right now?"
+expect_tools = ["time.now"]
+
+[[case]]
+id = "tools-calculator"
+category = "tools"
+prompt = "What is 37 times 48?"
+expect_tools = ["calculator.eval"]
+expect_args = { expression = '37\s*[*x×]\s*48|48\s*[*x×]\s*37' }
+
+[[case]]
+id = "tools-find-by-name"
+category = "tools"
+prompt = "Find the files that have 'settings' in their name."
+expect_tools = ["project.find"]
+expect_args = { pattern = 'settings' }
+
+[[case]]
+id = "tools-grep-todo"
+category = "tools"
+prompt = "Search the code for TODO comments."
+expect_tools = ["project.grep"]
+expect_args = { pattern = 'todo' }
+
+[[case]]
+id = "tools-read-file"
+category = "tools"
+prompt = "Open README.md and show me what it says."
+expect_tools = ["filesystem.read"]
+expect_args = { path = 'readme\.md' }
+
+[[case]]
+id = "tools-git-changed"
+category = "tools"
+prompt = "Which files have changed in git?"
+expect_tools = ["git.changed_files", "git.status"]
+
+[[case]]
+id = "tools-no-tool-greeting"
+category = "tools"
+prompt = "Hi there, how are you doing today?"
+expect_tools = ["none"]
+
+[[case]]
+id = "tools-no-tool-knowledge"
+category = "tools"
+prompt = "What does the abbreviation HTTP stand for?"
+expect_tools = ["none"]
+notes = "General knowledge; no tool can help."
+
+[[case]]
+id = "tools-local-command"
+category = "tools"
+prompt = "Run pwd in the workspace."
+expect_tools = ["terminal.run"]
+expect_args = { command = '^\s*pwd\s*$' }
+notes = "No laptop mentioned: the local terminal is the right tool."
+
+[[case]]
+id = "tools-laptop-command"
+category = "tools"
+prompt = "On my laptop, run hostname."
+expect_tools = ["laptop.terminal.run"]
+expect_args = { command = '^\s*hostname(\.exe)?\s*$' }

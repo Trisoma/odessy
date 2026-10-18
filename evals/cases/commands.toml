@@ -1,0 +1,137 @@
+# Command generation: graded on the model's proposal (model layer), not on whether
+# the policy let it run -- most non-trivial commands need confirmation, which the
+# harness declines, so grading the executed command would grade the policy instead.
+#
+# accept_tools:     acceptable tools. A dedicated tool (e.g. git.log) passes outright.
+# command_patterns: alternatives; each is a list of regexes that must ALL match the
+#                   command (case-insensitive). Any one alternative passing is enough.
+# shell:            "powershell" for the laptop (Windows), "sh" for the Jetson (Linux).
+#                   Constructs from the other shell fail the case.
+#
+# Prompts name the operating system on purpose: the model is not told which OS each
+# machine runs, so without it shell correctness could not be graded fairly.
+
+# --- Windows laptop (PowerShell) -------------------------------------------------
+
+[[case]]
+id = "cmd-ps-top-memory"
+category = "commands"
+prompt = "On my Windows laptop, show the five processes using the most memory."
+accept_tools = ["laptop.terminal.run"]
+shell = "powershell"
+command_patterns = [
+  ['Get-Process|\bgps\b|\bps\b', 'Sort-Object|\bsort\b', 'WS|WorkingSet|PM|PrivateMemory|Memory', 'First\s+5|-First|Select-Object|\bselect\b'],
+  ['tasklist', 'sort'],
+]
+
+[[case]]
+id = "cmd-ps-ip-address"
+category = "commands"
+prompt = "On my Windows laptop, what is its IPv4 address?"
+accept_tools = ["laptop.terminal.run"]
+shell = "powershell"
+command_patterns = [
+  ['\bipconfig\b'],
+  ['Get-NetIPAddress'],
+  ['Get-NetIPConfiguration'],
+]
+
+[[case]]
+id = "cmd-ps-disk-free"
+category = "commands"
+prompt = "On my Windows laptop, how much free space is left on drive C?"
+accept_tools = ["laptop.terminal.run"]
+shell = "powershell"
+command_patterns = [
+  ['Get-PSDrive', '\bC\b'],
+  ['Get-Volume'],
+  ['Get-CimInstance|Get-WmiObject|\bgcim\b|\bgwmi\b', 'Win32_LogicalDisk'],
+  ['fsutil', 'diskfree'],
+  ['wmic', 'logicaldisk'],
+]
+
+[[case]]
+id = "cmd-ps-count-py"
+category = "commands"
+prompt = "On my Windows laptop, count the .py files under the current folder, including subfolders."
+accept_tools = ["laptop.terminal.run"]
+shell = "powershell"
+command_patterns = [
+  ['Get-ChildItem|\bgci\b|\bdir\b|\bls\b', '\.py', '-Recurse|-r\b|/s\b', 'Measure-Object|\bmeasure\b|\.Count|\.Length'],
+  ['\bdir\b', '/s', '\.py', 'find\s+/c'],
+]
+
+[[case]]
+id = "cmd-ps-path-variable"
+category = "commands"
+prompt = "On my Windows laptop, print the PATH environment variable."
+accept_tools = ["laptop.terminal.run"]
+shell = "powershell"
+command_patterns = [
+  ['\$env:Path'],
+  ['%PATH%'],
+  ['env:\\?Path'],
+  ['GetEnvironmentVariable', 'PATH'],
+]
+
+[[case]]
+id = "cmd-ps-listening-port"
+category = "commands"
+prompt = "On my Windows laptop, check whether anything is listening on port 8731."
+accept_tools = ["laptop.terminal.run"]
+shell = "powershell"
+command_patterns = [
+  ['Get-NetTCPConnection', '8731'],
+  ['netstat', '8731'],
+  ['Test-NetConnection', '8731'],
+]
+
+# --- Jetson (Linux sh) -------------------------------------------------------------
+
+[[case]]
+id = "cmd-sh-disk-free"
+category = "commands"
+prompt = "On this Linux machine, show the free disk space in human-readable form."
+accept_tools = ["terminal.run"]
+shell = "sh"
+command_patterns = [
+  ['\bdf\b', '-[a-zA-Z]*h|--human'],
+]
+
+[[case]]
+id = "cmd-sh-free-memory"
+category = "commands"
+prompt = "On this Linux machine, how much RAM is free right now?"
+accept_tools = ["terminal.run"]
+shell = "sh"
+command_patterns = [
+  ['\bfree\b'],
+  ['/proc/meminfo'],
+  ['\bvmstat\b'],
+  ['\btop\b', '-b'],
+]
+
+[[case]]
+id = "cmd-sh-count-py"
+category = "commands"
+prompt = "On this Linux machine, count the .py files under the current directory, including subdirectories."
+accept_tools = ["terminal.run", "project.find"]
+shell = "sh"
+command_patterns = [
+  ['\bfind\b', '\.py', '\bwc\s+-l\b|-printf|\bcount\b'],
+  ['\bls\b', '-[a-zA-Z]*R|\*\*', '\.py', '\bwc\b'],
+  ['\bfd\b', 'py', '\bwc\b'],
+]
+notes = "project.find with a .py pattern also answers it and passes."
+
+# --- Either machine -----------------------------------------------------------------
+
+[[case]]
+id = "cmd-recent-commits"
+category = "commands"
+prompt = "Show me the last five commits of this project."
+accept_tools = ["git.log", "terminal.run", "laptop.terminal.run"]
+command_patterns = [
+  ['\bgit\b', '\blog\b', '-n\s*5\b|-5\b|--max-count[= ]5\b'],
+]
+notes = "The dedicated git.log tool is preferred and passes outright; a correct git log command also passes."
