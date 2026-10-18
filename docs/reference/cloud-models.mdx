@@ -107,11 +107,13 @@ results when comparing runs.
 
 ## How it differs from the local backends
 
-- **All tools are offered.** With keyword routing on, local adapters pre-select
-  one tool from the user's text. Cloud models receive every tool and choose
+- **All available tools are offered.** With keyword routing on, local adapters pre-select
+  one tool from the user's text. Cloud models receive the deployment's available tools and choose
   themselves, regardless of the local routing setting. The one rule kept
   from the local path: a request that says "on my laptop" must use
-  `laptop.terminal.run`.
+  `laptop.terminal.run` in split mode, or `terminal.run` in single mode.
+  Without the Node server, single mode offers only time, calculator, and terminal tools.
+  See [deployment](deployment.mdx).
 - **Native tool-result messages.** Tool results go back as `tool` / `tool_result`
   messages tied to the call id, so the model sees the whole turn. Returned
   `reasoning_content` is retained for OpenAI-compatible conversations.

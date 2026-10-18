@@ -9,7 +9,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
-from odessy.deployment import command_tool_for_laptop, environment_prompt
+from odessy.deployment import command_tool_for_laptop, environment_prompt, tool_is_available
 from odessy.redaction import redact_for_log
 from odessy.types import (
     FinalResponse,
@@ -345,6 +345,8 @@ def _corrected_tool_request(response: dict[str, Any], user_text: str) -> ToolReq
 
 
 def _system_prompt(tool_name: str | None) -> str:
+    if tool_name is not None and not tool_is_available(tool_name):
+        tool_name = None
     if tool_name is not None:
         intent_instruction = f"The user's request maps to {tool_name}. Call that tool."
     else:
@@ -361,6 +363,8 @@ def _system_prompt(tool_name: str | None) -> str:
 
 def _text_system_prompt(user_text: str, tool_name: str | None) -> str:
     """Text-mode prompt used when the model does not support native tool calling."""
+    if tool_name is not None and not tool_is_available(tool_name):
+        tool_name = None
     contract = render_tool_contract(tool_name) if tool_name is not None else render_tool_contracts()
     intent_instruction = (
         f"User intent maps to {tool_name}. MUST use {tool_name}."
@@ -452,6 +456,11 @@ def keyword_routing_enabled() -> bool:
 def _proposal_tool_name_for_user_text(user_text: str) -> str | None:
     if not keyword_routing_enabled():
         return None
+    name = _keyword_tool_name_for_user_text(user_text)
+    return name if name is not None and tool_is_available(name) else None
+
+
+def _keyword_tool_name_for_user_text(user_text: str) -> str | None:
     normalized = user_text.strip().lower()
     if _is_laptop_command_intent(normalized):
         return command_tool_for_laptop()

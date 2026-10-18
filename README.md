@@ -120,7 +120,8 @@ runs the tool server. On the Jetson, put the laptop's address in
 
 ```dotenv
 ODESSY_TOOL_SERVER_URL=http://<laptop-ip>:8765/mcp
-ODESSY_LAPTOP_OS=windows   # optional: tells the model which shell the laptop uses
+# Optional: tells the model which shell the laptop uses
+ODESSY_LAPTOP_OS=windows
 ODESSY_OLLAMA_MODEL=lfm2.5-thinking:1.2b-q8_0
 ODESSY_MODEL_NAME=lfm2.5-thinking:1.2b-q8_0
 ODESSY_MODEL_ENDPOINT=http://127.0.0.1:11434

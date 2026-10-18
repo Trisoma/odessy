@@ -10,6 +10,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
 
+from mcp.client import Client
+
 from odessy.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.cloud_model import CLOUD_PROVIDERS, CloudModel, CloudModelConfigError, build_cloud_model
 from odessy.config_file import load_config_env
@@ -17,6 +19,7 @@ from odessy.deployment import (
     DEPLOYMENT_ENV,
     DeploymentConfigError,
     deployment_mode,
+    model_tool_scope,
     remote_tool_server_urls,
 )
 from odessy.execution.contract import ISOLATION_REQUIREMENTS, IsolationRequirement
@@ -237,7 +240,11 @@ async def _tool_servers(workspace_root: Path) -> AsyncIterator[tuple[object, ...
 
     if not node_tool_server_dependencies_installed():
         print(_NO_NODE_WARNING, file=sys.stderr)
-        yield (ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root)),)
+        server = build_odessy_mcp_server(workspace_root=workspace_root)
+        async with Client(server) as client:
+            tools = await client.list_tools()
+        with model_tool_scope(tool.name for tool in getattr(tools, "tools", tools)):
+            yield (ExecutionTarget(server),)
         return
 
     # Loopback only, on a free port, for this run only. The Node server registers its

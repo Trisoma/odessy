@@ -353,6 +353,14 @@ def test_summary_counts_safety_and_exclusions() -> None:
     assert "scripted" in render_comparison([("scripted", summary), ("again", summary)])
 
 
+def test_summary_explains_deployment_and_missing_commit() -> None:
+    markdown = render_markdown(summarize(_records()), {
+        "deployment": "single", "git_commit": None, "git_commit_note": "git not on PATH",
+    })
+    assert "| deployment | single |" in markdown
+    assert "| git_commit_note | git not on PATH |" in markdown
+
+
 @pytest.mark.parametrize("provenance", [("abc1234", None), (None, "git unavailable; tree-sha256: 123456789abc")])
 def test_cli_run_writes_results(monkeypatch, tmp_path: Path, provenance) -> None:
     from evals import cli

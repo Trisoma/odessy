@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import os
 import platform
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Literal
 
 DEPLOYMENT_ENV = "ODESSY_DEPLOYMENT"
@@ -35,6 +37,24 @@ DEPLOYMENTS: tuple[Deployment, ...] = ("single", "split")
 #: offered to the model: "the laptop" is this computer, and two command tools for one
 #: machine only give a small model a wrong choice to make.
 SPLIT_ONLY_TOOLS = frozenset({"laptop.terminal.run"})
+
+_available_tools: ContextVar[frozenset[str] | None] = ContextVar("available_tools", default=None)
+
+
+@contextmanager
+def model_tool_scope(names: Iterable[str]) -> Iterator[None]:
+    """Limit model-facing tools for this run without changing other tasks or runs."""
+    token = _available_tools.set(frozenset(names))
+    try:
+        yield
+    finally:
+        _available_tools.reset(token)
+
+
+def tool_is_available(name: str) -> bool:
+    available = _available_tools.get()
+    return available is None or name in available
+
 
 _OS_ALIASES = {
     "windows": "windows",
@@ -86,7 +106,7 @@ def model_tool_names(mode: Deployment | None = None) -> list[str]:
     return [
         name
         for name in TOOL_REQUEST_SCHEMAS
-        if resolved == "split" or name not in SPLIT_ONLY_TOOLS
+        if (resolved == "split" or name not in SPLIT_ONLY_TOOLS) and tool_is_available(name)
     ]
 
 

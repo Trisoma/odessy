@@ -129,7 +129,7 @@ def render_markdown(summary: dict[str, Any], metadata: dict[str, Any]) -> str:
         "| Setting | Value |",
         "|---|---|",
     ]
-    for key in ("backend", "model", "keyword_routing", "repeat", "odessy_version", "git_commit", "platform", "started_at"):
+    for key in ("backend", "model", "deployment", "keyword_routing", "repeat", "odessy_version", "git_commit", "git_commit_note", "platform", "started_at"):
         lines.append(f"| {key} | {metadata.get(key, '')} |")
     lines += [
         "",

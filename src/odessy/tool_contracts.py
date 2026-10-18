@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from odessy.deployment import deployment_mode, model_tool_names
+from odessy.deployment import deployment_mode, model_tool_names, tool_is_available
 from odessy.execution.contract import ESCALATION_TARGETS
 
 #: Spec keys that describe Odessy's own rendering rather than the JSON Schema, and so
@@ -169,6 +169,8 @@ def render_tool_contract(name: str) -> str:
     schema = TOOL_REQUEST_SCHEMAS.get(name)
     if schema is None:
         raise ValueError(f"Unknown tool contract requested: {name}")
+    if not tool_is_available(name):
+        return render_tool_contracts()
     return "\n".join(
         [
             "Use this exact JSON shape.",
@@ -216,6 +218,8 @@ def build_openai_tools(names: list[str] | None = None) -> list[dict[str, Any]]:
     selected = names if names is not None else model_tool_names()
     tools: list[dict[str, Any]] = []
     for name in selected:
+        if not tool_is_available(name):
+            continue
         schema = TOOL_REQUEST_SCHEMAS.get(name)
         if schema is None:
             continue

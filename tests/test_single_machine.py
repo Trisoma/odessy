@@ -13,8 +13,17 @@ import odessy.config_file as config_file
 import odessy.node_mcp as node_mcp
 from odessy.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.fake_model import FakeModel
+from odessy.cloud_model import cloud_tools_openai
+from odessy.deployment import model_tool_names
 from odessy.mcp_server import build_odessy_mcp_server
+from odessy.ollama_model import (
+    _model_output_error,
+    _proposal_tool_name_for_user_text,
+    _select_tools,
+    _text_system_prompt,
+)
 from odessy.policy import OdessyPolicy
+from odessy.tool_contracts import build_openai_tools
 
 
 @pytest.fixture
@@ -127,7 +136,22 @@ async def test_single_mode_without_node_runs_degraded_and_says_so(
 
     async with cli._tool_servers(tmp_path) as servers:
         (local,) = _servers_of(servers)
+        mounted = await _tool_names(local)
+        assert set(model_tool_names()) == mounted
+        assert {tool["function"]["name"] for tool in build_openai_tools()} == mounted
+        assert {tool["function"]["name"] for tool in cloud_tools_openai()} == {
+            name.replace(".", "__") for name in mounted
+        }
+        assert _proposal_tool_name_for_user_text("list files") is None
+        assert _proposal_tool_name_for_user_text("run echo hello") == "terminal.run"
+        assert {tool["function"]["name"] for tool in _select_tools("filesystem.list")} == mounted
+        assert "filesystem.list" not in _text_system_prompt("list files", None)
+        error = _model_output_error(
+            '{"name":"filesystem.list","arguments":{}}', ValueError("unavailable"), "list files"
+        )
+        assert "filesystem.list" not in error.tool_contract
 
+    assert len(model_tool_names()) == 13  # Availability does not leak into later runs.
     assert "terminal.run" in await _tool_names(local)
     warning = capsys.readouterr().err
     assert "Node tool server is not installed" in warning
@@ -234,6 +258,8 @@ async def test_single_mode_runs_a_command_through_the_local_node_server(
     async with cli._tool_servers(tmp_path) as servers:
         local, node_url = _servers_of(servers)
         node_tools = await _tool_names(node_url)
+        assert set(model_tool_names()) == node_tools | await _tool_names(local)
+        assert len(model_tool_names()) == 13
         agent = OdessyAgent(
             model=FakeModel(),
             policy=OdessyPolicy(workspace_root=tmp_path),
