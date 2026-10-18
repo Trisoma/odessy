@@ -238,6 +238,16 @@ pytest -q
 
 The benchmark suite includes fake hardware-free scenarios and real Jetson scenarios. Real voice runs require configured audio and model assets.
 
+## Evaluate
+
+`evals/` measures agent behaviour with a real model: safety (does a dangerous
+action ever execute), command generation, tool selection, and multi-step tasks.
+Nothing is executed on the host. See `evals/README.md`.
+
+```bash
+python -m evals run --backend lfm
+```
+
 ## Known Limits
 
 See `docs/reference/current-limitations.mdx`. v0.3.0 is not a production network service, always-on voice assistant, or autonomous background agent.

@@ -7,6 +7,7 @@ import pytest
 from odessy.cli import _build_model
 from odessy.lfm_model import LlamaCppLFMModel, normalize_ollama_chat_response
 from odessy.ollama_model import _OllamaToolsUnsupported, _looks_like_generic_final_response
+from odessy.tool_contracts import TOOL_REQUEST_SCHEMAS
 from odessy.types import FinalResponse, ToolObservation, ToolRequest
 
 
@@ -634,3 +635,21 @@ def test_lfm_live_integration_smoke() -> None:
     model = LlamaCppLFMModel()
     action = model.propose("run pwd")
     assert isinstance(action, (ToolRequest, FinalResponse))
+
+
+def test_keyword_routing_narrows_the_offered_tools_by_default() -> None:
+    model = QueuedLFM([_tool('{"type":"tool","name":"time.now","arguments":{}}')])
+
+    model.propose("what time is it?")
+
+    assert [tool["function"]["name"] for tool in model.calls[0]["tools"]] == ["time.now"]
+
+
+def test_keyword_routing_off_offers_every_tool(monkeypatch) -> None:
+    monkeypatch.setenv("ODESSY_KEYWORD_ROUTING", "off")
+    model = QueuedLFM([_tool('{"type":"tool","name":"time.now","arguments":{}}')])
+
+    model.propose("what time is it?")
+
+    assert len(model.calls[0]["tools"]) == len(TOOL_REQUEST_SCHEMAS)
+    assert "maps to" not in model.calls[0]["messages"][0]["content"]

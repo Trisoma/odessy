@@ -1,0 +1,7 @@
+[server]
+host = "127.0.0.1"
+port = 8731
+
+[storage]
+directory = "data/notes"
+max_note_kb = 256

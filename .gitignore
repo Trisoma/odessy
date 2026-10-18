@@ -58,3 +58,6 @@ secrets.yaml
 service-account*.json
 token.json
 .e2e/
+
+# Evaluation run output
+evals/results/

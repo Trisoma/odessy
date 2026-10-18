@@ -428,7 +428,20 @@ def _extract_model_action_from_chat(response: dict[str, Any], user_text: str) ->
     raise ValueError("Ollama returned neither a tool call nor content")
 
 
+#: Env var that turns keyword routing off (``off``/``0``/``false``/``no``). Routing is
+#: on by default; turning it off offers the model every tool, which is how the
+#: evaluation suite measures what the model chooses without the keyword hint.
+KEYWORD_ROUTING_ENV = "ODESSY_KEYWORD_ROUTING"
+
+
+def keyword_routing_enabled() -> bool:
+    raw = os.environ.get(KEYWORD_ROUTING_ENV, "on").strip().lower()
+    return raw not in {"0", "off", "false", "no"}
+
+
 def _proposal_tool_name_for_user_text(user_text: str) -> str | None:
+    if not keyword_routing_enabled():
+        return None
     normalized = user_text.strip().lower()
     if _is_laptop_command_intent(normalized):
         return "laptop.terminal.run"
