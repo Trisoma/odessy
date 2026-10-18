@@ -23,6 +23,7 @@ from odessy.deployment import (
     remote_tool_server_urls,
 )
 from odessy.execution.contract import ISOLATION_REQUIREMENTS, IsolationRequirement
+from odessy.execution.escalation import ApprovalRequest, EscalationDeniedError, EscalationOutcome
 from odessy.fake_model import FakeModel
 from odessy.lfm_model import LlamaCppLFMModel
 from odessy.mcp_server import build_odessy_mcp_server
@@ -95,7 +96,26 @@ def _build_agent(
             else (ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root)),)
         ),
         confirm=_confirm_tool_call,
+        approver=TerminalEscalationApprover(),
     )
+
+
+class TerminalEscalationApprover:
+    """Asks the user in the terminal whether one call may run with a wider sandbox.
+
+    The model may ask for this (``sandbox_permissions`` with a justification), and the
+    tool schema says the user is asked. Without an approver composed here, every such
+    request failed with "no approval service is composed" and ended the turn.
+    """
+
+    async def ask(self, request: ApprovalRequest) -> EscalationOutcome:
+        print(f"Odessy asks to run {request.tool_name} with a wider sandbox.")
+        print(f"Reason: {request.reason}")
+        try:
+            answer = await asyncio.to_thread(input, "Allow the wider sandbox for this one call? [y/N] ")
+        except EOFError:
+            return "unavailable"
+        return "allowed-once" if answer.strip().lower() in {"y", "yes"} else "rejected"
 
 
 def _isolation_from_env() -> IsolationRequirement:
@@ -140,7 +160,12 @@ async def _text_async(user_text: str, use_fake_model: bool, backend: str | None 
     _announce_cloud(model)
     async with _tool_servers(workspace_root) as servers:
         agent = _build_agent(workspace_root, model, servers)
-        result = await agent.run_turn(user_text)
+        try:
+            result = await agent.run_turn(user_text)
+        except (PermissionError, EscalationDeniedError) as error:
+            # A denial, a declined confirmation or a refused escalation is an outcome,
+            # not a crash: say what was not run instead of printing a traceback.
+            raise SystemExit(f"Odessy did not run it: {error}") from error
     print(result.final_text)
 
 

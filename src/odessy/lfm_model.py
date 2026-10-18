@@ -26,6 +26,10 @@ from odessy.ollama_model import (
     _default_progress_timeout,
     _extract_model_action_from_chat,
     _fallback_observation_response,
+    _follow_up_tools,
+    _observation_messages,
+    _remember_observation,
+    _start_turn,
     _looks_like_generic_final_response,
     _model_output_error,
     _proposal_tool_name_for_user_text,
@@ -101,6 +105,7 @@ class LlamaCppLFMModel:
     def propose(self, user_text: str) -> ModelAction:
         diagnostics = ModelTurnDiagnostics()
         object.__setattr__(self, "_last_turn_diagnostics", diagnostics)
+        _start_turn(self)
         tool_name = _proposal_tool_name_for_user_text(user_text)
         try:
             action = self._chat_native_action(user_text, tool_name, diagnostics)
@@ -236,25 +241,12 @@ class LlamaCppLFMModel:
         user_text: str,
         observation: ToolObservation,
     ) -> ModelAction:
-        prompt = (
-            "You are Odessy. Return the tool output first, then a short interpretation.\n"
-            "Do not answer with filler like 'Please wait' or 'Yes'.\n"
-            f"User: {user_text}\n"
-            f"Tool: {observation.request.name}\n"
-            f"Arguments: {json.dumps(observation.request.arguments)}\n"
-            f"Observation: {json.dumps(observation.result)}\n"
-            "If the task is not finished, call another tool instead of answering.\n"
-            "Final response:"
-        )
         diagnostics = self.last_turn_diagnostics
         started = time.perf_counter()
         _record_model_call_attempt(diagnostics)
-        # Advertise the same tool set the proposal path uses. Without an
-        # advertised list the response cannot carry a native tool_call, so
-        # _corrected_tool_request can never fire and continuation is inert.
         response = self._chat(
-            [{"role": "user", "content": prompt}],
-            tools=_select_tools(_proposal_tool_name_for_user_text(user_text)),
+            _observation_messages(user_text, _remember_observation(self, observation)),
+            tools=_follow_up_tools(),
         )
         diagnostics.final_generation_ms = _elapsed_ms(started)
         _record_ollama_response(diagnostics, response)

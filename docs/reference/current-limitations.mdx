@@ -235,7 +235,10 @@ work:
    write tools exist yet.
 5. How confirmation is represented so the model cannot approve itself -- the model
    requests, an `EscalationApprover` decides, and a denied `danger-full-access` request
-   cannot fall back to a wider mode.
+   cannot fall back to a wider mode. The text CLI composes a terminal approver that asks
+   y/N for the one call (until the October 18 fixes it composed none, so every
+   escalation request failed the turn). Voice mode uses the same terminal prompt, like
+   its confirmations; there is no spoken approval yet.
 
 These limitations should be updated whenever Odessy adds Gemma, voice, write tools, public MCP exposure, or further OS-level containment. v0.3.0 added the isolation layer, and the **Isolation Layer** section above is where its coverage is recorded per host.
 

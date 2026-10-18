@@ -207,8 +207,10 @@ def test_observation_call_advertises_tools_at_the_wire_level(monkeypatch) -> Non
 
     assert len(fake.requests) == 2
     assert fake.requests[1]["tools"], "the observation request must advertise tools"
-    # Same menu as the first proposal, so the model sees a consistent tool list.
-    assert fake.requests[1]["tools"] == fake.requests[0]["tools"]
+    # Every tool, not just the routed one: the next step may need a different tool.
+    first_names = {tool["function"]["name"] for tool in fake.requests[0]["tools"]}
+    follow_up_names = {tool["function"]["name"] for tool in fake.requests[1]["tools"]}
+    assert first_names < follow_up_names
 
 
 def test_plain_final_answer_parses_without_a_repair_call(monkeypatch) -> None:
