@@ -228,6 +228,56 @@ def test_cloud_models_are_offered_every_tool() -> None:
 # -- OpenAI-compatible protocol --------------------------------------------
 
 
+@pytest.mark.parametrize(
+    ("provider", "effort"),
+    [("deepseek", "low"), ("deepseek", "high"), ("deepseek", ""), ("openai", "low"), ("qwen", "low")],
+)
+def test_deepseek_effort_from_environment_is_sent_only_when_configured(monkeypatch, provider, effort) -> None:
+    model = build_cloud_model(provider, {"ODESSY_CLOUD_API_KEY": "test-key", "ODESSY_CLOUD_EFFORT": effort})
+    payloads = []
+
+    def post_chat(payload):
+        payloads.append(payload)
+        return openai_reply(content="Hello.")
+
+    monkeypatch.setattr(model, "_post_chat", post_chat)
+    assert model.propose("hi") == FinalResponse(text="Hello.")
+
+    if provider == "deepseek" and effort:
+        assert payloads[0]["reasoning_effort"] == effort
+    else:
+        assert "reasoning_effort" not in payloads[0]
+
+
+@pytest.mark.parametrize("reasoning", ["First inspect the status.", "", None])
+def test_deepseek_reasoning_is_preserved_across_tool_calls(reasoning) -> None:
+    first = openai_reply(calls=[("c1", "git__status", {})])
+    first["choices"][0]["message"]["reasoning_content"] = reasoning
+    second = openai_reply(calls=[("c2", "git__diff", {})])
+    second["choices"][0]["message"]["reasoning_content"] = "Now inspect the diff."
+    model = QueuedOpenAI([first, second, openai_reply(content="The port changed.")])
+    prompt = "summarize my uncommitted changes"
+
+    request = model.propose(prompt)
+    request = model.respond_to_observation(prompt, ToolObservation(request, {"changed": ["a.py"]}))
+    answer = model.respond_to_observation(prompt, ToolObservation(request, {"diff": "port changed"}))
+
+    assert answer == FinalResponse(text="The port changed.")
+    assistants = [m for m in model.payloads[2]["messages"] if m["role"] == "assistant"]
+    assert [m["reasoning_content"] for m in assistants] == [reasoning, "Now inspect the diff."]
+    assert [m["tool_calls"][0]["id"] for m in assistants] == ["c1", "c2"]
+
+
+@pytest.mark.parametrize("with_tool", [True, False])
+def test_deepseek_reasoning_is_preserved_during_repair(with_tool) -> None:
+    first = openai_reply(calls=[("c1", "no__such__tool", {})] if with_tool else None)
+    first["choices"][0]["message"]["reasoning_content"] = "I should check the time."
+    model = QueuedOpenAI([first, openai_reply(calls=[("c2", "time__now", {})])])
+
+    assert model.propose("time?") == ToolRequest(name="time.now", arguments={})
+    assert model.payloads[1]["messages"][2]["reasoning_content"] == "I should check the time."
+
+
 def test_openai_tool_call_becomes_tool_request() -> None:
     model = QueuedOpenAI([openai_reply(calls=[("call_1", "time__now", {})])])
 

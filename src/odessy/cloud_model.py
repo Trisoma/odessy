@@ -200,7 +200,7 @@ class CloudModel:
     base_url: str = ""
     timeout: int = DEFAULT_CLOUD_TIMEOUT_SECONDS
     max_tokens: int = DEFAULT_CLAUDE_MAX_TOKENS
-    #: Claude only: ``output_config.effort``. ``None`` keeps the model's default.
+    #: Claude: ``output_config.effort``; DeepSeek: ``reasoning_effort``. ``None`` keeps the default.
     effort: str | None = None
     #: Claude only: enable server-side refusal fallbacks on models that support them.
     refusal_fallbacks: bool = True
@@ -418,12 +418,16 @@ class CloudModel:
             "tools": cloud_tools_openai(),
             "tool_choice": "auto",
         }
+        if self.provider == "deepseek" and self.effort:
+            payload["reasoning_effort"] = self.effort
         data = self._post_chat(payload)
         choices = data.get("choices") or []
         if not choices:
             raise RuntimeError(f"{self.provider} returned no choices")
         message = choices[0].get("message") or {}
         assistant: dict[str, Any] = {"role": "assistant", "content": message.get("content") or ""}
+        if "reasoning_content" in message:
+            assistant["reasoning_content"] = message["reasoning_content"]
         if message.get("tool_calls"):
             assistant["tool_calls"] = message["tool_calls"]
         self._messages.append(assistant)
