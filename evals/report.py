@@ -265,6 +265,14 @@ def _upgrade_outcome(record: dict[str, Any]) -> dict[str, Any]:
     error = record.get("error") or ""
     if record.get("outcome") == "infra_error" and "sandbox escalation" in error and "requires approval" in error:
         return {**record, "outcome": "blocked"}
+    # Before the harness read the agent log, a turn ended at the model-call or correction
+    # limit was recorded as completed. The runtime's texts for it are fixed.
+    text = record.get("final_text") or ""
+    if record.get("outcome") == "completed" and (
+        "because this turn reached its limit on model calls" in text
+        or text.startswith("I could not form a valid call to")
+    ):
+        return {**record, "outcome": "exhausted"}
     return record
 
 

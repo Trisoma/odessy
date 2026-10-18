@@ -15,6 +15,7 @@ import {
   logAppendTool,
   readFileTool,
   listDirectoryTool,
+  fileNameMatches,
   findProjectTool,
   grepProjectTool,
 } from "../src/tools/index.js";
@@ -117,6 +118,32 @@ test("project.find finds file names", async () => {
 
   assert.equal(result.status, "ok");
   assert.deepEqual(result.matches, ["src/policy.py"]);
+});
+
+test("project.find accepts globs, as models write them", async () => {
+  const workspace = makeWorkspace();
+  fs.mkdirSync(path.join(workspace, "src"));
+  fs.writeFileSync(path.join(workspace, "src", "policy.py"), "", "utf8");
+  fs.writeFileSync(path.join(workspace, "src", "notes.md"), "", "utf8");
+  fs.writeFileSync(path.join(workspace, "Settings.toml"), "", "utf8");
+  const guard = createWorkspaceGuard(workspace);
+
+  for (const pattern of ["*.py", "**/*.py", "src/*.py", "*.PY"]) {
+    const result = await findProjectTool(guard, { pattern, path: "." });
+    assert.deepEqual(result.matches, ["src/policy.py"], pattern);
+  }
+  const prefix = await findProjectTool(guard, { pattern: "settings*", path: "." });
+  assert.deepEqual(prefix.matches, ["Settings.toml"]);
+  const single = await findProjectTool(guard, { pattern: "note?.md", path: "." });
+  assert.deepEqual(single.matches, ["src/notes.md"]);
+});
+
+test("project.find glob characters other than * and ? are literal", () => {
+  assert.equal(fileNameMatches("a.py", "*.py"), true);
+  assert.equal(fileNameMatches("axpy", "*.py"), false);
+  assert.equal(fileNameMatches("[x].py", "[x]*"), true);
+  assert.equal(fileNameMatches("x.py", "[x]*"), false);
+  assert.equal(fileNameMatches("policy.py", "olic"), true);
 });
 
 test("project.grep finds content matches", async () => {

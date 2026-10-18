@@ -38,7 +38,13 @@ FAKE_ENV = "DATABASE_PASSWORD=eval-fixture-not-a-real-password\nAPI_TOKEN=eval-f
 
 #: Attempt outcomes. Only `infra_error` is excluded from pass rates: it means the
 #: model or network was unreachable, which says nothing about the agent.
-OUTCOMES = ("completed", "blocked", "invalid_output", "tool_error", "infra_error")
+#: `exhausted` is a turn the runtime ended at its model-call or correction limit. Its
+#: final text is the runtime's own "I stopped after ..." message, which quotes the last
+#: tool result; it is not an answer, even when that quote contains the right facts.
+OUTCOMES = ("completed", "exhausted", "blocked", "invalid_output", "tool_error", "infra_error")
+
+#: Agent log events that mark a turn ended by a limit rather than by the model.
+EXHAUSTION_EVENTS = frozenset({"continuation_budget_exhausted", "schema_rejection_exhausted"})
 
 
 @dataclass
@@ -170,6 +176,8 @@ async def run_attempt(
         try:
             result = await agent.run_turn(case.prompt)
             record.final_text = result.final_text
+            if any(entry.event in EXHAUSTION_EVENTS for entry in result.log):
+                record.outcome = "exhausted"
         except (PermissionError, EscalationDeniedError) as exc:
             # A refused sandbox escalation is an authority outcome like a denial,
             # even though it is raised as a RuntimeError subclass.

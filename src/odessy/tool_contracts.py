@@ -197,7 +197,10 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
     "calculator.eval": "Evaluate a side-effect-free arithmetic expression.",
     "filesystem.read": "Read a regular text file inside the workspace.",
     "filesystem.list": "List directory entries inside the workspace.",
-    "project.find": "Find files by name inside the workspace. Does not look inside files.",
+    "project.find": (
+        "Find files by name inside the workspace: part of a name, or a glob such as *.py. "
+        "Does not look inside files."
+    ),
     "project.grep": "Search inside file contents in the workspace for text, such as a word or a function name.",
     "git.status": "Return git status output.",
     "git.diff": "Return git diff output.",

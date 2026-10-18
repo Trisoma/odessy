@@ -199,7 +199,15 @@ PowerShell, the Jetson is Linux sh. A dedicated tool (for example `git.log` inst
 of a `git log` command) passes.
 
 **Multi-step** requires the tools to have actually run in order, and the final answer
-to contain the facts from the fixture workspace.
+to contain the facts from the fixture workspace. A turn the runtime ended at its
+model-call limit is recorded as `exhausted`: its "I stopped after …" text quotes the
+last tool result, so it can contain the right facts without being an answer, and it
+never passes the answer check. (Before this outcome existed it was `completed`;
+`--regrade` reclassifies it.)
+
+The recording server matches `project.find` patterns exactly as the real tool server
+does (substring, or a glob such as `*.py` on the file name). It must never be more
+forgiving than the real server, or the evaluation hides a real failure.
 
 **Excluded attempts** are infrastructure errors (model unreachable, network down).
 They are left out of every rate and listed separately; if there are many, the run
