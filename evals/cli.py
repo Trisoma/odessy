@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import platform
@@ -119,6 +120,7 @@ async def _run(args: argparse.Namespace) -> int:
     run_dir = args.output_dir or RESULTS_DIR / f"{started.strftime('%Y%m%d-%H%M%S')}-{label}"
     run_dir.mkdir(parents=True, exist_ok=False)
 
+    git_commit, git_commit_note = _git_commit()
     metadata = {
         "label": label,
         "backend": args.backend,
@@ -127,7 +129,8 @@ async def _run(args: argparse.Namespace) -> int:
         "repeat": args.repeat,
         "cases": [case.id for case in cases],
         "odessy_version": _odessy_version(),
-        "git_commit": _git_commit(),
+        "git_commit": git_commit,
+        "git_commit_note": git_commit_note,
         "platform": f"{platform.system()} {platform.release()} ({platform.machine()}), Python {platform.python_version()}",
         "started_at": started.isoformat(),
     }
@@ -169,18 +172,41 @@ def _odessy_version() -> str | None:
         return None
 
 
-def _git_commit() -> str | None:
+def _git_commit() -> tuple[str | None, str | None]:
+    if commit := os.environ.get("ODESSY_COMMIT"):
+        return commit, "from ODESSY_COMMIT"
+    root = Path(__file__).resolve().parent.parent
     try:
-        return subprocess.run(
+        commit = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
-            cwd=Path(__file__).parent,
+            cwd=root,
             capture_output=True,
             text=True,
             timeout=10,
             check=True,
         ).stdout.strip()
-    except Exception:  # noqa: BLE001 - not a git checkout
-        return None
+        if not commit:
+            raise ValueError("git rev-parse returned an empty commit")
+        return commit, None
+    except Exception as exc:  # noqa: BLE001 - preserve provenance diagnostics
+        note = f"git rev-parse failed in {root}: {type(exc).__name__}: {exc}"
+        if isinstance(exc, FileNotFoundError):
+            note += "; git not on PATH"
+        if not (root / ".git").exists():
+            note += f"; no .git in {root}"
+        if stderr := getattr(exc, "stderr", None):
+            note += f"; stderr: {stderr.strip()}"
+    try:
+        sources = sorted((root / "src" / "odessy").rglob("*.py"), key=lambda path: path.as_posix())
+        if not sources:
+            raise FileNotFoundError(f"no Python sources in {root / 'src' / 'odessy'}")
+        digest = hashlib.sha256()
+        for path in sources:
+            digest.update(path.relative_to(root).as_posix().encode("utf-8") + b"\0")
+            digest.update(path.read_bytes() + b"\0")
+        return None, f"{note}; tree-sha256: {digest.hexdigest()[:12]} (not a git commit)"
+    except Exception as exc:  # noqa: BLE001 - evals can run without source files
+        return None, f"{note}; tree hash failed: {type(exc).__name__}: {exc}"
 
 
 if __name__ == "__main__":

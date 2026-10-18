@@ -8,7 +8,9 @@ against behaviours scripted to pass and to fail.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import subprocess
 from collections import Counter
 from pathlib import Path
 
@@ -351,9 +353,11 @@ def test_summary_counts_safety_and_exclusions() -> None:
     assert "scripted" in render_comparison([("scripted", summary), ("again", summary)])
 
 
-def test_cli_run_writes_results(monkeypatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize("provenance", [("abc1234", None), (None, "git unavailable; tree-sha256: 123456789abc")])
+def test_cli_run_writes_results(monkeypatch, tmp_path: Path, provenance) -> None:
     from evals import cli
 
+    monkeypatch.setattr(cli, "_git_commit", lambda: provenance)
     case = CASES["tools-time"]
     monkeypatch.setattr(
         "odessy.cli._build_model",
@@ -365,12 +369,93 @@ def test_cli_run_writes_results(monkeypatch, tmp_path: Path) -> None:
     )
 
     assert exit_code == 0
+    metadata = json.loads((tmp_path / "run" / "metadata.json").read_text(encoding="utf-8"))
+    assert (metadata["git_commit"], metadata["git_commit_note"]) == provenance
     lines = (tmp_path / "run" / "attempts.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
     assert json.loads(lines[0])["grade"]["passed"] is True
     summary = json.loads((tmp_path / "run" / "summary.json").read_text(encoding="utf-8"))
     assert summary["categories"]["tools"]["pass_rate"] == 1.0
     assert (tmp_path / "run" / "summary.md").exists()
+
+
+def test_git_commit_env_override_wins(monkeypatch) -> None:
+    from evals import cli
+
+    monkeypatch.setenv("ODESSY_COMMIT", "deployed-revision")
+
+    def unexpected_git(*args, **kwargs):
+        pytest.fail("environment override must not invoke git")
+
+    monkeypatch.setattr(cli.subprocess, "run", unexpected_git)
+    commit, note = cli._git_commit()
+    assert commit == "deployed-revision"
+    assert "ODESSY_COMMIT" in note
+
+
+def test_git_commit_runs_from_repo_root(monkeypatch, tmp_path: Path) -> None:
+    from evals import cli
+
+    monkeypatch.delenv("ODESSY_COMMIT", raising=False)
+    monkeypatch.setattr(cli, "__file__", str(tmp_path / "evals" / "cli.py"))
+
+    def git(command, **kwargs):
+        assert command == ["git", "rev-parse", "--short", "HEAD"]
+        assert kwargs["cwd"] == tmp_path
+        assert kwargs["check"] and kwargs["capture_output"]
+        return subprocess.CompletedProcess(command, 0, stdout="abc1234\n")
+
+    monkeypatch.setattr(cli.subprocess, "run", git)
+    assert cli._git_commit() == ("abc1234", None)
+
+
+@pytest.mark.parametrize("failure", [
+    FileNotFoundError("git not on PATH"),
+    subprocess.CalledProcessError(128, ["git", "rev-parse"], stderr="fatal: not a git repository"),
+])
+def test_git_commit_tree_hash_fallback(monkeypatch, tmp_path: Path, failure) -> None:
+    from evals import cli
+
+    monkeypatch.delenv("ODESSY_COMMIT", raising=False)
+    monkeypatch.setattr(cli, "__file__", str(tmp_path / "evals" / "cli.py"))
+
+    def failed_git(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(cli.subprocess, "run", failed_git)
+    source = tmp_path / "src" / "odessy"
+    (source / "nested").mkdir(parents=True)
+    (source / "nested" / "z.py").write_bytes(b"z = 2\n")
+    (source / "a.py").write_bytes(b"a = 1\n")
+    (source / "Z.py").write_bytes(b"Z = 3\n")
+    (source / "ignored.txt").write_bytes(b"not Python")
+    expected = hashlib.sha256(
+        b"src/odessy/Z.py\0Z = 3\n\0src/odessy/a.py\0a = 1\n\0src/odessy/nested/z.py\0z = 2\n\0"
+    ).hexdigest()[:12]
+
+    commit, note = cli._git_commit()
+    assert commit is None
+    assert f"tree-sha256: {expected}" in note
+    assert str(failure) in note
+    if isinstance(failure, subprocess.CalledProcessError):
+        assert failure.stderr in note
+
+
+def test_git_commit_unknown_has_failure_note(monkeypatch, tmp_path: Path) -> None:
+    from evals import cli
+
+    monkeypatch.delenv("ODESSY_COMMIT", raising=False)
+    monkeypatch.setattr(cli, "__file__", str(tmp_path / "evals" / "cli.py"))
+
+    def failed_git(*args, **kwargs):
+        raise RuntimeError("Jetson checkout unavailable")
+
+    monkeypatch.setattr(cli.subprocess, "run", failed_git)
+    commit, note = cli._git_commit()
+    assert commit is None
+    assert "Jetson checkout unavailable" in note
+    assert str(tmp_path) in note
+    assert "no Python sources" in note
 
 
 def test_matcher_searches_argument_values_as_written() -> None:
