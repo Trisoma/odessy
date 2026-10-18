@@ -9,6 +9,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
+from odessy.deployment import command_tool_for_laptop, environment_prompt
 from odessy.redaction import redact_for_log
 from odessy.types import (
     FinalResponse,
@@ -350,6 +351,7 @@ def _system_prompt(tool_name: str | None) -> str:
         intent_instruction = "Call the single tool that best fulfills the user's request."
     return (
         "You are Odessy's tool-calling adapter.\n"
+        f"{_environment_line(tool_name)}"
         f"{intent_instruction}\n"
         "Use the function tools provided in this request to carry out the user's intent.\n"
         "If the user only wants information and no tool applies, answer directly.\n"
@@ -367,6 +369,7 @@ def _text_system_prompt(user_text: str, tool_name: str | None) -> str:
     )
     return (
         "Based on the user's request, generate exactly one JSON object.\n"
+        f"{_environment_line(tool_name)}"
         f"{intent_instruction}\n"
         "For command requests, write the exact command in the command field.\n"
         "Leave optional fields omitted unless the user explicitly specifies them.\n"
@@ -376,6 +379,13 @@ def _text_system_prompt(user_text: str, tool_name: str | None) -> str:
         f"User: {user_text}\n"
         "JSON:"
     )
+
+
+def _environment_line(tool_name: str | None) -> str:
+    """The environment sentence for the tools this call offers, as a line or nothing."""
+
+    line = environment_prompt([tool_name] if tool_name is not None else None)
+    return f"{line}\n" if line else ""
 
 
 def _read_error_body(error: urllib.error.HTTPError) -> str:
@@ -444,7 +454,7 @@ def _proposal_tool_name_for_user_text(user_text: str) -> str | None:
         return None
     normalized = user_text.strip().lower()
     if _is_laptop_command_intent(normalized):
-        return "laptop.terminal.run"
+        return command_tool_for_laptop()
     if normalized.startswith("run ") or " run " in normalized:
         return "terminal.run"
     if "git status" in normalized:
@@ -561,14 +571,13 @@ def _parse_and_validate_model_action(raw_text: str, user_text: str) -> ModelActi
 
 
 def _validate_tool_selection_for_user_intent(user_text: str, action: ModelAction) -> None:
+    required = command_tool_for_laptop()
     if (
         isinstance(action, ToolRequest)
-        and action.name != "laptop.terminal.run"
+        and action.name != required
         and _is_laptop_command_intent(user_text)
     ):
-        raise ValueError(
-            f"Laptop command requests must use laptop.terminal.run, not {action.name}"
-        )
+        raise ValueError(f"Laptop command requests must use {required}, not {action.name}")
 
 
 def _is_laptop_command_intent(user_text: str) -> bool:
@@ -587,12 +596,8 @@ def _model_output_error(
     intended_tool_name: str | None = None,
 ) -> ModelOutputError:
     tool_name = _extract_tool_name(raw_output) or intended_tool_name
-    if (
-        tool_name == "terminal.run"
-        and _is_laptop_command_intent(user_text)
-        and "Laptop command requests" in str(error)
-    ):
-        tool_name = "laptop.terminal.run"
+    if _is_laptop_command_intent(user_text) and "Laptop command requests" in str(error):
+        tool_name = command_tool_for_laptop()
     tool_contract = (
         render_tool_contract(tool_name)
         if tool_name in TOOL_REQUEST_SCHEMAS

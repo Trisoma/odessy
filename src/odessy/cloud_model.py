@@ -45,6 +45,7 @@ from odessy.ollama_model import (
     _looks_like_generic_final_response,
     _validate_tool_selection_for_user_intent,
 )
+from odessy.deployment import command_tool_for_laptop, environment_prompt
 from odessy.redaction import redact_for_log, redact_text
 from odessy.tool_contracts import build_openai_tools, validate_tool_arguments
 from odessy.types import (
@@ -124,11 +125,12 @@ _CLAUDE_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 DEFAULT_CLOUD_TIMEOUT_SECONDS = 120
 DEFAULT_CLAUDE_MAX_TOKENS = 16000
 
-SYSTEM_PROMPT = (
+_SYSTEM_PROMPT_TEMPLATE = (
     "You are Odessy, a voice assistant that can act on the user's computers through tools.\n"
+    "{environment}\n"
     "Use the provided tools when the request needs them; answer directly when no tool applies.\n"
     "Call at most one tool at a time and wait for its result before deciding the next step.\n"
-    "Commands the user says should run on their laptop must use laptop__terminal__run.\n"
+    "Commands the user says should run on their laptop must use {laptop_tool}.\n"
     "Do not decide whether a tool call is safe. The Odessy runtime validates and authorizes "
     "every call, and may ask the user to confirm or may reject it. If a call is rejected, "
     "either propose a corrected call or explain briefly.\n"
@@ -136,6 +138,20 @@ SYSTEM_PROMPT = (
     "Your final answer is read aloud: reply in one to three short plain sentences, "
     "with no markdown, code blocks, or JSON."
 )
+
+
+def system_prompt() -> str:
+    """The system prompt for the current deployment, with tool names as the API sees them."""
+
+    environment = environment_prompt()
+    # The longer name first: encoding it removes the "terminal.run" inside it.
+    for name in ("laptop.terminal.run", "terminal.run"):
+        environment = environment.replace(name, encode_tool_name(name))
+    return _SYSTEM_PROMPT_TEMPLATE.format(
+        environment=environment,
+        laptop_tool=encode_tool_name(command_tool_for_laptop()),
+    )
+
 
 _REPAIR_MESSAGE = "That tool call was invalid: {error}. Propose a corrected tool call or answer directly."
 _EXTRA_CALL_MESSAGE = "Not executed: Odessy runs one tool call per step. Propose it again if still needed."
@@ -351,7 +367,7 @@ class CloudModel:
         params: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
-            "system": SYSTEM_PROMPT,
+            "system": system_prompt(),
             "messages": self._messages,
             "tools": cloud_tools_anthropic(),
             "tool_choice": {"type": "auto", "disable_parallel_tool_use": True},
@@ -414,7 +430,7 @@ class CloudModel:
     def _exchange_openai(self) -> _ParsedReply:
         payload = {
             "model": self.model,
-            "messages": [{"role": "system", "content": SYSTEM_PROMPT}, *self._messages],
+            "messages": [{"role": "system", "content": system_prompt()}, *self._messages],
             "tools": cloud_tools_openai(),
             "tool_choice": "auto",
         }

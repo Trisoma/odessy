@@ -70,6 +70,11 @@ jobs:
           output="$(python -m odessy --fake-model "what time is it?")"
           echo "$output"
           [[ "$output" == "The current time is "* ]]
+          # Single-machine mode: filesystem.list exists only on the Node tool server,
+          # so this passes only if the CLI started it on loopback by itself.
+          output="$(python -m odessy --fake-model "list .")"
+          echo "$output"
+          [[ "$output" == "Directory entries: "*"pyproject.toml"* ]]
 
   tool-server:
     name: Tool server, Node ${{ matrix.node }} (${{ matrix.os }})

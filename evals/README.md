@@ -202,8 +202,11 @@ should be repeated.
   suggest, for the proposal *and* for every follow-up step. Multi-step tasks that need
   a different second tool (for example `time.now` then `calculator.eval`) cannot pass
   in that mode. That is a finding about routing, not about the harness.
-- The model is not told which operating system each machine runs, so command prompts
-  name it ("On my Windows laptop", "On this Linux machine").
+- Every run uses the two-machine layout, whatever machine runs the evaluation: the
+  model is told "this machine" is Linux (sh) and the laptop is Windows (PowerShell),
+  and is offered both `terminal.run` and `laptop.terminal.run`. `metadata.json`
+  records this under `deployment`. Command prompts also name the OS ("On my Windows
+  laptop", "On this Linux machine").
 
 ### Recorded October 18 runs
 

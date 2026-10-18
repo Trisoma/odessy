@@ -51,6 +51,21 @@ function executionProviders(): ProviderRegistry {
   return executionRegistry;
 }
 
+/**
+ * The name the command tool is registered under.
+ *
+ * In the two-machine (`split`) deployment this server runs on the laptop and the
+ * Jetson has its own `terminal.run`, so this one is `laptop.terminal.run`. In the
+ * `single` deployment the Python runtime starts this server on the same computer and
+ * leaves `terminal.run` to it, so commands get this side's confinement backends
+ * (the Python side has none on Windows). The handler is the same either way.
+ */
+function terminalToolName(env: NodeJS.ProcessEnv = process.env): string {
+  return env.ODESSY_DEPLOYMENT?.trim().toLowerCase() === "single"
+    ? "terminal.run"
+    : "laptop.terminal.run";
+}
+
 type StructuredResult = Record<string, unknown>;
 
 function resultPayload(result: object) {
@@ -161,10 +176,10 @@ function buildServer(registry?: ProviderRegistry): McpServer {
   );
 
   server.registerTool(
-    "laptop.terminal.run",
+    terminalToolName(),
     {
-      title: "Laptop Terminal Run",
-      description: "Run a laptop-side command in the Odessy workspace.",
+      title: "Terminal Run",
+      description: "Run a command on this computer in the Odessy workspace.",
       inputSchema: laptopTerminalRunInputSchema,
     },
     async (input) => {
