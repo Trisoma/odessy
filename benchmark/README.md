@@ -2,6 +2,12 @@
 
 This package contains the shared benchmark harness for Odessy.
 
+For agent-behaviour evaluations (safety, command generation, tool selection, and
+multi-step tasks), use [`evals/`](../evals/README.md). That suite supports local
+and cloud models, including DeepSeek low-effort configuration, and records
+provenance diagnostics. This component-performance harness has a separate
+configuration and artifact format; the eval metadata additions do not change it.
+
 ## Shared Components
 
 - `cli.py`: command-line entry point and scenario selection.

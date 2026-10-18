@@ -1,6 +1,7 @@
 # Odessy: A Voice-Controlled Edge-AI Personal Agent and Device Orchestration Platform
 
-> NOTE: This version (v0.2.0, under development) is highly experimental, completely unstable, and may be confusing. It is recommended for developers only, not regular users!!!
+> NOTE: v0.3.0 is under development and intended for developers. Package metadata
+> still reports v0.2.0; the development milestone does not imply a new release.
 
 Odessy is a local, single-user edge-AI agent runtime. By default the Jetson hosts the model and voice loop, and a laptop-side MCP server provides controlled command execution. An optional cloud model backend can replace the local model; policy, authorization, and confirmation stay local in every configuration. See `docs/reference/cloud-models.mdx`.
 
@@ -15,7 +16,7 @@ Voice command
 
 The model proposes actions. Python Odessy validates and authorizes them. MCP transports them. The model is never the authority.
 
-## Current v0.2.0 (under development)
+## Current v0.3.0 development
 
 - LFM2.5-Thinking 1.2B through Ollama is the default model path.
 - Gemma 3 1B remains available with `--model-backend ollama`.
@@ -23,6 +24,10 @@ The model proposes actions. Python Odessy validates and authorizes them. MCP tra
 - Laptop commands use `laptop.terminal.run`.
 - Voice uses Whisper.cpp STT and Kokoro ONNX TTS.
 - Policy and confirmation remain in the Python runtime.
+- Optional cloud backends support native tool conversations; DeepSeek accepts
+  configured reasoning effort and retains returned reasoning content.
+- The agent evaluation suite covers 38 safety, command, tool, and multi-step cases
+  using recorded execution, with code-provenance diagnostics in run metadata.
 
 > The long-term technical category could be:
 > Embodied Edge-AI Agent for Multimodal Device and Engineering Automation
@@ -221,10 +226,15 @@ requests plus redacted tool output are sent to the provider:
 ```bash
 pip install -e .[cloud]   # needed for Claude only
 export DEEPSEEK_API_KEY=...
+export ODESSY_CLOUD_MODEL=deepseek-flash
+export ODESSY_CLOUD_EFFORT=low
 python -m odessy --model-backend deepseek "on my laptop, run pwd"
 ```
 
-Providers, settings, and the data-flow details are in `docs/reference/cloud-models.mdx`.
+This explicitly selects `deepseek-flash` with low reasoning effort. Without these
+overrides the DeepSeek preset remains `deepseek-chat` with provider-default effort.
+Providers, PowerShell equivalents, and data-flow details are in
+[Cloud Model Backends](docs/reference/cloud-models.mdx).
 
 ## Demo
 
@@ -238,6 +248,10 @@ pytest -q
 
 The benchmark suite includes fake hardware-free scenarios and real Jetson scenarios. Real voice runs require configured audio and model assets.
 
+GitHub Actions runs Python and Node checks on Ubuntu and Windows; see
+[the workflow](.github/workflows/ci.yml) for its version matrix. Workflow coverage
+is not a claim of Jetson hardware or live-provider validation.
+
 ## Evaluate
 
 `evals/` measures agent behaviour with a real model: safety (does a dangerous
@@ -247,6 +261,19 @@ Nothing is executed on the host. See `evals/README.md`.
 ```bash
 python -m evals run --backend lfm
 ```
+
+For a DeepSeek check using the cloud settings above:
+
+```bash
+python -m evals run --backend deepseek --label deepseek-low-smoke --case tools-time --repeat 1
+python -m evals run --backend deepseek --label deepseek-low
+```
+
+New `metadata.json` files add `git_commit_note`: a nonempty `ODESSY_COMMIT`
+override wins, otherwise Git runs from the repo root, then a labeled source-tree
+hash is recorded with failure details if Git is unavailable. A null commit always
+has a note. Older run files are not repaired retroactively. See
+[the eval guide](evals/README.md#code-provenance) for coverage and comparison limits.
 
 ## Known Limits
 

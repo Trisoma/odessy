@@ -300,9 +300,19 @@ Not allowed          "Odessy runs locally", unqualified, once a cloud backend is
 Reference: `docs/reference/cloud-models.mdx`. Published register:
 `docs/reference/current-limitations.mdx` (the **Data egress** row).
 
-## Multi-Tool Continuation Deferred To v0.3
+DeepSeek now receives `ODESSY_CLOUD_EFFORT` as `reasoning_effort` when configured.
+The OpenAI-compatible adapter retains returned assistant `reasoning_content` for
+subsequent requests, including repairs and tool follow-ups. Model and effort
+support are provider-specific; the adapter forwards effort without validating
+its allowed values. These changes do not add a general thinking toggle or make
+the setting apply to every OpenAI-compatible provider.
 
-**Status: implemented, wired, and does not fire with a real model.**
+## Multi-Tool Continuation: Local Limitation And Cloud Evidence
+
+**Status: implemented; model and routing configuration affect whether it succeeds.**
+
+The following examples are the historical v0.2 local-model observation, not a
+claim about every current backend:
 
 The observation call advertises tools, and the loop can accept a second tool
 request. Offline the same loop makes 3 model calls with tools advertised on calls
@@ -317,12 +327,36 @@ Even with an explicit "then run X", the model summarises and stops. The prompt
 line asking it to continue is a nudge, not an enforcement: the loop can decline to
 accept an answer, but cannot demand a tool call.
 
-**v0.2 ships single-tool turns.** This is a model-behaviour limitation, not a
-wiring defect. The continuation machinery is retained but inert pending v0.3.
+**v0.2 shipped with this observed single-tool behaviour.** On October 18, both
+local LFM eval sweeps still passed 0/18 multi-step attempts, while the separate
+`deepseek-flash` reference passed 17/18. The continuation machinery can therefore
+work with a real cloud model in these fixtures. Keyword routing on also limits
+follow-ups to the selected tool, constraining sequences that need a different
+second tool. These results do not establish general multi-step reliability.
+
+See [the eval guide](evals/README.md) for the saved artifacts and comparison limits.
+
+## Evaluation Provenance And Scope
+
+New eval metadata adds only `git_commit_note`: provenance tries a nonempty
+`ODESSY_COMMIT`, then Git from the repo root, then a labeled 12-character SHA-256
+source-tree hash. When `git_commit` is null, the note includes the Git exception
+message, available stderr, and either the hash or its failure reason.
+
+The October 18 cloud artifact reports missing `.git` on the Jetson and a source
+hash; both earlier local artifacts lack revision information. The fix does not
+recover their old revisions or require rerunning their models. A source hash is
+not a commit and does not cover eval cases, settings, dependencies, or the full
+deployment. The existing metadata also omits dirty status, reasoning effort,
+and provider endpoint. Preserve non-secret settings separately for comparisons.
+
+The recording executor does not run proposed shell commands or writes. Zero
+forbidden calls reaching it is evidence about the tested authority path, not a
+test of kernel isolation or arbitrary real-world command safety.
 
 ## Previously Failing Tests: Resolved
 
-**Status: resolved. The suite is green.**
+**Status: resolved; the dated October 17 full-suite record is 530 passed, 3 skipped.**
 
 These five were quarantined rather than fixed. In each case the stale side was the
 expectation, not the runtime, and the expectations now match. Kept as a record of what

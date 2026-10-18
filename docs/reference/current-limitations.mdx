@@ -15,7 +15,7 @@ This page records the limits future agents must keep visible when changing the r
 
 | Area | Current state | Limitation |
 |---|---|---|
-| Model | LFM2.5-Thinking is the default Ollama backend; Gemma remains an explicit fallback; an optional cloud backend (Claude, or any OpenAI-compatible API) can replace both | Model quality, latency, memory behavior, and long-run reliability are not fully benchmarked on any backend. The cloud backend is opt-in and off by default — see **Data egress** below. |
+| Model | LFM2.5-Thinking is the default Ollama backend; Gemma remains an explicit fallback; an optional cloud backend (Claude, or any OpenAI-compatible API) can replace both | The October 18 agent-eval runs provide fixture-based measurements for LFM and DeepSeek, not full quality, latency, memory, or long-run reliability validation. The cloud backend is opt-in and off by default — see **Data egress** below. |
 | Voice | Staged voice loop is integrated and has completed live Jetson turns | Automated tests still use fakes for hardware components, and physical audio quality depends on the configured device. |
 | GUI automation | Out of scope | No mouse, keyboard injection, screen capture, browser automation, desktop automation, or robotics. |
 | Multi-agent behavior | Out of scope | No delegation, background autonomy, scheduler, or multi-session agent orchestration. |
@@ -158,9 +158,38 @@ benchmark/tts/jetson-voice-benchmark.mdx
 
 ## Testing Limits
 
+### Agent evaluations and provenance
+
+`evals/` has 38 cases and supports local and cloud models. It runs the real agent
+loop against a recording execution server, so shell commands and requested writes
+are not performed on the host. It measures proposals, policy decisions, tool
+sequences, and deterministic checks against fixtures. It does not measure real
+shell success, host confinement, audio quality, or production safety.
+
+The October 18 artifacts record local LFM routing-on and routing-off sweeps, plus
+a separate `deepseek-flash` reference. Local multi-step pass rates were 0%; the
+cloud reference passed 17/18 multi-step attempts. Multi-tool continuation should
+therefore not be described as universally inactive. These observations do not
+establish a routing improvement across different models. See
+[the eval guide](../../evals/README.md) for results and denominators.
+
+New run metadata adds `git_commit_note`, retaining failure details and a labeled
+source-tree hash when Git is unavailable. The two older local artifacts still
+have unknown revisions. The hash covers Python sources under `src/odessy`, not
+the eval definitions, configuration, or dependencies; a Git commit does not
+capture dirty status either. Reasoning effort and endpoint are not recorded in
+metadata, so a label such as `deepseek-low` is not independent proof of the
+request configuration. The Markdown summary omits the provenance note; inspect
+`metadata.json`.
+
+DeepSeek effort forwarding and reasoning-content retention have focused adapter
+tests. The October 18 local verification passed 119 tests across
+`tests/test_cloud_model.py` and `tests/test_evals.py`; this is not a full-suite
+count or live coverage of every provider.
+
 | Area | Current state | Limitation |
 |---|---|---|
-| Python tests | 530 passed, 3 skipped locally on 2026-10-17 | The five previously quarantined ONNX and LFM tests are resolved — see `LIMITATION.md`. Tests cover important adversarial cases, but not every shell, filesystem race, or platform-specific reparse behavior. |
+| Python tests | Historical full-suite result: 530 passed, 3 skipped locally on 2026-10-17; focused October 18 checks are described above | The five previously quarantined ONNX and LFM tests are resolved — see `LIMITATION.md`. Tests cover important adversarial cases, but not every shell, filesystem race, or platform-specific reparse behavior. |
 | Node tests | `npm run typecheck` passes; 170 tests pass, 0 failed, 0 skipped | Earlier records cite "6/6 tests"; that was the Step 7 read-only tool count and is historical. In a restricted sandbox the Git test may skip because Node subprocess spawning is restricted, so normal Windows PowerShell is the source of truth. |
 | Process cleanup tests | Timeout result is tested | Tests verify timeout reporting, but do not deeply inspect every possible descendant-process cleanup scenario. |
 

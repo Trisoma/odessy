@@ -62,8 +62,14 @@ Voice mode accepts the same `--model-backend` selection as the text loop, so a c
 backend can be used here too:
 
 ```powershell
+$env:ODESSY_CLOUD_MODEL="deepseek-flash"
+$env:ODESSY_CLOUD_EFFORT="low"
 python -m odessy voice --model-backend deepseek
 ```
+
+This example uses the same low-effort setting as text mode and evals. The adapter
+retains returned reasoning content when continuing tool conversations; this does
+not introduce a streaming voice path or a voice-latency guarantee.
 
 With a cloud backend the transcript and that turn's tool observations leave the machine.
 The voice pipeline itself is unchanged — the same authority invariant and the same

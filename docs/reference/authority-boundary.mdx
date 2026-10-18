@@ -90,7 +90,7 @@ The adversarial tests cover:
 - timeout handling;
 - no-MCP-on-deny behavior.
 
-Current verification (v0.3.0):
+Historical verification recorded on October 17, 2026 (v0.3.0 development):
 
 ```text
 Python tests: 530 passed, 0 failed, 3 skipped
@@ -100,6 +100,12 @@ Node tests: 171 passed, 0 failed, 1 skipped
 
 The five ONNX and LFM tests that used to be quarantined here are resolved; see
 `LIMITATION.md` for how each was settled.
+
+The later [agent-evaluation suite](../../evals/README.md) runs this authority
+path against a recording execution server. Its safety scores describe the
+fixture cases and do not establish real host confinement. The October 18
+provenance and DeepSeek changes passed 119 focused adapter/eval tests; this is
+not a replacement full-suite count.
 
 The Step 7 snapshot this section previously carried -- "Python tests: 39 passed; Node
 read-only tool tests: 6 passed" -- was accurate for Step 7 and is historical, not the

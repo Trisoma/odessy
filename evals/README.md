@@ -11,8 +11,8 @@
 
 Each case runs through the **real** agent loop (model, validation, policy,
 confirmation). Only the execution layer is replaced, by a recording server that
-answers from a fixed fixture workspace. **Nothing is executed on the machine running
-the evaluation**: no command runs, no file is written. That is what makes it safe to
+answers from a fixed fixture workspace. **Proposed commands and file writes are not
+executed on the host**; the harness still writes its own result artifacts. This lets it
 include requests like "delete the project" or "pipe this script into sh".
 
 Grading is deterministic: every check reads recorded facts (which tool was proposed,
@@ -57,9 +57,24 @@ python -m evals run --backend lfm --routing on --label lfm-routing-on
 # 2. Same model, keyword routing off: the model sees every tool and chooses itself
 python -m evals run --backend lfm --routing off --label lfm-routing-off
 
-# 3. A cloud model for reference (needs its API key in the environment)
+# 3. A cloud model for reference, with low reasoning effort
 export DEEPSEEK_API_KEY=...        # Windows: $env:DEEPSEEK_API_KEY="..."
-python -m evals run --backend deepseek --label deepseek
+export ODESSY_CLOUD_MODEL=deepseek-flash
+export ODESSY_CLOUD_EFFORT=low
+python -m evals run --backend deepseek --label deepseek-low
+```
+
+In PowerShell, set the latter variables with
+`$env:ODESSY_CLOUD_MODEL="deepseek-flash"` and `$env:ODESSY_CLOUD_EFFORT="low"`.
+The adapter forwards effort as DeepSeek's `reasoning_effort` and retains returned
+`reasoning_content` through tool conversations. Without a model override the
+DeepSeek preset still selects `deepseek-chat`; without an effort setting it uses
+the provider default. See [cloud model settings](../docs/reference/cloud-models.mdx).
+
+Before a full sweep, check one case and inspect its `metadata.json`:
+
+```bash
+python -m evals run --backend deepseek --label deepseek-low-smoke --case tools-time --repeat 1
 ```
 
 Each case runs 3 times by default (`--repeat`), because model output varies.
@@ -80,8 +95,12 @@ Useful options:
 - **Local LFM on the Jetson**: a single model call was measured at ~25–30 s, so plan
   for **about 2–3 hours per configuration**. Overnight is fine; results are written
   after every attempt, so an interrupted run keeps what it finished.
-- **Cloud models**: usually 10–30 minutes. Cost is roughly 300–450 API calls per
-  run; on DeepSeek that is a few yuan.
+- **Cloud models**: depends on the model, effort, network, and number of tool
+  follow-ups. The saved October 18 `deepseek-low` run took about **4 minutes
+  51 seconds** for 114 attempts and 200 model calls. It recorded 312,082 prompt
+  tokens and 16,859 completion tokens. These are measurements from one run,
+  not a time or cost guarantee. Calculate cost using the provider's current
+  rates and cache billing; no billed amount is recorded in the artifacts.
 
 ## What to send back
 
@@ -91,16 +110,47 @@ Each run creates a folder under `evals/results/`, for example
 | File | Contents |
 |---|---|
 | `attempts.jsonl` | Every attempt: proposals, policy decisions, confirmations, executed calls, final answer, grade |
-| `metadata.json` | Backend, model, routing, repeat count, commit, platform, times |
+| `metadata.json` | Backend, model, routing, repeat count, commit and `git_commit_note`, platform, times |
 | `summary.md` / `summary.json` | The summary, regenerated from the two files above |
 
 **Send the whole folder for each run** (zip `evals/results/`). `attempts.jsonl` holds
 the raw facts, so anything can be re-graded later without rerunning a model.
 
+### Code provenance
+
+New runs keep the existing metadata keys and add `git_commit_note`. Provenance is
+resolved in this order:
+
+1. A nonempty `ODESSY_COMMIT` wins. Its value becomes `git_commit`, with a note
+   identifying the environment override. Set it only to the revision actually
+   deployed; the provenance helper does not validate it.
+2. Otherwise, `git rev-parse --short HEAD` runs from the repository root. Success
+   records the commit with a null note.
+3. If Git fails, `git_commit` stays null. The note records the root path,
+   exception type and message, Git stderr when available, and diagnostics such
+   as missing `.git` or Git not being on PATH. It also records a labeled
+   `tree-sha256: <12 hex characters>` over sorted `src/odessy/**/*.py` paths and
+   contents. If hashing fails too, that exception is included in the note.
+
+The tree digest uses repository-relative POSIX paths in case-sensitive sorted
+order, UTF-8 path bytes, and raw file contents, with a NUL after each path and
+each file's contents. It is a source-tree fingerprint, **not a commit**. It
+does not cover eval cases, configuration, dependencies, or uncommitted changes
+outside `src/odessy`. A successful Git lookup also does not record dirty status.
+
+Inspect `metadata.json` directly: the current Markdown summary does not display
+`git_commit_note`. Metadata does not yet record reasoning effort or the endpoint;
+retain those non-secret settings separately. `keyword_routing` is recorded for
+cloud runs too, but cloud adapters always offer all tools regardless of its value.
+
+The older October 18 local runs predate this change and have null commits without
+notes. Keep that uncertainty visible. This metadata-only fix does not require
+rerunning them or justify assigning today's revision to them.
+
 To put the runs side by side:
 
 ```bash
-python -m evals compare evals/results/*-lfm-routing-on evals/results/*-lfm-routing-off evals/results/*-deepseek --output comparison.md
+python -m evals compare evals/results/*-lfm-routing-on evals/results/*-lfm-routing-off evals/results/*-deepseek-low --output comparison.md
 ```
 
 If a run was interrupted, rebuild its summary from what it finished:
@@ -142,12 +192,39 @@ should be repeated.
 
 ## Things worth knowing when comparing
 
+- Local routing on versus off compares the same model under two routing
+  configurations. A cloud run changes the model and adapter as well; it is a
+  separate reference, not another observation of the routing toggle.
+- Better cloud results suggest that these cases can be handled by a stronger
+  model. They do not validate every grader or prove that every local failure is
+  caused by the model; inspect the failed attempts and their recorded checks.
 - With keyword routing **on**, a local model is offered only the one tool the keywords
   suggest, for the proposal *and* for every follow-up step. Multi-step tasks that need
   a different second tool (for example `time.now` then `calculator.eval`) cannot pass
   in that mode. That is a finding about routing, not about the harness.
 - The model is not told which operating system each machine runs, so command prompts
   name it ("On my Windows laptop", "On this Linux machine").
+
+### Recorded October 18 runs
+
+These summaries come from the saved run folders. Rates exclude infrastructure
+errors; they measure this fixture suite, not general reliability or OS containment.
+
+Local model: `lfm2.5-thinking:1.2b-q8_0`.
+
+| Routing | Overall | Safety | Commands | Tools | Multi-step | Excluded |
+|---|---|---|---|---|---|---|
+| [On](results/20261018-035501-lfm-routing-on/summary.md) | 61/114 (53.5%) | 100.0% | 3.3% | 80.0% | 0.0% | 0 |
+| [Off](results/20261018-063608-lfm-routing-off/summary.md) | 58/113 (51.3%) | 91.7% | 3.3% | 82.8% | 0.0% | 1 |
+
+Separate cloud reference: [the run labeled `deepseek-low`](results/20261018-111616-deepseek-low/summary.md)
+records model `deepseek-flash`, 107/114 (93.9%) overall, 100.0% safety, 80.0%
+commands, 100.0% tools, and 94.4% multi-step, with no excluded attempts. Its label
+indicates intended effort; the metadata does not independently record that setting.
+Its provenance note reports no `.git` in `/home/jaimef/odessy` and the tree hash
+`73725ee69afd`. Both local runs lack revision provenance. All three recorded zero
+forbidden actions reaching the recording executor, which does not test host
+confinement.
 
 ## Changing the cases
 
