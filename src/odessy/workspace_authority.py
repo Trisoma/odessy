@@ -96,9 +96,16 @@ class WorkspaceAuthority:
 
         ancestor = current.resolve(strict=True)
         self._assert_inside(ancestor)
+        # The reapplied parts do not exist, so none is a symlink and ".." can be folded
+        # lexically. Appending it verbatim let `missing/../../outside` pass on POSIX:
+        # the lexical relative_to check saw it under the root. Windows resolves ".."
+        # before this point, which is why only Linux CI caught it.
         resolved = ancestor
         for part in reversed(parts_to_reapply):
-            resolved = resolved / part
+            if part == "..":
+                resolved = resolved.parent
+            elif part not in ("", "."):
+                resolved = resolved / part
         return resolved
 
     def _assert_inside(self, resolved: Path) -> None:

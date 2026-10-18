@@ -525,3 +525,16 @@ def test_posix_reading_of_windows_paths(monkeypatch: pytest.MonkeyPatch) -> None
         _native_path_text("\\\\server\\share\\x")
     assert _native_path_text("notes\\a.txt") == "notes/a.txt"
     assert _native_path_text("src/app.py") == "src/app.py"
+
+
+@pytest.mark.parametrize("path", ["missing/../../outside.txt", "a/b/../../../outside.txt", "missing/./../../x"])
+def test_dotdot_after_a_missing_directory_cannot_leave_the_workspace(tmp_path: Path, path: str) -> None:
+    # Caught by Linux CI: the nonexistent tail was reattached verbatim, so ".." after a
+    # missing directory escaped while the lexical containment check still passed.
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    assert _decide(workspace, "filesystem.write", path=path, content="x") == "deny"
+
+
+def test_dotdot_that_stays_inside_still_works(tmp_path: Path) -> None:
+    assert _decide(tmp_path, "filesystem.write", path="missing/../notes/new.txt", content="x") == "confirm"
