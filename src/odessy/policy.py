@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -185,6 +186,18 @@ class OdessyPolicy:
             return PolicyDecision(
                 "deny",
                 f"{tool_name} denied because background or detached execution is outside the request lifecycle",
+                "high",
+            )
+        if _matches_remote_execution_rule(lowered):
+            return PolicyDecision(
+                "deny",
+                f"{tool_name} denied because it runs code downloaded from the network",
+                "high",
+            )
+        if _matches_system_write_rule(lowered):
+            return PolicyDecision(
+                "deny",
+                f"{tool_name} denied because it writes to an operating-system location",
                 "high",
             )
         if _matches_deny_rule(lowered, tokens):
@@ -487,6 +500,52 @@ def _matches_deny_rule(command: str, tokens: list[str]) -> bool:
     if any(pattern in command for pattern in destructive_patterns):
         return True
     return False
+
+#: Something that fetches from the network...
+_DOWNLOADER = r"(?:curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod|\(new-object\s+net\.webclient\)\.downloadstring)"
+#: ...and something that runs what it is given.
+_INTERPRETER = r"(?:sh|bash|zsh|dash|ksh|fish|python3?|perl|ruby|node|iex|invoke-expression|powershell|pwsh|cmd)"
+_REMOTE_EXECUTION = (
+    # curl https://x/install.sh | sh,  iwr https://x | iex
+    re.compile(rf"\b{_DOWNLOADER}\b[^|;&]*\|\s*(?:sudo\s+)?{_INTERPRETER}(?:\.exe)?\b"),
+    # bash <(curl ...),  sh -c "$(curl ...)",  iex (iwr ...)
+    re.compile(rf"\b{_INTERPRETER}\b[^;&|]*(?:<\(|\$\(|\()\s*{_DOWNLOADER}\b"),
+)
+
+
+def _matches_remote_execution_rule(command: str) -> bool:
+    """Download-and-run: the payload is chosen by whoever controls the URL.
+
+    The first evaluation runs showed models proposing ``curl ... | sh`` when asked to
+    "install the helper tool", and it was only *confirmed*: one "yes" from the user
+    ran a script nobody had seen. Downloading a file is still allowed through the
+    normal rules; piping it straight into an interpreter is not.
+    """
+
+    return any(pattern.search(command) for pattern in _REMOTE_EXECUTION)
+
+
+#: Operating-system locations, in the slash-normalized, lowercased command.
+#: POSIX roots must start a path ("src/lib/x" is the workspace, "/lib/x" is not).
+_SYSTEM_LOCATION = (
+    r"(?:(?<![\w./-])(?:/etc|/usr|/bin|/sbin|/boot|/lib|/system/library)/"
+    r"|(?<![\w./-])(?:[a-z]:/windows|/c/windows)\b|%systemroot%|\$env:systemroot)"
+)
+#: Write verbs and redirections, in the same normalized command.
+_WRITE = r"(?:>>?|\btee\b|\bcp\b|\bmv\b|\binstall\b|\bset-content\b|\badd-content\b|\bout-file\b|\bnew-item\b|\bcopy-item\b|\bmove-item\b|\bcopy\b|\bmove\b|\bxcopy\b|\brobocopy\b)"
+_SYSTEM_WRITE = re.compile(rf"{_WRITE}[^;&|]*{_SYSTEM_LOCATION}")
+
+
+def _matches_system_write_rule(command: str) -> bool:
+    """A write whose target is an operating-system directory.
+
+    Heuristic, like every command rule here (there is no shell parser): a write verb or
+    redirection followed, in the same simple command, by a system location. Reading
+    such a location is unaffected. The workspace is the only place Odessy writes to.
+    """
+
+    return _SYSTEM_WRITE.search(command.replace("\\", "/")) is not None
+
 
 def _matches_background_or_detach_rule(command: str, tokens: list[str]) -> bool:
     if not tokens:

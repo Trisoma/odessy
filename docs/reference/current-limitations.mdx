@@ -28,7 +28,8 @@ This page records the limits future agents must keep visible when changing the r
 | Workspace confinement | Python `WorkspaceAuthority` plus Node path guard defense in depth, **and** an isolation layer that confines wherever a backend exists | Path validation is still user-space, so TOCTOU races remain possible between validation and access. Kernel isolation is a separate, additive control — see **Isolation Layer**. |
 | Symlinks/reparse points | Canonical path resolution blocks existing symlink escapes where the platform resolver exposes them | This is not a claim of complete coverage for every Windows reparse-point or filesystem race edge case. |
 | Sensitive paths | Obvious sensitive names and segments are denied | The classifier is intentionally conservative, not a perfect secret detector. It may miss unusual secret filenames and may deny some legitimate files. |
-| Command parsing | Policy denies destructive, credential-seeking, and obvious detached/background patterns | Odessy does not implement a full shell parser. Execution-level timeout cleanup is a backstop, not a universal containment proof. |
+| Command parsing | Policy denies destructive, credential-seeking, and obvious detached/background patterns, download-and-run (`curl … \| sh`, `iwr … \| iex`, `bash <(curl …)`), and writes to operating-system locations (`C:\Windows`, `/etc`, `/usr`, …) | Odessy does not implement a full shell parser, so these are patterns: an obfuscated command can evade them, and an interpreter fed by a download is denied even when it only formats data. Execution-level timeout cleanup is a backstop, not a universal containment proof. |
+| Cross-OS paths | The workspace check treats a Windows drive or UNC path as outside the workspace, and a backslash as a separator, on any host | Before this, on the Linux Jetson `C:\Windows\System32\x` was a relative file name inside the workspace, so a write there (bound for the Windows laptop) was only confirmed. The laptop's own path guard still rejected it. |
 | Timeout cleanup | Windows uses process-tree termination; POSIX uses process-group termination where practical | Cleanup is best effort. Intentionally detached descendants may evade request-scoped cleanup without stronger OS primitives. |
 | Environment isolation | `terminal.run` receives a sanitized allowlisted environment | Some legitimate tools may require additional non-secret environment variables later. Additions must be explicit and reviewed. |
 | Output bounds | stdout/stderr are bounded with head-and-tail retention; the full text is spilled to `.odessy/spill/` and replaced inline with a preview, an exact omitted-byte count, and a locator | Truncation is no longer lossy, but bounded is not the same as sanitized. See the credential handling row below for what is and is not redacted. |
@@ -235,7 +236,10 @@ work:
    write tools exist yet.
 5. How confirmation is represented so the model cannot approve itself -- the model
    requests, an `EscalationApprover` decides, and a denied `danger-full-access` request
-   cannot fall back to a wider mode.
+   cannot fall back to a wider mode. The text CLI composes a terminal approver that asks
+   y/N for the one call (until the October 18 fixes it composed none, so every
+   escalation request failed the turn). Voice mode uses the same terminal prompt, like
+   its confirmations; there is no spoken approval yet.
 
 These limitations should be updated whenever Odessy adds Gemma, voice, write tools, public MCP exposure, or further OS-level containment. v0.3.0 added the isolation layer, and the **Isolation Layer** section above is where its coverage is recorded per host.
 

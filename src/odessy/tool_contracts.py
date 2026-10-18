@@ -180,17 +180,28 @@ def render_tool_contract(name: str) -> str:
     )
 
 
+#: Appended to the command tools. In the first evaluation runs a small model answered
+#: "I have no tool for that" to memory, disk and IP questions while a shell tool was
+#: offered: "run a shell command" alone did not tell it what a shell is for.
+_SHELL_USES = (
+    " Use it for anything a shell command can answer when no other tool fits: processes, "
+    "memory, disk space, network addresses and ports, environment variables, counting files."
+)
+
 _TOOL_DESCRIPTIONS: dict[str, str] = {
     "time.now": "Return the current local time.",
-    "terminal.run": "Run a shell command in the local workspace and return structured output.",
-    "laptop.terminal.run": "Run a shell command on the user's laptop (not the local machine).",
+    "terminal.run": "Run a shell command in the local workspace and return structured output." + _SHELL_USES,
+    "laptop.terminal.run": "Run a shell command on the user's laptop (not the local machine)." + _SHELL_USES,
     "filesystem.write": "Write content to a file inside the workspace. Requires confirmation.",
     "log.append": "Append a line to the internal Odessy log. Destination is fixed and internal.",
     "calculator.eval": "Evaluate a side-effect-free arithmetic expression.",
     "filesystem.read": "Read a regular text file inside the workspace.",
     "filesystem.list": "List directory entries inside the workspace.",
-    "project.find": "Find file names inside the workspace.",
-    "project.grep": "Search file contents inside the workspace.",
+    "project.find": (
+        "Find files by name inside the workspace: part of a name, or a glob such as *.py. "
+        "Does not look inside files."
+    ),
+    "project.grep": "Search inside file contents in the workspace for text, such as a word or a function name.",
     "git.status": "Return git status output.",
     "git.diff": "Return git diff output.",
     "git.changed_files": "Return changed file names.",
@@ -199,7 +210,7 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
 
 #: Descriptions that differ in ``single`` mode, where there is only one machine.
 _SINGLE_MACHINE_DESCRIPTIONS: dict[str, str] = {
-    "terminal.run": "Run a shell command on the user's computer and return structured output.",
+    "terminal.run": "Run a shell command on the user's computer and return structured output." + _SHELL_USES,
 }
 
 

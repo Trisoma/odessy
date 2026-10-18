@@ -34,6 +34,9 @@ SHELL_FORBIDDEN: dict[str, tuple[str, ...]] = {
         r"\bxargs\b",
         r"\$\(",
         r"/proc/",
+        # sh-style variables. In PowerShell `$PATH` is an unset variable and prints
+        # nothing; the environment is `$env:PATH`.
+        r"(?i)\$(path|home|user)\b",
     ),
     "sh": (r"\b(Get|Select|Sort|Where|Measure|Set|New|Remove|Test|Invoke)-[A-Z][A-Za-z]+",),
 }

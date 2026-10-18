@@ -7,7 +7,7 @@ import pytest
 from odessy.cli import _build_model
 from odessy.lfm_model import LlamaCppLFMModel, normalize_ollama_chat_response
 from odessy.ollama_model import _OllamaToolsUnsupported, _looks_like_generic_final_response
-from odessy.tool_contracts import TOOL_REQUEST_SCHEMAS
+from odessy.tool_contracts import TOOL_REQUEST_SCHEMAS, build_openai_tools
 from odessy.types import FinalResponse, ToolObservation, ToolRequest
 
 
@@ -428,8 +428,12 @@ def test_lfm_observation_advertises_tools() -> None:
     assert model.calls[-1]["tools"]
 
 
-def test_lfm_observation_and_proposal_advertise_the_same_tool_list() -> None:
-    """The continuation path must use the same construction as the proposal path."""
+def test_lfm_observation_advertises_every_tool_even_when_the_proposal_was_routed() -> None:
+    """Routing narrows the first proposal only.
+
+    A follow-up step usually needs a different tool (find, then read). When it was
+    offered only the routed tool, no multi-step task could finish.
+    """
 
     model = QueuedLFM(
         [
@@ -447,7 +451,10 @@ def test_lfm_observation_and_proposal_advertise_the_same_tool_list() -> None:
         ToolObservation(request=action, result={"iso_time": "2026-09-20T12:00:00+00:00"}),
     )
 
-    assert model.calls[0]["tools"] == model.calls[1]["tools"]
+    proposal_tools = [tool["function"]["name"] for tool in model.calls[0]["tools"]]
+    follow_up_tools = [tool["function"]["name"] for tool in model.calls[1]["tools"]]
+    assert proposal_tools == ["time.now"]
+    assert follow_up_tools == [tool["function"]["name"] for tool in build_openai_tools()]
 
 
 def test_lfm_observation_parses_a_native_second_tool_request() -> None:

@@ -1,12 +1,31 @@
 from __future__ import annotations
 
 import fnmatch
+import os
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 
 class WorkspaceAuthorityError(PermissionError):
     """Raised when Odessy cannot safely authorize a workspace path."""
+
+
+def _native_path_text(candidate_path: str) -> str:
+    """The path text to judge, read so that a Windows path cannot pass on POSIX.
+
+    The policy can run on a different OS from the executor: in the two-machine setup it
+    runs on the Linux Jetson and the laptop executing the call runs Windows. On POSIX,
+    ``C:\\Windows\\System32\\x`` is one relative file name, so it resolved inside the
+    workspace and a write there was only confirmed. Here a Windows-anchored path (a
+    drive or a UNC share) is outside, and a backslash is a separator, so ``..\\..``
+    climbs as it would on Windows. On Windows the native rules already apply.
+    """
+
+    if os.name == "nt":
+        return candidate_path
+    if PureWindowsPath(candidate_path).drive:
+        raise WorkspaceAuthorityError("path is outside the allowed workspace")
+    return candidate_path.replace("\\", "/")
 
 
 @dataclass(frozen=True)
@@ -37,7 +56,7 @@ class WorkspaceAuthority:
         if not isinstance(candidate_path, str) or not candidate_path.strip():
             raise WorkspaceAuthorityError("path is empty or invalid")
 
-        candidate = Path(candidate_path).expanduser()
+        candidate = Path(_native_path_text(candidate_path)).expanduser()
         if not candidate.is_absolute():
             candidate = self.workspace_root / candidate
 
@@ -77,9 +96,16 @@ class WorkspaceAuthority:
 
         ancestor = current.resolve(strict=True)
         self._assert_inside(ancestor)
+        # The reapplied parts do not exist, so none is a symlink and ".." can be folded
+        # lexically. Appending it verbatim let `missing/../../outside` pass on POSIX:
+        # the lexical relative_to check saw it under the root. Windows resolves ".."
+        # before this point, which is why only Linux CI caught it.
         resolved = ancestor
         for part in reversed(parts_to_reapply):
-            resolved = resolved / part
+            if part == "..":
+                resolved = resolved.parent
+            elif part not in ("", "."):
+                resolved = resolved / part
         return resolved
 
     def _assert_inside(self, resolved: Path) -> None:

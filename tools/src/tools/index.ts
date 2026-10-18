@@ -156,12 +156,11 @@ export async function findProjectTool(
 ): Promise<ProjectFindResult> {
   const root = await guard.resolveExisting(input.path ?? ".");
   const limit = normalizeLimit(input.limit);
-  const needle = input.pattern.toLowerCase();
   const matches: string[] = [];
 
   await walk(root, async (absolutePath, stat) => {
     if (matches.length >= limit) return;
-    if (stat.isFile() && path.basename(absolutePath).toLowerCase().includes(needle)) {
+    if (stat.isFile() && fileNameMatches(path.basename(absolutePath), input.pattern)) {
       matches.push(guard.relative(absolutePath));
     }
   });
@@ -552,6 +551,21 @@ function buildMatcher(
   }
   const regex = new RegExp(pattern, options.ignoreCase ? "i" : undefined);
   return (line) => regex.test(line);
+}
+
+/**
+ * Whether a file name matches a `project.find` pattern.
+ *
+ * A plain pattern is a case-insensitive substring of the name. A pattern with `*` or
+ * `?` is a glob on the name: models write `*.py` and `**\/*.py`, and as substrings those
+ * matched nothing, so a search that should list every Python file found none. Only the
+ * last path segment counts, because names are matched, not paths.
+ */
+export function fileNameMatches(fileName: string, pattern: string): boolean {
+  const name = fileName.toLowerCase();
+  const needle = pattern.toLowerCase();
+  if (!/[*?]/.test(needle)) return name.includes(needle);
+  return globMatches(name, needle.split(/[\\/]/).pop() ?? needle);
 }
 
 function globMatches(filename: string, glob: string): boolean {

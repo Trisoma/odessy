@@ -18,6 +18,8 @@ from evals.definitions import CATEGORIES, Case, load_cases
 
 RESULTS_DIR = Path(__file__).parent / "results"
 
+_REGRADE_HELP = "Grade the recorded attempts again with the current graders (attempts.jsonl is not changed)."
+
 EVAL_DEPLOYMENT_ENV = {
     "ODESSY_DEPLOYMENT": "split",
     "ODESSY_LOCAL_OS": "linux",
@@ -51,10 +53,12 @@ def main(argv: list[str] | None = None) -> int:
 
     summarize = commands.add_parser("summarize", help="Regenerate summary.md/json for a run directory.")
     summarize.add_argument("run_dir", type=Path)
+    summarize.add_argument("--regrade", action="store_true", help=_REGRADE_HELP)
 
     compare = commands.add_parser("compare", help="Compare several run directories side by side.")
     compare.add_argument("run_dirs", type=Path, nargs="+")
     compare.add_argument("--output", type=Path, help="Write the comparison here as well as printing it.")
+    compare.add_argument("--regrade", action="store_true", help=_REGRADE_HELP)
 
     args = parser.parse_args(argv)
     if args.command == "list":
@@ -62,11 +66,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "summarize":
         from evals.report import write_summary
 
-        write_summary(args.run_dir)
+        write_summary(args.run_dir, regrade_records=args.regrade)
         print((args.run_dir / "summary.md").read_text(encoding="utf-8"))
         return 0
     if args.command == "compare":
-        return _compare(args.run_dirs, args.output)
+        return _compare(args.run_dirs, args.output, regrade=args.regrade)
     return asyncio.run(_run(args))
 
 
@@ -76,12 +80,12 @@ def _list() -> int:
     return 0
 
 
-def _compare(run_dirs: list[Path], output: Path | None) -> int:
+def _compare(run_dirs: list[Path], output: Path | None, *, regrade: bool = False) -> int:
     from evals.report import render_comparison, write_summary
 
     runs = []
     for run_dir in run_dirs:
-        summary = write_summary(run_dir)
+        summary = write_summary(run_dir, regrade_records=regrade)
         metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
         runs.append((metadata.get("label", run_dir.name), summary))
     text = render_comparison(runs)

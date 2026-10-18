@@ -121,6 +121,23 @@ def _register(
     server.add_tool(tool, name=name, description=name, structured_output=True)
 
 
+def file_name_matches(name: str, pattern: str) -> bool:
+    """``project.find`` matching, the same as the Node tool server's ``fileNameMatches``.
+
+    A plain pattern is a case-insensitive substring of the name; a pattern with ``*`` or
+    ``?`` is a glob on the name, using its last path segment. Any other character is
+    literal. This used to strip ``*`` instead, which let ``*.py`` succeed here while the
+    real server found nothing.
+    """
+
+    name, needle = name.lower(), pattern.lower()
+    if "*" not in needle and "?" not in needle:
+        return needle in name
+    segment = re.split(r"[\\/]", needle)[-1]
+    regex = re.escape(segment).replace(r"\*", ".*").replace(r"\?", ".")
+    return re.fullmatch(regex, name) is not None
+
+
 def _handlers(workspace: Path, git: GitFixture, terminal_stdout: str | None) -> dict[str, Any]:
     def inside(relative: str | None) -> Path:
         target = (workspace / (relative or ".")).resolve()
@@ -149,8 +166,8 @@ def _handlers(workspace: Path, git: GitFixture, terminal_stdout: str | None) -> 
 
     def find(args: dict[str, Any]) -> dict[str, Any]:
         root = inside(args.get("path"))
-        needle = str(args["pattern"]).lower().strip("*")
-        matches = [rel(p) for p in files(root) if needle in p.name.lower()]
+        pattern = str(args["pattern"])
+        matches = [rel(p) for p in files(root) if file_name_matches(p.name, pattern)]
         return {"pattern": args["pattern"], "path": rel(root), "matches": matches, "count": len(matches), "status": "ok", "truncated": False}
 
     def grep(args: dict[str, Any]) -> dict[str, Any]:
