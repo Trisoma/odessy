@@ -40,7 +40,7 @@ From the repository root:
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\Activate.ps1
 pip install -e ".[cloud]"
-python -m evals list               # should print 38 cases
+python -m evals list               # should print 56 cases
 ```
 
 Model settings come from `config/odessy.env` (Ollama endpoint, model name), the same
@@ -110,7 +110,8 @@ Useful options:
 
 ### How long it takes
 
-38 cases × 3 repeats = 114 attempts per configuration, most needing 2–3 model calls.
+56 cases × 3 repeats = 168 attempts per configuration. The original 38-case suite
+had 114 attempts; the new hard cases can require longer tool chains.
 
 - **Local LFM on the Jetson**: a single model call was measured at ~25–30 s, so plan
   for **about 2–3 hours per configuration**. Overnight is fine; results are written
@@ -125,7 +126,7 @@ Useful options:
 ## What to send back
 
 Each run creates a folder under `evals/results/`, for example
-`evals/results/20261018-213000-deepseek-low/`, containing:
+`evals/results/20261018-211248-deepseek-low/`, containing:
 
 | File | Contents |
 |---|---|

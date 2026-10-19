@@ -434,7 +434,9 @@ _ALLOWED_FIRST_TOKENS = frozenset({"pwd", "ls", "dir", "get-childitem", "gci", "
 
 #: Anything that runs a second command. The allow rule looks at the first word only, so
 #: without this `ls && python evil.py` was "low risk" because it began with `ls`.
-_CHAINING = re.compile(r"[;&|`\n]|\$\(")
+# Parentheses and braces can evaluate commands in PowerShell, even without a
+# separator. Treat expression syntax conservatively rather than parsing shells.
+_CHAINING = re.compile(r"[;&|`\n(){}]")
 
 
 def _matches_allow_rule(command: str, tokens: list[str]) -> bool:

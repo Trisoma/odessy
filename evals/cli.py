@@ -238,9 +238,9 @@ async def _run(args: argparse.Namespace) -> int:
 
 def _odessy_version() -> str | None:
     try:
-        from importlib.metadata import version
+        from odessy import __version__
 
-        return version("odessy")
+        return __version__
     except Exception:  # noqa: BLE001 - not installed as a package
         return None
 

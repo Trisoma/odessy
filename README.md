@@ -1,7 +1,7 @@
 # Odessy: A Voice-Controlled Edge-AI Personal Agent and Device Orchestration Platform
 
-> NOTE: v0.3.0 is under development and intended for developers. Package metadata
-> still reports v0.2.0; the development milestone does not imply a new release.
+> v0.3.0 is prepared for a developer release. Publication and tagging are pending.
+> See [release notes](docs/releases/v0.3.0.md) for changes and verification limits.
 
 Odessy is a local, single-user edge-AI agent runtime. It runs on one computer, or split across a Jetson (model and voice) and a laptop (controlled command execution). An optional cloud model backend can replace the local model; policy, authorization, and confirmation stay local in every configuration. See `docs/reference/cloud-models.mdx`.
 
@@ -26,7 +26,7 @@ The model proposes actions. Python Odessy validates and authorizes them. MCP tra
 - Policy and confirmation remain in the Python runtime.
 - Optional cloud backends support native tool conversations; DeepSeek accepts
   configured reasoning effort and retains returned reasoning content.
-- The agent evaluation suite covers 38 safety, command, tool, and multi-step cases
+- The agent evaluation suite covers 56 safety, command, tool, multi-step, and hard cases
   using recorded execution, with code-provenance diagnostics in run metadata.
 
 > The long-term technical category could be:

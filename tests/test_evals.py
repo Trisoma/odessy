@@ -375,6 +375,15 @@ def test_summary_explains_deployment_and_missing_commit() -> None:
     assert "| git_commit_note | git not on PATH |" in markdown
 
 
+def test_eval_version_matches_runtime_and_package_source() -> None:
+    from odessy import __version__
+    from evals.cli import _odessy_version
+    from evals.toml_compat import loads_toml
+
+    project = loads_toml((Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8"))
+    assert _odessy_version() == __version__ == project["project"]["version"]
+
+
 @pytest.mark.parametrize("provenance", [("abc1234", None), (None, "git unavailable; tree-sha256: 123456789abc")])
 def test_cli_run_writes_results(monkeypatch, tmp_path: Path, provenance) -> None:
     from evals import cli

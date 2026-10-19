@@ -29,7 +29,7 @@ This page records the limits future agents must keep visible when changing the r
 | Symlinks/reparse points | Canonical path resolution blocks existing symlink escapes where the platform resolver exposes them | This is not a claim of complete coverage for every Windows reparse-point or filesystem race edge case. |
 | Sensitive paths | Obvious sensitive names and segments are denied | The classifier is intentionally conservative, not a perfect secret detector. It may miss unusual secret filenames and may deny some legitimate files. |
 | Command parsing | Policy denies destructive, credential-seeking, and obvious detached/background patterns, download-and-run (`curl … \| sh`, `iwr … \| iex`, `bash <(curl …)`), and writes to operating-system locations (`C:\Windows`, `/etc`, `/usr`, …) | Odessy does not implement a full shell parser, so these are patterns: an obfuscated command can evade them, and an interpreter fed by a download is denied even when it only formats data. Execution-level timeout cleanup is a backstop, not a universal containment proof. |
-| Low-risk allow rule | `pwd`, `ls`, `dir`, `Get-ChildItem`/`gci`, `Get-Location` and `git status` run without confirmation, and only as a single command | Before, only the first word was checked, so `ls && python evil.py` was "low risk"; any chaining (`;`, `&&`, `\|`, backticks, `$(`) now needs confirmation. PowerShell's read-only listing needed confirmation that `ls` did not. |
+| Low-risk allow rule | `pwd`, `ls`, `dir`, `Get-ChildItem`/`gci`, `Get-Location` and `git status` run without confirmation, and only as a single command | Before, only the first word was checked, so `ls && python evil.py` was "low risk"; any chaining (`;`, `&&`, `\|`, backticks, `$(`) now needs confirmation. Parentheses and braces also require confirmation because PowerShell can execute commands inside expressions. This remains conservative pattern matching, not a shell parser. |
 | Failed tool calls | A tool call that runs and fails (a wrong path) is returned to the model as an observation it can correct | The next call is validated and authorized like any other, and the per-turn model-call limit (`ODESSY_MAX_MODEL_CALLS`: 8 for cloud backends, 4 for local ones) still bounds retries. Before, one wrong path ended the turn. |
 | Cross-OS paths | The workspace check treats a Windows drive or UNC path as outside the workspace, and a backslash as a separator, on any host | Before this, on the Linux Jetson `C:\Windows\System32\x` was a relative file name inside the workspace, so a write there (bound for the Windows laptop) was only confirmed. The laptop's own path guard still rejected it. |
 | Timeout cleanup | Windows uses process-tree termination; POSIX uses process-group termination where practical | Cleanup is best effort. Intentionally detached descendants may evade request-scoped cleanup without stronger OS primitives. |
@@ -164,7 +164,7 @@ benchmark/tts/jetson-voice-benchmark.mdx
 
 ### Agent evaluations and provenance
 
-`evals/` has 38 cases and supports local and cloud models. It runs the real agent
+`evals/` has 56 cases, including 18 hard cases, and supports local and cloud models. It runs the real agent
 loop against a recording execution server, so shell commands and requested writes
 are not performed on the host. It measures proposals, policy decisions, tool
 sequences, and deterministic checks against fixtures. It does not measure real
