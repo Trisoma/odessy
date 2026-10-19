@@ -4,6 +4,10 @@ Release baseline: **v0.3.0**, released privately as a prerelease on October 19,
 2026. Unfinished feature work belongs to the [v0.4.0 roadmap](docs/releases/v0.4.0.md).
 Historical measurements below retain their original dates and versions.
 
+Third-party MCP server support is v0.4.0 development work and is not part of the
+released v0.3.0 baseline. See `docs/reference/external-servers.mdx` for its
+transport, trust, schema, and policy boundaries.
+
 ## Voice Smoke Test Limitations
 
 The voice path is wired and runnable, but the first live smoke test exposed several limitations that should not be confused with wiring failure.
@@ -283,7 +287,7 @@ cloud tool call passes through the same validation functions the local adapter u
 What changes is where data goes, not who decides.
 
 ```text
-Local backend (default)   Nothing leaves the machine.
+Local backend (default)   No model-provider request; tools may perform network I/O.
 Cloud backend selected    The user's text and that turn's tool observations are sent to
                           the provider, after passing through redact_text.
 ```

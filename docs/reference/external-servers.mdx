@@ -12,6 +12,18 @@ Odessy can offer the tools of third-party MCP servers to the model, next to its 
 A server is used only if it is listed in your `servers.toml`; being reachable is not
 being trusted.
 
+**Status: implemented in v0.4.0 development, unreleased**, merged via PR #11 on
+October 19, 2026. This is an extra feature beyond the initial roadmap and is not
+part of the released v0.3.0 baseline. See the [v0.4.0 roadmap](../releases/v0.4.0.md).
+
+Listing a `stdio` server authorizes launching that program locally, including
+during startup discovery, before any individual tool confirmation. Listing an
+`http` server authorizes contacting that endpoint and sending it tool arguments
+on calls. The `trust` setting governs tool-policy decisions; `untrusted` does not
+sandbox the program. Odessy's own command isolation does not automatically apply
+to third-party servers. Their descriptions, schemas, annotations, and results are
+third-party content, including descriptions sent to the model.
+
 ## The servers file
 
 Location: `~/.config/odessy/servers.toml` (outside the repository). Set
@@ -59,7 +71,9 @@ and the built-in tools are unaffected.
 
 - **Descriptions** are written by the server's author. They are shortened and
   labelled `[Third-party tool from the notes server]` in what the model sees.
-- **Arguments** are checked against the server's own JSON Schema before policy runs.
+- **Arguments** are checked against the server's own JSON Schema before execution.
+  Policy preflight can run before schema validation; confirmation may therefore
+  be requested for arguments that are subsequently rejected.
 - **Left out, with a reason:** tool names that cannot travel through every model
   adapter (anything but letters, digits, `_`, `.`, `-`, or containing `__`), schemas
   that are not objects, invalid, larger than 8000 characters or nested deeper than 8.
@@ -98,3 +112,7 @@ server that answered in `ExecutionTarget`, and nothing found at runtime is added
 - `python -m odessy doctor` does not yet check configured servers.
 - Confirmation is a terminal prompt in voice mode too.
 - No audit log of third-party calls beyond the turn log.
+- The merged snapshot imports `jsonschema` directly but obtains it through the
+  `mcp` dependency; declaring it directly remains follow-up work.
+- Avoid `__` in server names: the merged config parser accepts it, but cloud
+  tool-name decoding cannot preserve it. Remote tool names already reject `__`.
