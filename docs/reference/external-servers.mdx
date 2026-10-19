@@ -1,0 +1,100 @@
+---
+title: "Third-Party MCP Servers"
+sidebar-title: "External Servers"
+description: "Reference for connecting third-party MCP servers to Odessy: the servers.toml format, how their tools are named and offered, and how policy decides each call."
+description-agent: "Use when adding, configuring, or changing third-party MCP servers. Only a configured server executes; only the user's config relaxes a decision; untrusted servers need confirmation on every call."
+keywords: ["odessy mcp", "external servers", "servers.toml", "tool policy", "trust"]
+content:
+  type: "reference"
+---
+
+Odessy can offer the tools of third-party MCP servers to the model, next to its own.
+A server is used only if it is listed in your `servers.toml`; being reachable is not
+being trusted.
+
+## The servers file
+
+Location: `~/.config/odessy/servers.toml` (outside the repository). Set
+`ODESSY_SERVERS_FILE` to use another path. Without the file, nothing changes.
+
+```toml
+[servers.notes]                  # the name is also the tool-name prefix
+transport = "stdio"
+command = ["notes-mcp", "--root", "notes"]
+env = ["NOTES_DIR"]              # environment passed to the command, beyond the base set
+trust = "trusted"                # "untrusted" (the default) or "trusted"
+workspace_paths = ["path"]       # arguments that hold paths; kept inside the workspace
+timeout = 30                     # seconds per listing or call
+
+[servers.notes.tools.search]
+policy = "allow"                 # "allow" | "confirm" | "deny", by the server's own tool name
+
+[servers.notes.tools.delete_note]
+policy = "deny"
+
+[servers.tracker]
+transport = "http"
+url = "http://127.0.0.1:9000/mcp"
+```
+
+| Key | Meaning |
+|---|---|
+| `transport` | `http` (needs `url`) or `stdio` (needs `command`) |
+| `env` | stdio only: variable names passed to the command. It always gets a base set (`PATH`, `SYSTEMROOT`, `HOME`, `TEMP`, ...) and nothing else |
+| `trust` | `untrusted` by default. See the decision order below |
+| `tools.<name>.policy` | Per-tool override. The only way to relax a decision |
+| `workspace_paths` | Argument names whose values must stay inside the workspace and not name credential files, checked even when a tool is allowed |
+| `timeout` | Seconds for listing the server's tools and for each call |
+
+Server names are lowercase identifiers. The built-in families (`git`, `filesystem`,
+`terminal`, `project`, `time`, `calculator`, `log`, `laptop`) and `odessy` are
+reserved. A malformed file stops Odessy with the file, server and problem named.
+
+## How tools are offered
+
+At startup each configured server is asked for its tools once. Its tools are offered
+as `<server>.<tool>` (`notes.search`), so they cannot shadow a built-in tool or each
+other. A server that does not answer is reported on startup and left out; the others
+and the built-in tools are unaffected.
+
+- **Descriptions** are written by the server's author. They are shortened and
+  labelled `[Third-party tool from the notes server]` in what the model sees.
+- **Arguments** are checked against the server's own JSON Schema before policy runs.
+- **Left out, with a reason:** tool names that cannot travel through every model
+  adapter (anything but letters, digits, `_`, `.`, `-`, or containing `__`), schemas
+  that are not objects, invalid, larger than 8000 characters or nested deeper than 8.
+- **Limit:** at most 64 third-party tools for a cloud model and 16 for a local one,
+  in config order.
+- **Results** may be text only; they reach the model as `{"status": "ok", "content": ...}`
+  and, for a cloud model, are redacted and capped like any tool result.
+
+## How a call is decided
+
+Evaluated in order; the first rule that applies decides.
+
+| # | Rule | Decision |
+|---|---|---|
+| 1 | `policy = "deny"` for this tool | deny |
+| 2 | A `workspace_paths` argument leaves the workspace or names a credential file | deny |
+| 3 | `policy = "allow"` / `"confirm"` for this tool | allow / confirm |
+| 4 | The server is not `trusted` | confirm |
+| 5 | Trusted server, tool annotated `read_only_hint` and not `destructive_hint` | allow |
+| 6 | Anything else (trusted, but destructive, unannotated, or not read-only) | confirm |
+
+What a server says about its own tools only ever makes a decision stricter, with one
+exception: rule 5, which applies only to a server you marked `trusted`. Marking a
+server trusted is therefore a statement that you believe its annotations.
+
+Odessy's sandbox modes govern its own command tools; a third-party tool that is sent
+`sandbox_permissions` or `justification` without declaring them is denied.
+
+A server must be listed to execute at all: the composition root wraps each listed
+server that answered in `ExecutionTarget`, and nothing found at runtime is added.
+
+## Not covered yet
+
+- One connection per call. A stdio server is started for each listing and each call;
+  a session kept for the whole run is planned.
+- `python -m odessy doctor` does not yet check configured servers.
+- Confirmation is a terminal prompt in voice mode too.
+- No audit log of third-party calls beyond the turn log.

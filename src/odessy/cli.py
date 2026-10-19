@@ -27,6 +27,14 @@ from odessy.execution.escalation import ApprovalRequest, EscalationDeniedError, 
 from odessy.fake_model import FakeModel
 from odessy.lfm_model import LlamaCppLFMModel
 from odessy.mcp_server import build_odessy_mcp_server
+from odessy.external_tools import (
+    NamespacedServer,
+    ServerConfigError,
+    discover_tools,
+    external_tool,
+    external_tool_scope,
+    load_server_configs,
+)
 from odessy.node_mcp import NodeToolServerHttp, node_tool_server_dependencies_installed
 from odessy.ollama_model import OllamaModel
 from odessy.policy import OdessyPolicy
@@ -170,6 +178,9 @@ def _isolation_from_env() -> IsolationRequirement:
 
 def _confirm_tool_call(decision: PolicyDecision, request: ToolRequest) -> bool:
     print(f"Odessy needs confirmation to run {request.name}.")
+    external = external_tool(request.name)
+    if external is not None:
+        print(f"Server: {external.server.name} ({external.server.trust}), its tool {external.remote_name!r}")
     print(f"Risk: {decision.risk}")
     print(f"Reason: {decision.reason}")
     print(f"Arguments: {_summarize_arguments(request.arguments)}")
@@ -191,7 +202,7 @@ async def _text_async(user_text: str, use_fake_model: bool, backend: str | None 
     workspace_root = Path.cwd()
     model = _build_model(use_fake_model, backend=backend)
     _announce_cloud(model)
-    async with _tool_servers(workspace_root) as servers:
+    async with _tool_servers(workspace_root, cloud=isinstance(model, CloudModel)) as servers:
         agent = _build_agent(workspace_root, model, servers)
         try:
             result = await agent.run_turn(user_text)
@@ -207,7 +218,7 @@ async def _voice_async(use_fake_model: bool, backend: str | None = None) -> None
     workspace_root = Path.cwd()
     model = _build_model(use_fake_model, backend=backend, model_name=config.ollama_model)
     _announce_cloud(model)
-    async with _tool_servers(workspace_root) as servers:
+    async with _tool_servers(workspace_root, cloud=isinstance(model, CloudModel)) as servers:
         agent = _build_agent(workspace_root, model, servers)
         await _run_voice_turn(agent, config)
 
@@ -290,8 +301,43 @@ _NO_NODE_WARNING = (
 )
 
 
+#: Third-party tools offered to the model at most, by backend. Every tool's schema is
+#: sent with every model call; a 1B local model also chooses worse among many tools.
+MAX_EXTERNAL_TOOLS_CLOUD = 64
+MAX_EXTERNAL_TOOLS_LOCAL = 16
+
+
 @asynccontextmanager
-async def _tool_servers(workspace_root: Path) -> AsyncIterator[tuple[object, ...]]:
+async def _tool_servers(workspace_root: Path, *, cloud: bool = False) -> AsyncIterator[tuple[object, ...]]:
+    """Built-in servers for this deployment, plus the third-party servers in servers.toml.
+
+    A configured server is listed once at startup; its tools become model-facing for
+    the run as ``<server>.<tool>``. A server that does not answer is reported and left
+    out; it does not stop the run or affect the built-in tools.
+    """
+
+    try:
+        configs = load_server_configs()
+    except ServerConfigError as error:
+        raise SystemExit(str(error)) from error
+
+    async with _builtin_tool_servers(workspace_root) as builtins:
+        if not configs:
+            yield builtins
+            return
+        limit = MAX_EXTERNAL_TOOLS_CLOUD if cloud else MAX_EXTERNAL_TOOLS_LOCAL
+        tools, reachable, problems = await discover_tools(configs, limit=limit)
+        for problem in problems:
+            print(f"[odessy] external server {problem}", file=sys.stderr)
+        # Being configured is the authorization: only listed servers that answered are
+        # execution targets. Nothing found at runtime is ever added here.
+        externals = tuple(ExecutionTarget(NamespacedServer(config)) for config in reachable)
+        with external_tool_scope(tools):
+            yield (*builtins, *externals)
+
+
+@asynccontextmanager
+async def _builtin_tool_servers(workspace_root: Path) -> AsyncIterator[tuple[object, ...]]:
     """The MCP servers for this deployment, kept running for the duration of the block.
 
     Each is wrapped in `ExecutionTarget` because this IS the authorization act: the

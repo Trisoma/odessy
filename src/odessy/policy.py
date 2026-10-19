@@ -20,6 +20,7 @@ from odessy.execution.escalation import (
     approve_escalation,
     validate_escalation_args,
 )
+from odessy.external_tools import ExternalTool, external_tool
 from odessy.types import PolicyDecision, ToolRequest
 from odessy.workspace_authority import WorkspaceAuthority, WorkspaceAuthorityError
 
@@ -70,6 +71,9 @@ class OdessyPolicy:
         return WorkspaceAuthority(Path(self.workspace_root))
 
     def evaluate(self, request: ToolRequest) -> PolicyDecision:
+        external = external_tool(request.name)
+        if external is not None:
+            return self._evaluate_external(external, request)
         allowed_tools = self.allowed_tools or {
             "time.now",
             "terminal.run",
@@ -345,6 +349,62 @@ class OdessyPolicy:
                 subject="command",
             ),
             approval,
+        )
+
+    def _evaluate_external(self, tool: ExternalTool, request: ToolRequest) -> PolicyDecision:
+        """A tool from a configured third-party server.
+
+        Only the user's config can relax a decision. What the server says about its
+        own tools (its annotations) is used in one way only: on a server the user
+        marked ``trusted``, a tool annotated read-only and not destructive runs
+        without confirmation. Everything else needs the user's yes.
+        """
+
+        name = request.name
+        server = tool.server
+        stray = _ESCALATION_ARGUMENT_NAMES & set(request.arguments)
+        if stray and not ({"properties"} <= set(tool.input_schema) and stray <= set(tool.input_schema["properties"])):
+            return PolicyDecision(
+                "deny",
+                f"{name} does not accept {sorted(stray)[0]}: sandbox modes govern Odessy's own "
+                "command tools, not third-party tools",
+                "medium",
+            )
+
+        configured = server.tool_policies.get(tool.remote_name)
+        if configured == "deny":
+            return PolicyDecision("deny", f"{name} is denied by the {server.name} server's config", "high")
+
+        # Path arguments the user declared are held to the workspace, whatever the
+        # tool-level policy says: an `allow` covers the tool, not where it reaches.
+        for argument in server.workspace_paths:
+            value = request.arguments.get(argument)
+            if isinstance(value, str):
+                decision = self._check_workspace_path(value, name)
+                if decision is not None:
+                    return decision
+
+        if configured == "allow":
+            return PolicyDecision("allow", f"{name} is allowed by the {server.name} server's config", "low")
+        if configured == "confirm":
+            return PolicyDecision("confirm", f"{name} requires confirmation by the {server.name} server's config", "medium")
+        if server.trust != "trusted":
+            return PolicyDecision(
+                "confirm",
+                f"{name} requires confirmation because the {server.name} server is not marked trusted",
+                "medium",
+            )
+        if tool.read_only is True and tool.destructive is not True:
+            return PolicyDecision(
+                "allow",
+                f"{name} is annotated read-only by the trusted {server.name} server",
+                "low",
+            )
+        why = "annotated destructive" if tool.destructive else "not annotated read-only"
+        return PolicyDecision(
+            "confirm",
+            f"{name} requires confirmation because it is {why}",
+            "medium" if not tool.destructive else "high",
         )
 
     def _check_workspace_cwd(self, cwd: str, tool_name: str) -> PolicyDecision | None:
