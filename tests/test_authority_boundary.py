@@ -207,6 +207,38 @@ def test_command_bridge_runs_with_the_sanitized_environment(
     assert "secret-value" not in result["stdout"]
 
 
+def test_a_failing_command_still_reports_an_exit_code(tmp_path: Path) -> None:
+    """``exit_code is None`` means Odessy terminated it, and nothing else.
+
+    This is the converse of the timeout test: a command that fails on its own must
+    keep a code, or ``None`` would stop being a signal and start being noise.
+    """
+
+    bridge = CommandBridge(tmp_path)
+
+    result = bridge.run(command='python -c "raise SystemExit(7)"', timeout=bridge.max_timeout)
+
+    assert result["status"] == "failed"
+    assert result["timed_out"] is False
+    assert result["exit_code"] is not None
+
+
+@pytest.mark.skipif(os.name != "nt", reason="POSIX propagates the child's status")
+def test_windows_reports_powershell_status_not_the_commands(tmp_path: Path) -> None:
+    """The measured Windows limitation, recorded in ``LIMITATION.md``.
+
+    ``powershell -Command`` exits with its own status, so a command that exits 7
+    arrives as 1. Without this note the test would read as a bug; with it, a change
+    here fails loudly and points at the documentation that has to be updated.
+    """
+
+    bridge = CommandBridge(tmp_path)
+
+    result = bridge.run(command='python -c "raise SystemExit(7)"', timeout=bridge.max_timeout)
+
+    assert result["exit_code"] == 1
+
+
 def test_command_bridge_bounds_stdout(tmp_path: Path) -> None:
     bridge = CommandBridge(tmp_path, max_stdout_chars=100)
     command = "python -c \"print('x' * 1000)\""

@@ -171,9 +171,14 @@ class CommandBridge:
             return {
                 "stdout": stdout,
                 "stderr": stderr_text,
-                # No process exit status exists: the executor terminated the process,
-                # so any code a killed process reports is a kill artifact, not the
-                # command's outcome.
+                # Decision (2026-10-19): a command Odessy terminated reports no exit
+                # code. Measured on Windows, a taskkill'd process reports 1, and 1 is
+                # also what PowerShell returns for any failing command -- so keeping
+                # the number would make "Odessy killed it" indistinguishable from "it
+                # failed with 1". POSIX would report -15/-9, which names the signal,
+                # but a single field cannot mean both. `timed_out` and `status` carry
+                # the distinction; `exit_code is None` always means this branch.
+                # See LIMITATION.md, "A Killed Command Reports No Exit Code".
                 "exit_code": None,
                 "duration": duration,
                 "status": "timeout",

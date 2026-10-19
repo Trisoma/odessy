@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 from odessy.agent_loop import OdessyAgent
+from odessy.voice.stt import blank_transcript_reason
 
 
 class AudioIO(Protocol):
@@ -72,6 +73,22 @@ class VoiceLoop:
                     input_audio_path=input_audio,
                     output_audio_path=output_audio,
                     error=stt_result.error,
+                )
+            # Applied here rather than in the Whisper adapter so every STT
+            # implementation is covered, including a future cloud one. No usable
+            # speech means no request: the model is not called, so it cannot propose
+            # a tool, and authorization never enters the picture because nothing was
+            # proposed. Retrying is the caller's decision (`ODESSY_VOICE_BLANK_RETRIES`).
+            blank = blank_transcript_reason(transcript)
+            if blank is not None:
+                self._status("No speech detected")
+                return VoiceLoopResult(
+                    status="blank",
+                    transcript=transcript,
+                    final_text="",
+                    input_audio_path=input_audio,
+                    output_audio_path=output_audio,
+                    error=blank,
                 )
             self._status("Model is thinking")
             turn = await self.agent.run_turn(transcript, status_callback=self._status)

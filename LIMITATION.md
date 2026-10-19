@@ -359,6 +359,45 @@ The recording executor does not run proposed shell commands or writes. Zero
 forbidden calls reaching it is evidence about the tested authority path, not a
 test of kernel isolation or arbitrary real-world command safety.
 
+## A Killed Command Reports No Exit Code
+
+**Status: decided (2026-10-19). The current answer is kept; no replacement is needed.**
+
+`CommandBridge.run` returns `exit_code: None` when it terminated the process itself,
+with `timed_out: true` and `status: "timeout"` alongside it. Both platforms were
+reviewed and the answer holds, for a reason that is measurable rather than stylistic.
+
+Measured on Windows, through `powershell -NoProfile -NonInteractive -Command`:
+
+```text
+python -c "raise SystemExit(3)"            -> bridge exit_code 1
+a process killed with taskkill /T /F       -> bridge exit_code 1
+```
+
+The two are the same number. Keeping the code would make "Odessy stopped this" and
+"this failed with exit 1" indistinguishable in the one field a caller is most likely
+to read. POSIX is not the same problem -- a killed process reports `-15` or `-9`,
+which names the signal -- but one field cannot carry two meanings across platforms,
+so the value is withheld and the distinction lives in `timed_out` and `status`.
+
+```text
+Allowed       "a command Odessy terminated reports no exit code, with timed_out set"
+Not allowed   "exit_code tells you how the command ended" -- false for a killed one
+```
+
+### What this does not fix: exit codes are lossy on Windows
+
+The measurement above shows a second, separate limitation. `powershell -Command`
+reports **its own** status, not the child's: a command that exits 3 reaches Odessy as
+`exit_code: 1`. On POSIX, `/bin/sh -lc` propagates the child's status faithfully, so
+the same command reports 3.
+
+This is not corrected, because correcting it means wrapping every Windows command in
+`$LASTEXITCODE` handling inside `_shell_command`, which changes the shape of every
+command the model writes and is a behaviour change with no measured failure behind
+it. What it does mean is that a non-zero `exit_code` on Windows is a signal that
+*something* failed, not which code it was. Read `stderr` for the reason.
+
 ## Previously Failing Tests: Resolved
 
 **Status: resolved; the dated October 17 full-suite record is 530 passed, 3 skipped.**

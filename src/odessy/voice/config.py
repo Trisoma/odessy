@@ -22,6 +22,9 @@ class VoiceConfig:
     audio_input_device: str | None = None
     audio_output_device: str | None = None
     voice_seconds: int = 5
+    #: Extra recordings attempted when a turn hears no usable speech. Total
+    #: recordings per turn is this plus one.
+    blank_retries: int = 2
     tmp_dir: Path = Path(tempfile.gettempdir()) / "odessy-voice"
 
     @classmethod
@@ -40,6 +43,7 @@ class VoiceConfig:
             audio_input_device=os.environ.get("ODESSY_AUDIO_INPUT_DEVICE") or None,
             audio_output_device=os.environ.get("ODESSY_AUDIO_OUTPUT_DEVICE") or None,
             voice_seconds=_env_int("ODESSY_VOICE_SECONDS", 5),
+            blank_retries=_env_retries("ODESSY_VOICE_BLANK_RETRIES", 2),
             tmp_dir=Path(os.environ.get("ODESSY_VOICE_TMPDIR", str(Path(tempfile.gettempdir()) / "odessy-voice"))),
         )
 
@@ -50,6 +54,18 @@ def _env_int(name: str, default: int) -> int:
         return default
     try:
         return max(1, int(value))
+    except ValueError:
+        return default
+
+
+def _env_retries(name: str, default: int) -> int:
+    """A retry count, where 0 is a meaningful value (try once, never retry)."""
+
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        return max(0, int(value))
     except ValueError:
         return default
 

@@ -9,7 +9,7 @@ from odessy.fake_model import FakeModel
 from odessy.mcp_server import build_odessy_mcp_server
 from odessy.policy import OdessyPolicy
 from odessy.voice.loop import VoiceLoop
-from odessy.voice.stt import WhisperCppSTT, parse_whisper_transcript
+from odessy.voice.stt import WhisperCppSTT, blank_transcript_reason, parse_whisper_transcript
 from odessy.voice.tts import KokoroTTS
 
 
@@ -32,6 +32,40 @@ def test_parse_whisper_transcript_ignores_diagnostics_without_transcript() -> No
     output = "whisper_print_timings: total time = 1000 ms"
 
     assert parse_whisper_transcript(output) == ""
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["[BLANK_AUDIO]", "[BLANK_AUDIO].", "(silence)", "[ Silence ]", "[MUSIC]", "...", "   "],
+)
+def test_a_silence_marker_is_not_a_request(text: str) -> None:
+    """Whisper returns a marker for silence, not an empty string.
+
+    ``[BLANK_AUDIO]`` is non-empty text, so a status check alone passed it to the
+    model, which then proposed a tool for a request nobody made.
+    """
+
+    assert blank_transcript_reason(text) is not None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "what time is it?",
+        "[inaudible] hello",
+        "calculate 12 * 8",
+        "silence is golden",
+        "music please",
+    ],
+)
+def test_real_speech_is_never_treated_as_blank(text: str) -> None:
+    """Only annotation-only or punctuation-only text is blank.
+
+    Any word outside the annotation means the recording contained speech, so a
+    transcript that merely *starts* with a marker must still reach the model.
+    """
+
+    assert blank_transcript_reason(text) is None
 
 
 def test_whisper_stt_reports_command_failure(tmp_path: Path) -> None:
@@ -141,6 +175,116 @@ async def test_voice_loop_reports_progress_phases(tmp_path: Path) -> None:
         "Synthesizing speech",
         "Playing response",
     ]
+
+
+@pytest.mark.anyio
+async def test_a_blank_recording_never_reaches_the_model(tmp_path: Path) -> None:
+    """No speech means no request: no model call, no tool call, no authorization.
+
+    The assertion is on the agent because that is the boundary that matters. A
+    turn that returns ``blank`` must not have entered the loop at all.
+    """
+
+    loop = VoiceLoop(
+        agent=_ExplodingAgent(),
+        audio_io=FakeAudioIO(),
+        stt=FakeSTT("[BLANK_AUDIO]"),
+        tts=FakeTTS(),
+        tmp_dir=tmp_path,
+    )
+
+    result = await loop.run_once()
+
+    assert result.status == "blank"
+    assert result.transcript == "[BLANK_AUDIO]"
+    assert result.final_text == ""
+    assert "non-speech annotation" in (result.error or "")
+
+
+@pytest.mark.anyio
+async def test_a_blank_recording_is_retried_without_a_second_model_call(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The retry re-records; it never re-runs the previous request."""
+
+    from odessy import cli as odessy_cli
+    from odessy.voice.config import VoiceConfig
+    from odessy.voice.loop import VoiceLoopResult
+
+    statuses = ["blank", "blank", "ok"]
+    calls: list[int] = []
+
+    async def fake_run_once(self: VoiceLoop) -> VoiceLoopResult:
+        calls.append(len(calls) + 1)
+        status = statuses[len(calls) - 1]
+        return VoiceLoopResult(
+            status=status,
+            transcript="[BLANK_AUDIO]" if status == "blank" else "what time is it?",
+            final_text="" if status == "blank" else "It is noon.",
+            input_audio_path=tmp_path / "in.wav",
+            output_audio_path=tmp_path / "out.wav",
+            error=None if status == "ok" else "transcript was non-speech annotation only",
+        )
+
+    monkeypatch.setattr(VoiceLoop, "run_once", fake_run_once)
+    config = VoiceConfig(
+        whisper_bin="whisper-cli",
+        whisper_model="tiny.bin",
+        kokoro_model="kokoro.onnx",
+        kokoro_voices="voices.bin",
+        blank_retries=2,
+    )
+
+    await odessy_cli._run_voice_turn(_ExplodingAgent(), config)  # type: ignore[arg-type]
+
+    assert len(calls) == 3
+
+
+@pytest.mark.anyio
+async def test_blank_retries_are_exhausted_with_a_clear_exit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from odessy import cli as odessy_cli
+    from odessy.voice.config import VoiceConfig
+    from odessy.voice.loop import VoiceLoopResult
+
+    calls: list[int] = []
+
+    async def always_blank(self: VoiceLoop) -> VoiceLoopResult:
+        calls.append(len(calls) + 1)
+        return VoiceLoopResult(
+            status="blank",
+            transcript="[BLANK_AUDIO]",
+            final_text="",
+            input_audio_path=tmp_path / "in.wav",
+            output_audio_path=tmp_path / "out.wav",
+            error="transcript was non-speech annotation only: '[BLANK_AUDIO]'",
+        )
+
+    monkeypatch.setattr(VoiceLoop, "run_once", always_blank)
+    config = VoiceConfig(
+        whisper_bin="whisper-cli",
+        whisper_model="tiny.bin",
+        kokoro_model="kokoro.onnx",
+        kokoro_voices="voices.bin",
+        blank_retries=1,
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        await odessy_cli._run_voice_turn(_ExplodingAgent(), config)  # type: ignore[arg-type]
+
+    assert len(calls) == 2
+    assert "no usable speech" in str(raised.value).lower()
+    assert "nothing was sent to the model" in str(raised.value).lower()
+
+
+class _ExplodingAgent:
+    """Fails the test if anything asks it to run a turn."""
+
+    async def run_turn(self, *args: object, **kwargs: object) -> object:
+        raise AssertionError("a blank transcript must never reach the model")
 
 
 class FakeAudioIO:
