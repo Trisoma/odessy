@@ -35,12 +35,19 @@ jobs:
       # Never read the committed developer config (laptop MCP URL, model paths).
       ODESSY_CONFIG_FILE: ${{ github.workspace }}/.ci-no-config.env
       PYTHONUTF8: "1"
-      # Give the child powershell.exe somewhere writable to cache module analysis.
-      # ``build_sanitized_environment`` passes this name through, but nothing used to
-      # set it, so the allowlist entry did nothing. Ignored off Windows.
-      PSMODULEANALYSISCACHEPATH: ${{ runner.temp }}/ps-module-analysis-cache
     steps:
       - uses: actions/checkout@v5
+
+      # The runner context is unavailable in job-level env. Export the cache from
+      # a step and warm Windows PowerShell before any short command timeout starts.
+      - name: Prepare Windows PowerShell
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $env:PSModuleAnalysisCachePath = Join-Path $env:RUNNER_TEMP 'ps-module-analysis-cache'
+          "PSModuleAnalysisCachePath=$env:PSModuleAnalysisCachePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          powershell.exe -NoProfile -NonInteractive -Command "exit 0"
 
       - uses: actions/setup-python@v6
         with:
@@ -94,6 +101,15 @@ jobs:
         working-directory: tools
     steps:
       - uses: actions/checkout@v5
+
+      - name: Prepare Windows PowerShell
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $env:PSModuleAnalysisCachePath = Join-Path $env:RUNNER_TEMP 'ps-module-analysis-cache'
+          "PSModuleAnalysisCachePath=$env:PSModuleAnalysisCachePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          powershell.exe -NoProfile -NonInteractive -Command "exit 0"
 
       - uses: actions/setup-node@v5
         with:
