@@ -2,8 +2,9 @@ from pathlib import Path
 
 import pytest
 
+from shell_model import ShellModel
+
 from odessy.agent_loop import ExecutionTarget, OdessyAgent
-from odessy.fake_model import FakeModel
 from odessy.mcp_server import build_odessy_mcp_server
 from odessy.policy import OdessyPolicy
 
@@ -15,7 +16,7 @@ def anyio_backend() -> str:
 
 def build_agent(workspace_root: Path, confirm=False) -> OdessyAgent:
     return OdessyAgent(
-        model=FakeModel(),
+        model=ShellModel(),
         policy=OdessyPolicy(workspace_root=workspace_root),
         mcp_server=ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root)),
         confirm=confirm,
@@ -31,7 +32,7 @@ async def test_terminal_run_pwd_flows_through_policy_and_mcp(tmp_path: Path) -> 
     assert response.tool_request is not None
     assert response.tool_request.name == "terminal.run"
     assert response.tool_result is not None
-    assert response.tool_result["exit_code"] == 0
+    assert response.tool_result["exit_code"] == 0, repr(response.tool_result)
     assert response.tool_result["status"] == "ok"
     assert response.tool_result["cwd"] == str(tmp_path.resolve())
     assert "exit code 0" in response.final_text
@@ -60,7 +61,7 @@ async def test_terminal_run_ls_is_allowed_read_only(tmp_path: Path) -> None:
     response = await agent.run_turn("run ls")
 
     assert response.tool_result is not None
-    assert response.tool_result["exit_code"] == 0
+    assert response.tool_result["exit_code"] == 0, repr(response.tool_result)
     assert "sample.txt" in response.tool_result["stdout"]
 
 
@@ -115,7 +116,7 @@ async def test_terminal_run_denies_destructive_command(tmp_path: Path) -> None:
 @pytest.mark.anyio
 async def test_terminal_run_denies_workspace_escape(tmp_path: Path) -> None:
     agent = OdessyAgent(
-        model=FakeModel(),
+        model=ShellModel(),
         policy=OdessyPolicy(workspace_root=tmp_path),
         mcp_server=ExecutionTarget(build_odessy_mcp_server(workspace_root=tmp_path)),
     )

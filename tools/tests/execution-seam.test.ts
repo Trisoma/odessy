@@ -219,11 +219,13 @@ test("an unavailable backend stops the command", async () => {
 
 test("a successful command reports its exit code", async () => {
   const workspace = makeWorkspace();
+  // Check the exit-code contract without racing cold Windows shell startup.
   const result = await laptopTerminalRun(createWorkspaceGuard(workspace), {
     command: "exit 0",
+    timeout: 30,
   });
 
-  assert.equal(result.exit_code, 0);
+  assert.equal(result.exit_code, 0, JSON.stringify(result));
   assert.equal(result.timed_out, false);
   assert.equal(result.status, "ok");
 });
@@ -234,9 +236,10 @@ test("a failing command reports its real code", async () => {
   const workspace = makeWorkspace();
   const result = await laptopTerminalRun(createWorkspaceGuard(workspace), {
     command: "exit 7",
+    timeout: 30,
   });
 
-  assert.equal(result.exit_code, 7);
+  assert.equal(result.exit_code, 7, JSON.stringify(result));
   assert.equal(result.timed_out, false);
   assert.equal(result.status, "failed");
 });

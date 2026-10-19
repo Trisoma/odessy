@@ -322,11 +322,11 @@ def build_sanitized_environment(source: os._Environ[str]) -> dict[str, str]:
         "LC_ALL",
         "PATH",
         "PATHEXT",
-        # Passed through so a host can point PowerShell's module analysis cache at a
-        # writable location. Unset, every powershell.exe start re-analyzes all
-        # installed modules -- about 25 s on a host with many modules, such as GitHub's
-        # Windows runners -- and a command with a short budget times out. Allowing the
-        # name alone does nothing; something has to set it (CI does, in ``ci.yml``).
+        # Preserve an explicitly configured module search path. Reconstructing it
+        # in a stripped environment can trigger unrelated installed-module scans.
+        "PSMODULEPATH",
+        # Let the host choose a writable module-analysis cache. Cache reuse alone
+        # does not bound module discovery; preserve PSMODULEPATH above as well.
         "PSMODULEANALYSISCACHEPATH",
         "SYSTEMROOT",
         "TEMP",

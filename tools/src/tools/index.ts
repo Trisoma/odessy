@@ -468,9 +468,9 @@ function buildSanitizedEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv
     "LC_ALL",
     "PATH",
     "PATHEXT",
-    // Where PowerShell keeps its module analysis cache. Without it, every
-    // powershell.exe start re-analyzes all installed modules: about 25 s on a
-    // host with many modules (GitHub's Windows runners), so commands time out.
+    // Match Python: honor the host's explicit PowerShell module search path.
+    "PSMODULEPATH",
+    // Let the host choose a writable module-analysis cache as well as its search path.
     "PSMODULEANALYSISCACHEPATH",
     "SYSTEMROOT",
     "TEMP",

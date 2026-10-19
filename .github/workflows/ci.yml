@@ -35,12 +35,23 @@ jobs:
       # Never read the committed developer config (laptop MCP URL, model paths).
       ODESSY_CONFIG_FILE: ${{ github.workspace }}/.ci-no-config.env
       PYTHONUTF8: "1"
-      # Give the child powershell.exe somewhere writable to cache module analysis.
-      # ``build_sanitized_environment`` passes this name through, but nothing used to
-      # set it, so the allowlist entry did nothing. Ignored off Windows.
-      PSMODULEANALYSISCACHEPATH: ${{ runner.temp }}/ps-module-analysis-cache
     steps:
       - uses: actions/checkout@v5
+
+      # The runner context is unavailable in job-level env. Export the cache from
+      # a step. Put built-in modules first so cmdlet discovery avoids runner extras.
+      - name: Prepare Windows PowerShell
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 1
+        run: |
+          $env:PSModulePath = (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\Modules') + ';' + (Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules')
+          "PSModulePath=$env:PSModulePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $env:PSModuleAnalysisCachePath = Join-Path $env:RUNNER_TEMP 'ps-module-analysis-cache'
+          "PSModuleAnalysisCachePath=$env:PSModuleAnalysisCachePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # Exercise the module loading used by pwd, ls, and echo.
+          powershell.exe -NoProfile -NonInteractive -Command '$ErrorActionPreference = "Stop"; Get-Location; Get-ChildItem; Write-Output ready; exit 0'
+          if ($LASTEXITCODE -ne 0) { throw "PowerShell preparation failed: $LASTEXITCODE" }
 
       - uses: actions/setup-python@v6
         with:
@@ -65,7 +76,7 @@ jobs:
         run: python -m pip install -e ".[test]"
 
       - name: Run tests
-        run: python -m pytest -q
+        run: python -m pytest -q --tb=short --durations=10
 
       - name: CLI smoke test
         shell: bash
@@ -94,6 +105,19 @@ jobs:
         working-directory: tools
     steps:
       - uses: actions/checkout@v5
+
+      - name: Prepare Windows PowerShell
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 1
+        run: |
+          $env:PSModulePath = (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\Modules') + ';' + (Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules')
+          "PSModulePath=$env:PSModulePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $env:PSModuleAnalysisCachePath = Join-Path $env:RUNNER_TEMP 'ps-module-analysis-cache'
+          "PSModuleAnalysisCachePath=$env:PSModuleAnalysisCachePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # Exercise the module loading used by pwd, ls, and echo.
+          powershell.exe -NoProfile -NonInteractive -Command '$ErrorActionPreference = "Stop"; Get-Location; Get-ChildItem; Write-Output ready; exit 0'
+          if ($LASTEXITCODE -ne 0) { throw "PowerShell preparation failed: $LASTEXITCODE" }
 
       - uses: actions/setup-node@v5
         with:
