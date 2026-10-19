@@ -171,9 +171,13 @@ class CommandBridge:
             return {
                 "stdout": stdout,
                 "stderr": stderr_text,
-                # No process exit status exists: the executor terminated the process,
-                # so any code a killed process reports is a kill artifact, not the
-                # command's outcome.
+                # Decision (2026-10-19): a command Odessy terminated reports no exit
+                # code. A native kill code describes executor termination, not the
+                # command's own outcome. Raw Windows termination and failure codes
+                # can coincide; POSIX signal codes are platform-specific. Keep the
+                # same contract on both: None, with `timed_out` and `status` stating
+                # why no command exit code is available.
+                # See LIMITATION.md, "A Killed Command Reports No Exit Code".
                 "exit_code": None,
                 "duration": duration,
                 "status": "timeout",

@@ -236,10 +236,26 @@ async def _run_voice_turn(agent: OdessyAgent, config: VoiceConfig) -> None:
         status_callback=print,
     )
     result = await loop.run_once()
+    attempts = 1 + config.blank_retries
+    attempt = 1
+    while result.status == "blank" and attempt < attempts:
+        attempt += 1
+        # The model was never called for the blank turn, so retrying costs a
+        # recording and nothing else. It is not a retry of a request.
+        print(
+            f"No usable speech in that recording ({result.error}). "
+            f"Recording again ({attempt}/{attempts})."
+        )
+        result = await loop.run_once()
     if result.transcript:
         print(f"Transcript: {result.transcript}")
     if result.final_text:
         print(f"Odessy: {result.final_text}")
+    if result.status == "blank":
+        raise SystemExit(
+            f"Heard no usable speech after {attempt} recording(s): {result.error}. "
+            "Nothing was sent to the model."
+        )
     if result.status != "ok":
         raise SystemExit(f"Voice turn failed with status {result.status}: {result.error}")
 
