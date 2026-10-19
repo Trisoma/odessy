@@ -72,7 +72,8 @@ def _bad_call() -> ToolRequest:
 def _good_call() -> ToolRequest:
     return ToolRequest(
         name="terminal.run",
-        arguments={"command": "pwd", "cwd": ".", "timeout": 10},
+        # These tests measure rejection handling, not PowerShell startup latency.
+        arguments={"command": "pwd", "cwd": ".", "timeout": 30},
     )
 
 
@@ -108,7 +109,7 @@ async def test_rejected_call_is_corrected_and_then_executes(tmp_path: Path) -> N
 
     # The corrected call actually ran.
     assert response.tool_result is not None
-    assert response.tool_result["status"] == "ok"
+    assert response.tool_result["status"] == "ok", response.tool_result
     assert response.tool_result["exit_code"] == 0
 
     # Two observation calls: one to deliver the rejection, one to summarise the

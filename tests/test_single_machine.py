@@ -8,11 +8,12 @@ from typing import Any
 import pytest
 from mcp.client import Client
 
+from shell_model import ShellModel
+
 import odessy.cli as cli
 import odessy.config_file as config_file
 import odessy.node_mcp as node_mcp
 from odessy.agent_loop import ExecutionTarget, OdessyAgent
-from odessy.fake_model import FakeModel
 from odessy.cloud_model import cloud_tools_openai
 from odessy.deployment import model_tool_names
 from odessy.mcp_server import build_odessy_mcp_server
@@ -256,7 +257,7 @@ async def test_single_mode_runs_a_command_through_the_local_node_server(
         assert set(model_tool_names()) == node_tools | await _tool_names(local)
         assert len(model_tool_names()) == 13
         agent = OdessyAgent(
-            model=FakeModel(),
+            model=ShellModel(),
             policy=OdessyPolicy(workspace_root=tmp_path),
             mcp_server=servers,
             confirm=True,
@@ -270,7 +271,7 @@ async def test_single_mode_runs_a_command_through_the_local_node_server(
 
     assert command.tool_request is not None and command.tool_request.name == "terminal.run"
     assert command.tool_result is not None
-    assert command.tool_result["exit_code"] == 0
+    assert command.tool_result["exit_code"] == 0, command.tool_result
     assert "odessy-single" in command.tool_result["stdout"]
     # Only the Node server reports spill fields: proof the command ran there.
     assert "stdout_spill" in command.tool_result

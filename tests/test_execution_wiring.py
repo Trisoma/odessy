@@ -123,11 +123,11 @@ def test_the_report_names_the_backend_and_its_completeness(tmp_path: Path) -> No
 
 
 def test_no_backend_is_reported_rather_than_implied(tmp_path: Path) -> None:
-    result = CommandBridge(tmp_path).run(command="echo hi")
+    result = CommandBridge(tmp_path).run(command="echo hi", timeout=30)
 
     # The command still runs, and the result states exactly what confined it. The
     # absence is loud: a caller never has to infer enforcement from silence.
-    assert result["exit_code"] == 0
+    assert result["exit_code"] == 0, result
     assert result["sandbox"] == {
         "provider_id": "unconfined",
         "enforcement": "none",
@@ -229,9 +229,9 @@ def test_the_mcp_server_threads_the_backend_through(tmp_path: Path) -> None:
 
 
 def test_a_successful_command_reports_its_exit_code(tmp_path: Path) -> None:
-    result = CommandBridge(tmp_path).run(command="exit 0")
+    result = CommandBridge(tmp_path).run(command="exit 0", timeout=30)
 
-    assert result["exit_code"] == 0
+    assert result["exit_code"] == 0, result
     assert result["timed_out"] is False
     assert result["status"] == "ok"
 
@@ -239,9 +239,9 @@ def test_a_successful_command_reports_its_exit_code(tmp_path: Path) -> None:
 def test_a_failing_command_reports_its_real_code(tmp_path: Path) -> None:
     # A real non-zero status is preserved as-is: this is the case a sentinel would
     # collide with if the sentinel were a plausible exit code.
-    result = CommandBridge(tmp_path).run(command="exit 7")
+    result = CommandBridge(tmp_path).run(command="exit 7", timeout=30)
 
-    assert result["exit_code"] == 7
+    assert result["exit_code"] == 7, result
     assert result["timed_out"] is False
     assert result["status"] == "failed"
 

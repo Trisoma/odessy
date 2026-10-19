@@ -209,9 +209,12 @@ test("laptop.terminal.run executes a command in the workspace", async () => {
   const workspace = makeWorkspace();
   const guard = createWorkspaceGuard(workspace);
 
-  const result = await laptopTerminalRun(guard, { command: "pwd" });
+  // This tests command execution and cwd, not PowerShell's cold module-load time.
+  // Keep short deadlines in the dedicated timeout/termination tests instead.
+  const result = await laptopTerminalRun(guard, { command: "pwd", timeout: 30 });
 
-  assert.equal(result.status, "ok");
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  assert.equal(result.timed_out, false);
   // The canonical root: on Windows runners the temp path is an 8.3 short name
   // (RUNNER~1) that canonicalization expands.
   assert.equal(result.cwd, guard.root);

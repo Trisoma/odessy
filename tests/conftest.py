@@ -28,9 +28,17 @@ def _warm_windows_shell() -> None:
     shell = shutil.which("powershell")
     if shell is None:
         return
+    from odessy.command_bridge import build_sanitized_environment
+
     try:
         subprocess.run(
-            [shell, "-NoProfile", "-NonInteractive", "-Command", "exit 0"],
+            [
+                shell, "-NoProfile", "-NonInteractive", "-Command",
+                '$ErrorActionPreference = "Stop"; '
+                'Get-Location; Get-ChildItem; Write-Output ready; exit 0',
+            ],
+            # Warm the same module environment that real executor children see.
+            env=build_sanitized_environment(os.environ),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=180,

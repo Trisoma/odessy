@@ -47,7 +47,8 @@ jobs:
         run: |
           $env:PSModuleAnalysisCachePath = Join-Path $env:RUNNER_TEMP 'ps-module-analysis-cache'
           "PSModuleAnalysisCachePath=$env:PSModuleAnalysisCachePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          powershell.exe -NoProfile -NonInteractive -Command "exit 0"
+          # Exercise the module loading used by pwd, ls, and echo.
+          powershell.exe -NoProfile -NonInteractive -Command '$ErrorActionPreference = "Stop"; Get-Location; Get-ChildItem; Write-Output ready; exit 0'
 
       - uses: actions/setup-python@v6
         with:
@@ -109,7 +110,8 @@ jobs:
         run: |
           $env:PSModuleAnalysisCachePath = Join-Path $env:RUNNER_TEMP 'ps-module-analysis-cache'
           "PSModuleAnalysisCachePath=$env:PSModuleAnalysisCachePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          powershell.exe -NoProfile -NonInteractive -Command "exit 0"
+          # Exercise the module loading used by pwd, ls, and echo.
+          powershell.exe -NoProfile -NonInteractive -Command '$ErrorActionPreference = "Stop"; Get-Location; Get-ChildItem; Write-Output ready; exit 0'
 
       - uses: actions/setup-node@v5
         with:
