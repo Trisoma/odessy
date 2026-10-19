@@ -134,6 +134,21 @@ def test_command_bridge_uses_sanitized_environment(
             assert env.get(name) == os.environ[name]
 
 
+@pytest.mark.skipif(os.name != "nt", reason="PowerShell module discovery is Windows-only")
+def test_command_bridge_preserves_configured_powershell_modules(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = tmp_path / "modules" / "OdessyProbe"
+    module.mkdir(parents=True)
+    (module / "OdessyProbe.psm1").write_text(
+        'function Get-OdessyProbe { "module-path-preserved" }', encoding="utf-8",
+    )
+    monkeypatch.setenv("PSModulePath", str(module.parent))
+    result = CommandBridge(tmp_path).run(command="Get-OdessyProbe")
+    assert result["status"] == "ok", result
+    assert "module-path-preserved" in result["stdout"]
+
+
 def test_command_bridge_passes_the_sanitized_environment_to_the_child(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

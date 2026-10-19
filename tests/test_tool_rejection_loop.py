@@ -227,6 +227,8 @@ async def test_valid_call_is_unaffected(tmp_path: Path) -> None:
     response = await agent.run_turn("run pwd")
 
     assert model.observation_calls == 1  # the normal final-response call
+    assert response.tool_result is not None
+    assert response.tool_result["status"] == "ok", repr(response.tool_result)
     assert [entry.event for entry in response.log] == [
         "user_input",
         "model_tool_request",

@@ -32,7 +32,7 @@ async def test_terminal_run_pwd_flows_through_policy_and_mcp(tmp_path: Path) -> 
     assert response.tool_request is not None
     assert response.tool_request.name == "terminal.run"
     assert response.tool_result is not None
-    assert response.tool_result["exit_code"] == 0, response.tool_result
+    assert response.tool_result["exit_code"] == 0, repr(response.tool_result)
     assert response.tool_result["status"] == "ok"
     assert response.tool_result["cwd"] == str(tmp_path.resolve())
     assert "exit code 0" in response.final_text
@@ -61,7 +61,7 @@ async def test_terminal_run_ls_is_allowed_read_only(tmp_path: Path) -> None:
     response = await agent.run_turn("run ls")
 
     assert response.tool_result is not None
-    assert response.tool_result["exit_code"] == 0, response.tool_result
+    assert response.tool_result["exit_code"] == 0, repr(response.tool_result)
     assert "sample.txt" in response.tool_result["stdout"]
 
 

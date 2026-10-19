@@ -205,6 +205,29 @@ test("git read-only tools use fixed argv behavior", async (t) => {
   assert.equal(log.limit, 50);
 });
 
+test("laptop.terminal.run preserves configured PowerShell modules", {
+  skip: process.platform !== "win32",
+}, async () => {
+  const workspace = makeWorkspace();
+  const modules = path.join(workspace, "modules");
+  const module = path.join(modules, "OdessyProbe");
+  fs.mkdirSync(module, { recursive: true });
+  fs.writeFileSync(path.join(module, "OdessyProbe.psm1"),
+    'function Get-OdessyProbe { "module-path-preserved" }', "utf8");
+  const previous = process.env.PSModulePath;
+  try {
+    process.env.PSModulePath = modules;
+    const result = await laptopTerminalRun(createWorkspaceGuard(workspace), {
+      command: "Get-OdessyProbe",
+    });
+    assert.equal(result.status, "ok", JSON.stringify(result));
+    assert.match(result.stdout, /module-path-preserved/);
+  } finally {
+    if (previous === undefined) delete process.env.PSModulePath;
+    else process.env.PSModulePath = previous;
+  }
+});
+
 test("laptop.terminal.run executes a command in the workspace", async () => {
   const workspace = makeWorkspace();
   const guard = createWorkspaceGuard(workspace);

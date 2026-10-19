@@ -1,51 +1,9 @@
 from __future__ import annotations
 
 import os
-import shutil
-import subprocess
 from collections.abc import Iterator
 
 import pytest
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _warm_windows_shell() -> None:
-    """Pay the first Windows PowerShell start once, outside any test's budget.
-
-    ``CommandBridge`` runs commands through ``powershell.exe``. On a fresh Windows
-    runner the first start re-analyzes every installed module, which
-    ``command_bridge`` documents as about 25 s. A test that gives a shell command a
-    10 s budget is then racing that analysis instead of testing its own subject, and
-    it fails on whichever job happens to start PowerShell first. Warming it here
-    makes that cost one per session rather than a hidden per-test variable.
-
-    Best effort: a host with no working shell should fail in the tests that need one,
-    with a clearer message than a collection error here.
-    """
-
-    if os.name != "nt":
-        return
-    shell = shutil.which("powershell")
-    if shell is None:
-        return
-    from odessy.command_bridge import build_sanitized_environment
-
-    try:
-        subprocess.run(
-            [
-                shell, "-NoProfile", "-NonInteractive", "-Command",
-                '$ErrorActionPreference = "Stop"; '
-                'Get-Location; Get-ChildItem; Write-Output ready; exit 0',
-            ],
-            # Warm the same module environment that real executor children see.
-            env=build_sanitized_environment(os.environ),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=180,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        pass
 
 
 @pytest.fixture(autouse=True)
