@@ -3,6 +3,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from odessy.deployment import deployment_mode, model_tool_names, tool_is_available
+from odessy.execution.contract import ESCALATION_TARGETS
+
+#: Spec keys that describe Odessy's own rendering rather than the JSON Schema, and so
+#: must not be forwarded to a model API verbatim.
+_NON_SCHEMA_KEYS = frozenset({"optional", "model_requested"})
+
 
 TOOL_REQUEST_SCHEMAS: dict[str, dict[str, Any]] = {
     "time.now": {
@@ -14,6 +21,26 @@ TOOL_REQUEST_SCHEMAS: dict[str, dict[str, Any]] = {
             "command": {"type": "string"},
             "cwd": {"type": "string", "optional": True},
             "timeout": {"type": "integer", "optional": True},
+            "sandbox_permissions": {
+                "type": "string",
+                "enum": list(ESCALATION_TARGETS),
+                "optional": True,
+                "model_requested": True,
+                "description": (
+                    "Request a wider sandbox mode for this one call. Must be strictly "
+                    "wider than the mode the command would otherwise run under, and "
+                    "must be accompanied by a justification. The user is asked to approve."
+                ),
+            },
+            "justification": {
+                "type": "string",
+                "optional": True,
+                "model_requested": True,
+                "description": (
+                    "One sentence explaining why the wider mode is needed. Only valid "
+                    "together with sandbox_permissions."
+                ),
+            },
         },
         "required": ["command"],
     },
@@ -22,6 +49,26 @@ TOOL_REQUEST_SCHEMAS: dict[str, dict[str, Any]] = {
             "command": {"type": "string"},
             "cwd": {"type": "string", "optional": True},
             "timeout": {"type": "integer", "optional": True},
+            "sandbox_permissions": {
+                "type": "string",
+                "enum": list(ESCALATION_TARGETS),
+                "optional": True,
+                "model_requested": True,
+                "description": (
+                    "Request a wider sandbox mode for this one call. Must be strictly "
+                    "wider than the mode the command would otherwise run under, and "
+                    "must be accompanied by a justification. The user is asked to approve."
+                ),
+            },
+            "justification": {
+                "type": "string",
+                "optional": True,
+                "model_requested": True,
+                "description": (
+                    "One sentence explaining why the wider mode is needed. Only valid "
+                    "together with sandbox_permissions."
+                ),
+            },
         },
         "required": ["command"],
     },
@@ -112,9 +159,9 @@ def render_tool_contracts() -> str:
         "Use only these exact JSON shapes.",
         "If a tool has no arguments, emit \"arguments\": {}.",
     ]
-    for name, schema in TOOL_REQUEST_SCHEMAS.items():
+    for name in model_tool_names():
         lines.append(f"{name}:")
-        lines.append(_render_tool_request_shape(name, schema))
+        lines.append(_render_tool_request_shape(name, TOOL_REQUEST_SCHEMAS[name]))
     return "\n".join(lines)
 
 
@@ -122,6 +169,8 @@ def render_tool_contract(name: str) -> str:
     schema = TOOL_REQUEST_SCHEMAS.get(name)
     if schema is None:
         raise ValueError(f"Unknown tool contract requested: {name}")
+    if not tool_is_available(name):
+        return render_tool_contracts()
     return "\n".join(
         [
             "Use this exact JSON shape.",
@@ -131,29 +180,57 @@ def render_tool_contract(name: str) -> str:
     )
 
 
+#: Appended to the command tools. In the first evaluation runs a small model answered
+#: "I have no tool for that" to memory, disk and IP questions while a shell tool was
+#: offered: "run a shell command" alone did not tell it what a shell is for.
+_SHELL_USES = (
+    " Use it for anything a shell command can answer when no other tool fits: processes, "
+    "memory, disk space, network addresses and ports, environment variables, counting files."
+)
+
 _TOOL_DESCRIPTIONS: dict[str, str] = {
     "time.now": "Return the current local time.",
-    "terminal.run": "Run a shell command in the local workspace and return structured output.",
-    "laptop.terminal.run": "Run a shell command on the user's laptop (not the local machine).",
+    "terminal.run": "Run a shell command in the local workspace and return structured output." + _SHELL_USES,
+    "laptop.terminal.run": "Run a shell command on the user's laptop (not the local machine)." + _SHELL_USES,
     "filesystem.write": "Write content to a file inside the workspace. Requires confirmation.",
     "log.append": "Append a line to the internal Odessy log. Destination is fixed and internal.",
     "calculator.eval": "Evaluate a side-effect-free arithmetic expression.",
     "filesystem.read": "Read a regular text file inside the workspace.",
     "filesystem.list": "List directory entries inside the workspace.",
-    "project.find": "Find file names inside the workspace.",
-    "project.grep": "Search file contents inside the workspace.",
+    "project.find": (
+        "Find files by name inside the workspace: part of a name, or a glob such as *.py. "
+        "Does not look inside files."
+    ),
+    "project.grep": "Search inside file contents in the workspace for text, such as a word or a function name.",
     "git.status": "Return git status output.",
     "git.diff": "Return git diff output.",
     "git.changed_files": "Return changed file names.",
     "git.log": "Return recent commit summaries.",
 }
 
+#: Descriptions that differ in ``single`` mode, where there is only one machine.
+_SINGLE_MACHINE_DESCRIPTIONS: dict[str, str] = {
+    "terminal.run": "Run a shell command on the user's computer and return structured output." + _SHELL_USES,
+}
+
+
+def tool_description(name: str) -> str:
+    if deployment_mode() == "single" and name in _SINGLE_MACHINE_DESCRIPTIONS:
+        return _SINGLE_MACHINE_DESCRIPTIONS[name]
+    return _TOOL_DESCRIPTIONS.get(name, name)
+
 
 def build_openai_tools(names: list[str] | None = None) -> list[dict[str, Any]]:
-    """Render tool schemas in OpenAI function-calling format for Ollama's /api/chat."""
-    selected = names if names is not None else list(TOOL_REQUEST_SCHEMAS)
+    """Render tool schemas in OpenAI function-calling format for Ollama's /api/chat.
+
+    With no ``names``, renders the tools this deployment offers
+    (``deployment.model_tool_names``), not every tool in the registry.
+    """
+    selected = names if names is not None else model_tool_names()
     tools: list[dict[str, Any]] = []
     for name in selected:
+        if not tool_is_available(name):
+            continue
         schema = TOOL_REQUEST_SCHEMAS.get(name)
         if schema is None:
             continue
@@ -164,12 +241,12 @@ def build_openai_tools(names: list[str] | None = None) -> list[dict[str, Any]]:
 def _to_openai_tool(name: str, schema: dict[str, Any]) -> dict[str, Any]:
     properties: dict[str, dict[str, Any]] = {}
     for key, spec in schema["properties"].items():
-        properties[key] = {k: v for k, v in spec.items() if k != "optional"}
+        properties[key] = {k: v for k, v in spec.items() if k not in _NON_SCHEMA_KEYS}
     return {
         "type": "function",
         "function": {
             "name": name,
-            "description": _TOOL_DESCRIPTIONS.get(name, name),
+            "description": tool_description(name),
             "parameters": {
                 "type": "object",
                 "properties": properties,
@@ -210,7 +287,12 @@ def _render_tool_request_shape(name: str, schema: dict[str, Any]) -> str:
     arguments: dict[str, str] = {}
     for argument_name, spec in properties.items():
         label = _render_type_label(spec)
-        if argument_name not in required:
+        if spec.get("model_requested"):
+            # The model raises this one on its own initiative. The stock note below
+            # would tell it to stay silent unless the user asked first, which would
+            # make the mechanism unreachable.
+            label = f"{label} (request this only when the command genuinely needs it)"
+        elif argument_name not in required:
             label = f"{label} (omit unless the user explicitly specifies it)"
         arguments[argument_name] = label
     return json.dumps(

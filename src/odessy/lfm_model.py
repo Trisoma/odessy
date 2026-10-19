@@ -16,6 +16,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
+from odessy.tool_contracts import build_openai_tools
 from odessy.ollama_model import (
     _OllamaStreamTimeout,
     _OllamaToolsUnsupported,
@@ -23,17 +24,24 @@ from odessy.ollama_model import (
     _corrected_tool_request,
     _debug_model_repair,
     _debug_parsed_action,
+    _default_call_timeout,
+    _default_num_ctx,
+    _default_num_predict,
     _default_progress_timeout,
     _extract_model_action_from_chat,
     _fallback_observation_response,
+    _follow_up_tools,
+    _observation_messages,
+    _remember_observation,
+    _start_turn,
+    _strip_thinking,
     _looks_like_generic_final_response,
     _model_output_error,
-    _proposal_tool_name_for_user_text,
     _repair_prompt,
-    _select_tools,
     _system_prompt,
     _text_system_prompt,
     PROGRESS_TIMEOUT_ENV,
+    generation_options,
 )
 from odessy.types import FinalResponse, ModelAction, ModelTurnDiagnostics, ToolObservation
 
@@ -90,6 +98,13 @@ class LlamaCppLFMModel:
     timeout: int = field(default_factory=_default_progress_timeout)
     temperature: float = 0.0
     think: bool | str | None = None
+    #: Tokens one call may generate, including thinking tokens.
+    num_predict: int = field(default_factory=_default_num_predict)
+    #: Context window; prompt plus ``num_predict`` has to fit inside it.
+    num_ctx: int = field(default_factory=_default_num_ctx)
+    #: Stream wall-time budget checked between lines; includes silence, excludes
+    #: connection/header waits, and can overrun during a blocking read.
+    call_timeout: float = field(default_factory=_default_call_timeout)
 
     @property
     def last_turn_diagnostics(self) -> ModelTurnDiagnostics:
@@ -101,13 +116,13 @@ class LlamaCppLFMModel:
     def propose(self, user_text: str) -> ModelAction:
         diagnostics = ModelTurnDiagnostics()
         object.__setattr__(self, "_last_turn_diagnostics", diagnostics)
-        tool_name = _proposal_tool_name_for_user_text(user_text)
+        _start_turn(self)
         try:
-            action = self._chat_native_action(user_text, tool_name, diagnostics)
+            action = self._chat_native_action(user_text, diagnostics)
         except ValueError as error:
             diagnostics.proposal_valid = False
             diagnostics.repair_triggered = True
-            model_error = _model_output_error("", error, user_text, tool_name)
+            model_error = _model_output_error("", error, user_text)
             repair_prompt = _repair_prompt(user_text, model_error)
             _debug_model_repair(
                 [
@@ -158,23 +173,22 @@ class LlamaCppLFMModel:
     def _chat_native_action(
         self,
         user_text: str,
-        tool_name: str | None,
         diagnostics: ModelTurnDiagnostics,
     ) -> ModelAction:
         messages = [
-            {"role": "system", "content": _system_prompt(tool_name)},
+            {"role": "system", "content": _system_prompt()},
             {"role": "user", "content": user_text},
         ]
         try:
             started = time.perf_counter()
             _record_model_call_attempt(diagnostics)
-            response = self._chat(messages, tools=_select_tools(tool_name))
+            response = self._chat(messages, tools=build_openai_tools())
             _add_diagnostic_ms(diagnostics, "proposal_generation_ms", _elapsed_ms(started))
             _record_ollama_response(diagnostics, response)
         except _OllamaToolsUnsupported:
             return self._chat_text_action(
                 user_text,
-                _text_system_prompt(user_text, tool_name),
+                _text_system_prompt(user_text),
                 diagnostics,
             )
         parse_started = time.perf_counter()
@@ -196,7 +210,10 @@ class LlamaCppLFMModel:
             "model": self.model,
             "messages": messages,
             "stream": True,
-            "temperature": self.temperature,
+            # Inside ``options``, which is where Ollama reads it. A top-level
+            # ``temperature`` is ignored, so this used to sample at Ollama's
+            # default instead of at the intended 0.0.
+            "options": generation_options(self.temperature, self.num_predict, self.num_ctx),
         }
         if self.think is not None:
             payload["think"] = self.think
@@ -210,7 +227,9 @@ class LlamaCppLFMModel:
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return normalize_ollama_chat_response(_accumulate_stream(response))
+                return normalize_ollama_chat_response(
+                    _accumulate_stream(response, self.call_timeout)
+                )
         except urllib.error.HTTPError as error:
             body = _read_error_body(error)
             if "does not support tools" in body:
@@ -236,25 +255,12 @@ class LlamaCppLFMModel:
         user_text: str,
         observation: ToolObservation,
     ) -> ModelAction:
-        prompt = (
-            "You are Odessy. Return the tool output first, then a short interpretation.\n"
-            "Do not answer with filler like 'Please wait' or 'Yes'.\n"
-            f"User: {user_text}\n"
-            f"Tool: {observation.request.name}\n"
-            f"Arguments: {json.dumps(observation.request.arguments)}\n"
-            f"Observation: {json.dumps(observation.result)}\n"
-            "If the task is not finished, call another tool instead of answering.\n"
-            "Final response:"
-        )
         diagnostics = self.last_turn_diagnostics
         started = time.perf_counter()
         _record_model_call_attempt(diagnostics)
-        # Advertise the same tool set the proposal path uses. Without an
-        # advertised list the response cannot carry a native tool_call, so
-        # _corrected_tool_request can never fire and continuation is inert.
         response = self._chat(
-            [{"role": "user", "content": prompt}],
-            tools=_select_tools(_proposal_tool_name_for_user_text(user_text)),
+            _observation_messages(user_text, _remember_observation(self, observation)),
+            tools=_follow_up_tools(),
         )
         diagnostics.final_generation_ms = _elapsed_ms(started)
         _record_ollama_response(diagnostics, response)
@@ -262,7 +268,7 @@ class LlamaCppLFMModel:
         corrected = _corrected_tool_request(response, user_text)
         if corrected is not None:
             return corrected
-        text = ((response.get("message") or {}).get("content") or "").strip()
+        text = _strip_thinking((response.get("message") or {}).get("content") or "")
         if text and not _looks_like_generic_final_response(text):
             return FinalResponse(text=text)
         return FinalResponse(text=_fallback_observation_response(observation))
@@ -272,8 +278,10 @@ def _extract_lfm_native_action_from_chat(response: dict[str, Any], user_text: st
     message = response.get("message") or {}
     if message.get("tool_calls"):
         return _extract_model_action_from_chat(response, user_text)
-    content = (message.get("content") or "").strip()
+    content = _strip_thinking(message.get("content") or "")
     if not content:
+        # Includes content that was only unfinished reasoning: there is no answer to
+        # give, so the repair path asks again.
         raise ValueError("Ollama returned neither a tool call nor content")
     if content.startswith("{") or content.startswith("```"):
         return _extract_model_action_from_chat(response, user_text)

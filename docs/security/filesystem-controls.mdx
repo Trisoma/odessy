@@ -7,7 +7,7 @@ keywords: ["odessy filesystem controls", "workspace authority", "path guard", "s
 content:
   type: "concept"
 ---
-Odessy v0.2.0 confines filesystem-sensitive operations to an explicit local workspace.
+Odessy v0.3.0 confines filesystem-sensitive operations to an explicit local workspace.
 The Python runtime owns the authoritative workspace decision before any MCP tool call is allowed.
 The Node MCP tool server also performs path checks as defense in depth, but it is not the security authority.
 
@@ -80,7 +80,19 @@ The request must be denied because the resolved target is outside the workspace.
 
 ## Limitations
 
-Odessy v0.2.0 is not a kernel sandbox, container, or VM.
+Odessy v0.3.0 is not a container or a VM, and the path checks on this page are **user-space validation**, not a filesystem sandbox.
 User-space path checks have inherent TOCTOU limitations if files or links change between validation and use.
 
-For v0.2.0, the goal is a serious local single-user authority boundary around whichever local model backend is selected, not complete operating-system isolation.
+v0.2.0 had no kernel-level confinement at all. v0.3.0 adds an **isolation layer** that
+is *additive* to path validation rather than a replacement for it: path validation
+decides what the runtime will authorize, and the isolation layer constrains what the
+authorized process can subsequently reach. On this board most backends report
+unavailable, so the layer is largely inactive here.
+
+Per-host coverage is recorded in `docs/reference/current-limitations.mdx` (Isolation
+Layer), and the declared-but-unbacked inventory is in
+`docs/execution/PROVIDER-PLACEHOLDERS.md`.
+
+So the accurate v0.3.0 statement is: a serious local single-user authority boundary plus
+best-effort process confinement whose coverage depends on the host -- not complete
+operating-system isolation.

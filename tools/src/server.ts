@@ -30,8 +30,41 @@ import {
   readInputSchema,
 } from "./tools/index.js";
 import { createWorkspaceGuard } from "./workspace/path-guard.js";
+import { resolveHostConfinement } from "./execution/seam.js";
+import { defaultExecutionProviders } from "./execution/providers/index.js";
+import { withUnconfinedFallback, type ProviderRegistry } from "./execution/registry.js";
 
 const workspaceRoot = process.env.ODESSY_WORKSPACE_ROOT || process.cwd();
+
+/**
+ * The host's execution targets, as a registry.
+ *
+ * Built once and cached: provider selection reads *host facts*, which discovery
+ * gathers by probing (and on Windows, by running the confinement runner once), so it
+ * must not be redone per call. The registry is what makes selection a fact about this
+ * host rather than a guess.
+ */
+let executionRegistry: ProviderRegistry | undefined;
+
+function executionProviders(): ProviderRegistry {
+  executionRegistry ??= withUnconfinedFallback(defaultExecutionProviders());
+  return executionRegistry;
+}
+
+/**
+ * The name the command tool is registered under.
+ *
+ * In the two-machine (`split`) deployment this server runs on the laptop and the
+ * Jetson has its own `terminal.run`, so this one is `laptop.terminal.run`. In the
+ * `single` deployment the Python runtime starts this server on the same computer and
+ * leaves `terminal.run` to it, so commands get this side's confinement backends
+ * (the Python side has none on Windows). The handler is the same either way.
+ */
+function terminalToolName(env: NodeJS.ProcessEnv = process.env): string {
+  return env.ODESSY_DEPLOYMENT?.trim().toLowerCase() === "single"
+    ? "terminal.run"
+    : "laptop.terminal.run";
+}
 
 type StructuredResult = Record<string, unknown>;
 
@@ -43,8 +76,20 @@ function resultPayload(result: object) {
   };
 }
 
-function buildServer(): McpServer {
+/**
+ * Build the tool server.
+ *
+ * `registry` is injectable so a test can pin the provider set. Production uses the
+ * host's real providers.
+ *
+ * The terminal tool resolves its confinement **per call** from the `mode` the authority
+ * layer sent with that call, rather than from a single confinement fixed at startup —
+ * because the mode is a property of the action, not of the host. The host does not
+ * choose it; it selects a provider that satisfies it, and throws when none does.
+ */
+function buildServer(registry?: ProviderRegistry): McpServer {
   const guard = createWorkspaceGuard(workspaceRoot);
+  const providers = registry ?? executionProviders();
   const server = new McpServer({
     name: "odessy-tool-server",
     version: "0.1.0",
@@ -131,13 +176,20 @@ function buildServer(): McpServer {
   );
 
   server.registerTool(
-    "laptop.terminal.run",
+    terminalToolName(),
     {
-      title: "Laptop Terminal Run",
-      description: "Run a laptop-side command in the Odessy workspace.",
+      title: "Terminal Run",
+      description: "Run a command on this computer in the Odessy workspace.",
       inputSchema: laptopTerminalRunInputSchema,
     },
-    async (input) => resultPayload(await laptopTerminalRun(guard, input)),
+    async (input) => {
+      // No requirement means the caller expressed none: run unconfined and SAY so. A
+      // requirement means the authority layer decided it, so this side selects a
+      // provider for it and fails closed when none satisfies it. The requirement is
+      // never inferred from the mode -- see `resolveHostConfinement`.
+      const confinement = resolveHostConfinement(input, guard.root, providers);
+      return resultPayload(await laptopTerminalRun(guard, input, confinement));
+    },
   );
 
   server.registerTool(

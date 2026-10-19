@@ -53,6 +53,10 @@ class FakeModel:
         user_text: str,
         observation: ToolObservation,
     ) -> FinalResponse:
+        if observation.result.get("status") == "error":
+            return FinalResponse(
+                text=f"{observation.request.name} failed: {observation.result.get('error', 'unknown error')}"
+            )
         if observation.request.name == "time.now":
             iso_time = observation.result["iso_time"]
             return FinalResponse(text=f"The current time is {iso_time}.")
@@ -61,6 +65,12 @@ class FakeModel:
             command = result["command"]
             status = result["status"]
             exit_code = result["exit_code"]
+            # A timed-out command has no exit status of its own, so there is no number
+            # to print. Saying "exit code None" would be worse than saying nothing.
+            if exit_code is None:
+                return FinalResponse(
+                    text=f"Command `{command}` finished with status {status} (no exit code)."
+                )
             return FinalResponse(
                 text=f"Command `{command}` finished with status {status} and exit code {exit_code}."
             )

@@ -7,7 +7,7 @@ keywords: ["odessy architecture", "authority boundary", "mcp security", "runtime
 content:
   type: "reference"
 ---
-Odessy v0.2.0 uses a local single-user command-line authority model.
+Odessy v0.3.0 uses a local single-user command-line authority model.
 The architecture is intentionally small, but the authority split is strict.
 
 ## Required Flow
@@ -18,8 +18,10 @@ MODEL
   -> Python Odessy Runtime
      -> schema validation
      -> policy
+     -> execution target authorization
      -> workspace authority
      -> process authority
+     -> isolation requirement and escalation
      -> confirmation when required
   -> MCP client
   -> Node MCP tool server
@@ -40,10 +42,12 @@ MODEL
 | Python is the authority | Python owns validation, policy, workspace checks, process checks, and confirmation. |
 | DENY means no execution | A denied request must not reach `tools/call`. |
 | CONFIRM means human approval | The model cannot approve its own action. |
+| Only authorized targets execute | A server must be explicitly marked an `ExecutionTarget` before any tool call reaches it. Holding one *is* the authorization; there is no default target set. |
+| Requesting a wider mode is not self-granting | A denied `danger-full-access` request does not fall back to a wider mode, and can never satisfy a `required` isolation requirement. |
 
 ## Current Tool Surface
 
-Step 7 keeps the v0.1.0 command-line scope:
+v0.3.0 keeps the v0.1.0 command-line scope:
 
 ```text
 time.now
@@ -59,7 +63,7 @@ git.changed_files
 git.log
 ```
 
-Voice integration is part of the v0.1.0 interface. GUI automation, robotics, and background autonomy remain outside this step.
+Voice integration arrived in v0.2.0 and remains part of the interface. GUI automation, robotics, and background autonomy remain outside the current scope.
 
 ## Defense In Depth
 
@@ -70,9 +74,9 @@ Voice integration is part of the v0.1.0 interface. GUI automation, robotics, and
 | Node tool server | Read-only tool handlers, schema validation, path guard defense in depth. |
 | OS/process layer | cwd, sanitized environment, timeout, stdout/stderr bounds, process cleanup. |
 
-## Step 7 Verification
+## Authority Verification
 
-Step 7 adversarial tests cover:
+The adversarial tests cover:
 
 - relative and absolute inside paths;
 - outside paths;
@@ -86,13 +90,26 @@ Step 7 adversarial tests cover:
 - timeout handling;
 - no-MCP-on-deny behavior.
 
-Current verification:
+Historical verification recorded on October 17, 2026 (v0.3.0 development):
 
 ```text
-Python tests: 39 passed
+Python tests: 530 passed, 0 failed, 3 skipped
 Node typecheck: passed
-Node read-only tool tests: 6 passed, 0 failed, 0 skipped
+Node tests: 171 passed, 0 failed, 1 skipped
 ```
+
+The five ONNX and LFM tests that used to be quarantined here are resolved; see
+`LIMITATION.md` for how each was settled.
+
+The later [agent-evaluation suite](../../evals/README.md) runs this authority
+path against a recording execution server. Its safety scores describe the
+fixture cases and do not establish real host confinement. The October 18
+provenance and DeepSeek changes passed 119 focused adapter/eval tests; this is
+not a replacement full-suite count.
+
+The Step 7 snapshot this section previously carried -- "Python tests: 39 passed; Node
+read-only tool tests: 6 passed" -- was accurate for Step 7 and is historical, not the
+current count.
 
 For current security and product limits, see `docs/reference/current-limitations.mdx`.
 

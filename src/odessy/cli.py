@@ -2,16 +2,32 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from odessy.agent_loop import OdessyAgent
+from mcp.client import Client
+
+from odessy.agent_loop import ExecutionTarget, OdessyAgent
+from odessy.cloud_model import CLOUD_PROVIDERS, CloudModel, CloudModelConfigError, build_cloud_model
 from odessy.config_file import load_config_env
+from odessy.deployment import (
+    DEPLOYMENT_ENV,
+    DeploymentConfigError,
+    deployment_mode,
+    model_tool_scope,
+    remote_tool_server_urls,
+)
+from odessy.execution.contract import ISOLATION_REQUIREMENTS, IsolationRequirement
+from odessy.execution.escalation import ApprovalRequest, EscalationDeniedError, EscalationOutcome
 from odessy.fake_model import FakeModel
 from odessy.lfm_model import LlamaCppLFMModel
 from odessy.mcp_server import build_odessy_mcp_server
+from odessy.node_mcp import NodeToolServerHttp, node_tool_server_dependencies_installed
 from odessy.ollama_model import OllamaModel
 from odessy.policy import OdessyPolicy
 from odessy.types import PolicyDecision, ToolRequest
@@ -23,6 +39,10 @@ from odessy.voice.tts import KokoroTTS
 
 DEFAULT_LFM_ENDPOINT = "http://127.0.0.1:11434"
 DEFAULT_LFM_MODEL = "lfm2.5-thinking:1.2b-q8_0"
+LOCAL_BACKENDS = ("lfm", "ollama", "llama_cpp")
+MODEL_BACKENDS = (*LOCAL_BACKENDS, *CLOUD_PROVIDERS)
+
+Model = FakeModel | OllamaModel | LlamaCppLFMModel | CloudModel
 
 
 def _build_model(
@@ -31,10 +51,17 @@ def _build_model(
     backend: str | None = None,
     model_name: str | None = None,
     ollama_model: str | None = None,
-) -> FakeModel | OllamaModel | LlamaCppLFMModel:
+) -> Model:
     if use_fake_model:
         return FakeModel()
     backend = (backend or os.environ.get("ODESSY_MODEL_BACKEND", "lfm")).lower()
+    if backend in CLOUD_PROVIDERS:
+        # Cloud models ignore model_name: callers pass Ollama names, and the cloud
+        # model is configured separately through ODESSY_CLOUD_MODEL.
+        try:
+            return build_cloud_model(backend)
+        except CloudModelConfigError as error:
+            raise SystemExit(str(error)) from error
     if backend == "ollama":
         name = (
             model_name
@@ -54,14 +81,91 @@ def _build_model(
 
 def _build_agent(
     workspace_root: Path,
-    model: FakeModel | OllamaModel | LlamaCppLFMModel,
+    model: Model,
+    mcp_servers: tuple[object, ...] | None = None,
 ) -> OdessyAgent:
     return OdessyAgent(
         model=model,
-        policy=OdessyPolicy(workspace_root=workspace_root),
-        mcp_server=_build_mcp_servers(workspace_root),
+        policy=OdessyPolicy(
+            workspace_root=workspace_root,
+            isolation=_isolation_from_env(),
+        ),
+        mcp_server=(
+            mcp_servers
+            if mcp_servers is not None
+            else (ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root)),)
+        ),
         confirm=_confirm_tool_call,
+        approver=TerminalEscalationApprover(),
+        max_model_calls=_max_model_calls_from_env(cloud=isinstance(model, CloudModel)),
     )
+
+
+#: Model generations allowed per turn, counting retries and follow-up steps.
+MAX_MODEL_CALLS_ENV = "ODESSY_MAX_MODEL_CALLS"
+DEFAULT_MAX_MODEL_CALLS = 4
+DEFAULT_CLOUD_MAX_MODEL_CALLS = 8
+
+
+def default_max_model_calls(*, cloud: bool) -> int:
+    """8 for a cloud model, 4 for a local one.
+
+    A cloud call takes about 2 s and a capable model explores before it answers: two
+    DeepSeek multi-step attempts in the evaluation stopped one call short at 4. A local
+    call takes about 30 s, so the local ceiling stays where it was.
+    """
+
+    return DEFAULT_CLOUD_MAX_MODEL_CALLS if cloud else DEFAULT_MAX_MODEL_CALLS
+
+
+def _max_model_calls_from_env(*, cloud: bool = False) -> int:
+    """The per-turn ceiling on model calls: ``ODESSY_MAX_MODEL_CALLS``, else the default."""
+
+    raw = os.environ.get(MAX_MODEL_CALLS_ENV, "").strip()
+    if not raw:
+        return default_max_model_calls(cloud=cloud)
+    try:
+        value = int(raw)
+    except ValueError:
+        raise SystemExit(f"{MAX_MODEL_CALLS_ENV} must be a positive integer (got {raw!r})") from None
+    if value < 1:
+        raise SystemExit(f"{MAX_MODEL_CALLS_ENV} must be a positive integer (got {raw!r})")
+    return value
+
+
+class TerminalEscalationApprover:
+    """Asks the user in the terminal whether one call may run with a wider sandbox.
+
+    The model may ask for this (``sandbox_permissions`` with a justification), and the
+    tool schema says the user is asked. Without an approver composed here, every such
+    request failed with "no approval service is composed" and ended the turn.
+    """
+
+    async def ask(self, request: ApprovalRequest) -> EscalationOutcome:
+        print(f"Odessy asks to run {request.tool_name} with a wider sandbox.")
+        print(f"Reason: {request.reason}")
+        try:
+            answer = await asyncio.to_thread(input, "Allow the wider sandbox for this one call? [y/N] ")
+        except EOFError:
+            return "unavailable"
+        return "allowed-once" if answer.strip().lower() in {"y", "yes"} else "rejected"
+
+
+def _isolation_from_env() -> IsolationRequirement:
+    """How strict this deployment is about isolation.
+
+    Defaults to ``preferred``, which is the behaviour every existing caller already has.
+    It is deliberately **not** ``required`` by default: a host with no confinement backend
+    would then refuse every process-spawning command, including on this machine, where
+    the Python side has no Windows backend. Raising it is a deployment decision, so it is
+    configuration rather than a constant.
+    """
+
+    raw = (os.environ.get("ODESSY_ISOLATION") or "preferred").strip().lower()
+    if raw not in ISOLATION_REQUIREMENTS:
+        allowed = ", ".join(ISOLATION_REQUIREMENTS)
+        raise SystemExit(f"ODESSY_ISOLATION must be one of: {allowed} (got {raw!r})")
+    return cast(IsolationRequirement, raw)
 
 
 def _confirm_tool_call(decision: PolicyDecision, request: ToolRequest) -> bool:
@@ -86,16 +190,29 @@ def _summarize_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
 async def _text_async(user_text: str, use_fake_model: bool, backend: str | None = None) -> None:
     workspace_root = Path.cwd()
     model = _build_model(use_fake_model, backend=backend)
-    agent = _build_agent(workspace_root, model)
-    result = await agent.run_turn(user_text)
+    _announce_cloud(model)
+    async with _tool_servers(workspace_root) as servers:
+        agent = _build_agent(workspace_root, model, servers)
+        try:
+            result = await agent.run_turn(user_text)
+        except (PermissionError, EscalationDeniedError) as error:
+            # A denial, a declined confirmation or a refused escalation is an outcome,
+            # not a crash: say what was not run instead of printing a traceback.
+            raise SystemExit(f"Odessy did not run it: {error}") from error
     print(result.final_text)
 
 
-async def _voice_async(use_fake_model: bool) -> None:
+async def _voice_async(use_fake_model: bool, backend: str | None = None) -> None:
     config = VoiceConfig.from_env()
     workspace_root = Path.cwd()
-    model = _build_model(use_fake_model, model_name=config.ollama_model)
-    agent = _build_agent(workspace_root, model)
+    model = _build_model(use_fake_model, backend=backend, model_name=config.ollama_model)
+    _announce_cloud(model)
+    async with _tool_servers(workspace_root) as servers:
+        agent = _build_agent(workspace_root, model, servers)
+        await _run_voice_turn(agent, config)
+
+
+async def _run_voice_turn(agent: OdessyAgent, config: VoiceConfig) -> None:
     loop = VoiceLoop(
         agent=agent,
         audio_io=CommandAudioIO(
@@ -127,20 +244,118 @@ async def _voice_async(use_fake_model: bool) -> None:
         raise SystemExit(f"Voice turn failed with status {result.status}: {result.error}")
 
 
-def _build_mcp_servers(workspace_root: Path) -> tuple[object, ...] | object:
-    servers: list[object] = [build_odessy_mcp_server(workspace_root=workspace_root)]
-    extra_urls = os.environ.get("ODESSY_MCP_SERVER_URLS") or os.environ.get("ODESSY_TOOL_SERVER_URL")
-    if extra_urls:
-        for raw_url in extra_urls.replace(";", ",").split(","):
-            url = raw_url.strip()
-            if url:
-                servers.append(url)
-    return tuple(servers) if len(servers) > 1 else servers[0]
+def _announce_cloud(model: object) -> None:
+    """Say plainly, once per run, that this turn leaves the machine."""
+    if isinstance(model, CloudModel):
+        print(
+            f"[odessy] cloud model {model.provider}/{model.model}: your request and "
+            "redacted tool output are sent to the provider.",
+            file=sys.stderr,
+        )
+
+
+def _model_backend_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--model-backend",
+        choices=MODEL_BACKENDS,
+        default=None,
+        help=(
+            "Select the model backend (defaults to ODESSY_MODEL_BACKEND, then lfm). "
+            "Cloud backends: " + ", ".join(CLOUD_PROVIDERS) + "."
+        ),
+    )
+
+
+#: Printed when ``single`` mode runs without the Node tool server.
+_NO_NODE_WARNING = (
+    "[odessy] Node tool server is not installed, so only time.now, calculator.eval and "
+    "terminal.run are available (no file, search or git tools), and commands run with "
+    "no confinement backend. Run `python -m odessy doctor` for the setup steps."
+)
+
+
+@asynccontextmanager
+async def _tool_servers(workspace_root: Path) -> AsyncIterator[tuple[object, ...]]:
+    """The MCP servers for this deployment, kept running for the duration of the block.
+
+    Each is wrapped in `ExecutionTarget` because this IS the authorization act: the
+    composition root names the servers it means to execute on. A server that is merely
+    reachable -- discovered, or supplied by a future dynamic source -- is not executable,
+    so trust is never inherited from construction.
+    """
+
+    try:
+        mode = deployment_mode()
+    except DeploymentConfigError as error:
+        raise SystemExit(str(error)) from error
+
+    if mode == "split":
+        yield (
+            ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root)),
+            *(ExecutionTarget(url) for url in remote_tool_server_urls()),
+        )
+        return
+
+    if not node_tool_server_dependencies_installed():
+        print(_NO_NODE_WARNING, file=sys.stderr)
+        server = build_odessy_mcp_server(workspace_root=workspace_root)
+        async with Client(server) as client:
+            tools = await client.list_tools()
+        with model_tool_scope(tool.name for tool in getattr(tools, "tools", tools)):
+            yield (ExecutionTarget(server),)
+        return
+
+    # Loopback only, on a free port, for this run only. The Node server registers its
+    # command tool as `terminal.run` in single mode, so the Python server leaves it out.
+    node = NodeToolServerHttp(workspace_root, host="127.0.0.1", extra_env={DEPLOYMENT_ENV: "single"})
+    try:
+        url = await node.__aenter__()
+    except (RuntimeError, TimeoutError) as error:
+        raise SystemExit(
+            f"Could not start the local Node tool server: {error}\n"
+            "Run `python -m odessy doctor` to check the setup."
+        ) from error
+    try:
+        yield (
+            ExecutionTarget(
+                build_odessy_mcp_server(workspace_root=workspace_root, include_terminal=False)
+            ),
+            ExecutionTarget(url),
+        )
+    finally:
+        await node.__aexit__(None, None, None)
+
+
+def _quiet_transport_logs() -> None:
+    """Keep per-request HTTP lines out of the console.
+
+    Building the Python MCP server sets the root logger to INFO, after which httpx and
+    the MCP client log every request ("HTTP Request: POST ...", session ids). The
+    levels are set on those loggers, so they hold whatever the root config becomes.
+    ``ODESSY_DEBUG_HTTP=1`` keeps them.
+    """
+
+    if os.environ.get("ODESSY_DEBUG_HTTP") == "1":
+        return
+    # The MCP SDK's HTTP client is `httpx2`; plain `httpx` is listed for older SDKs.
+    for name in ("httpx", "httpx2", "mcp.client"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def main(argv: list[str] | None = None) -> None:
     load_config_env()
+    _quiet_transport_logs()
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["doctor"]:
+        parser = argparse.ArgumentParser(
+            prog="python -m odessy doctor",
+            description="Check this machine's Odessy setup and print how to fix what is missing.",
+        )
+        _model_backend_argument(parser)
+        args = parser.parse_args(argv[1:])
+        from odessy.doctor import main as doctor_main
+
+        raise SystemExit(doctor_main(args.model_backend))
     if argv[:1] == ["voice"]:
         parser = argparse.ArgumentParser(description="Run one bounded local Odessy voice turn.")
         parser.add_argument(
@@ -148,8 +363,9 @@ def main(argv: list[str] | None = None) -> None:
             action="store_true",
             help="Use the deterministic fake model instead of Ollama/Gemma.",
         )
+        _model_backend_argument(parser)
         args = parser.parse_args(argv[1:])
-        asyncio.run(_voice_async(use_fake_model=args.fake_model))
+        asyncio.run(_voice_async(use_fake_model=args.fake_model, backend=args.model_backend))
         return
     parser = argparse.ArgumentParser(description="Run the Odessy text loop.")
     parser.add_argument(
@@ -157,12 +373,7 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Use the deterministic fake model instead of a real model backend.",
     )
-    parser.add_argument(
-        "--model-backend",
-        choices=["lfm", "ollama", "llama_cpp"],
-        default=None,
-        help="Select the model backend (defaults to ODESSY_MODEL_BACKEND, then lfm).",
-    )
+    _model_backend_argument(parser)
     parser.add_argument("text", help="User text to send into the Odessy loop.")
     args = parser.parse_args(argv)
     if not args.text:

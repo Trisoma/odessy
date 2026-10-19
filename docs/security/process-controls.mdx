@@ -20,6 +20,31 @@ The model may propose a terminal action, but only the Python Odessy runtime can 
 | Execution server | The local MCP server invokes the command bridge; it does not decide model authority. |
 | Recommendation | Keep terminal policy and confirmation outside the model and outside MCP. |
 
+## Process Confinement
+
+Authorization decides whether a command may run. Confinement decides what it can reach
+once it does. v0.2.0 had authorization only; **v0.3.0 adds confinement**, and every
+executor now routes its argv through `confine()`.
+
+The backend is chosen by **what the host can actually enforce**, not by platform name:
+
+```text
+bwrap         Linux
+landlock      Linux, via a launcher; unavailable where the kernel lacks Landlock
+seatbelt      macOS
+windows-acl   Windows, reporting `partial` by construction
+unconfined    any -- the named, reported absence of confinement, not a backend
+```
+
+Each run reports the enforcement it achieved, so an unconfined run is *stated* rather
+than inferred, and a run that requires isolation can never be satisfied by a backend
+providing none.
+
+This does not make `terminal.run` sandboxed on every host: on this board most backends
+report unavailable. Per-host coverage is in `docs/reference/current-limitations.mdx`;
+the design rationale is in the internal record
+`../docs/execution-layer-design.md`.
+
 ## Working Directory
 
 Every terminal request has an explicit working directory.
@@ -62,11 +87,11 @@ On Windows, cleanup uses the platform process tree tool.
 On POSIX platforms, cleanup uses the process group where practical.
 
 This is not a universal process jail.
-It is a v0.2.0 local single-user lifecycle boundary.
+It is a v0.3.0 local single-user lifecycle boundary.
 
 ## Background And Detached Execution
 
-Odessy v0.2.0 is request-scoped.
+Odessy v0.3.0 is request-scoped.
 Intentional background or detached execution is outside the authority model.
 
 The policy layer denies obvious detachment patterns such as:
@@ -95,12 +120,17 @@ If that write fails, the untruncated original is returned rather than a lossy cu
 This prevents a model-requested command from flooding logs, observations, or model context without destroying the output it bounded.
 
 Output is also redacted for credential-shaped values before it is exposed or spilled.
-That redaction is name-based and covers this `terminal.run` path; it does not cover MCP tool results in general.
+That redaction is name-based and now covers **both** terminal executors -- this
+`terminal.run` path and the Node command path (`terminal.run` in single mode,
+`laptop.terminal.run` in split mode), the latter since v0.3.0. It
+does not cover MCP tool results in general.
 See `docs/security/credential-handling.mdx`.
 
 ## Current Limitations
 
-Odessy process control is a local v0.2.0 authority boundary, not a complete OS sandbox.
+Odessy process control is a local v0.3.0 authority boundary plus best-effort confinement,
+not a complete OS sandbox. Coverage depends on the host, and on this board most backends
+report unavailable.
 Timeout cleanup is best effort, shell command parsing is intentionally limited, and intentionally detached descendants may require stronger OS primitives in a future version.
 
 For the full current limitation register, see `docs/reference/current-limitations.mdx`.

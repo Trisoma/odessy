@@ -179,42 +179,140 @@ When it is run, the experiment is one command varying one number:
 on the fixed `lfm_compare` prompt, with warmups, comparing tok/s and latency.
 `ollama_num_gpu` is written into `metadata.json`, so the runs are comparable.
 
-## No Isolation Sandbox
+## Isolation: Implemented In v0.3.0, Largely Inactive On This Board
 
-**Status: intentional. v0.2 ships without containment.**
+**Status: the layer exists. Do not describe this board as sandboxed.**
 
-Odessy enforces an **authority** boundary, not an **isolation** boundary.
+Odessy enforced only an **authority** boundary through v0.2. v0.3.0 adds an
+**isolation** layer. The distinction is still the one that matters:
 
 ```text
 Authority    "the model proposes, Odessy decides" -- enforced in-process.
-Isolation    "an allowed command cannot exceed a stated blast radius" -- NOT
-             enforced. Not in v0.2.
+             Reduces what Odessy will LAUNCH.
+Isolation    "an allowed command cannot exceed a stated blast radius" -- now
+             implemented, and enforced by the platform where a backend exists.
+             Constrains what a launched program CAN REACH.
 ```
 
-Everything Odessy does today is authority: `WorkspaceAuthority` path confinement,
-sensitive-path denial, the sanitized environment allowlist, policy denial of
-destructive / detached / credential-seeking commands, confirmation for
-non-low-risk calls, execution timeouts with process-tree cleanup, and bounded plus
-redacted output.
+### What was built
 
-A command that passes policy runs as a normal child process with the user's full
-privileges. It can read and write anything that user can, and reach the network.
-Policy reduces what Odessy will *launch*; it does not constrain what a launched
-program does. The Windows Node MCP server applies a path guard but no OS-level
-restriction.
+Provider-selected confinement, with the backend chosen by *what the host can
+actually enforce* rather than by platform name:
 
-Why no sandbox now: Landlock is unavailable on this board
-(`CONFIG_SECURITY_LANDLOCK is not set` in the L4T kernel -- a kernel build
-decision by NVIDIA, not a runtime toggle). Every remaining route needs a kernel
-rebuild, a Windows restricted token, or a container: real work with unproven
-payoff for a local single-user agent.
+```text
+bwrap            Linux, namespaces
+landlock         Linux, kernel LSM      (needs the landlock-run launcher)
+seatbelt         macOS
+windows-acl      Windows, restricted token + ACL   -> PARTIAL enforcement
+```
 
-Odessy must not be described as sandboxed, jailed, or contained. Options and
-prototype gates for a future version: `SANDBOX-PLAN.md`.
+Every executor routes commands through `confine()`, including runs with no backend
+configured, so a run always **states** its enforcement rather than leaving it to be
+inferred. `required` isolation can never be satisfied by a mode that provides no
+confinement — not by selection, not by escalation, not by omission.
 
-## Multi-Tool Continuation Deferred To v0.3
+### Why this board is still not contained
 
-**Status: implemented, wired, and does not fire with a real model.**
+**This is the part that must not be lost.** Implementing the layer does not confine
+the Jetson:
+
+- **Landlock is off in this kernel.** `CONFIG_SECURITY_LANDLOCK is not set` in the
+  L4T build — a kernel decision by NVIDIA, not a runtime toggle. The Python Landlock
+  provider therefore reports unavailable.
+- **Odessy ships no `landlock-run` launcher.** The Python Landlock backend needs a
+  native launcher on `PATH`; without one it reports unavailable even where Landlock
+  is compiled in.
+- **The Node side cannot read the ABI.** Node cannot issue
+  `landlock_create_ruleset`, so the TypeScript provider reports the ABI as unknown on
+  every Linux host rather than guessing it.
+- **Python has no Windows backend.** On Windows the Python bridge reports
+  `unconfined`, while the TypeScript host can genuinely confine.
+
+The practical result: **`bwrap` is the only backend with a real chance of confining
+on this board**, and only if it is installed and can actually sandbox. Everything
+else reports unavailable, which is the intended behaviour — an unavailable backend is
+a fact the report states, not a failure to conceal.
+
+### What the Windows backend does not cover
+
+`windows-acl` reports **`partial`**, and the gaps are named rather than implied:
+
+1. `WRITE_RESTRICTED` must retain `Everyone` for process initialisation, so an
+   external object whose DACL grants Everyone a write right stays writable.
+2. NTFS hard links alias a *file object*, so a granted workspace file is writable
+   through an external alias.
+
+Reads, network, and process visibility are **not restricted** on Windows. Derived but
+undocumented device and ioctl boundaries are deliberately excluded from the reported
+limitation set.
+
+### Still absent
+
+- **Host pairing.** The host is a local subprocess; there is nothing remote to pair
+  with. A server must be explicitly marked an `ExecutionTarget` to be executable.
+- **Any device backend.** ESP32 / STM32 / RP2040 are declared and unbacked.
+- **A total wall-clock turn deadline.** Unchanged from the section above.
+
+### How to describe it
+
+```text
+Allowed              "Odessy has an isolation layer; its coverage depends on the
+                      host, and each run reports what it achieved."
+Not allowed          "Odessy is sandboxed", "jailed", or "contained" -- without the
+                      qualifier, because on this board it would be false.
+```
+
+Full inventory of what is declared and unbacked:
+`docs/execution/PROVIDER-PLACEHOLDERS.md`. Design detail:
+`docs/execution-layer-design.md` in the repository root.
+
+## Cloud Model Backends Are Optional And Off By Default
+
+**Status: implemented, opt-in, off by default.**
+
+A cloud backend (Claude, or any OpenAI-compatible API) can replace the local LFM/Gemma
+model. It is a stronger *proposer*, never a stronger authority: tool-call validation,
+workspace authority, policy, and confirmation still run in the Python runtime, and a
+cloud tool call passes through the same validation functions the local adapter uses.
+
+What changes is where data goes, not who decides.
+
+```text
+Local backend (default)   Nothing leaves the machine.
+Cloud backend selected    The user's text and that turn's tool observations are sent to
+                          the provider, after passing through redact_text.
+```
+
+The redaction on that path is the same best-effort, name-based filter described above.
+It does widen coverage, because MCP tool results are otherwise unredacted — but it is
+still a filter, not a policy.
+
+**What this does not establish:** no requirement states what may leave the host.
+Until one does, the only control over egress is *which backend was selected*, and every
+run prints a notice on stderr saying the request is leaving the machine.
+
+```text
+Allowed              "Odessy is local by default; selecting a cloud backend sends the
+                      request and redacted tool output to that provider."
+Not allowed          "Odessy runs locally", unqualified, once a cloud backend is selected.
+```
+
+Reference: `docs/reference/cloud-models.mdx`. Published register:
+`docs/reference/current-limitations.mdx` (the **Data egress** row).
+
+DeepSeek now receives `ODESSY_CLOUD_EFFORT` as `reasoning_effort` when configured.
+The OpenAI-compatible adapter retains returned assistant `reasoning_content` for
+subsequent requests, including repairs and tool follow-ups. Model and effort
+support are provider-specific; the adapter forwards effort without validating
+its allowed values. These changes do not add a general thinking toggle or make
+the setting apply to every OpenAI-compatible provider.
+
+## Multi-Tool Continuation: Local Limitation And Cloud Evidence
+
+**Status: implemented; model and routing configuration affect whether it succeeds.**
+
+The following examples are the historical v0.2 local-model observation, not a
+claim about every current backend:
 
 The observation call advertises tools, and the loop can accept a second tool
 request. Offline the same loop makes 3 model calls with tools advertised on calls
@@ -229,15 +327,40 @@ Even with an explicit "then run X", the model summarises and stops. The prompt
 line asking it to continue is a nudge, not an enforcement: the loop can decline to
 accept an answer, but cannot demand a tool call.
 
-**v0.2 ships single-tool turns.** This is a model-behaviour limitation, not a
-wiring defect. The continuation machinery is retained but inert pending v0.3.
+**v0.2 shipped with this observed single-tool behaviour.** On October 18, both
+local LFM eval sweeps still passed 0/18 multi-step attempts, while the separate
+`deepseek-flash` reference passed 17/18. The continuation machinery can therefore
+work with a real cloud model in these fixtures. Keyword routing on also limits
+follow-ups to the selected tool, constraining sequences that need a different
+second tool. These results do not establish general multi-step reliability.
 
-## Known Failing Tests
+See [the eval guide](evals/README.md) for the saved artifacts and comparison limits.
 
-**Status: quarantined, not fixed. 5 tests fail on every run.**
+## Evaluation Provenance And Scope
 
-They are unrelated to v0.2's deliverable. Recorded so that a red suite is a
-documented state rather than a surprise, and so nobody assumes the suite is clean.
+New eval metadata adds only `git_commit_note`: provenance tries a nonempty
+`ODESSY_COMMIT`, then Git from the repo root, then a labeled 12-character SHA-256
+source-tree hash. When `git_commit` is null, the note includes the Git exception
+message, available stderr, and either the hash or its failure reason.
+
+The October 18 cloud artifact reports missing `.git` on the Jetson and a source
+hash; both earlier local artifacts lack revision information. The fix does not
+recover their old revisions or require rerunning their models. A source hash is
+not a commit and does not cover eval cases, settings, dependencies, or the full
+deployment. The existing metadata also omits dirty status, reasoning effort,
+and provider endpoint. Preserve non-secret settings separately for comparisons.
+
+The recording executor does not run proposed shell commands or writes. Zero
+forbidden calls reaching it is evidence about the tested authority path, not a
+test of kernel isolation or arbitrary real-world command safety.
+
+## Previously Failing Tests: Resolved
+
+**Status: resolved; the dated October 17 full-suite record is 530 passed, 3 skipped.**
+
+These five were quarantined rather than fixed. In each case the stale side was the
+expectation, not the runtime, and the expectations now match. Kept as a record of what
+was decided, not as outstanding work.
 
 ```text
 test_benchmark_matrix.py::test_pytorch_kokoro_engine_uses_pipeline_and_reports_device
@@ -247,17 +370,19 @@ test_onnx_runtime_wiring.py::test_build_kokoro_uses_tensorrt_with_fallbacks
     All four assert ONNX Runtime provider configs. They expect
     ('CUDAExecutionProvider', {'device_id': 0}) while the runtime now supplies
     ('CUDAExecutionProvider', {'device_id': 0, 'gpu_mem_limit': 536870912}).
-    Either the expectations are stale, or an intentional memory-limit change was
-    never propagated. NOT DETERMINED.
+    Resolved as stale expectations: the memory limit is part of the runtime's
+    provider configuration, and these tests exist to pin provider order and
+    selection. They now assert the limit as well.
 
 test_lfm_model.py::test_lfm_call_count_includes_final_observation_response
     Asserts response_chars == 11 for a single call. The field accumulates across
-    calls (response_chars += len(content)), so a two-call turn records 59. The
-    test is stale relative to the field's behaviour, but whether the field or the
-    test is wrong has never been decided.
+    calls (response_chars += len(content)), so a two-call turn records 59.
+    Resolved as a stale test: the field records the whole turn, so a two-call turn
+    legitimately reports both responses. The assertion now sums them.
 ```
 
-Neither group may be deleted to make the suite green. Both need a decision first:
-is the code or the expectation correct? Editing the expectation without settling
-that would hide a possible regression.
+Neither group was deleted to make the suite green; both were decided first. The rule
+still holds for future failures: settle whether the code or the expectation is wrong
+before editing either, because editing an expectation without settling that hides a
+possible regression.
 

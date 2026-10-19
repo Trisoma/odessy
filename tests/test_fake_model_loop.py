@@ -1,6 +1,6 @@
 import pytest
 
-from odessy.agent_loop import OdessyAgent
+from odessy.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.fake_model import FakeModel
 from odessy.mcp_server import build_odessy_mcp_server
 from odessy.policy import OdessyPolicy
@@ -21,8 +21,10 @@ async def test_fake_model_time_request_flows_through_policy_and_mcp() -> None:
             workspace_root=Path.cwd(),
             allowed_tools={"time.now"},
         ),
-        mcp_server=build_odessy_mcp_server(
-            clock=lambda: "2026-08-15T23:45:00+08:00"
+        mcp_server=ExecutionTarget(
+            build_odessy_mcp_server(
+                clock=lambda: "2026-08-15T23:45:00+08:00"
+            )
         ),
     )
 

@@ -6,7 +6,6 @@ from odessy.agent_loop import OdessyAgent
 from odessy.ollama_model import (
     OllamaModel,
     _parse_model_action,
-    _select_tools,
     _system_prompt,
 )
 from odessy.policy import OdessyPolicy
@@ -34,33 +33,13 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-def test_system_prompt_targets_terminal_run_single_tool() -> None:
-    prompt = _system_prompt("terminal.run")
+def test_system_prompt_never_preselects_a_tool() -> None:
+    # Keyword routing is gone: the model always chooses among every offered tool.
+    prompt = _system_prompt()
 
     assert "tool-calling adapter" in prompt
-    assert "maps to terminal.run" in prompt
-    assert "laptop.terminal.run" not in prompt
-
-
-def test_system_prompt_targets_laptop_terminal_run_single_tool() -> None:
-    prompt = _system_prompt("laptop.terminal.run")
-
-    assert "tool-calling adapter" in prompt
-    assert "maps to laptop.terminal.run" in prompt
-
-
-def test_select_tools_returns_single_tool_for_git_status() -> None:
-    tools = _select_tools("git.status")
-
-    assert len(tools) == 1
-    assert tools[0]["function"]["name"] == "git.status"
-    assert tools[0]["function"]["parameters"]["required"] == []
-
-
-def test_select_tools_returns_all_tools_when_unknown() -> None:
-    tools = _select_tools(None)
-
-    assert len(tools) > 10
+    assert "maps to" not in prompt
+    assert "more tools after its result" in prompt
 
 
 def test_valid_tool_json_becomes_tool_request() -> None:
@@ -248,8 +227,8 @@ def test_ollama_repair_prompt_recovers_tool_name_from_malformed_laptop_request()
 
     assert isinstance(action, ToolRequest)
     assert action.name == "laptop.terminal.run"
+    # Without a routed tool to focus on, the repair prompt carries every contract.
     assert "laptop.terminal.run:" in model.prompts[1]
-    assert "time.now:" not in model.prompts[1]
 
 
 def test_ollama_invalid_retry_fails_after_exactly_one_repair_attempt() -> None:

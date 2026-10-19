@@ -8,7 +8,11 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "outDir": "dist",
-    "rootDir": "."
+    "rootDir": ".",
+    // The moved dsh sources use `.ts` extensions in relative imports. Rewriting
+    // them at emit keeps those files byte-identical to the upstream they were
+    // moved from, which is what makes a later diff against upstream meaningful.
+    "rewriteRelativeImportExtensions": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vendor/**/*.ts"]
 }

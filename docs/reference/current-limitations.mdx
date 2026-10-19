@@ -1,38 +1,101 @@
 ---
-title: "Current v0.2.0 Limitations"
+title: "Current v0.3.0 Limitations"
 sidebar-title: "Current Limitations"
-description: "Reference for Odessy's current implementation limits, security limits, and intentionally deferred v0.2.0 capabilities."
-description-agent: "Use before claiming Odessy is sandboxed, autonomous, voice-ready, Gemma-integrated, or production-secure. Lists current known limitations and deferred work."
-keywords: ["odessy limitations", "v0.2.0 scope", "security limitations", "deferred work"]
+description: "Reference for Odessy's current implementation limits, security limits, per-host isolation coverage, and intentionally deferred v0.3.0 capabilities."
+description-agent: "Use before claiming Odessy is sandboxed, paired, autonomous, voice-ready, local-only, or production-secure. Lists current known limitations, per-host isolation coverage, data egress, and deferred work."
+keywords: ["odessy limitations", "v0.3.0 scope", "security limitations", "isolation coverage", "deferred work"]
 content:
   type: "reference"
 ---
-Odessy v0.2.0 currently has a real local command-line authority boundary, but it is not a complete operating-system sandbox or finished product.
+Odessy v0.3.0 has a real local command-line authority boundary, and an isolation layer whose coverage depends on the host.
+It is still not a complete operating-system sandbox, and on the Jetson board it is largely inactive — see **Isolation Layer** below.
 This page records the limits future agents must keep visible when changing the runtime, tools, policy, MCP integration, or public documentation.
 
 ## Product Scope Limits
 
 | Area | Current state | Limitation |
 |---|---|---|
-| Model | LFM2.5-Thinking is the default Ollama backend; Gemma remains an explicit fallback | Model quality, latency, memory behavior, and long-run reliability are not fully benchmarked. |
+| Model | LFM2.5-Thinking is the default Ollama backend; Gemma remains an explicit fallback; an optional cloud backend (Claude, or any OpenAI-compatible API) can replace both | The October 18 agent-eval runs provide fixture-based measurements for LFM and DeepSeek, not full quality, latency, memory, or long-run reliability validation. The cloud backend is opt-in and off by default — see **Data egress** below. |
 | Voice | Staged voice loop is integrated and has completed live Jetson turns | Automated tests still use fakes for hardware components, and physical audio quality depends on the configured device. |
 | GUI automation | Out of scope | No mouse, keyboard injection, screen capture, browser automation, desktop automation, or robotics. |
 | Multi-agent behavior | Out of scope | No delegation, background autonomy, scheduler, or multi-session agent orchestration. |
-| Writes | Out of scope after Step 7 | `filesystem.write` and `log.append` are not implemented yet. Step 8 must design confirmation semantics before adding writes. |
+| Writes | Still out of scope | `filesystem.write` and `log.append` are not implemented. Step 8 designed the confirmation and escalation semantics they will need; adding the tools themselves remains future work. |
 
 ## Security Boundary Limits
 
 | Area | Current control | Limitation |
 |---|---|---|
-| Workspace confinement | Python `WorkspaceAuthority` plus Node path guard defense in depth | This is user-space validation, not kernel isolation. TOCTOU races remain possible if filesystem state changes between validation and access. |
+| Workspace confinement | Python `WorkspaceAuthority` plus Node path guard defense in depth, **and** an isolation layer that confines wherever a backend exists | Path validation is still user-space, so TOCTOU races remain possible between validation and access. Kernel isolation is a separate, additive control — see **Isolation Layer**. |
 | Symlinks/reparse points | Canonical path resolution blocks existing symlink escapes where the platform resolver exposes them | This is not a claim of complete coverage for every Windows reparse-point or filesystem race edge case. |
 | Sensitive paths | Obvious sensitive names and segments are denied | The classifier is intentionally conservative, not a perfect secret detector. It may miss unusual secret filenames and may deny some legitimate files. |
-| Command parsing | Policy denies destructive, credential-seeking, and obvious detached/background patterns | Odessy does not implement a full shell parser. Execution-level timeout cleanup is a backstop, not a universal containment proof. |
+| Command parsing | Policy denies destructive, credential-seeking, and obvious detached/background patterns, download-and-run (`curl … \| sh`, `iwr … \| iex`, `bash <(curl …)`), and writes to operating-system locations (`C:\Windows`, `/etc`, `/usr`, …) | Odessy does not implement a full shell parser, so these are patterns: an obfuscated command can evade them, and an interpreter fed by a download is denied even when it only formats data. Execution-level timeout cleanup is a backstop, not a universal containment proof. |
+| Low-risk allow rule | `pwd`, `ls`, `dir`, `Get-ChildItem`/`gci`, `Get-Location` and `git status` run without confirmation, and only as a single command | Before, only the first word was checked, so `ls && python evil.py` was "low risk"; any chaining (`;`, `&&`, `\|`, backticks, `$(`) now needs confirmation. Parentheses and braces also require confirmation because PowerShell can execute commands inside expressions. This remains conservative pattern matching, not a shell parser. |
+| Failed tool calls | A tool call that runs and fails (a wrong path) is returned to the model as an observation it can correct | The next call is validated and authorized like any other, and the per-turn model-call limit (`ODESSY_MAX_MODEL_CALLS`: 8 for cloud backends, 4 for local ones) still bounds retries. Before, one wrong path ended the turn. |
+| Cross-OS paths | The workspace check treats a Windows drive or UNC path as outside the workspace, and a backslash as a separator, on any host | Before this, on the Linux Jetson `C:\Windows\System32\x` was a relative file name inside the workspace, so a write there (bound for the Windows laptop) was only confirmed. The laptop's own path guard still rejected it. |
 | Timeout cleanup | Windows uses process-tree termination; POSIX uses process-group termination where practical | Cleanup is best effort. Intentionally detached descendants may evade request-scoped cleanup without stronger OS primitives. |
 | Environment isolation | `terminal.run` receives a sanitized allowlisted environment | Some legitimate tools may require additional non-secret environment variables later. Additions must be explicit and reviewed. |
 | Output bounds | stdout/stderr are bounded with head-and-tail retention; the full text is spilled to `.odessy/spill/` and replaced inline with a preview, an exact omitted-byte count, and a locator | Truncation is no longer lossy, but bounded is not the same as sanitized. See the credential handling row below for what is and is not redacted. |
-| Credential handling | Policy is **defined but not enforced**; name-based redaction is applied on some surfaces | There is no credential store, vault, or reference resolver. Redaction does not cover MCP tool results in general (including `laptop.terminal.run`, `filesystem.read`, and the Git tools), nor the `command` metadata field, which is preserved byte-for-byte by design. Detection is name-based and misses unrecognised secret shapes. See `docs/security/credential-handling.mdx`. |
-| MCP server exposure | Node HTTP transport is intended for local/controlled use | There is no production authentication layer for a LAN-exposed MCP endpoint yet. Prefer loopback or SSH tunneling for Jetson/laptop development. |
+| Credential handling | Policy is **defined but not enforced**; name-based redaction now covers **both** terminal executors (Python, and Node since v0.3.0) | There is no credential store, vault, or reference resolver. Redaction still does not cover MCP tool results in general — `filesystem.read`, `project.grep`, and the Git tools return unredacted — nor the `command` metadata field, which is preserved byte-for-byte by design. Detection is name-based and misses unrecognised secret shapes. See `docs/security/credential-handling.mdx`. |
+| Data egress | Nothing leaves the machine under a local backend. Selecting a cloud backend sends the user's text and redacted tool observations to that provider. | Under a cloud backend this is the boundary where data stops being local, and redaction there is **best effort** — name-based, and it misses unrecognised secret shapes. No policy states what may leave the host, so *which backend is selected* is currently the only control over egress. See `docs/reference/cloud-models.mdx`. |
+| MCP server exposure | Node HTTP transport is intended for local/controlled use | There is no production authentication layer for a LAN-exposed MCP endpoint yet. Prefer loopback or SSH tunneling for Jetson/laptop development. In the `single` deployment the server binds loopback on a random free port for the length of one run, but it is still unauthenticated: another process on the same computer could call it during that run. |
+| Single-machine degraded mode | Without Node dependencies, `single` mode mounts and advertises only time, calculator, and the Python `terminal.run` | That `terminal.run` has no confinement backend (Odessy passes it none), so commands run unconfined and each result reports `enforcement: "none"`. Installing the Node tool server restores its backends. |
+
+## Isolation Layer
+
+v0.3.0 adds provider-selected confinement. The backend is chosen by **what the host can
+actually enforce**, not by platform name, and every run reports what it achieved.
+
+Every executor routes commands through `confine()`, including runs with no backend
+configured, so a run **states** its enforcement rather than leaving it to be inferred.
+`required` isolation can never be satisfied by a mode providing no confinement — not by
+selection, not by escalation, not by omission.
+
+| Backend | Platform | Coverage here |
+|---|---|---|
+| `bwrap` | Linux | The only backend with a real chance of confining on this board, if installed and functional. |
+| `landlock` (Python) | Linux | **Unavailable.** Landlock is off in this kernel (`CONFIG_SECURITY_LANDLOCK is not set` in L4T — a kernel decision, not a runtime toggle), and Odessy ships no `landlock-run` launcher. |
+| `landlock` (TypeScript) | Linux | **Unavailable.** Node cannot issue `landlock_create_ruleset`, so the ABI is reported as *unknown* rather than guessed. |
+| `seatbelt` | macOS | Available on macOS. |
+| `windows-acl` | Windows | Available, and **`partial`** by construction — see below. |
+| `unconfined` | any | Not a backend: the named, reported absence of confinement. |
+
+### What this does not mean
+
+Implementing the layer does **not** confine the Jetson. On this board most backends
+report unavailable, which is the intended behaviour — an unavailable backend is a fact
+the report states, not a failure to conceal.
+
+```text
+Allowed        "Odessy has an isolation layer; its coverage depends on the host, and
+                each run reports what it achieved."
+Not allowed    "Odessy is sandboxed", "jailed", or "contained" -- without the
+                qualifier, because on this board it would be false.
+```
+
+### The Windows backend's named gaps
+
+`windows-acl` reports `partial` rather than overstating its boundary:
+
+1. `WRITE_RESTRICTED` must retain `Everyone` for process initialisation, so an external
+   object whose DACL grants Everyone a write right stays writable.
+2. NTFS hard links alias a *file object*, so a granted workspace file is writable
+   through an external alias.
+
+Reads, network, and process visibility are **not** restricted on Windows.
+
+### Not isolated at all
+
+- **Host pairing does not exist.** The host is a local subprocess; there is nothing
+  remote to pair with. A server must be explicitly marked an `ExecutionTarget` before
+  anything will execute on it.
+- **No device backend exists.** ESP32 / STM32 / RP2040 are declared and unbacked.
+- **No hard real-time guarantee anywhere.** The Linux host is upper-tier compute and
+  control planning; a device that needs a deadline owns it in firmware.
+
+Full inventory of declared-but-unbacked capability:
+`docs/execution/PROVIDER-PLACEHOLDERS.md`. Timing: `docs/execution/REAL-TIME-BOUNDARY.md`.
+Design detail (internal record, outside this docs set):
+`../docs/execution-layer-design.md`.
 
 ## Tooling Limits
 
@@ -42,7 +105,7 @@ This page records the limits future agents must keep visible when changing the r
 | Read-only Node tools | `filesystem.read`, `filesystem.list`, `project.find`, `project.grep`, Git read-only tools | They are useful for project understanding, but they are not a broad file manager or search platform. |
 | Git tools | Fixed-argv read-only commands | Git output is captured and bounded, and the full output is recoverable from a spill locator, but it is not redacted: these tools return over MCP, which is outside the redaction boundary. |
 | Schema validation | Basic MCP schema validation in the Python loop | Validation is intentionally small and type-focused. It does not yet implement full JSON Schema semantics. |
-| Observations | Structured tool result objects | Output from the Python `terminal.run` path is redacted before exposure and before spill. Observations carrying results from other MCP tools are not redacted. Large outputs are bounded and recoverable rather than truncated away. |
+| Observations | Structured tool result objects | Output from **both** terminal executors (`terminal.run` in Python; Node uses `terminal.run` in single mode and `laptop.terminal.run` in split mode, since v0.3.0) is redacted before exposure and before spill. Observations carrying results from other MCP tools are not redacted. Large outputs are bounded and recoverable rather than truncated away. |
 
 ## Jetson Voice Benchmark Limits
 
@@ -53,10 +116,10 @@ Current benchmark status:
 
 | Component | Current result | Limitation |
 |---|---|---|
-| Whisper.cpp STT | CPU-only `ggml-tiny.en.bin` transcribes an 11-second sample in about 1.1 to 1.6 seconds | CUDA Whisper currently fails during cuBLAS resource allocation, so CPU-only STT is the v0.2.0 baseline. |
+| Whisper.cpp STT | CPU-only `ggml-tiny.en.bin` transcribes an 11-second sample in about 1.1 to 1.6 seconds | CUDA Whisper currently fails during cuBLAS resource allocation, so CPU-only STT is the baseline -- established in v0.2.0, unchanged in v0.3.0. |
 | LFM2.5-Thinking | Runs through Ollama with native tool calls on the Jetson baseline | Its latency, token rate, residency, and memory/swap behavior still need systematic benchmarking. |
-| Kokoro TTS | ONNX int8 model runs on Jetson and can generate speech | Current measured generation is about 14.8 seconds for 5.7 seconds of audio, about 2.6x real time. This is acceptable for v0.2.0 feasibility, but not natural low-latency speech. |
-| Full voice stack | STT, LFM, and TTS have completed staged live turns | Odessy should use a staged turn-based pipeline for v0.2.0, not require STT + LFM + TTS to stay active in parallel. |
+| Kokoro TTS | ONNX int8 model runs on Jetson and can generate speech | Measured generation is about 14.8 seconds for 5.7 seconds of audio, about 2.6x real time. The figure is a v0.2.0 measurement and is still the current one. Acceptable for feasibility, but not natural low-latency speech. |
+| Full voice stack | STT, LFM, and TTS have completed staged live turns | The staged turn-based pipeline established in v0.2.0 remains the design: STT + LFM + TTS are not required to stay active in parallel. |
 | Voice implementation | `python -m odessy voice` wires recording, STT, runtime, TTS, and playback | The command still depends on configured local binaries, model files, audio devices, and a real Jetson manual run. |
 | Blank audio handling | Whisper.cpp can emit `[BLANK_AUDIO]` for empty or unusable recording input | Odessy currently passes `[BLANK_AUDIO]` into the model instead of short-circuiting with a retry prompt. In live testing, this caused LFM to propose `terminal.run` with command `BLANK_AUDIO`, triggering confirmation or, if allowed, an unnecessary command/tool path. |
 
@@ -82,7 +145,7 @@ Voice turn failed with status failed: Policy requires confirmation before execut
 
 A second run again transcribed `[BLANK_AUDIO]`; when the user allowed the command, Odessy entered the tool-observation/final-response path and was manually interrupted with `Ctrl-C`.
 
-This is a known v0.2.0 limitation:
+This is a known limitation, first recorded in v0.2.0 and still open in v0.3.0:
 
 ```text
 [BLANK_AUDIO] or empty transcript
@@ -91,18 +154,47 @@ This is a known v0.2.0 limitation:
 -> should return/speak a short retry message
 ```
 
-Reference:
+Reference (outside this docs set, in the benchmark tree):
 
 ```text
-docs/reference/jetson-voice-benchmark.mdx
+benchmark/tts/jetson-voice-benchmark.mdx
 ```
 
 ## Testing Limits
 
+### Agent evaluations and provenance
+
+`evals/` has 56 cases, including 18 hard cases, and supports local and cloud models. It runs the real agent
+loop against a recording execution server, so shell commands and requested writes
+are not performed on the host. It measures proposals, policy decisions, tool
+sequences, and deterministic checks against fixtures. It does not measure real
+shell success, host confinement, audio quality, or production safety.
+
+The October 18 artifacts record local LFM routing-on and routing-off sweeps, plus
+a separate `deepseek-flash` reference. Local multi-step pass rates were 0%; the
+cloud reference passed 17/18 multi-step attempts. Multi-tool continuation should
+therefore not be described as universally inactive. These observations do not
+establish a routing improvement across different models. See
+[the eval guide](../../evals/README.md) for results and denominators.
+
+New run metadata adds `git_commit_note`, retaining failure details and a labeled
+source-tree hash when Git is unavailable. The two older local artifacts still
+have unknown revisions. The hash covers Python sources under `src/odessy`, not
+the eval definitions, configuration, or dependencies; a Git commit does not
+capture dirty status either. Reasoning effort and endpoint are not recorded in
+metadata, so a label such as `deepseek-low` is not independent proof of the
+request configuration. The Markdown summary omits the provenance note; inspect
+`metadata.json`.
+
+DeepSeek effort forwarding and reasoning-content retention have focused adapter
+tests. The October 18 local verification passed 119 tests across
+`tests/test_cloud_model.py` and `tests/test_evals.py`; this is not a full-suite
+count or live coverage of every provider.
+
 | Area | Current state | Limitation |
 |---|---|---|
-| Python tests | Step 7 suite passes locally | Tests cover important adversarial cases, but not every shell, filesystem race, or platform-specific reparse behavior. |
-| Node tests | Normal PowerShell verifies 6/6 tests passing | In the Codex sandbox, the Git test may skip because Node subprocess spawning is restricted. Normal Windows PowerShell is the source of truth for that test. |
+| Python tests | Historical full-suite result: 530 passed, 3 skipped locally on 2026-10-17; focused October 18 checks are described above | The five previously quarantined ONNX and LFM tests are resolved — see `LIMITATION.md`. Tests cover important adversarial cases, but not every shell, filesystem race, or platform-specific reparse behavior. |
+| Node tests | `npm run typecheck` passes; 170 tests pass, 0 failed, 0 skipped | Earlier records cite "6/6 tests"; that was the Step 7 read-only tool count and is historical. In a restricted sandbox the Git test may skip because Node subprocess spawning is restricted, so normal Windows PowerShell is the source of truth. |
 | Process cleanup tests | Timeout result is tested | Tests verify timeout reporting, but do not deeply inspect every possible descendant-process cleanup scenario. |
 
 ## Architecture Limits
@@ -123,19 +215,36 @@ It is not currently designed for:
 - untrusted multi-user hosting;
 - public network MCP exposure;
 - arbitrary third-party MCP servers;
-- production-grade sandbox isolation;
+- production-grade sandbox isolation (v0.3.0 has a host-dependent isolation layer,
+  documented above, not production-grade coverage);
 - long-running autonomous jobs;
 - GUI/desktop operation;
 - hardware/robotics control.
 
-## Before Step 8
+## Write Tools: The Questions Step 8 Answered
 
-Before adding write tools, future work should explicitly decide:
+This list is historical -- it was the pre-Step-8 checklist. Step 8 shipped the escalation
+and isolation machinery, so the answers are recorded here as context rather than as open
+work:
 
-1. Which writes require confirmation.
-2. Which writes, if any, can be automatically allowed.
-3. How output redaction should work for file reads, grep results, Git diffs, and terminal output.
-4. Whether write paths need stricter rules than read paths.
-5. How confirmation is represented so the model cannot approve itself.
+1. Which writes require confirmation -- decided by policy classification; anything
+   outside the low-risk allow rules requires confirmation.
+2. Which writes, if any, can be automatically allowed -- only those matching the low-risk
+   allow rules.
+3. How output redaction should work for reads, grep results, Git diffs, and terminal
+   output -- both terminal executors are redacted (Node since v0.3.0); reads, grep, and
+   Git results are still not redacted, so this remains genuinely open.
+4. Whether write paths need stricter rules than read paths -- unresolved, because no
+   write tools exist yet.
+5. How confirmation is represented so the model cannot approve itself -- the model
+   requests, an `EscalationApprover` decides, and a denied `danger-full-access` request
+   cannot fall back to a wider mode. The text CLI composes a terminal approver that asks
+   y/N for the one call (until the October 18 fixes it composed none, so every
+   escalation request failed the turn). Voice mode uses the same terminal prompt, like
+   its confirmations; there is no spoken approval yet.
 
-These limitations should be updated whenever Odessy adds Gemma, voice, write tools, public MCP exposure, or stronger OS-level containment.
+These limitations should be updated whenever Odessy adds Gemma, voice, write tools, public MCP exposure, or further OS-level containment. v0.3.0 added the isolation layer, and the **Isolation Layer** section above is where its coverage is recorded per host.
+
+Where this page still names an earlier version -- for example the Jetson voice benchmark
+figures measured in v0.2.0 -- the version is stated so the claim is not read as a fresh
+v0.3.0 measurement.

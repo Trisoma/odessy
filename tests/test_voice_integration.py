@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from odessy.agent_loop import OdessyAgent
+from odessy.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.fake_model import FakeModel
 from odessy.mcp_server import build_odessy_mcp_server
 from odessy.policy import OdessyPolicy
@@ -70,9 +70,11 @@ async def test_voice_loop_cleans_temp_files_and_returns_text(tmp_path: Path) -> 
     agent = OdessyAgent(
         model=FakeModel(),
         policy=OdessyPolicy(workspace_root=tmp_path),
-        mcp_server=build_odessy_mcp_server(
-            workspace_root=tmp_path,
-            clock=lambda: "2026-08-17T15:00:00+08:00",
+        mcp_server=ExecutionTarget(
+            build_odessy_mcp_server(
+                workspace_root=tmp_path,
+                clock=lambda: "2026-08-17T15:00:00+08:00",
+            )
         ),
     )
     loop = VoiceLoop(agent=agent, audio_io=audio, stt=stt, tts=tts, tmp_dir=tmp_path)
@@ -94,7 +96,7 @@ async def test_voice_loop_can_drive_existing_tool_path(tmp_path: Path) -> None:
         agent=OdessyAgent(
             model=FakeModel(),
             policy=OdessyPolicy(workspace_root=tmp_path),
-            mcp_server=build_odessy_mcp_server(workspace_root=tmp_path),
+            mcp_server=ExecutionTarget(build_odessy_mcp_server(workspace_root=tmp_path)),
         ),
         audio_io=FakeAudioIO(),
         stt=FakeSTT("calculate 12 * 8"),
@@ -115,7 +117,7 @@ async def test_voice_loop_reports_progress_phases(tmp_path: Path) -> None:
         agent=OdessyAgent(
             model=FakeModel(),
             policy=OdessyPolicy(workspace_root=tmp_path),
-            mcp_server=build_odessy_mcp_server(workspace_root=tmp_path),
+            mcp_server=ExecutionTarget(build_odessy_mcp_server(workspace_root=tmp_path)),
         ),
         audio_io=FakeAudioIO(),
         stt=FakeSTT("calculate 12 * 8"),

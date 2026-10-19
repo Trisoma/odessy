@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from odessy.agent_loop import OdessyAgent
+from odessy.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.command_bridge import CommandBridge, TerminalRunResult
 from odessy.mcp_server import build_odessy_mcp_server
 from odessy.output_retention import TextRetainer, format_retention_notice
@@ -429,7 +429,7 @@ async def test_live_observation_is_bounded_and_redacted(tmp_path: Path) -> None:
     agent = OdessyAgent(
         model=model,
         policy=OdessyPolicy(workspace_root=tmp_path),
-        mcp_server=build_odessy_mcp_server(workspace_root=tmp_path),
+        mcp_server=ExecutionTarget(build_odessy_mcp_server(workspace_root=tmp_path)),
         confirm=True,
     )
 

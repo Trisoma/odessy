@@ -15,6 +15,7 @@ import {
   logAppendTool,
   readFileTool,
   listDirectoryTool,
+  fileNameMatches,
   findProjectTool,
   grepProjectTool,
 } from "../src/tools/index.js";
@@ -53,6 +54,36 @@ test("filesystem.read reads workspace file with structured content", async () =>
   assert.equal(result.truncated, false);
 });
 
+test("a workspace given by its 8.3 short name still contains itself", async (t) => {
+  if (process.platform !== "win32") {
+    t.skip("8.3 short names are Windows-only");
+    return;
+  }
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "odessy-long-workspace-name-"));
+  fs.writeFileSync(path.join(workspace, "README.md"), "short name\n", "utf8");
+  const parent = path.dirname(workspace);
+  const leaf = path.basename(workspace);
+  // Only the leaf goes through cmd, so a non-ASCII parent is never re-encoded.
+  const shortLeaf = execFileSync("cmd", ["/d", "/c", `for %I in (${leaf}) do @echo %~snxI`], {
+    cwd: parent,
+    encoding: "utf8",
+  }).trim();
+  if (shortLeaf.toLowerCase() === leaf.toLowerCase()) {
+    t.skip("8.3 short names are disabled on this volume");
+    return;
+  }
+
+  const guard = createWorkspaceGuard(path.join(parent, shortLeaf));
+
+  assert.equal(await guard.resolveExisting("."), guard.root);
+  const result = await readFileTool(guard, { path: "README.md" });
+  assert.equal(result.status, "ok");
+  assert.equal(result.content, "short name\n");
+  // filesystem.write reports its path through the lexical (short-name) route.
+  const written = await filesystemWriteTool(guard, { path: "notes.txt", content: "x" });
+  assert.equal(written.path, "notes.txt");
+});
+
 test("filesystem.read denies workspace escape", async () => {
   const workspace = makeWorkspace();
   const guard = createWorkspaceGuard(workspace);
@@ -87,6 +118,32 @@ test("project.find finds file names", async () => {
 
   assert.equal(result.status, "ok");
   assert.deepEqual(result.matches, ["src/policy.py"]);
+});
+
+test("project.find accepts globs, as models write them", async () => {
+  const workspace = makeWorkspace();
+  fs.mkdirSync(path.join(workspace, "src"));
+  fs.writeFileSync(path.join(workspace, "src", "policy.py"), "", "utf8");
+  fs.writeFileSync(path.join(workspace, "src", "notes.md"), "", "utf8");
+  fs.writeFileSync(path.join(workspace, "Settings.toml"), "", "utf8");
+  const guard = createWorkspaceGuard(workspace);
+
+  for (const pattern of ["*.py", "**/*.py", "src/*.py", "*.PY"]) {
+    const result = await findProjectTool(guard, { pattern, path: "." });
+    assert.deepEqual(result.matches, ["src/policy.py"], pattern);
+  }
+  const prefix = await findProjectTool(guard, { pattern: "settings*", path: "." });
+  assert.deepEqual(prefix.matches, ["Settings.toml"]);
+  const single = await findProjectTool(guard, { pattern: "note?.md", path: "." });
+  assert.deepEqual(single.matches, ["src/notes.md"]);
+});
+
+test("project.find glob characters other than * and ? are literal", () => {
+  assert.equal(fileNameMatches("a.py", "*.py"), true);
+  assert.equal(fileNameMatches("axpy", "*.py"), false);
+  assert.equal(fileNameMatches("[x].py", "[x]*"), true);
+  assert.equal(fileNameMatches("x.py", "[x]*"), false);
+  assert.equal(fileNameMatches("policy.py", "olic"), true);
 });
 
 test("project.grep finds content matches", async () => {
@@ -148,14 +205,42 @@ test("git read-only tools use fixed argv behavior", async (t) => {
   assert.equal(log.limit, 50);
 });
 
+test("laptop.terminal.run preserves configured PowerShell modules", {
+  skip: process.platform !== "win32",
+}, async () => {
+  const workspace = makeWorkspace();
+  const modules = path.join(workspace, "modules");
+  const module = path.join(modules, "OdessyProbe");
+  fs.mkdirSync(module, { recursive: true });
+  fs.writeFileSync(path.join(module, "OdessyProbe.psm1"),
+    'function Get-OdessyProbe { "module-path-preserved" }', "utf8");
+  const previous = process.env.PSModulePath;
+  try {
+    process.env.PSModulePath = modules;
+    const result = await laptopTerminalRun(createWorkspaceGuard(workspace), {
+      command: "Get-OdessyProbe",
+    });
+    assert.equal(result.status, "ok", JSON.stringify(result));
+    assert.match(result.stdout, /module-path-preserved/);
+  } finally {
+    if (previous === undefined) delete process.env.PSModulePath;
+    else process.env.PSModulePath = previous;
+  }
+});
+
 test("laptop.terminal.run executes a command in the workspace", async () => {
   const workspace = makeWorkspace();
   const guard = createWorkspaceGuard(workspace);
 
-  const result = await laptopTerminalRun(guard, { command: "pwd" });
+  // This tests command execution and cwd, not PowerShell's cold module-load time.
+  // Keep short deadlines in the dedicated timeout/termination tests instead.
+  const result = await laptopTerminalRun(guard, { command: "pwd", timeout: 30 });
 
-  assert.equal(result.status, "ok");
-  assert.equal(result.cwd, path.resolve(workspace));
+  assert.equal(result.status, "ok", JSON.stringify(result));
+  assert.equal(result.timed_out, false);
+  // The canonical root: on Windows runners the temp path is an 8.3 short name
+  // (RUNNER~1) that canonicalization expands.
+  assert.equal(result.cwd, guard.root);
   assert.equal(result.command, "pwd");
   assert.equal(result.exit_code, 0);
   assert.match(result.stdout, /.+/);

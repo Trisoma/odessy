@@ -7,6 +7,7 @@ import pytest
 from odessy.cli import _build_model
 from odessy.lfm_model import LlamaCppLFMModel, normalize_ollama_chat_response
 from odessy.ollama_model import _OllamaToolsUnsupported, _looks_like_generic_final_response
+from odessy.tool_contracts import TOOL_REQUEST_SCHEMAS, build_openai_tools
 from odessy.types import FinalResponse, ToolObservation, ToolRequest
 
 
@@ -249,9 +250,10 @@ def test_lfm_records_ollama_latency_and_thinking_metadata() -> None:
 
 
 def test_lfm_call_count_includes_final_observation_response() -> None:
+    proposal = '{"type":"tool","name":"time.now","arguments":{}}'
     model = QueuedLFM(
         [
-            _assistant(content='{"type":"tool","name":"time.now","arguments":{}}'),
+            _assistant(content=proposal),
             _assistant(content="It is noon."),
         ]
     )
@@ -267,7 +269,7 @@ def test_lfm_call_count_includes_final_observation_response() -> None:
     )
 
     assert model.last_turn_diagnostics.model_call_count == 2
-    assert model.last_turn_diagnostics.response_chars == len("It is noon.")
+    assert model.last_turn_diagnostics.response_chars == len(proposal) + len("It is noon.")
 
 
 def test_lfm_observation_can_return_a_corrected_tool_request() -> None:
@@ -426,8 +428,8 @@ def test_lfm_observation_advertises_tools() -> None:
     assert model.calls[-1]["tools"]
 
 
-def test_lfm_observation_and_proposal_advertise_the_same_tool_list() -> None:
-    """The continuation path must use the same construction as the proposal path."""
+def test_lfm_proposal_and_observation_advertise_every_tool() -> None:
+    """Both steps offer every tool: a follow-up usually needs a different one."""
 
     model = QueuedLFM(
         [
@@ -445,7 +447,10 @@ def test_lfm_observation_and_proposal_advertise_the_same_tool_list() -> None:
         ToolObservation(request=action, result={"iso_time": "2026-09-20T12:00:00+00:00"}),
     )
 
-    assert model.calls[0]["tools"] == model.calls[1]["tools"]
+    proposal_tools = [tool["function"]["name"] for tool in model.calls[0]["tools"]]
+    follow_up_tools = [tool["function"]["name"] for tool in model.calls[1]["tools"]]
+    assert proposal_tools == [tool["function"]["name"] for tool in build_openai_tools()]
+    assert follow_up_tools == [tool["function"]["name"] for tool in build_openai_tools()]
 
 
 def test_lfm_observation_parses_a_native_second_tool_request() -> None:
@@ -633,3 +638,13 @@ def test_lfm_live_integration_smoke() -> None:
     model = LlamaCppLFMModel()
     action = model.propose("run pwd")
     assert isinstance(action, (ToolRequest, FinalResponse))
+
+
+def test_proposal_offers_every_tool() -> None:
+    # No keyword routing: the model chooses among every tool the deployment offers.
+    model = QueuedLFM([_tool('{"type":"tool","name":"time.now","arguments":{}}')])
+
+    model.propose("what time is it?")
+
+    assert len(model.calls[0]["tools"]) == len(TOOL_REQUEST_SCHEMAS)
+    assert "maps to" not in model.calls[0]["messages"][0]["content"]

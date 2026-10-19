@@ -1,10 +1,54 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+from odessy.execution.contract import (
+    ESCALATION_TARGETS,
+    ExecutionPolicy,
+    IsolationRequirement,
+    Mode,
+    Requirement,
+)
+from odessy.execution.escalation import (
+    EscalationApproval,
+    EscalationArgumentError,
+    EscalationDeniedError,
+    EscalationRequest,
+    approve_escalation,
+    validate_escalation_args,
+)
 from odessy.types import PolicyDecision, ToolRequest
 from odessy.workspace_authority import WorkspaceAuthority, WorkspaceAuthorityError
+
+#: The tools whose action spawns a process, and which therefore have an *execution*
+#: isolation mode at all.
+#:
+#: The scoping is deliberate. What this excludes is "execution isolation does not apply
+#: to this action", NOT "this action needs no security boundary". Capability classes
+#: outside process execution carry their own requirement semantics: a managed-device
+#: write is not a process and is still a privileged capability, so it must bring its
+#: own answer rather than being waved through by the ``None`` this produces.
+_PROCESS_TOOL_NAMES = frozenset({"terminal.run", "laptop.terminal.run"})
+
+#: The two arguments that together ask for a wider sandbox mode. They travel as a
+#: pair; see :func:`validate_escalation_args`.
+_ESCALATION_ARGUMENT_NAMES = frozenset({"sandbox_permissions", "justification"})
+
+#: The mode each authority outcome implies for a process-spawning action.
+#:
+#: The mapping is derived from the authority decision rather than from a *second*
+#: pass over the command rules. Re-evaluating the command could disagree with the
+#: first pass, and the authority answer and the isolation answer would then be
+#: describing different actions.
+#:
+#: ``deny`` is absent on purpose: a denied action never reaches a mode.
+_MODE_BY_OUTCOME: dict[str, Mode] = {
+    "allow": "read-only",
+    "confirm": "workspace-write",
+}
 
 @dataclass(frozen=True)
 class OdessyPolicy:
@@ -14,6 +58,12 @@ class OdessyPolicy:
     allowed_tools: set[str] | None = None
     normal_timeout: int = 10
     max_timeout: int = 30
+    #: How strict this policy is about isolation, in the execution contract's
+    #: vocabulary. ``required`` means an absolute boundary was demanded, so a mode
+    #: providing no confinement can never be granted -- not even by an approved
+    #: escalation. Defaults to ``preferred`` because that accepts a weaker boundary,
+    #: which is the behaviour every existing caller already has.
+    isolation: IsolationRequirement = "preferred"
 
     @property
     def authority(self) -> WorkspaceAuthority:
@@ -42,6 +92,21 @@ class OdessyPolicy:
                 reason=f"Tool is not allowed: {request.name}",
                 risk="high",
             )
+        if request.name not in _PROCESS_TOOL_NAMES:
+            # A silent no-op would be worse than a refusal: a model that asks to widen
+            # the sandbox on an action the sandbox does not govern would otherwise be
+            # told nothing. Note the message is scoped to sandbox modes, which are the
+            # process-execution vocabulary, and says nothing about whether the action
+            # is privileged by some other means.
+            stray = _ESCALATION_ARGUMENT_NAMES & set(request.arguments)
+            if stray:
+                name = sorted(stray)[0]
+                return PolicyDecision(
+                    "deny",
+                    f"{request.name} does not accept {name}: sandbox modes govern "
+                    "process-spawning actions, and this action spawns no process",
+                    "medium",
+                )
         if request.name == "time.now" and request.arguments:
             return PolicyDecision(
                 action="deny",
@@ -106,6 +171,10 @@ class OdessyPolicy:
                 "medium",
             )
 
+        escalation_denial = self._check_escalation_arguments(request.arguments)
+        if escalation_denial is not None:
+            return escalation_denial
+
         cwd_decision = self._check_workspace_cwd(cwd, tool_name)
         if cwd_decision is not None:
             return cwd_decision
@@ -117,6 +186,18 @@ class OdessyPolicy:
             return PolicyDecision(
                 "deny",
                 f"{tool_name} denied because background or detached execution is outside the request lifecycle",
+                "high",
+            )
+        if _matches_remote_execution_rule(lowered):
+            return PolicyDecision(
+                "deny",
+                f"{tool_name} denied because it runs code downloaded from the network",
+                "high",
+            )
+        if _matches_system_write_rule(lowered):
+            return PolicyDecision(
+                "deny",
+                f"{tool_name} denied because it writes to an operating-system location",
                 "high",
             )
         if _matches_deny_rule(lowered, tokens):
@@ -141,6 +222,129 @@ class OdessyPolicy:
             "confirm",
             f"{tool_name} requires confirmation because the command is outside the low-risk allow rules",
             "medium",
+        )
+
+    def _check_escalation_arguments(
+        self, arguments: dict[str, Any]
+    ) -> PolicyDecision | None:
+        """Deny a malformed escalation ask, or return None when there is none.
+
+        :meth:`evaluate` must stay *total* -- the agent loop treats a raised error from
+        it as a bug rather than an outcome -- so the pairing rule is enforced here as a
+        denial. :func:`validate_escalation_args` remains the single source of truth for
+        what the rule is, so the two boundaries cannot drift apart.
+        """
+
+        target = arguments.get("sandbox_permissions")
+        justification = arguments.get("justification")
+        if target is None and justification is None:
+            return None
+        if target is not None and not isinstance(target, str):
+            return PolicyDecision(
+                "deny", "invalid escalation: sandbox_permissions must be a mode string", "medium"
+            )
+        if justification is not None and not isinstance(justification, str):
+            return PolicyDecision(
+                "deny", "invalid escalation: justification must be a sentence", "medium"
+            )
+        try:
+            validate_escalation_args(target, justification)
+        except EscalationArgumentError as exc:
+            return PolicyDecision("deny", str(exc), "medium")
+        if target not in ESCALATION_TARGETS:
+            # The schema advertises the closed vocabulary; this is the per-call truth.
+            return PolicyDecision(
+                "deny",
+                f"unknown sandbox_permissions target: {target}",
+                "medium",
+            )
+        return None
+
+    def _effective_mode(self, request: ToolRequest, decision: PolicyDecision) -> Mode | None:
+        """The mode this action's process runs under, or ``None`` if it spawns none.
+
+        ``None`` is scoped to the execution axis, never read as "no boundary needed";
+        see :meth:`requirement_for`.
+        """
+
+        if request.name not in _PROCESS_TOOL_NAMES:
+            return None
+        return _MODE_BY_OUTCOME.get(decision.action)
+
+    def requirement_for(
+        self, request: ToolRequest, decision: PolicyDecision
+    ) -> Requirement | None:
+        """The *execution* isolation requirement for one already evaluated action.
+
+        The decision is passed in rather than recomputed so the requirement describes
+        the same action the authority layer just judged.
+
+        Returns ``None`` when the execution axis does not govern the action -- that is,
+        when it spawns no process. ``None`` means "this axis of control does not apply
+        here", not "no boundary is needed". A managed-device write is not a process and
+        is still a privileged capability, so a device provider brings its own
+        requirement semantics instead of inheriting this function's answer.
+        """
+
+        mode = self._effective_mode(request, decision)
+        if mode is None:
+            return None
+        return Requirement(
+            policy=ExecutionPolicy(
+                mode=mode,
+                workspace_root=str(self.workspace_root),
+            ),
+            isolation=self.isolation,
+        )
+
+    async def resolve_execution_mode(
+        self,
+        request: ToolRequest,
+        decision: PolicyDecision,
+        *,
+        approval: EscalationApproval,
+    ) -> Mode:
+        """Resolve the mode one process-spawning action runs under, before it runs.
+
+        Without an escalation ask this is just the effective mode. With one, the
+        request goes through the full choreography in
+        :func:`odessy.execution.escalation.approve_escalation`: strict widening against
+        the *effective* mode, then the approval channel, then the outcome. An approved
+        escalation is a new call under a wider policy, never a mutated one.
+        """
+
+        effective = self._effective_mode(request, decision)
+        if effective is None:
+            raise ValueError(
+                f"{request.name} does not spawn a process, so it has no isolation mode"
+            )
+
+        target = request.arguments.get("sandbox_permissions")
+        if target is None:
+            return effective
+
+        justification = request.arguments.get("justification")
+        validate_escalation_args(target, justification)
+
+        # The invariant this phase exists for. `required` means an absolute boundary
+        # was demanded, and `danger-full-access` provides none -- so granting it here
+        # would let the escalation path hand out exactly what the requirement exists
+        # to refuse. The registry refuses the same combination, and these two layers
+        # must not disagree about it.
+        if target == "danger-full-access" and self.isolation == "required":
+            raise EscalationDeniedError(
+                f'sandbox escalation to "{target}" is refused because isolation is '
+                "required and this mode provides no confinement"
+            )
+
+        return await approve_escalation(
+            EscalationRequest(
+                requested_mode=target,
+                justification=justification if justification is not None else "",
+                effective_mode=effective,
+                subject="command",
+            ),
+            approval,
         )
 
     def _check_workspace_cwd(self, cwd: str, tool_name: str) -> PolicyDecision | None:
@@ -223,10 +427,22 @@ class OdessyPolicy:
             "low",
         )
 
+#: Read-only commands allowed without confirmation, in both shells. PowerShell's own
+#: names were missing, so on the Windows laptop the idiomatic `Get-ChildItem` needed a
+#: confirmation that `ls` did not.
+_ALLOWED_FIRST_TOKENS = frozenset({"pwd", "ls", "dir", "get-childitem", "gci", "get-location", "gl"})
+
+#: Anything that runs a second command. The allow rule looks at the first word only, so
+#: without this `ls && python evil.py` was "low risk" because it began with `ls`.
+# Parentheses and braces can evaluate commands in PowerShell, even without a
+# separator. Treat expression syntax conservatively rather than parsing shells.
+_CHAINING = re.compile(r"[;&|`\n(){}]")
+
+
 def _matches_allow_rule(command: str, tokens: list[str]) -> bool:
-    if not tokens:
+    if not tokens or _CHAINING.search(command):
         return False
-    if tokens[0] in {"pwd", "ls", "dir"}:
+    if tokens[0] in _ALLOWED_FIRST_TOKENS:
         return True
     return len(tokens) >= 2 and tokens[:2] == ["git", "status"]
 
@@ -296,6 +512,52 @@ def _matches_deny_rule(command: str, tokens: list[str]) -> bool:
     if any(pattern in command for pattern in destructive_patterns):
         return True
     return False
+
+#: Something that fetches from the network...
+_DOWNLOADER = r"(?:curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod|\(new-object\s+net\.webclient\)\.downloadstring)"
+#: ...and something that runs what it is given.
+_INTERPRETER = r"(?:sh|bash|zsh|dash|ksh|fish|python3?|perl|ruby|node|iex|invoke-expression|powershell|pwsh|cmd)"
+_REMOTE_EXECUTION = (
+    # curl https://x/install.sh | sh,  iwr https://x | iex
+    re.compile(rf"\b{_DOWNLOADER}\b[^|;&]*\|\s*(?:sudo\s+)?{_INTERPRETER}(?:\.exe)?\b"),
+    # bash <(curl ...),  sh -c "$(curl ...)",  iex (iwr ...)
+    re.compile(rf"\b{_INTERPRETER}\b[^;&|]*(?:<\(|\$\(|\()\s*{_DOWNLOADER}\b"),
+)
+
+
+def _matches_remote_execution_rule(command: str) -> bool:
+    """Download-and-run: the payload is chosen by whoever controls the URL.
+
+    The first evaluation runs showed models proposing ``curl ... | sh`` when asked to
+    "install the helper tool", and it was only *confirmed*: one "yes" from the user
+    ran a script nobody had seen. Downloading a file is still allowed through the
+    normal rules; piping it straight into an interpreter is not.
+    """
+
+    return any(pattern.search(command) for pattern in _REMOTE_EXECUTION)
+
+
+#: Operating-system locations, in the slash-normalized, lowercased command.
+#: POSIX roots must start a path ("src/lib/x" is the workspace, "/lib/x" is not).
+_SYSTEM_LOCATION = (
+    r"(?:(?<![\w./-])(?:/etc|/usr|/bin|/sbin|/boot|/lib|/system/library)/"
+    r"|(?<![\w./-])(?:[a-z]:/windows|/c/windows)\b|%systemroot%|\$env:systemroot)"
+)
+#: Write verbs and redirections, in the same normalized command.
+_WRITE = r"(?:>>?|\btee\b|\bcp\b|\bmv\b|\binstall\b|\bset-content\b|\badd-content\b|\bout-file\b|\bnew-item\b|\bcopy-item\b|\bmove-item\b|\bcopy\b|\bmove\b|\bxcopy\b|\brobocopy\b)"
+_SYSTEM_WRITE = re.compile(rf"{_WRITE}[^;&|]*{_SYSTEM_LOCATION}")
+
+
+def _matches_system_write_rule(command: str) -> bool:
+    """A write whose target is an operating-system directory.
+
+    Heuristic, like every command rule here (there is no shell parser): a write verb or
+    redirection followed, in the same simple command, by a system location. Reading
+    such a location is unaffected. The workspace is the only place Odessy writes to.
+    """
+
+    return _SYSTEM_WRITE.search(command.replace("\\", "/")) is not None
+
 
 def _matches_background_or_detach_rule(command: str, tokens: list[str]) -> bool:
     if not tokens:

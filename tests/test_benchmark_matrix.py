@@ -208,6 +208,7 @@ def test_pytorch_kokoro_engine_uses_pipeline_and_reports_device(
     torch.__version__ = "test-torch"
     torch.cuda = types.SimpleNamespace(is_available=lambda: False)
     kokoro = types.ModuleType("kokoro")
+    kokoro.KModel = object
     kokoro.KPipeline = FakePipeline
     soundfile = types.ModuleType("soundfile")
     soundfile.write = lambda path, samples, sample_rate: state.update(
@@ -420,7 +421,10 @@ def test_onnx_tensorrt_records_exact_provider_order_and_selection(
     requested = state["requested_providers"]
     assert isinstance(requested, list)
     assert requested[0][0] == "TensorrtExecutionProvider"
-    assert requested[1] == ("CUDAExecutionProvider", {"device_id": 0})
+    assert requested[1] == (
+        "CUDAExecutionProvider",
+        {"device_id": 0, "gpu_mem_limit": 512 * 1024 * 1024},
+    )
     assert requested[2] == "CPUExecutionProvider"
     assert info.available_execution_providers == [
         "TensorrtExecutionProvider",

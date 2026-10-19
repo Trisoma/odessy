@@ -18,6 +18,10 @@ import type {
   TerminalRunResult,
 } from "../output/contracts.js";
 import { DEFAULT_MAX_BYTES, normalizeLimit, truncateUtf8 } from "../output/truncate.js";
+import { prepareOutput } from "../output/prepare.js";
+import { SpillStore } from "../output/spill.js";
+import { confineArgv, type Confinement, type SandboxReport } from "../execution/seam.js";
+import { ISOLATION_REQUIREMENTS, MODES } from "../execution/contract.js";
 import type { WorkspaceGuard } from "../workspace/path-guard.js";
 
 const execFileAsync = promisify(execFile);
@@ -65,6 +69,23 @@ export const laptopTerminalRunInputSchema = {
   command: z.string(),
   cwd: z.string().optional(),
   timeout: z.number().int().min(1).max(30).optional(),
+  /**
+   * The sandbox mode the *authority layer* resolved for this call.
+   *
+   * Sent by the Odessy agent after policy and any escalation, never by a model. The
+   * host does not decide it; it selects a provider that satisfies it. Omitting it
+   * means the caller resolved no mode, and the run is reported as unconfined rather
+   * than assumed to be confined.
+   *
+   * Declared with the closed vocabulary so an unknown mode is rejected here instead of
+   * being silently dropped. That silent drop was a real defect: the agent logged a
+   * resolved mode, the host discarded it, and the record claimed a boundary that did
+   * not exist.
+   */
+  mode: z.enum(MODES).optional(),
+  /** How strict the peer is about isolation. `required` cannot be satisfied by a
+   * mode that provides no confinement. */
+  isolation: z.enum(ISOLATION_REQUIREMENTS).optional(),
 };
 
 export const filesystemWriteInputSchema = {
@@ -135,12 +156,11 @@ export async function findProjectTool(
 ): Promise<ProjectFindResult> {
   const root = await guard.resolveExisting(input.path ?? ".");
   const limit = normalizeLimit(input.limit);
-  const needle = input.pattern.toLowerCase();
   const matches: string[] = [];
 
   await walk(root, async (absolutePath, stat) => {
     if (matches.length >= limit) return;
-    if (stat.isFile() && path.basename(absolutePath).toLowerCase().includes(needle)) {
+    if (stat.isFile() && fileNameMatches(path.basename(absolutePath), input.pattern)) {
       matches.push(guard.relative(absolutePath));
     }
   });
@@ -254,17 +274,37 @@ export async function gitLog(
 export async function laptopTerminalRun(
   guard: WorkspaceGuard,
   input: { command: string; cwd?: string; timeout?: number },
+  confinement?: Confinement,
 ): Promise<TerminalRunResult> {
   const resolvedCwd = await guard.resolveExisting(input.cwd ?? ".");
   const effectiveTimeout = Math.min(Math.max(1, input.timeout ?? 10), 30);
   const start = Date.now();
-  const result = await runShellCommand(input.command, resolvedCwd, effectiveTimeout);
+  const result = await runShellCommand(
+    input.command,
+    resolvedCwd,
+    effectiveTimeout,
+    confinement,
+    guard.root,
+  );
   const duration = (Date.now() - start) / 1000;
-  const stdout = truncateUtf8(result.stdout, 64 * 1024);
-  const stderr = truncateUtf8(result.stderr, 32 * 1024);
+  // One store per call, shared by both streams, so a run's captured output lands
+  // in a single session directory. Redact -> retain -> spill, in that order: a
+  // secret must never reach the spill file, because once it is on disk it cannot
+  // be recalled.
+  const spill = new SpillStore(guard.root);
+  const stdout = prepareOutput(result.stdout, {
+    label: "stdout",
+    maxChars: 64 * 1024,
+    spill,
+  });
+  const stderr = prepareOutput(result.stderr, {
+    label: "stderr",
+    maxChars: 32 * 1024,
+    spill,
+  });
   return {
-    stdout: stdout.content,
-    stderr: stderr.content,
+    stdout: stdout.text,
+    stderr: stderr.text,
     exit_code: result.exitCode,
     duration,
     status: result.timedOut ? "timeout" : result.exitCode === 0 ? "ok" : "failed",
@@ -273,6 +313,9 @@ export async function laptopTerminalRun(
     timed_out: result.timedOut,
     stdout_truncated: stdout.truncated,
     stderr_truncated: stderr.truncated,
+    stdout_spill: stdout.spill,
+    stderr_spill: stderr.spill,
+    sandbox: result.sandbox,
   };
 }
 
@@ -331,14 +374,33 @@ async function runShellCommand(
   command: string,
   cwd: string,
   timeoutSeconds: number,
-): Promise<{ stdout: string; stderr: string; exitCode: number; timedOut: boolean }> {
+  confinement: Confinement | undefined,
+  workspaceRoot: string,
+): Promise<{
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  timedOut: boolean;
+  sandbox: SandboxReport;
+}> {
+  const shell = process.platform === "win32" ? "powershell" : "/bin/sh";
+  const shellArgs =
+    process.platform === "win32"
+      ? ["-NoProfile", "-NonInteractive", "-Command", command]
+      : ["-lc", command];
+
+  // Confinement happens before anything is spawned, and it throws rather than
+  // falling back: a caller that asked for a boundary must never receive an
+  // unconfined run instead, because the record would be indistinguishable from one
+  // where the boundary held. The argv below is the one `confineArgv` returned.
+  const confined = confineArgv(confinement, [shell, ...shellArgs], workspaceRoot);
+  const [executable, ...args] = confined.argv;
+  if (executable === undefined) {
+    throw new Error("confinement returned an empty argv");
+  }
+
   return await new Promise((resolve, reject) => {
-    const shell = process.platform === "win32" ? "powershell" : "/bin/sh";
-    const shellArgs =
-      process.platform === "win32"
-        ? ["-NoProfile", "-NonInteractive", "-Command", command]
-        : ["-lc", command];
-    const child = spawn(shell, shellArgs, {
+    const child = spawn(executable, args, {
       cwd,
       env: buildSanitizedEnvironment(process.env),
       stdio: ["ignore", "pipe", "pipe"],
@@ -361,11 +423,16 @@ async function runShellCommand(
       stderr += chunk;
     });
 
-    const finish = (result: { stdout: string; stderr: string; exitCode: number; timedOut: boolean }) => {
+    const finish = (result: {
+      stdout: string;
+      stderr: string;
+      exitCode: number | null;
+      timedOut: boolean;
+    }) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve(result);
+      resolve({ ...result, sandbox: confined.sandbox });
     };
 
     child.on("error", (error) => {
@@ -379,7 +446,10 @@ async function runShellCommand(
       finish({
         stdout,
         stderr,
-        exitCode: typeof code === "number" ? code : -1,
+        // `null` when there is no status to report. A process the executor killed has
+        // no exit code of its own, and a signal name is not a process exit status
+        // either, so neither is flattened into a number that would read as an outcome.
+        exitCode: timedOut || typeof code !== "number" ? null : code,
         timedOut,
       });
     });
@@ -398,6 +468,10 @@ function buildSanitizedEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv
     "LC_ALL",
     "PATH",
     "PATHEXT",
+    // Match Python: honor the host's explicit PowerShell module search path.
+    "PSMODULEPATH",
+    // Let the host choose a writable module-analysis cache as well as its search path.
+    "PSMODULEANALYSISCACHEPATH",
     "SYSTEMROOT",
     "TEMP",
     "TERM",
@@ -477,6 +551,21 @@ function buildMatcher(
   }
   const regex = new RegExp(pattern, options.ignoreCase ? "i" : undefined);
   return (line) => regex.test(line);
+}
+
+/**
+ * Whether a file name matches a `project.find` pattern.
+ *
+ * A plain pattern is a case-insensitive substring of the name. A pattern with `*` or
+ * `?` is a glob on the name: models write `*.py` and `**\/*.py`, and as substrings those
+ * matched nothing, so a search that should list every Python file found none. Only the
+ * last path segment counts, because names are matched, not paths.
+ */
+export function fileNameMatches(fileName: string, pattern: string): boolean {
+  const name = fileName.toLowerCase();
+  const needle = pattern.toLowerCase();
+  if (!/[*?]/.test(needle)) return name.includes(needle);
+  return globMatches(name, needle.split(/[\\/]/).pop() ?? needle);
 }
 
 function globMatches(filename: string, glob: string): boolean {

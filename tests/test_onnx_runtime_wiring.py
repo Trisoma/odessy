@@ -61,7 +61,7 @@ def test_build_kokoro_uses_tensorrt_with_fallbacks(monkeypatch, tmp_path: Path) 
     assert (tmp_path / "ort-cache").is_dir()
     assert state["providers"][0][0] == "TensorrtExecutionProvider"
     assert state["providers"][1:] == [
-        ("CUDAExecutionProvider", {"device_id": 0}),
+        ("CUDAExecutionProvider", {"device_id": 0, "gpu_mem_limit": 512 * 1024 * 1024}),
         "CPUExecutionProvider",
     ]
 

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from odessy.agent_loop import OdessyAgent
+from odessy.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.fake_model import FakeModel
 from odessy.node_mcp import (
     build_node_tool_server_http,
@@ -29,7 +29,7 @@ async def test_python_runtime_calls_node_filesystem_read_through_mcp(
         agent = OdessyAgent(
             model=FakeModel(),
             policy=OdessyPolicy(workspace_root=tmp_path),
-            mcp_server=mcp_server_url,
+            mcp_server=ExecutionTarget(mcp_server_url),
         )
 
         response = await agent.run_turn("read README.md")

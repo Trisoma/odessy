@@ -4,10 +4,20 @@ import os
 import signal
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, TypedDict
 
+from odessy.execution.contract import (
+    ConfineResult,
+    ExecutionPolicy,
+    ExecutionProvider,
+    IsolationRequirement,
+    Mode,
+    ProviderUnavailableError,
+    Requirement,
+)
+from odessy.execution.providers import UnconfinedProvider
 from odessy.output_retention import TextRetainer, format_retention_notice
 from odessy.redaction import looks_like_secret_name, redact_text
 from odessy.spill import SpillStore
@@ -15,21 +25,37 @@ from odessy.workspace_authority import WorkspaceAuthority
 
 
 class _TerminalRunResultOptional(TypedDict, total=False):
-    """Locator fields added by the spill integration.
+    """Fields added after the original result contract, all optional.
 
     Kept in a `total=False` base so callers that build a `TerminalRunResult`
-    literal without them still type-check, and so adding a locator never breaks
-    an existing consumer.
+    literal without them still type-check, and so adding one never breaks an
+    existing consumer.
     """
 
     stdout_spill: dict[str, Any] | None
     stderr_spill: dict[str, Any] | None
+    #: What confinement actually achieved for this run. Always present, because a
+    #: caller cannot tell a confined run from an unconfined one without it.
+    sandbox: dict[str, Any]
 
 
 class TerminalRunResult(_TerminalRunResultOptional):
     stdout: str
     stderr: str
-    exit_code: int
+    #: The process's own exit status, or `None` when there is none to report.
+    #:
+    #: `timed_out` is what distinguishes the cases. When the executor terminated the
+    #: process, the code a killed process happens to report (1 on Windows) is an
+    #: artifact of the kill rather than an outcome of the command, so reporting it
+    #: would be semantically misleading. `None` says exactly "no process exit code
+    #: exists"; a sentinel such as `-1` is indistinguishable from a real code and so
+    #: reads as the command's own result.
+    #:
+    #: A negative value IS meaningful on POSIX -- it is `-signal` for a process killed
+    #: by a signal -- so the executor preserves it rather than flattening it to `None`.
+    #:
+    #: A spawn failure does not produce a result at all: it raises.
+    exit_code: int | None
     duration: float
     status: str
     command: str
@@ -50,16 +76,47 @@ class CommandBridge:
     #: Spill backend for withheld output. Built lazily from `workspace_root` when
     #: not supplied, so existing constructions keep working unchanged.
     spill_store: SpillStore | None = None
+    #: The confinement backend every command is routed through. `None` means no
+    #: backend was configured, and that absence is REPORTED in the result rather
+    #: than left for the caller to infer. A caller that wants a boundary injects a
+    #: provider together with the policy it confines under.
+    provider: ExecutionProvider | None = None
+    #: The file-effect policy `provider` confines under. Which mode an action
+    #: resolves to is the authority layer's decision, not this bridge's, so this is
+    #: supplied rather than derived here.
+    policy: ExecutionPolicy | None = None
 
-    def run(self, *, command: str, cwd: str = ".", timeout: int = 10) -> TerminalRunResult:
+    def __post_init__(self) -> None:
+        if (self.provider is None) != (self.policy is None):
+            raise ValueError(
+                "CommandBridge requires provider and policy together: a policy "
+                "without a backend confines nothing, and a backend without a "
+                "policy has no mode to confine under"
+            )
+
+    def run(
+        self,
+        *,
+        command: str,
+        cwd: str = ".",
+        timeout: int = 10,
+        mode: Mode | None = None,
+        isolation: IsolationRequirement | None = None,
+    ) -> TerminalRunResult:
         resolved_cwd = self.resolve_cwd(cwd)
         effective_timeout = min(max(1, timeout), self.max_timeout)
+        # Confinement happens before anything is spawned, and it raises rather than
+        # falling back: a caller that asked for a boundary must never receive an
+        # unconfined run instead. `ProviderUnavailableError`, the
+        # `danger-full-access` refusal, and a policy that no backend satisfies all
+        # therefore propagate out of `run()`.
+        argv, sandbox = self._confine(_shell_command(command), mode, isolation)
         start = time.monotonic()
         process: subprocess.Popen[str] | None = None
 
         try:
             process = subprocess.Popen(
-                _shell_command(command),
+                argv,
                 cwd=resolved_cwd,
                 env=build_sanitized_environment(os.environ),
                 stdout=subprocess.PIPE,
@@ -79,7 +136,7 @@ class CommandBridge:
             stderr, stderr_truncated, stderr_spill = self._prepare_output(
                 stderr, label="stderr", max_chars=self.max_stderr_chars
             )
-            exit_code = process.returncode if process.returncode is not None else -1
+            exit_code = process.returncode
             status = "ok" if exit_code == 0 else "failed"
             return {
                 "stdout": stdout,
@@ -94,6 +151,7 @@ class CommandBridge:
                 "stderr_truncated": stderr_truncated,
                 "stdout_spill": stdout_spill,
                 "stderr_spill": stderr_spill,
+                "sandbox": sandbox,
             }
         except subprocess.TimeoutExpired as exc:
             if process is not None:
@@ -113,7 +171,10 @@ class CommandBridge:
             return {
                 "stdout": stdout,
                 "stderr": stderr_text,
-                "exit_code": -1,
+                # No process exit status exists: the executor terminated the process,
+                # so any code a killed process reports is a kill artifact, not the
+                # command's outcome.
+                "exit_code": None,
                 "duration": duration,
                 "status": "timeout",
                 "command": command,
@@ -123,10 +184,62 @@ class CommandBridge:
                 "stderr_truncated": stderr_truncated,
                 "stdout_spill": stdout_spill,
                 "stderr_spill": stderr_spill,
+                "sandbox": sandbox,
             }
 
     def resolve_cwd(self, cwd: str) -> Path:
         return WorkspaceAuthority(self.workspace_root).resolve_cwd(cwd)
+
+    def _confine(
+        self,
+        argv: list[str],
+        mode: Mode | None = None,
+        isolation: IsolationRequirement | None = None,
+    ) -> tuple[list[str], dict[str, Any]]:
+        """Route the argv through the configured backend.
+
+        ``mode`` is the mode the *authority layer* resolved for this one call, and
+        ``isolation`` is how strict it was about that. They are supplied per call rather
+        than read off ``self.policy`` because a decision taken per action cannot live in a
+        per-bridge field. ``None`` keeps the bridge's own policy, which is what a caller
+        that has not resolved one gets.
+
+        With no backend configured this still calls `confine()` -- through the named
+        unconfined provider -- so every run states its own enforcement instead of
+        silently reporting nothing. The inert mode passed in that case is
+        `read-only`, chosen because it is the most restrictive value: should a
+        backend ever be configured without an explicit policy, the default must
+        fail closed rather than over-grant.
+        """
+
+        if self.provider is None:
+            # `__post_init__` pairs the two fields, so the policy is None here too.
+            result = _UNCONFINED.confine(
+                argv,
+                ExecutionPolicy(mode="read-only", workspace_root=str(self.workspace_root)),
+            )
+            return list(result.argv), _sandbox_report(result)
+
+        assert self.policy is not None  # `__post_init__` pairs the two fields.
+        policy = self.policy if mode is None else replace(self.policy, mode=mode)
+
+        if isolation == "required":
+            # This side both decides and executes, so there is no trust boundary to
+            # cross -- but a `required` demand still has to be answered. Satisfying it
+            # with a partial or absent backend here would be the same silent downgrade
+            # the executor refuses on the other side of the boundary.
+            evaluation = self.provider.evaluate(Requirement(policy=policy, isolation="required"))
+            if not evaluation.satisfied:
+                # (mode, detail), not a single message: the first argument is the mode the
+                # backend could not satisfy, and the detail explains why.
+                raise ProviderUnavailableError(
+                    policy.mode,
+                    f"required isolation is not met: {self.provider.provider_id} reports "
+                    f"{evaluation.enforcement} enforcement ({evaluation.reason})",
+                )
+
+        result = self.provider.confine(argv, policy)
+        return list(result.argv), _sandbox_report(result)
 
     def _spill_store(self) -> SpillStore:
         if self.spill_store is not None:
@@ -175,6 +288,27 @@ class CommandBridge:
         return f"{result.text}\n{notice}\n", True, locator.as_dict()
 
 
+#: The named absence of a backend. Used when no provider was configured, so that
+#: every command is still routed through `confine()` and the result always states
+#: its own enforcement. The absence is loud, never concealed.
+_UNCONFINED = UnconfinedProvider()
+
+
+def _sandbox_report(result: ConfineResult) -> dict[str, Any]:
+    """The confinement facts a caller needs, in the contract's own vocabulary.
+
+    `provider_id` matters as much as `enforcement`: "unconfined" and "confined,
+    but only partially" are different answers, and a caller that cannot tell them
+    apart cannot act on either.
+    """
+
+    return {
+        "provider_id": result.provider_id,
+        "enforcement": result.enforcement,
+        "limitations": sorted(result.limitations),
+    }
+
+
 def _shell_command(command: str) -> list[str]:
     if os.name == "nt":
         return ["powershell", "-NoProfile", "-NonInteractive", "-Command", command]
@@ -188,6 +322,12 @@ def build_sanitized_environment(source: os._Environ[str]) -> dict[str, str]:
         "LC_ALL",
         "PATH",
         "PATHEXT",
+        # Preserve an explicitly configured module search path. Reconstructing it
+        # in a stripped environment can trigger unrelated installed-module scans.
+        "PSMODULEPATH",
+        # Let the host choose a writable module-analysis cache. Cache reuse alone
+        # does not bound module discovery; preserve PSMODULEPATH above as well.
+        "PSMODULEANALYSISCACHEPATH",
         "SYSTEMROOT",
         "TEMP",
         "TERM",

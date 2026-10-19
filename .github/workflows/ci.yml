@@ -1,0 +1,152 @@
+name: CI
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python ${{ matrix.python }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 3.10 is the declared minimum and the Jetson runtime.
+          - os: ubuntu-latest
+            python: "3.10"
+          - os: ubuntu-latest
+            python: "3.13"
+          # The laptop side runs on Windows.
+          - os: windows-latest
+            python: "3.13"
+    env:
+      # Never read the committed developer config (laptop MCP URL, model paths).
+      ODESSY_CONFIG_FILE: ${{ github.workspace }}/.ci-no-config.env
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v5
+
+      # The runner context is unavailable in job-level env. Export the cache from
+      # a step. Put built-in modules first so cmdlet discovery avoids runner extras.
+      - name: Prepare Windows PowerShell
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 1
+        run: |
+          $env:PSModulePath = (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\Modules') + ';' + (Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules')
+          "PSModulePath=$env:PSModulePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $env:PSModuleAnalysisCachePath = Join-Path $env:RUNNER_TEMP 'ps-module-analysis-cache'
+          "PSModuleAnalysisCachePath=$env:PSModuleAnalysisCachePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # Exercise the module loading used by pwd, ls, and echo.
+          powershell.exe -NoProfile -NonInteractive -Command '$ErrorActionPreference = "Stop"; Get-Location; Get-ChildItem; Write-Output ready; exit 0'
+          if ($LASTEXITCODE -ne 0) { throw "PowerShell preparation failed: $LASTEXITCODE" }
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # Node is needed so the Python <-> Node MCP integration test runs instead of skipping.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/package-lock.json
+
+      - name: Build Node tool server
+        working-directory: tools
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Install Odessy
+        run: python -m pip install -e ".[test]"
+
+      - name: Run tests
+        run: python -m pytest -q --tb=short --durations=10
+
+      - name: CLI smoke test
+        shell: bash
+        run: |
+          python -m odessy --help
+          output="$(python -m odessy --fake-model "what time is it?")"
+          echo "$output"
+          [[ "$output" == "The current time is "* ]]
+          # Single-machine mode: filesystem.list exists only on the Node tool server,
+          # so this passes only if the CLI started it on loopback by itself.
+          output="$(python -m odessy --fake-model "list .")"
+          echo "$output"
+          [[ "$output" == "Directory entries: "*"pyproject.toml"* ]]
+
+  tool-server:
+    name: Tool server, Node ${{ matrix.node }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [22, 24]
+    defaults:
+      run:
+        working-directory: tools
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Prepare Windows PowerShell
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 1
+        run: |
+          $env:PSModulePath = (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\Modules') + ';' + (Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules')
+          "PSModulePath=$env:PSModulePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $env:PSModuleAnalysisCachePath = Join-Path $env:RUNNER_TEMP 'ps-module-analysis-cache'
+          "PSModuleAnalysisCachePath=$env:PSModuleAnalysisCachePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          # Exercise the module loading used by pwd, ls, and echo.
+          powershell.exe -NoProfile -NonInteractive -Command '$ErrorActionPreference = "Stop"; Get-Location; Get-ChildItem; Write-Output ready; exit 0'
+          if ($LASTEXITCODE -ne 0) { throw "PowerShell preparation failed: $LASTEXITCODE" }
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: tools/package-lock.json
+
+      # Give the Linux runner a real confinement backend, so the host test asserts
+      # confinement instead of finding none. Ubuntu 24.04 blocks the unprivileged
+      # user namespaces bwrap needs unless AppArmor's restriction is lifted.
+      - name: Enable bubblewrap
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Records which confinement backends this runner offers and why, so a host
+      # test failure can be read without rerunning anything.
+      - name: Report host confinement facts
+        run: |
+          npm run build --silent
+          node --input-type=module -e "import { discoverHostFacts, renderHostFacts } from './dist/src/execution/probe.js'; console.log(renderHostFacts(discoverHostFacts()));"
+
+      - name: Run tests
+        run: npm test
