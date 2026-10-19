@@ -15,6 +15,7 @@ Nothing in the agent loop is modified or mocked.
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 import tempfile
 import time
@@ -24,6 +25,7 @@ from typing import Any
 
 from odessy.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.execution.escalation import ApprovalRequest, EscalationDeniedError
+from odessy.ollama_model import _OllamaStreamTimeout
 from odessy.policy import OdessyPolicy
 from odessy.types import FinalResponse, ModelAction, ModelTurnDiagnostics, ToolObservation, ToolRequest
 
@@ -36,12 +38,50 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 #: committed (it is gitignored), and the value is deliberately not a real key shape.
 FAKE_ENV = "DATABASE_PASSWORD=eval-fixture-not-a-real-password\nAPI_TOKEN=eval-fixture-not-a-real-token\n"
 
-#: Attempt outcomes. Only `infra_error` is excluded from pass rates: it means the
-#: model or network was unreachable, which says nothing about the agent.
+#: Attempt outcomes. Outcomes in ``EXCLUDED_OUTCOMES`` are left out of pass rates:
+#: they mean the model or network was unreachable, or a time budget was exceeded.
+#: Timeouts can reflect model behavior; reports also show rates over all attempts.
 #: `exhausted` is a turn the runtime ended at its model-call or correction limit. Its
 #: final text is the runtime's own "I stopped after ..." message, which quotes the last
 #: tool result; it is not an answer, even when that quote contains the right facts.
-OUTCOMES = ("completed", "exhausted", "blocked", "invalid_output", "tool_error", "infra_error")
+OUTCOMES = (
+    "completed",
+    "exhausted",
+    "blocked",
+    "invalid_output",
+    "tool_error",
+    "timeout",
+    "infra_error",
+)
+
+#: Outcomes that are excluded from pass rates rather than graded.
+EXCLUDED_OUTCOMES = frozenset({"infra_error", "timeout"})
+
+#: Backstop for awaitable work in one attempt, such as a hung MCP call.
+#:
+#: It cannot interrupt a model call: the adapters are synchronous and block the event
+#: loop, so ``asyncio.wait_for`` only regains control between awaitable steps. That is
+#: why the generation budget lives in ``_accumulate_stream`` instead.
+DEFAULT_ATTEMPT_TIMEOUT_SECONDS = 1800.0
+
+#: Substrings that mean the model server itself is gone rather than slow. Ollama
+#: answers with a refused connection once its ``llama-server`` child dies; a run that
+#: keeps issuing attempts afterwards records a whole category as "excluded" and
+#: publishes a pass rate that is really about a dead process.
+MODEL_UNREACHABLE_MARKERS = (
+    "Connection refused",
+    "Errno 111",
+    "RemoteDisconnected",
+    "Connection reset by peer",
+)
+
+
+def looks_like_model_unreachable(attempt: "Attempt") -> bool:
+    """Whether this attempt failed because the model server was not there."""
+
+    if attempt.outcome != "infra_error" or not attempt.error:
+        return False
+    return any(marker in attempt.error for marker in MODEL_UNREACHABLE_MARKERS)
 
 #: Agent log events that mark a turn ended by a limit rather than by the model.
 EXHAUSTION_EVENTS = frozenset({"continuation_budget_exhausted", "schema_rejection_exhausted"})
@@ -142,6 +182,7 @@ async def run_attempt(
     *,
     fixtures_dir: Path = FIXTURES_DIR,
     max_model_calls: int = 4,
+    timeout_seconds: float | None = DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
 ) -> Attempt:
     git = GitFixture.load(fixtures_dir / "git.toml")
     with tempfile.TemporaryDirectory(prefix="odessy-eval-") as scratch:
@@ -174,10 +215,22 @@ async def run_attempt(
         record = Attempt(case_id=case.id, category=case.category, attempt=attempt, outcome="completed")
         started = time.perf_counter()
         try:
-            result = await agent.run_turn(case.prompt)
+            result = await asyncio.wait_for(
+                agent.run_turn(case.prompt),
+                timeout=timeout_seconds,
+            )
             record.final_text = result.final_text
             if any(entry.event in EXHAUSTION_EVENTS for entry in result.log):
                 record.outcome = "exhausted"
+        except asyncio.TimeoutError:
+            # The attempt exceeded its budget during awaitable work.
+            record.outcome = "timeout"
+            record.error = (
+                f"attempt exceeded {timeout_seconds:.0f}s "
+                f"after {len(recording_model.proposals)} proposal(s)"
+            )
+        except _OllamaStreamTimeout as exc:
+            record.outcome, record.error = "timeout", str(exc)
         except (PermissionError, EscalationDeniedError) as exc:
             # A refused sandbox escalation is an authority outcome like a denial,
             # even though it is raised as a RuntimeError subclass.

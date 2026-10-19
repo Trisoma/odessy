@@ -32,6 +32,9 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
         "attempts": len(records),
         "excluded": len(records) - len(graded),
         "pass_rate": _rate(sum(r["grade"]["passed"] for r in graded), len(graded)),
+        "timeout_rate": _rate(sum(r["outcome"] == "timeout" for r in records), len(records)),
+        "completion_rate": _rate(sum(r["outcome"] == "completed" for r in records), len(records)),
+        "pass_rate_all_attempts": _rate(sum(r["grade"]["passed"] for r in graded), len(records)),
         "outcomes": dict(Counter(r["outcome"] for r in records)),
         "categories": {},
     }
@@ -133,14 +136,30 @@ def render_markdown(summary: dict[str, Any], metadata: dict[str, Any]) -> str:
         "| Setting | Value |",
         "|---|---|",
     ]
-    for key in ("backend", "model", "deployment", "keyword_routing", "repeat", "odessy_version", "git_commit", "git_commit_note", "platform", "started_at"):
+    for key in ("backend", "model", "deployment", "keyword_routing", "repeat", "attempt_timeout_seconds", "odessy_version", "git_commit", "git_commit_note", "platform", "started_at"):
         lines.append(f"| {key} | {metadata.get(key, '')} |")
     if "graded" in metadata:
         lines.append(f"| graded | {metadata['graded']} |")
+    aborted = metadata.get("aborted")
+    if isinstance(aborted, dict):
+        lines += [
+            "",
+            f"> **Run aborted after {aborted.get('attempts_completed', '?')} attempts.** "
+            f"{aborted.get('reason', '')}",
+            "> The numbers below cover only the attempts that ran. They are not a result "
+            "for the full suite.",
+        ]
     lines += [
         "",
         f"**Overall pass rate: {_pct(summary['pass_rate'])}** "
-        f"({summary['attempts']} attempts, {summary['excluded']} excluded as infrastructure errors)",
+        f"({summary['attempts']} attempts, {summary['excluded']} excluded as infrastructure "
+        f"errors or timeouts)",
+        "",
+        f"Timeouts: {summary['outcomes'].get('timeout', 0)}/{summary['attempts']} "
+        f"({_pct(summary.get('timeout_rate'))}). "
+        f"Completed without a runtime error: {_pct(summary.get('completion_rate'))}. "
+        f"Passed / all recorded attempts: {_pct(summary.get('pass_rate_all_attempts'))}.",
+        "The overall pass rate excludes timeouts; read it alongside these rates.",
         "",
         "## By category",
         "",

@@ -124,6 +124,9 @@ _CLAUDE_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 DEFAULT_CLOUD_TIMEOUT_SECONDS = 120
 DEFAULT_CLAUDE_MAX_TOKENS = 16000
+#: Output ceiling for OpenAI-compatible providers (DeepSeek, Qwen, Kimi, GPT, custom).
+#: Configurable separately from Claude; must fit the selected model's limits.
+DEFAULT_OPENAI_MAX_TOKENS = 4096
 
 _SYSTEM_PROMPT_TEMPLATE = (
     "You are Odessy, a voice assistant that can act on the user's computers through tools.\n"
@@ -216,6 +219,11 @@ class CloudModel:
     base_url: str = ""
     timeout: int = DEFAULT_CLOUD_TIMEOUT_SECONDS
     max_tokens: int = DEFAULT_CLAUDE_MAX_TOKENS
+    #: Output ceiling for OpenAI-compatible providers. Separate from ``max_tokens``
+    #: (Claude's, and 16000) because those providers *reject* a value above the
+    #: model's limit instead of truncating to it, so the safe number is the smaller
+    #: one. Left unset, an OpenAI-compatible call has no ceiling at all.
+    openai_max_tokens: int = DEFAULT_OPENAI_MAX_TOKENS
     #: Claude: ``output_config.effort``; DeepSeek: ``reasoning_effort``. ``None`` keeps the default.
     effort: str | None = None
     #: Claude only: enable server-side refusal fallbacks on models that support them.
@@ -433,6 +441,10 @@ class CloudModel:
             "messages": [{"role": "system", "content": system_prompt()}, *self._messages],
             "tools": cloud_tools_openai(),
             "tool_choice": "auto",
+            # Claude was the only path with an output ceiling; an OpenAI-compatible
+            # model that never stops generating runs to the provider's limit, with
+            # the bill to match.
+            "max_tokens": self.openai_max_tokens,
         }
         if self.provider == "deepseek" and self.effort:
             payload["reasoning_effort"] = self.effort
@@ -510,6 +522,9 @@ def build_cloud_model(provider: str, env: dict[str, str] | None = None) -> Cloud
         base_url=base_url,
         timeout=_positive_int(env.get("ODESSY_CLOUD_TIMEOUT"), DEFAULT_CLOUD_TIMEOUT_SECONDS),
         max_tokens=_positive_int(env.get("ODESSY_CLOUD_MAX_TOKENS"), DEFAULT_CLAUDE_MAX_TOKENS),
+        openai_max_tokens=_positive_int(
+            env.get("ODESSY_CLOUD_OPENAI_MAX_TOKENS"), DEFAULT_OPENAI_MAX_TOKENS
+        ),
         effort=(env.get("ODESSY_CLOUD_EFFORT") or "").strip() or None,
         refusal_fallbacks=(env.get("ODESSY_CLOUD_FALLBACKS") or "on").strip().lower()
         not in {"0", "off", "false", "no"},

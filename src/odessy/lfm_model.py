@@ -23,6 +23,9 @@ from odessy.ollama_model import (
     _corrected_tool_request,
     _debug_model_repair,
     _debug_parsed_action,
+    _default_call_timeout,
+    _default_num_ctx,
+    _default_num_predict,
     _default_progress_timeout,
     _extract_model_action_from_chat,
     _fallback_observation_response,
@@ -38,6 +41,7 @@ from odessy.ollama_model import (
     _system_prompt,
     _text_system_prompt,
     PROGRESS_TIMEOUT_ENV,
+    generation_options,
 )
 from odessy.types import FinalResponse, ModelAction, ModelTurnDiagnostics, ToolObservation
 
@@ -94,6 +98,13 @@ class LlamaCppLFMModel:
     timeout: int = field(default_factory=_default_progress_timeout)
     temperature: float = 0.0
     think: bool | str | None = None
+    #: Tokens one call may generate, including thinking tokens.
+    num_predict: int = field(default_factory=_default_num_predict)
+    #: Context window; prompt plus ``num_predict`` has to fit inside it.
+    num_ctx: int = field(default_factory=_default_num_ctx)
+    #: Stream wall-time budget checked between lines; includes silence, excludes
+    #: connection/header waits, and can overrun during a blocking read.
+    call_timeout: float = field(default_factory=_default_call_timeout)
 
     @property
     def last_turn_diagnostics(self) -> ModelTurnDiagnostics:
@@ -201,7 +212,10 @@ class LlamaCppLFMModel:
             "model": self.model,
             "messages": messages,
             "stream": True,
-            "temperature": self.temperature,
+            # Inside ``options``, which is where Ollama reads it. A top-level
+            # ``temperature`` is ignored, so this used to sample at Ollama's
+            # default instead of at the intended 0.0.
+            "options": generation_options(self.temperature, self.num_predict, self.num_ctx),
         }
         if self.think is not None:
             payload["think"] = self.think
@@ -215,7 +229,9 @@ class LlamaCppLFMModel:
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return normalize_ollama_chat_response(_accumulate_stream(response))
+                return normalize_ollama_chat_response(
+                    _accumulate_stream(response, self.call_timeout)
+                )
         except urllib.error.HTTPError as error:
             body = _read_error_body(error)
             if "does not support tools" in body:

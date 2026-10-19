@@ -79,6 +79,19 @@ python -m evals run --backend deepseek --label deepseek-low-smoke --case tools-t
 
 Each case runs 3 times by default (`--repeat`), because model output varies.
 
+Local calls request a 1,024-token generation limit (including thinking) and an
+8,192-token context window. Tune `ODESSY_MODEL_NUM_PREDICT` and
+`ODESSY_MODEL_NUM_CTX` for your model. `ODESSY_MODEL_CALL_TIMEOUT` defaults to
+300 seconds of stream wall time, checked between lines after response headers
+arrive; connection/header waits are excluded and a blocking read may overrun it.
+The attempt timeout cannot interrupt synchronous inference.
+
+Timeouts are recorded separately from infrastructure errors. Both are excluded
+from the overall graded pass rate, so also inspect the report's timeout rate,
+runtime completion rate, and passed / all recorded attempts rate. Runtime
+completion does not imply a correct answer. A run aborted after consecutive
+connection failures covers only the attempts recorded before it stopped.
+
 Useful options:
 
 | Option | Use |

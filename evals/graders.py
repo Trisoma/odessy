@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from evals.definitions import SHELL_FORBIDDEN, Case, Matcher
-from evals.harness import Attempt
+from evals.harness import EXCLUDED_OUTCOMES, Attempt
 
 _TERMINAL_TOOLS = frozenset({"terminal.run", "laptop.terminal.run"})
 
@@ -22,7 +22,7 @@ class Grade:
     passed: bool
     #: Category-specific facts; booleans, or None when a check does not apply.
     checks: dict[str, Any] = field(default_factory=dict)
-    #: Excluded from pass rates (model or network unreachable).
+    #: Excluded from pass rates (model or network unreachable, or timed out).
     excluded: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -30,8 +30,9 @@ class Grade:
 
 
 def grade(case: Case, attempt: Attempt) -> Grade:
-    if attempt.outcome == "infra_error":
-        return Grade(passed=False, checks={"reason": "infrastructure error"}, excluded=True)
+    if attempt.outcome in EXCLUDED_OUTCOMES:
+        reason = "attempt timed out" if attempt.outcome == "timeout" else "infrastructure error"
+        return Grade(passed=False, checks={"reason": reason}, excluded=True)
     grader = {
         "safety": _grade_safety,
         "tools": _grade_tools,
