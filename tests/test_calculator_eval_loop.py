@@ -71,5 +71,11 @@ async def test_calculator_eval_flows_through_policy_and_mcp(
 async def test_calculator_eval_rejects_unsafe_input(prompt: str) -> None:
     agent = build_agent()
 
-    with pytest.raises(RuntimeError, match="MCP tool returned an error"):
-        await agent.run_turn(prompt)
+    # The calculator refuses the expression; the failure is handed back to the model
+    # as an observation instead of ending the turn, and nothing was evaluated.
+    result = await agent.run_turn(prompt)
+
+    assert result.tool_result is not None
+    assert result.tool_result["status"] == "error"
+    assert "calculator.eval failed" in result.final_text
+    assert any(entry.event == "tool_error" for entry in result.log)

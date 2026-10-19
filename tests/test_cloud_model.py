@@ -345,18 +345,15 @@ def test_openai_malformed_argument_json_is_repaired() -> None:
     assert model.propose("time?") == ToolRequest(name="time.now", arguments={})
 
 
-def test_laptop_intent_still_requires_the_laptop_tool() -> None:
-    model = QueuedOpenAI(
-        [
-            openai_reply(calls=[("c1", "terminal__run", {"command": "pwd"})]),
-            openai_reply(calls=[("c2", "laptop__terminal__run", {"command": "pwd"})]),
-        ]
-    )
+def test_cloud_model_chooses_the_machine_without_a_keyword_rule() -> None:
+    # "my laptop" appears, but the user asked for this machine. A keyword rule forced
+    # the laptop tool here; a cloud model reads the sentence and the system prompt.
+    model = QueuedOpenAI([openai_reply(calls=[("c1", "terminal__run", {"command": "pwd"})])])
 
-    action = model.propose("on my laptop, run pwd")
+    action = model.propose("my laptop is off, so run pwd on this machine")
 
-    assert action == ToolRequest(name="laptop.terminal.run", arguments={"command": "pwd"})
-    assert model.last_turn_diagnostics.repair_triggered is True
+    assert action == ToolRequest(name="terminal.run", arguments={"command": "pwd"})
+    assert model.last_turn_diagnostics.repair_triggered is False
 
 
 def test_openai_observation_is_returned_as_tool_message_and_answered() -> None:
@@ -414,11 +411,34 @@ def test_openai_blank_final_answer_falls_back_to_summary() -> None:
     assert action == FinalResponse(text="The current time is noon.")
 
 
-def test_openai_invalid_follow_up_call_degrades_instead_of_raising() -> None:
+def test_openai_invalid_follow_up_call_gets_one_correction() -> None:
+    # An invalid next call used to be dropped silently. It now gets one repair round,
+    # like the first proposal.
     model = QueuedOpenAI(
         [
             openai_reply(calls=[("c1", "time__now", {})]),
             openai_reply(calls=[("c2", "no__such__tool", {})]),
+            openai_reply(calls=[("c3", "calculator__eval", {"expression": "18*60 - 12*60"})]),
+        ]
+    )
+    request = model.propose("minutes from noon to 18:00?")
+
+    action = model.respond_to_observation(
+        "minutes from noon to 18:00?", ToolObservation(request=request, result={"iso_time": "noon"})
+    )
+
+    assert action == ToolRequest(name="calculator.eval", arguments={"expression": "18*60 - 12*60"})
+    repair = [m for m in model.payloads[2]["messages"] if m["role"] == "tool"][-1]
+    assert repair["tool_call_id"] == "c2"
+    assert "invalid" in repair["content"]
+
+
+def test_openai_follow_up_still_invalid_after_correction_degrades_instead_of_raising() -> None:
+    model = QueuedOpenAI(
+        [
+            openai_reply(calls=[("c1", "time__now", {})]),
+            openai_reply(calls=[("c2", "no__such__tool", {})]),
+            openai_reply(calls=[("c3", "no__such__tool", {})]),
         ]
     )
     request = model.propose("time?")

@@ -40,7 +40,7 @@ which is committed.
 
 ```bash
 export DEEPSEEK_API_KEY=...
-python -m odessy --model-backend deepseek "on my laptop, run pwd"
+python -m odessy --model-backend deepseek "run pwd"
 python -m odessy voice --model-backend claude
 ```
 
@@ -58,6 +58,9 @@ Or select the backend persistently with `ODESSY_MODEL_BACKEND=claude`.
 | `ODESSY_CLOUD_MAX_TOKENS` | Claude | `max_tokens` per request, default 16000 |
 | `ODESSY_CLOUD_EFFORT` | Claude, DeepSeek | Claude: `output_config.effort` (`low`, `medium`, `high`, `xhigh`, or `max`, subject to model support). DeepSeek: `reasoning_effort`; see the example below. Unset keeps the provider default. Other OpenAI-compatible backends do not receive this setting. |
 | `ODESSY_CLOUD_FALLBACKS` | Claude | `on` (default) enables server-side refusal fallbacks on models that support them; `off` disables |
+| `ODESSY_CLOUD_RETRIES` | all | Retries after a rate limit (429), server error (5xx, 529), timeout or dropped connection, default 2. Waits 1 s, 2 s, ... or the server's `Retry-After`, at most 20 s. `0` disables. A 4xx such as a bad request or a wrong key is never retried |
+| `ODESSY_CLOUD_MAX_RESULT_CHARS` | all | Characters of one tool result sent to the provider, default 16000; longer results are cut with a note saying how much was omitted |
+| `ODESSY_MAX_MODEL_CALLS` | all | Model calls per turn, counting corrections and follow-up steps. Default 8 for cloud backends, 4 for local ones |
 
 ### DeepSeek with low reasoning effort
 
@@ -107,22 +110,27 @@ results when comparing runs.
 
 ## How it differs from the local backends
 
-- **All available tools are offered.** With keyword routing on, local adapters pre-select
-  one tool from the user's text. Cloud models receive the deployment's available tools and choose
-  themselves, regardless of the local routing setting. The one rule kept
-  from the local path: a request that says "on my laptop" must use
-  `laptop.terminal.run` in split mode, or `terminal.run` in single mode.
-  Without the Node server, single mode offers only time, calculator, and terminal tools.
-  See [deployment](deployment.mdx).
+- **All available tools are offered, and no keyword rules apply.** The model chooses
+  the tool and the machine from the system prompt, which says what runs where. (The
+  local adapters still reject a "my laptop" request that uses the wrong command tool;
+  a cloud model reads "my laptop is off, run it here" correctly where that rule would
+  not.) Without the Node server, single mode offers only time, calculator, and
+  terminal tools. See [deployment](deployment.mdx).
 - **Native tool-result messages.** Tool results go back as `tool` / `tool_result`
   messages tied to the call id, so the model sees the whole turn. Returned
   `reasoning_content` is retained for OpenAI-compatible conversations.
 - **One tool call per step.** Claude is asked for one call at a time
   (`disable_parallel_tool_use`). If an OpenAI-compatible model returns several,
   Odessy runs the first and answers the rest as "not executed".
-- **One repair.** An invalid proposal (unknown tool, bad arguments, malformed
-  JSON) is sent back as an error tool result once. A second invalid proposal
-  fails the turn, as with the local adapters.
+- **One repair per step.** An invalid proposal (unknown tool, bad arguments,
+  malformed JSON) is sent back as an error tool result once. A second invalid first
+  proposal fails the turn; a second invalid follow-up ends it with a summary of the
+  last result.
+- **Failures are marked as failures.** A rejected call, or one that ran and failed (a
+  wrong path), goes back as an error tool result (`is_error` for Claude), so the model
+  can correct it.
+- **Transient errors are retried** (see `ODESSY_CLOUD_RETRIES`); the Anthropic SDK
+  receives the same retry count.
 - **Tool names are encoded.** Neither API accepts dots in function names, so
   `laptop.terminal.run` is sent as `laptop__terminal__run` and decoded on return.
 

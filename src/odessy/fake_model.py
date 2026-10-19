@@ -53,6 +53,10 @@ class FakeModel:
         user_text: str,
         observation: ToolObservation,
     ) -> FinalResponse:
+        if observation.result.get("status") == "error":
+            return FinalResponse(
+                text=f"{observation.request.name} failed: {observation.result.get('error', 'unknown error')}"
+            )
         if observation.request.name == "time.now":
             iso_time = observation.result["iso_time"]
             return FinalResponse(text=f"The current time is {iso_time}.")

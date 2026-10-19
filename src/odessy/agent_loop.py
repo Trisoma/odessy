@@ -70,6 +70,31 @@ _REJECTION_INSTRUCTION = (
     "Correct the arguments and propose the tool call again, or give a final answer."
 )
 
+#: Instruction carried by the observation of a tool call that ran and failed.
+_TOOL_ERROR_INSTRUCTION = (
+    "The tool ran and failed. Correct the call (for example the path, which is "
+    "relative to the workspace) and try again, or answer briefly with what went wrong."
+)
+
+#: Characters of a tool's error message kept in the observation.
+_TOOL_ERROR_CHARS = 1000
+
+
+def _is_error_result(result: Any) -> bool:
+    return bool(getattr(result, "is_error", getattr(result, "isError", False)))
+
+
+def _error_text(result: Any) -> str:
+    """The text a failed MCP call returned, for the model to read."""
+
+    parts = []
+    for item in getattr(result, "content", None) or []:
+        text = getattr(item, "text", None)
+        if isinstance(text, str) and text.strip():
+            parts.append(text.strip())
+    message = "\n".join(parts) or "the tool reported an error without a message"
+    return message[:_TOOL_ERROR_CHARS]
+
 
 class OdessyAgent:
     """Single-turn Odessy runtime loop with model-independent tool execution."""
@@ -370,7 +395,20 @@ class OdessyAgent:
             result = await self._call_tool(action.name, call_arguments, tool_registry)
             log.append(LogEntry("mcp_tool_called", {"name": action.name}))
 
-            structured_result = self._extract_structured_result(result)
+            if _is_error_result(result):
+                # A failed call (a wrong path, a missing file) is something the model
+                # can correct, like a rejection: it becomes an observation, and the next
+                # action goes through validation and policy as usual. Ending the turn
+                # here meant one mistyped path lost the whole request. The model-call
+                # ceiling still bounds the retries.
+                structured_result = {
+                    "status": "error",
+                    "error": _error_text(result),
+                    "instruction": _TOOL_ERROR_INSTRUCTION,
+                }
+                log.append(LogEntry("tool_error", {"name": action.name, "error": structured_result["error"]}))
+            else:
+                structured_result = self._extract_structured_result(result)
             _add_ms(metrics, "mcp_execution_ms", _elapsed_ms(mcp_started))
             last_request = action
             last_result = structured_result

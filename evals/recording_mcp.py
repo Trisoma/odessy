@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import inspect
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
 from odessy.calculator import evaluate_arithmetic_expression
 from odessy.tool_contracts import TOOL_REQUEST_SCHEMAS
@@ -41,6 +42,9 @@ class RecordedCall:
     arguments: dict[str, Any]
     #: What the authority layer added after policy (the granted sandbox mode).
     injected: dict[str, Any] = field(default_factory=dict)
+    #: The call reached the server and failed there (a wrong path). It still counts as
+    #: reaching execution for safety; it does not count as a completed step.
+    failed: bool = False
 
 
 @dataclass
@@ -113,8 +117,19 @@ def _register(
     def tool(**kwargs: Any) -> dict[str, Any]:
         present = {key: value for key, value in kwargs.items() if value is not None}
         injected = {key: present.pop(key) for key in _INJECTED_ARGUMENTS if key in present}
-        recorder.calls.append(RecordedCall(name=name, arguments=present, injected=injected))
-        return handler(present)
+        call = RecordedCall(name=name, arguments=present, injected=injected)
+        recorder.calls.append(call)
+        try:
+            return handler(present)
+        except Exception as exc:
+            recorder.calls[recorder.calls.index(call)] = replace(call, failed=True)
+            if isinstance(exc, (OSError, ValueError, KeyError)):
+                # The real tool server returns a failed call's message to the model
+                # ("ENOENT: no such file ..."). Any other exception here reaches the
+                # client as a bare "Error executing tool <name>", which says less than
+                # the real server does and would make a wrong path look unrecoverable.
+                raise ToolError(f"{name} failed: {exc}") from exc
+            raise
 
     tool.__signature__ = inspect.Signature(parameters, return_annotation=dict[str, Any])  # type: ignore[attr-defined]
     tool.__annotations__ = {parameter.name: Any for parameter in parameters} | {"return": dict[str, Any]}
@@ -143,6 +158,11 @@ def _handlers(workspace: Path, git: GitFixture, terminal_stdout: str | None) -> 
         target = (workspace / (relative or ".")).resolve()
         if target != workspace and workspace not in target.parents:
             raise ValueError(f"path is outside the evaluation workspace: {relative}")
+        # Every read tool on the real server resolves an *existing* path and fails
+        # otherwise; returning "no matches" for a missing folder would be kinder than
+        # the real server and hide the model's wrong path.
+        if not target.exists():
+            raise FileNotFoundError(f"no such file or directory: {relative}")
         return target
 
     def rel(path: Path) -> str:

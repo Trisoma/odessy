@@ -26,10 +26,6 @@ EVAL_DEPLOYMENT_ENV = {
     "ODESSY_LAPTOP_OS": "windows",
 }
 
-#: Consecutive "model server is gone" attempts that end the run. One refusal can be a
-#: blip; three in a row is a dead process, and everything after it measures nothing.
-ABORT_AFTER_CONSECUTIVE_UNREACHABLE = 3
-
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m evals", description="Odessy agent evaluation suite.")
@@ -41,12 +37,6 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="Model backend, as for `python -m odessy --model-backend`: lfm, ollama, claude, openai, deepseek, qwen, kimi, custom.",
     )
-    run.add_argument(
-        "--routing",
-        choices=["on", "off"],
-        default="on",
-        help="Keyword routing for local backends (default on). Cloud backends never use it.",
-    )
     run.add_argument("--repeat", type=int, default=3, help="Attempts per case (default 3).")
     run.add_argument(
         "--attempt-timeout",
@@ -54,13 +44,26 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         metavar="SECONDS",
         help=(
-            "Wall-clock backstop for one attempt (default 1800; 0 disables). "
-            "Generation itself is bounded per call by ODESSY_MODEL_CALL_TIMEOUT."
+            "Backstop for awaitable work in one attempt (default 1800; 0 disables). "
+            "Cannot interrupt synchronous inference; local streams have a separate budget."
         ),
+    )
+    run.add_argument(
+        "--max-model-calls",
+        type=int,
+        default=None,
+        help="Model calls allowed per turn, as ODESSY_MAX_MODEL_CALLS in the CLI "
+        "(default: the CLI's default, 8 for cloud backends and 4 for local ones).",
+    )
+    run.add_argument(
+        "--max-infra-errors",
+        type=int,
+        default=5,
+        help="Stop the run after this many infrastructure errors in a row (default 5; 0 never stops).",
     )
     run.add_argument("--category", action="append", choices=CATEGORIES, help="Only these categories (repeatable).")
     run.add_argument("--case", action="append", dest="case_ids", help="Only these case ids (repeatable).")
-    run.add_argument("--label", help="Name for this run in reports (default: backend + routing).")
+    run.add_argument("--label", help="Name for this run in reports (default: the backend).")
     run.add_argument("--output-dir", type=Path, help="Where to write results (default: evals/results/<time>-<label>).")
 
     commands.add_parser("list", help="List the cases.")
@@ -124,20 +127,23 @@ async def _run(args: argparse.Namespace) -> int:
     # Imported here so `list`/`compare` work without the model stack configured.
     from odessy.cli import _build_model
     from odessy.config_file import load_config_env
-    from odessy.ollama_model import KEYWORD_ROUTING_ENV
 
     from evals.graders import grade
     from evals.harness import (
         DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
-        looks_like_model_unreachable,
         run_attempt,
     )
     from evals.report import write_summary
 
     if args.repeat < 1:
         raise SystemExit("--repeat must be at least 1")
+    if args.max_model_calls is not None and args.max_model_calls < 1:
+        raise SystemExit("--max-model-calls must be at least 1")
+    if args.max_infra_errors < 0:
+        raise SystemExit("--max-infra-errors must be at least 0")
+    if args.attempt_timeout is not None and args.attempt_timeout < 0:
+        raise SystemExit("--attempt-timeout must be at least 0")
     load_config_env()
-    os.environ[KEYWORD_ROUTING_ENV] = args.routing
     # The cases describe the two-machine layout: "this machine" is the Linux Jetson and
     # "my laptop" is Windows. Pin it, so the model sees the same tools and the same
     # environment sentence whichever machine runs the evaluation.
@@ -151,7 +157,13 @@ async def _run(args: argparse.Namespace) -> int:
     if attempt_timeout is None:
         attempt_timeout = DEFAULT_ATTEMPT_TIMEOUT_SECONDS
     attempt_timeout = attempt_timeout or None  # 0 disables the backstop
-    label = args.label or f"{args.backend}-routing-{args.routing}"
+    if args.max_model_calls is None:
+        # Evaluate what the product does by default for this backend.
+        from odessy.cli import default_max_model_calls
+        from odessy.cloud_model import CloudModel
+
+        args.max_model_calls = default_max_model_calls(cloud=isinstance(model, CloudModel))
+    label = args.label or args.backend
     started = datetime.now(timezone.utc)
     run_dir = args.output_dir or RESULTS_DIR / f"{started.strftime('%Y%m%d-%H%M%S')}-{label}"
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -161,10 +173,10 @@ async def _run(args: argparse.Namespace) -> int:
         "label": label,
         "backend": args.backend,
         "model": getattr(model, "model", type(model).__name__),
-        "keyword_routing": args.routing,
         "deployment": dict(EVAL_DEPLOYMENT_ENV),
         "repeat": args.repeat,
         "attempt_timeout_seconds": attempt_timeout,
+        "max_model_calls": args.max_model_calls,
         "cases": [case.id for case in cases],
         "odessy_version": _odessy_version(),
         "git_commit": git_commit,
@@ -176,13 +188,17 @@ async def _run(args: argparse.Namespace) -> int:
 
     total = len(cases) * args.repeat
     done = 0
-    unreachable_streak = 0
-    abort_reason: str | None = None
+    infra_streak = 0
+    aborted: str | None = None
     with (run_dir / "attempts.jsonl").open("a", encoding="utf-8") as handle:
         for case in cases:
+            if aborted:
+                break
             for attempt_index in range(1, args.repeat + 1):
                 attempt = await run_attempt(
-                    case, model, attempt_index, timeout_seconds=attempt_timeout
+                    case, model, attempt_index,
+                    timeout_seconds=attempt_timeout,
+                    max_model_calls=args.max_model_calls,
                 )
                 result = grade(case, attempt)
                 record: dict[str, Any] = {**attempt.to_dict(), "prompt": case.prompt, "grade": result.to_dict()}
@@ -195,34 +211,29 @@ async def _run(args: argparse.Namespace) -> int:
                     f"({attempt.outcome}, {attempt.latency_ms / 1000:.1f}s)",
                     flush=True,
                 )
-                unreachable_streak = (
-                    unreachable_streak + 1 if looks_like_model_unreachable(attempt) else 0
-                )
-                if unreachable_streak >= ABORT_AFTER_CONSECUTIVE_UNREACHABLE:
-                    # The server is gone, not slow. Continuing produced 30 excluded
-                    # tool attempts and a published pass rate that measured nothing.
-                    abort_reason = (
-                        f"model server unreachable for {unreachable_streak} consecutive "
-                        f"attempts (last: {attempt.error})"
+                infra_streak = infra_streak + 1 if attempt.outcome == "infra_error" else 0
+                if args.max_infra_errors and infra_streak >= args.max_infra_errors:
+                    aborted = (
+                        f"stopped after {infra_streak} infrastructure errors in a row "
+                        f"(last: {attempt.error}); rerun the remaining cases with --case or --category"
                     )
+                    print(f"\n{aborted}", flush=True)
                     break
-            if abort_reason is not None:
-                break
 
     metadata["finished_at"] = datetime.now(timezone.utc).isoformat()
-    if abort_reason is not None:
-        metadata["aborted"] = {"reason": abort_reason, "attempts_completed": done}
+    if aborted:
+        metadata["aborted"] = {"reason": aborted, "attempts_completed": done}
     (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     summary = write_summary(run_dir)
     print()
     print((run_dir / "summary.md").read_text(encoding="utf-8").split("## Tools")[0])
-    if abort_reason is not None:
-        print(f"ABORTED after {done} of {total} attempts: {abort_reason}")
-        print("This run has no pass rate: the model server died partway through.")
+    if aborted:
+        print(f"ABORTED after {done} of {total} attempts: {aborted}")
+        print("Reported rates cover only recorded attempts, not the full suite.")
     print(f"Results written to {run_dir}")
-    if abort_reason is not None:
-        return 2
-    return 0 if summary["safety"]["forbidden_executed"] == 0 else 1
+    if summary["safety"]["forbidden_executed"]:
+        return 1
+    return 2 if aborted else 0
 
 
 def _odessy_version() -> str | None:

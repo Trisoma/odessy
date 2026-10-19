@@ -16,9 +16,6 @@ Two wire protocols cover the supported providers:
 
 Differences from the local adapters, all deliberate:
 
-* **No keyword routing.** Local adapters pre-select one tool from keywords in the
-  user's text because a 1B model cannot pick reliably from the full list. A cloud
-  model is given every tool and chooses itself.
 * **Real conversation state.** Tool results go back as native tool-result
   messages tied to the call id, rather than a re-rendered single prompt.
 * **Redaction before sending.** The user text and every tool observation are
@@ -43,7 +40,6 @@ from typing import Any, Literal
 from odessy.ollama_model import (
     _fallback_observation_response,
     _looks_like_generic_final_response,
-    _validate_tool_selection_for_user_intent,
 )
 from odessy.deployment import command_tool_for_laptop, environment_prompt
 from odessy.redaction import redact_for_log, redact_text
@@ -164,6 +160,44 @@ class CloudModelConfigError(RuntimeError):
     """Raised when a cloud backend is selected but cannot be configured."""
 
 
+#: HTTP statuses that mean "try again shortly": rate limit, server errors, overload.
+_TRANSIENT_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 529})
+DEFAULT_CLOUD_RETRIES = 2
+_RETRY_BASE_SECONDS = 1.0
+_RETRY_MAX_SECONDS = 20.0
+
+
+class _TransientCloudError(Exception):
+    """A failed request that may succeed if repeated."""
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _retry_after(error: urllib.error.HTTPError) -> float | None:
+    """Seconds from a numeric ``Retry-After`` header, capped; None when absent."""
+
+    raw = error.headers.get("Retry-After") if error.headers else None
+    try:
+        return min(max(float(raw), 0.0), _RETRY_MAX_SECONDS) if raw else None
+    except ValueError:
+        return None
+
+
+#: Characters of one tool result sent to a cloud model. The tool server already
+#: bounds output (64 KiB of stdout), but every later step re-sends the conversation,
+#: so a large result is paid for again on each call.
+DEFAULT_CLOUD_RESULT_CHARS = 16000
+
+
+def _cap_result(content: str, limit: int) -> str:
+    if len(content) <= limit:
+        return content
+    omitted = len(content) - limit
+    return f"{content[:limit]} ...[{omitted} more characters omitted by Odessy]"
+
+
 @dataclass(frozen=True)
 class _ParsedCall:
     call_id: str
@@ -228,6 +262,12 @@ class CloudModel:
     effort: str | None = None
     #: Claude only: enable server-side refusal fallbacks on models that support them.
     refusal_fallbacks: bool = True
+    #: Retries after a transient failure (OpenAI-compatible path; the SDK retries Claude).
+    retries: int = DEFAULT_CLOUD_RETRIES
+    #: Characters of one tool result sent to the provider.
+    max_result_chars: int = DEFAULT_CLOUD_RESULT_CHARS
+    #: How to wait between retries. Replaced in tests.
+    _sleep: Any = field(default=time.sleep, repr=False)
 
     _messages: list[Any] = field(default_factory=list, init=False, repr=False)
     _pending_call_id: str | None = field(default=None, init=False, repr=False)
@@ -276,7 +316,13 @@ class CloudModel:
         user_text: str,
         observation: ToolObservation,
     ) -> ModelAction:
-        content = redact_text(json.dumps(observation.result, ensure_ascii=False, default=str))
+        content = _cap_result(
+            redact_text(json.dumps(observation.result, ensure_ascii=False, default=str)),
+            self.max_result_chars,
+        )
+        # A rejected call or one that failed in the tool did not do its job; say so in
+        # the protocol too, not only inside the JSON.
+        failed = observation.result.get("status") in {"rejected", "error"}
         if self._pending_call_id is None:
             # No live call to attach the result to; start over with the result inline.
             self._messages = [
@@ -289,17 +335,23 @@ class CloudModel:
                 }
             ]
         else:
-            self._append_result(self._pending_call_id, content, is_error=False)
+            self._append_result(self._pending_call_id, content, is_error=failed)
             self._pending_call_id = None
         reply = self._exchange("final_generation_ms")
         if reply.calls:
             try:
-                action = self._to_action(reply, user_text)
-            except ValueError:
-                action = None
-            if isinstance(action, ToolRequest):
-                return action
-            self._pending_call_id = None
+                return self._to_action(reply, user_text)
+            except ValueError as error:
+                # An invalid next call used to be dropped silently, and the turn ended
+                # with a summary of the *previous* result. Ask once for a correction,
+                # as the first proposal does.
+                self._append_tool_results(reply, _REPAIR_MESSAGE.format(error=error), is_error=True)
+                reply = self._exchange("repair_generation_ms")
+                if reply.calls:
+                    try:
+                        return self._to_action(reply, user_text)
+                    except ValueError:
+                        self._pending_call_id = None
         if reply.text and not _looks_like_generic_final_response(reply.text):
             return FinalResponse(text=reply.text)
         return FinalResponse(text=_fallback_observation_response(observation))
@@ -318,8 +370,10 @@ class CloudModel:
             raise ValueError(call.error)
         arguments = call.arguments or {}
         validate_tool_arguments(call.name, arguments)
+        # No keyword check on which machine the user meant: the system prompt says which
+        # tool runs where, and a capable model reads "check the Jetson, my laptop is
+        # off" correctly where a keyword rule would force the laptop tool.
         action = ToolRequest(name=call.name, arguments=arguments)
-        _validate_tool_selection_for_user_intent(user_text, action)
         # Every call in the reply needs a result before the next request; extra
         # calls are answered now so only the first stays pending.
         for extra in reply.calls[1:]:
@@ -421,6 +475,7 @@ class CloudModel:
                 api_key=self.api_key,
                 base_url=self.base_url or None,
                 timeout=float(self.timeout),
+                max_retries=self.retries,
             )
         try:
             if "betas" in params:
@@ -470,7 +525,25 @@ class CloudModel:
         )
 
     def _post_chat(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """One ``/chat/completions`` call. Overridden in tests."""
+        """One ``/chat/completions`` call, retried on transient failures.
+
+        The Anthropic SDK retries rate limits and overloads by itself; plain HTTP does
+        not, so without this a single 429 or 503 from DeepSeek or Qwen ended the turn.
+        Retries are bounded (``ODESSY_CLOUD_RETRIES``) and honour ``Retry-After``.
+        """
+
+        attempt = 0
+        while True:
+            try:
+                return self._post_chat_once(payload)
+            except _TransientCloudError as error:
+                if attempt >= self.retries:
+                    raise RuntimeError(str(error)) from error
+                attempt += 1
+                self._sleep(error.retry_after or min(_RETRY_BASE_SECONDS * 2 ** (attempt - 1), _RETRY_MAX_SECONDS))
+
+    def _post_chat_once(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """One HTTP request. Overridden in tests."""
         request = urllib.request.Request(
             f"{self.base_url.rstrip('/')}/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
@@ -484,15 +557,16 @@ class CloudModel:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
-            raise RuntimeError(
-                f"{self.provider} API call failed ({error.code}): {_read_error_body(error)}"
-            ) from error
+            message = f"{self.provider} API call failed ({error.code}): {_read_error_body(error)}"
+            if error.code in _TRANSIENT_STATUS:
+                raise _TransientCloudError(message, _retry_after(error)) from error
+            raise RuntimeError(message) from error
         except urllib.error.URLError as error:
-            raise RuntimeError(f"{self.provider} API connection failed: {error.reason}") from error
-        except TimeoutError as error:
-            raise RuntimeError(
-                f"{self.provider} API call timed out after {self.timeout}s"
-            ) from error
+            # Refused or reset connections are worth another try; a bad host is not,
+            # but it fails the same way again quickly, so the retry costs little.
+            raise _TransientCloudError(f"{self.provider} API connection failed: {error.reason}") from error
+        except (TimeoutError, ConnectionError) as error:
+            raise _TransientCloudError(f"{self.provider} API call failed: {error!r}") from error
 
 
 def build_cloud_model(provider: str, env: dict[str, str] | None = None) -> CloudModel:
@@ -528,6 +602,8 @@ def build_cloud_model(provider: str, env: dict[str, str] | None = None) -> Cloud
         effort=(env.get("ODESSY_CLOUD_EFFORT") or "").strip() or None,
         refusal_fallbacks=(env.get("ODESSY_CLOUD_FALLBACKS") or "on").strip().lower()
         not in {"0", "off", "false", "no"},
+        retries=_non_negative_int(env.get("ODESSY_CLOUD_RETRIES"), DEFAULT_CLOUD_RETRIES),
+        max_result_chars=_positive_int(env.get("ODESSY_CLOUD_MAX_RESULT_CHARS"), DEFAULT_CLOUD_RESULT_CHARS),
     )
 
 
@@ -574,6 +650,14 @@ def _positive_int(raw: str | None, default: int) -> int:
     except ValueError:
         return default
     return value if value > 0 else default
+
+
+def _non_negative_int(raw: str | None, default: int) -> int:
+    try:
+        value = int(raw) if raw else default
+    except ValueError:
+        return default
+    return value if value >= 0 else default
 
 
 def _add_tokens(diagnostics: ModelTurnDiagnostics, field_name: str, value: Any) -> None:

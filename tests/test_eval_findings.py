@@ -22,7 +22,6 @@ from odessy.lfm_model import LlamaCppLFMModel
 from odessy.ollama_model import (
     _is_laptop_command_intent,
     _observation_messages,
-    _proposal_tool_name_for_user_text,
 )
 from odessy.tool_contracts import tool_description
 from odessy.types import FinalResponse, ModelAction, ToolObservation, ToolRequest
@@ -36,34 +35,7 @@ def anyio_backend() -> str:
 CASES = {case.id: case for case in load_cases()}
 
 
-# --- keyword routing ----------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("text", "expected"),
-    [
-        # "times" contains "time": substring matching sent this to time.now.
-        ("What is 37 times 48?", "calculator.eval"),
-        ("what is 6 x 7", "calculator.eval"),
-        ("Remind me how many times I said that", None),
-        # Two intents: the one mentioned first is the first step.
-        ("Check what time it is, then calculate the minutes left", "time.now"),
-        ("Calculate 3 + 4 and tell me the time", "calculator.eval"),
-        # Dates and paths are not arithmetic.
-        ("Summarize notes/meeting-2026-10-01.md", None),
-        ("my screen is 1920x1080", None),
-        # Common phrasings beyond the literal tool name.
-        ("Open README.md and show me", "filesystem.read"),
-        ("Search the code for a function called main", "project.grep"),
-        ("Show me the last five commits", "git.log"),
-        ("Which files have changed?", "git.changed_files"),
-        # Not a file to open.
-        ("Is port 8731 open?", None),
-        ("Hi, how are you today?", None),
-    ],
-)
-def test_routing_matches_whole_words_and_the_first_intent(text: str, expected: str | None) -> None:
-    assert _proposal_tool_name_for_user_text(text) == expected
+# --- laptop wording -----------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -79,11 +51,6 @@ def test_routing_matches_whole_words_and_the_first_intent(text: str, expected: s
 )
 def test_laptop_intent_allows_a_word_or_two_before_laptop(text: str, laptop: bool) -> None:
     assert _is_laptop_command_intent(text) is laptop
-
-
-def test_routing_stays_off_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ODESSY_KEYWORD_ROUTING", "off")
-    assert _proposal_tool_name_for_user_text("What is 37 times 48?") is None
 
 
 # --- follow-up steps ---------------------------------------------------------------
@@ -271,7 +238,10 @@ async def test_a_benign_call_that_failed_in_the_tool_did_not_complete_but_was_no
     case = CASES["safety-benign-list-files"]
     attempt = await run_attempt(case, _Script([ToolRequest(name="filesystem.list", arguments={"path": "no-such-dir"})]), 1)
 
-    assert attempt.outcome == "tool_error"
+    # The failure goes back to the model (which here answers "done"), so the turn
+    # completes, but the call is recorded as failed and is not a completed listing.
+    assert attempt.outcome == "completed"
+    assert attempt.executed[0]["failed"] is True
     result = grade(case, attempt)
     assert result.checks["reached_execution"] is False
     assert result.checks["false_block"] is False
@@ -538,3 +508,177 @@ def test_dotdot_after_a_missing_directory_cannot_leave_the_workspace(tmp_path: P
 
 def test_dotdot_that_stays_inside_still_works(tmp_path: Path) -> None:
     assert _decide(tmp_path, "filesystem.write", path="missing/../notes/new.txt", content="x") == "confirm"
+
+
+# --- third batch: found in the runs after the fixes ------------------------------------
+
+
+@pytest.mark.anyio
+async def test_a_failed_tool_call_is_handed_back_so_the_model_can_correct_it() -> None:
+    # In the second runs a wrong path ended the whole turn as a tool error. Now the
+    # model sees the error and can retry; the retry goes through policy as usual.
+    case = CASES["multi-find-then-read-port"]
+    model = _Script(
+        [
+            ToolRequest(name="filesystem.read", arguments={"path": "settings.toml"}),
+            ToolRequest(name="filesystem.read", arguments={"path": "config/settings.toml"}),
+            FinalResponse(text="The server uses port 8731."),
+        ]
+    )
+    attempt = await run_attempt(case, model, 1)
+
+    assert attempt.outcome == "completed"
+    assert [call["failed"] for call in attempt.executed] == [True, False]
+    assert "8731" in (attempt.final_text or "")
+
+
+@pytest.mark.anyio
+async def test_the_recorder_reports_why_a_call_failed_like_the_real_server() -> None:
+    from evals.harness import Attempt  # noqa: F401 - imported for parity with other tests
+
+    seen: list[ToolObservation] = []
+
+    class _Watching(_Script):
+        def respond_to_observation(self, user_text: str, observation: ToolObservation) -> ModelAction:
+            seen.append(observation)
+            return FinalResponse(text="done")
+
+    case = CASES["tools-read-file"]
+    await run_attempt(case, _Watching([ToolRequest(name="filesystem.read", arguments={"path": "nope/missing.md"})]), 1)
+
+    (observation,) = seen
+    assert observation.result["status"] == "error"
+    assert "no such file or directory: nope/missing.md" in observation.result["error"]
+    assert "instruction" in observation.result
+
+
+@pytest.mark.anyio
+async def test_the_recorder_fails_on_a_missing_folder_like_the_real_server() -> None:
+    seen: list[ToolObservation] = []
+
+    class _Watching(_Script):
+        def respond_to_observation(self, user_text: str, observation: ToolObservation) -> ModelAction:
+            seen.append(observation)
+            return FinalResponse(text="done")
+
+    case = CASES["tools-find-by-name"]
+    await run_attempt(case, _Watching([ToolRequest(name="project.find", arguments={"pattern": "test", "path": "app"})]), 1)
+    assert seen[0].result["status"] == "error"
+
+
+def test_failed_calls_do_not_complete_a_multistep_sequence() -> None:
+    case = CASES["multi-find-then-read-port"]
+    attempt = Attempt(
+        case_id=case.id, category="multistep", attempt=1, outcome="completed", final_text="port 8731",
+        executed=[
+            {"name": "project.find", "arguments": {}, "injected": {}, "failed": False},
+            {"name": "filesystem.read", "arguments": {}, "injected": {}, "failed": True},
+        ],
+    )
+    assert grade(case, attempt).checks["sequence_ok"] is False
+
+
+def test_follow_up_prompt_points_arithmetic_at_the_calculator() -> None:
+    messages = _observation_messages("minutes until 18:00", [_observation("time.now", {}, {"iso_time": "14:30"})])
+    assert "calculator.eval" in messages[0]["content"]
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("<think>\nOkay, let's tackle this.</think>The port is 8731.", "The port is 8731."),
+        ("<think>\nOkay, let's tackle this. The user wants", ""),
+        ("The port is 8731.", "The port is 8731."),
+        ("<THINK>a</THINK> b <think>c</think> d", "b  d"),
+    ],
+)
+def test_thinking_is_removed_from_answers(raw: str, expected: str) -> None:
+    from odessy.ollama_model import _strip_thinking
+
+    assert _strip_thinking(raw) == expected
+
+
+def test_lfm_answer_that_is_only_unfinished_thinking_is_not_returned() -> None:
+    model = _ScriptedLFM([_tool_call("time.now", {}), _answer("<think>\nOkay, so the user")])
+    first = model.propose("what time is it?")
+    final = model.respond_to_observation("what time is it?", ToolObservation(request=first, result={"iso_time": "12:00"}))
+    assert isinstance(final, FinalResponse)
+    assert "<think>" not in final.text
+    assert "12:00" in final.text  # the fallback summary of the result
+
+
+@pytest.mark.parametrize(
+    ("command", "decision"),
+    [
+        ("Get-ChildItem", "allow"),
+        ("gci", "allow"),
+        ("Get-Location", "allow"),
+        ("ls", "allow"),
+        # Chained after an allowed first word: no longer "low risk".
+        ("ls && python evil.py", "confirm"),
+        ("ls; whoami", "confirm"),
+        ("dir | Out-String", "confirm"),
+        ("pwd `whoami`", "confirm"),
+        ("ls $(cat x)", "confirm"),
+    ],
+)
+def test_allow_rule_covers_powershell_and_refuses_chaining(tmp_path: Path, command: str, decision: str) -> None:
+    assert _decide(tmp_path, "terminal.run", command=command) == decision
+
+
+class _DeadServer:
+    """A model whose server is gone: every call fails like a refused connection."""
+
+    model = "dead"
+
+    def propose(self, user_text: str) -> ModelAction:
+        raise ConnectionRefusedError("[Errno 111] Connection refused")
+
+    def respond_to_observation(self, user_text: str, observation: ToolObservation) -> ModelAction:
+        raise ConnectionRefusedError("[Errno 111] Connection refused")
+
+
+def test_a_run_stops_after_consecutive_infrastructure_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from evals.cli import main as evals_main
+
+    monkeypatch.setattr("odessy.cli._build_model", lambda *args, **kwargs: _DeadServer())
+    out = tmp_path / "run"
+    code = evals_main(
+        ["run", "--backend", "lfm", "--category", "tools", "--repeat", "1", "--max-infra-errors", "3", "--output-dir", str(out)]
+    )
+
+    assert code == 2
+    lines = (out / "attempts.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 3
+    metadata = json.loads((out / "metadata.json").read_text(encoding="utf-8"))
+    assert "stopped after 3 infrastructure errors" in metadata["aborted"]["reason"]
+    assert metadata["max_model_calls"] == 4
+
+
+def test_the_model_call_limit_reaches_the_harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from evals.cli import main as evals_main
+
+    monkeypatch.setattr("odessy.cli._build_model", lambda *args, **kwargs: _Endless())
+    out = tmp_path / "run"
+    evals_main(["run", "--backend", "lfm", "--case", "multi-find-then-read-port", "--repeat", "1",
+                "--max-model-calls", "6", "--attempt-timeout", "0", "--output-dir", str(out)])
+    record = json.loads((out / "attempts.jsonl").read_text(encoding="utf-8").splitlines()[0])
+    assert record["outcome"] == "exhausted"
+    assert record["model_calls"] == 6
+    metadata = json.loads((out / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["max_model_calls"] == 6
+    assert metadata["attempt_timeout_seconds"] is None
+    report = (out / "summary.md").read_text(encoding="utf-8")
+    assert "| max_model_calls | 6 |" in report
+    assert "| attempt_timeout_seconds | None |" in report
+
+
+def test_cli_model_call_limit_comes_from_the_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from odessy.fake_model import FakeModel
+
+    assert cli._build_agent(tmp_path, FakeModel())._max_model_calls == 4
+    monkeypatch.setenv("ODESSY_MAX_MODEL_CALLS", "6")
+    assert cli._build_agent(tmp_path, FakeModel())._max_model_calls == 6
+    monkeypatch.setenv("ODESSY_MAX_MODEL_CALLS", "0")
+    with pytest.raises(SystemExit, match="positive integer"):
+        cli._build_agent(tmp_path, FakeModel())

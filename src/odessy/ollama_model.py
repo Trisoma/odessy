@@ -9,7 +9,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
-from odessy.deployment import command_tool_for_laptop, environment_prompt, tool_is_available
+from odessy.deployment import command_tool_for_laptop, environment_prompt
 from odessy.redaction import redact_for_log
 from odessy.types import (
     FinalResponse,
@@ -238,10 +238,9 @@ class OllamaModel:
         diagnostics = ModelTurnDiagnostics()
         object.__setattr__(self, "_last_turn_diagnostics", diagnostics)
         _start_turn(self)
-        tool_name = _proposal_tool_name_for_user_text(user_text)
-        system_prompt = _system_prompt(tool_name)
-        fallback_prompt = _text_system_prompt(user_text, tool_name)
-        tools = _select_tools(tool_name)
+        system_prompt = _system_prompt()
+        fallback_prompt = _text_system_prompt(user_text)
+        tools = build_openai_tools()
         try:
             action = self._chat_action(
                 user_text,
@@ -253,7 +252,7 @@ class OllamaModel:
         except ValueError as error:
             diagnostics.proposal_valid = False
             diagnostics.repair_triggered = True
-            model_error = _model_output_error("", error, user_text, tool_name)
+            model_error = _model_output_error("", error, user_text)
             repair_prompt = _repair_prompt(user_text, model_error)
             _debug_model_repair(
                 [
@@ -373,10 +372,26 @@ class OllamaModel:
         corrected = _corrected_tool_request(response, user_text)
         if corrected is not None:
             return corrected
-        text = ((response.get("message") or {}).get("content") or "").strip()
+        text = _strip_thinking((response.get("message") or {}).get("content") or "")
         if text and not _looks_like_generic_final_response(text):
             return FinalResponse(text=text)
         return FinalResponse(text=_fallback_observation_response(observation))
+
+
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_THINK_OPEN = re.compile(r"<think>.*", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_thinking(text: str) -> str:
+    """Remove reasoning a thinking model left in its answer content.
+
+    Ollama normally separates it, but in the second runs an LFM answer began
+    "<think>\\nOkay, let's tackle this...", which voice mode would read aloud. A
+    closed block is removed; an unclosed one is reasoning with no answer after it.
+    """
+
+    without_blocks = _THINK_BLOCK.sub("", text)
+    return _THINK_OPEN.sub("", without_blocks).strip()
 
 
 #: Characters of one tool result kept in a follow-up prompt. Results are already
@@ -405,11 +420,7 @@ def _remember_observation(model: Any, observation: ToolObservation) -> list[Tool
 
 
 def _follow_up_tools() -> list[dict[str, Any]]:
-    """Every tool this deployment offers.
-
-    Keyword routing picks the *first* tool only. A follow-up step usually needs a
-    different one (find, then read), so it is never narrowed to the routed tool.
-    """
+    """Every tool this deployment offers: a follow-up step often needs a different one."""
 
     return build_openai_tools()
 
@@ -429,6 +440,7 @@ def _observation_messages(user_text: str, observations: list[ToolObservation]) -
         + "You have already called the tools listed in the user message. Decide the next step:\n"
         "- If the request still needs another tool, call it now. For example: read the file "
         "a search found, or calculate with a value a tool just returned.\n"
+        "- For arithmetic, call calculator.eval rather than working it out yourself.\n"
         "- Otherwise answer in one to three short plain sentences, using only facts from the "
         "tool results. Do not repeat raw JSON and do not guess values the results do not contain.\n"
         "If a call was rejected, propose a corrected call or explain briefly.\n"
@@ -468,40 +480,27 @@ def _corrected_tool_request(response: dict[str, Any], user_text: str) -> ToolReq
     return action if isinstance(action, ToolRequest) else None
 
 
-def _system_prompt(tool_name: str | None) -> str:
-    if tool_name is not None and not tool_is_available(tool_name):
-        tool_name = None
-    if tool_name is not None:
-        intent_instruction = f"The user's request maps to {tool_name}. Call that tool."
-    else:
-        intent_instruction = "Call the single tool that best fulfills the user's request."
+def _system_prompt() -> str:
     return (
         "You are Odessy's tool-calling adapter.\n"
-        f"{_environment_line(tool_name)}"
-        f"{intent_instruction}\n"
+        f"{_environment_line()}"
+        "Call the tool that best fulfills the user's request; you can call more tools after "
+        "its result if the request needs several steps.\n"
         "Use the function tools provided in this request to carry out the user's intent.\n"
         "If the user only wants information and no tool applies, answer directly.\n"
         "Do not decide whether a tool is safe. The Odessy runtime will validate and authorize.\n"
     )
 
 
-def _text_system_prompt(user_text: str, tool_name: str | None) -> str:
+def _text_system_prompt(user_text: str) -> str:
     """Text-mode prompt used when the model does not support native tool calling."""
-    if tool_name is not None and not tool_is_available(tool_name):
-        tool_name = None
-    contract = render_tool_contract(tool_name) if tool_name is not None else render_tool_contracts()
-    intent_instruction = (
-        f"User intent maps to {tool_name}. MUST use {tool_name}."
-        if tool_name is not None
-        else "Choose the best tool for the user's request."
-    )
     return (
         "Based on the user's request, generate exactly one JSON object.\n"
-        f"{_environment_line(tool_name)}"
-        f"{intent_instruction}\n"
+        f"{_environment_line()}"
+        "Choose the best tool for the user's request.\n"
         "For command requests, write the exact command in the command field.\n"
         "Leave optional fields omitted unless the user explicitly specifies them.\n"
-        f"{contract}\n"
+        f"{render_tool_contracts()}\n"
         "Do not add markdown, explanation, or extra text.\n"
         "Do not decide whether a tool is safe. The Odessy runtime will validate and authorize.\n"
         f"User: {user_text}\n"
@@ -509,10 +508,10 @@ def _text_system_prompt(user_text: str, tool_name: str | None) -> str:
     )
 
 
-def _environment_line(tool_name: str | None) -> str:
-    """The environment sentence for the tools this call offers, as a line or nothing."""
+def _environment_line() -> str:
+    """The environment sentence for the offered tools, as a line or nothing."""
 
-    line = environment_prompt([tool_name] if tool_name is not None else None)
+    line = environment_prompt()
     return f"{line}\n" if line else ""
 
 
@@ -527,14 +526,6 @@ def _read_error_body(error: urllib.error.HTTPError) -> str:
         return redact_for_log(error.read().decode("utf-8", "replace"))
     except Exception:
         return ""
-
-
-def _select_tools(tool_name: str | None) -> list[dict[str, Any]]:
-    if tool_name is not None:
-        single = build_openai_tools([tool_name])
-        if single:
-            return single
-    return build_openai_tools()
 
 
 def _extract_model_action_from_chat(response: dict[str, Any], user_text: str) -> ModelAction:
@@ -566,87 +557,11 @@ def _extract_model_action_from_chat(response: dict[str, Any], user_text: str) ->
     raise ValueError("Ollama returned neither a tool call nor content")
 
 
-#: Env var that turns keyword routing off (``off``/``0``/``false``/``no``). Routing is
-#: on by default; turning it off offers the model every tool, which is how the
-#: evaluation suite measures what the model chooses without the keyword hint.
-KEYWORD_ROUTING_ENV = "ODESSY_KEYWORD_ROUTING"
-
-
-def keyword_routing_enabled() -> bool:
-    raw = os.environ.get(KEYWORD_ROUTING_ENV, "on").strip().lower()
-    return raw not in {"0", "off", "false", "no"}
-
-
-#: Keyword routes, matched on whole words against the lowercased request.
-#:
-#: Whole words matter: substring matching sent "37 times 48" to time.now. When
-#: several routes match, the one whose keyword appears **first** wins, because a
-#: request that names two steps ("check the time, then calculate") starts with the
-#: first; the follow-up step is never routed (see ``_follow_up_tools``). Order below
-#: only breaks ties at the same position.
-_ROUTES: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"^run\b|\brun\s+\S"), "terminal.run"),
-    (re.compile(r"\bgit\s+status\b"), "git.status"),
-    (re.compile(r"\bgit\s+diff\b"), "git.diff"),
-    (
-        re.compile(r"\bgit\s+changed\b|\bchanged\s+files\b|\bfiles?\s+(?:have\s+|has\s+)?changed\b"),
-        "git.changed_files",
-    ),
-    (
-        re.compile(
-            r"\bgit\s+log\b|\b(?:recent|last|latest)\s+(?:\w+\s+)?commits\b"
-            r"|\bcommit\s+(?:history|messages?)\b"
-        ),
-        "git.log",
-    ),
-    (
-        re.compile(r"^read\b|\bread\s+file\b|\b(?:read|open)\s+(?:the\s+)?(?:file\s+)?[\w./-]+\.\w+"),
-        "filesystem.read",
-    ),
-    (re.compile(r"^list\b|\blist\b.*\bfiles?\b"), "filesystem.list"),
-    (re.compile(r"^find\b|\bfind\s+(?:the\s+)?files?\b"), "project.find"),
-    (
-        re.compile(r"^grep\b|\bgrep\b|\bsearch\s+(?:the\s+)?(?:code|text|files|project)\b"),
-        "project.grep",
-    ),
-    (
-        re.compile(
-            r"\bcalculate\b|\bcompute\b"
-            # Arithmetic between two standalone numbers. "-" and "x" need spaces and
-            # neither number may touch a path or date character, so "2026-10-01",
-            # "notes/12/5" and "1920x1080" are not sums.
-            r"|(?<![\w/.:-])\d+(?:\.\d+)?\s*"
-            r"(?:[+*/]|\s[x-]\s|\s(?:times|plus|minus|divided\s+by|multiplied\s+by)\s)"
-            r"\s*\d+(?:\.\d+)?(?![\w/.:-])"
-        ),
-        "calculator.eval",
-    ),
-    (re.compile(r"\btime\b|\bdate\b"), "time.now"),
-)
-
-
-def _proposal_tool_name_for_user_text(user_text: str) -> str | None:
-    if not keyword_routing_enabled():
-        return None
-    name = _keyword_tool_name_for_user_text(user_text)
-    return name if name is not None and tool_is_available(name) else None
-
-
-def _keyword_tool_name_for_user_text(user_text: str) -> str | None:
-    normalized = user_text.strip().lower()
-    if _is_laptop_command_intent(normalized):
-        return command_tool_for_laptop()
-    best: tuple[int, int, str] | None = None
-    for order, (pattern, tool_name) in enumerate(_ROUTES):
-        match = pattern.search(normalized)
-        if match is not None and (best is None or (match.start(), order) < best[:2]):
-            best = (match.start(), order, tool_name)
-    return best[2] if best is not None else None
-
-
 def _fallback_observation_response(observation: ToolObservation) -> str:
     name = observation.request.name
     result = observation.result
+    if result.get("status") == "error":
+        return f"{name} failed: {result.get('error', 'unknown error')}"
     if name == "time.now" and isinstance(result.get("iso_time"), str):
         return f"The current time is {result['iso_time']}."
     if name == "terminal.run":
@@ -757,9 +672,8 @@ def _model_output_error(
     raw_output: str,
     error: ValueError,
     user_text: str,
-    intended_tool_name: str | None = None,
 ) -> ModelOutputError:
-    tool_name = _extract_tool_name(raw_output) or intended_tool_name
+    tool_name = _extract_tool_name(raw_output)
     if _is_laptop_command_intent(user_text) and "Laptop command requests" in str(error):
         tool_name = command_tool_for_laptop()
     tool_contract = (

@@ -13,7 +13,6 @@ from odessy.deployment import (
     remote_tool_server_urls,
 )
 from odessy.ollama_model import (
-    _proposal_tool_name_for_user_text,
     _system_prompt,
     _text_system_prompt,
     _validate_tool_selection_for_user_intent,
@@ -129,7 +128,8 @@ def test_single_mode_tells_the_model_the_shell() -> None:
 def test_split_mode_names_both_machines_and_the_laptop_os_when_known() -> None:
     env = {"ODESSY_DEPLOYMENT": "split", "ODESSY_LOCAL_OS": "linux", "ODESSY_LAPTOP_OS": "windows"}
     text = environment_prompt(env=env)
-    assert "terminal.run runs commands on this machine (Linux; commands run in sh)" in text
+    assert "terminal.run runs commands on this machine (Linux; commands run in sh." in text
+    assert "df -h" in text and "Get-PSDrive" in text
     assert "laptop.terminal.run runs commands on the user's laptop" in text
     assert "Windows PowerShell" in text
 
@@ -145,13 +145,10 @@ def test_environment_sentence_names_only_offered_tools() -> None:
     assert environment_prompt(["git.status"], {"ODESSY_DEPLOYMENT": "single"}) == ""
 
 
-def test_local_prompts_carry_the_environment_only_for_command_tools(single: None) -> None:
-    assert "Windows PowerShell" in _system_prompt("terminal.run")
-    assert "Windows PowerShell" in _system_prompt(None)
-    assert "Windows PowerShell" in _text_system_prompt("run dir", "terminal.run")
-    git_prompt = _system_prompt("git.status")
-    assert "terminal.run" not in git_prompt
-    assert "\n\n" not in git_prompt
+def test_local_prompts_carry_the_environment(single: None) -> None:
+    assert "Windows PowerShell" in _system_prompt()
+    assert "Windows PowerShell" in _text_system_prompt("run dir")
+    assert "\n\n" not in _system_prompt()
 
 
 def test_cloud_prompt_uses_encoded_names_for_the_mode(single: None, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -166,11 +163,7 @@ def test_cloud_prompt_uses_encoded_names_for_the_mode(single: None, monkeypatch:
     assert "terminal__run runs commands on this machine" in prompt
 
 
-# --- keyword routing in single mode -----------------------------------------------
-
-
-def test_laptop_wording_routes_to_terminal_run_in_single_mode(single: None) -> None:
-    assert _proposal_tool_name_for_user_text("On my laptop, run dir") == "terminal.run"
+# --- laptop wording in single mode --------------------------------------------------
 
 
 def test_laptop_wording_accepts_terminal_run_and_rejects_others_in_single_mode(single: None) -> None:
@@ -183,5 +176,8 @@ def test_laptop_wording_accepts_terminal_run_and_rejects_others_in_single_mode(s
         )
 
 
-def test_laptop_wording_still_routes_to_the_laptop_tool_in_split_mode() -> None:
-    assert _proposal_tool_name_for_user_text("On my laptop, run dir") == "laptop.terminal.run"
+def test_laptop_wording_requires_the_laptop_tool_in_split_mode() -> None:
+    with pytest.raises(ValueError, match="must use laptop.terminal.run"):
+        _validate_tool_selection_for_user_intent(
+            "on my laptop, run dir", ToolRequest(name="terminal.run", arguments={"command": "dir"})
+        )

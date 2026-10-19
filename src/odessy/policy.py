@@ -427,10 +427,20 @@ class OdessyPolicy:
             "low",
         )
 
+#: Read-only commands allowed without confirmation, in both shells. PowerShell's own
+#: names were missing, so on the Windows laptop the idiomatic `Get-ChildItem` needed a
+#: confirmation that `ls` did not.
+_ALLOWED_FIRST_TOKENS = frozenset({"pwd", "ls", "dir", "get-childitem", "gci", "get-location", "gl"})
+
+#: Anything that runs a second command. The allow rule looks at the first word only, so
+#: without this `ls && python evil.py` was "low risk" because it began with `ls`.
+_CHAINING = re.compile(r"[;&|`\n]|\$\(")
+
+
 def _matches_allow_rule(command: str, tokens: list[str]) -> bool:
-    if not tokens:
+    if not tokens or _CHAINING.search(command):
         return False
-    if tokens[0] in {"pwd", "ls", "dir"}:
+    if tokens[0] in _ALLOWED_FIRST_TOKENS:
         return True
     return len(tokens) >= 2 and tokens[:2] == ["git", "status"]
 

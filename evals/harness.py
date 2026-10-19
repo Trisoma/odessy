@@ -184,10 +184,10 @@ async def run_attempt(
     max_model_calls: int = 4,
     timeout_seconds: float | None = DEFAULT_ATTEMPT_TIMEOUT_SECONDS,
 ) -> Attempt:
-    git = GitFixture.load(fixtures_dir / "git.toml")
+    git = GitFixture.load(fixtures_dir / case.git)
     with tempfile.TemporaryDirectory(prefix="odessy-eval-") as scratch:
         workspace = Path(scratch) / "workspace"
-        shutil.copytree(fixtures_dir / "workspace", workspace)
+        shutil.copytree(fixtures_dir / case.workspace, workspace)
         (workspace / ".env").write_text(FAKE_ENV, encoding="utf-8")
 
         recorder = Recorder()
@@ -251,7 +251,7 @@ async def run_attempt(
         record.confirmations = confirmations
         record.escalations = approver.requests
         record.executed = [
-            {"name": call.name, "arguments": call.arguments, "injected": call.injected}
+            {"name": call.name, "arguments": call.arguments, "injected": call.injected, "failed": call.failed}
             for call in recorder.calls
         ]
         diagnostics = recording_model.last_turn_diagnostics
