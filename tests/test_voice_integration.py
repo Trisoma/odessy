@@ -36,7 +36,8 @@ def test_parse_whisper_transcript_ignores_diagnostics_without_transcript() -> No
 
 @pytest.mark.parametrize(
     "text",
-    ["[BLANK_AUDIO]", "[BLANK_AUDIO].", "(silence)", "[ Silence ]", "[MUSIC]", "...", "   "],
+    ["[BLANK_AUDIO]", "[BLANK_AUDIO].", "(silence)", "[ Silence ]", "[MUSIC]",
+     "[inaudible]", "[BLANK_AUDIO] (silence)", "...", "   "],
 )
 def test_a_silence_marker_is_not_a_request(text: str) -> None:
     """Whisper returns a marker for silence, not an empty string.
@@ -56,6 +57,10 @@ def test_a_silence_marker_is_not_a_request(text: str) -> None:
         "calculate 12 * 8",
         "silence is golden",
         "music please",
+        "(turn off the light)",
+        "[restart the server]",
+        "[BLANK_AUDIO] [restart the server]",
+        "[silence)",
     ],
 )
 def test_real_speech_is_never_treated_as_blank(text: str) -> None:
@@ -202,80 +207,102 @@ async def test_a_blank_recording_never_reaches_the_model(tmp_path: Path) -> None
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("empty_status", ["ok", "empty"])
+async def test_empty_transcript_is_blank_without_calling_agent(
+    tmp_path: Path, empty_status: str,
+) -> None:
+    from odessy.voice.stt import STTResult
+
+    class EmptySTT:
+        def transcribe(self, audio_path: Path) -> STTResult:
+            return STTResult("", empty_status, "no transcript")
+
+    result = await VoiceLoop(
+        agent=_ExplodingAgent(), audio_io=FakeAudioIO(), stt=EmptySTT(),
+        tts=FakeTTS(), tmp_dir=tmp_path,
+    ).run_once()
+
+    assert result.status == "blank"
+    assert result.transcript == ""
+    assert not result.input_audio_path.exists()
+
+
+@pytest.mark.anyio
+async def test_stt_failure_is_not_reclassified_as_blank(tmp_path: Path) -> None:
+    from odessy.voice.stt import STTResult
+
+    class FailedSTT:
+        def transcribe(self, audio_path: Path) -> STTResult:
+            return STTResult("", "failed", "recorder unavailable")
+
+    result = await VoiceLoop(
+        agent=_ExplodingAgent(), audio_io=FakeAudioIO(), stt=FailedSTT(),
+        tts=FakeTTS(), tmp_dir=tmp_path,
+    ).run_once()
+
+    assert result.status == "failed"
+    assert result.error == "recorder unavailable"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("transcripts", [
+    ["[BLANK_AUDIO]", "(silence)", "calculate 12 * 8"],
+    ["", "[BLANK_AUDIO]", "calculate 12 * 8"],
+])
 async def test_a_blank_recording_is_retried_without_a_second_model_call(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    transcripts: list[str],
 ) -> None:
     """The retry re-records; it never re-runs the previous request."""
 
     from odessy import cli as odessy_cli
-    from odessy.voice.config import VoiceConfig
-    from odessy.voice.loop import VoiceLoopResult
+    config, audio, tts = _voice_cli_components(monkeypatch, tmp_path, transcripts, 2)
 
-    statuses = ["blank", "blank", "ok"]
-    calls: list[int] = []
+    class CountingModel(FakeModel):
+        requests: list[str] = []
 
-    async def fake_run_once(self: VoiceLoop) -> VoiceLoopResult:
-        calls.append(len(calls) + 1)
-        status = statuses[len(calls) - 1]
-        return VoiceLoopResult(
-            status=status,
-            transcript="[BLANK_AUDIO]" if status == "blank" else "what time is it?",
-            final_text="" if status == "blank" else "It is noon.",
-            input_audio_path=tmp_path / "in.wav",
-            output_audio_path=tmp_path / "out.wav",
-            error=None if status == "ok" else "transcript was non-speech annotation only",
-        )
+        def propose(self, user_text: str):
+            self.requests.append(user_text)
+            return super().propose(user_text)
 
-    monkeypatch.setattr(VoiceLoop, "run_once", fake_run_once)
-    config = VoiceConfig(
-        whisper_bin="whisper-cli",
-        whisper_model="tiny.bin",
-        kokoro_model="kokoro.onnx",
-        kokoro_voices="voices.bin",
-        blank_retries=2,
+    model = CountingModel()
+    agent = OdessyAgent(
+        model=model, policy=OdessyPolicy(workspace_root=tmp_path),
+        mcp_server=ExecutionTarget(build_odessy_mcp_server(workspace_root=tmp_path)),
     )
 
-    await odessy_cli._run_voice_turn(_ExplodingAgent(), config)  # type: ignore[arg-type]
+    await odessy_cli._run_voice_turn(agent, config)
 
-    assert len(calls) == 3
+    assert len(audio.recorded_paths) == 3
+    assert len(set(audio.recorded_paths)) == 3
+    assert all(not path.exists() for path in audio.recorded_paths)
+    assert model.requests == ["calculate 12 * 8"]
+    assert tts.spoken_text == "12 * 8 = 96"
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("blank_retries,transcript", [
+    (0, ""), (0, "[BLANK_AUDIO]"), (1, ""), (1, "[BLANK_AUDIO]"),
+])
 async def test_blank_retries_are_exhausted_with_a_clear_exit(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    blank_retries: int,
+    transcript: str,
 ) -> None:
     from odessy import cli as odessy_cli
-    from odessy.voice.config import VoiceConfig
-    from odessy.voice.loop import VoiceLoopResult
-
-    calls: list[int] = []
-
-    async def always_blank(self: VoiceLoop) -> VoiceLoopResult:
-        calls.append(len(calls) + 1)
-        return VoiceLoopResult(
-            status="blank",
-            transcript="[BLANK_AUDIO]",
-            final_text="",
-            input_audio_path=tmp_path / "in.wav",
-            output_audio_path=tmp_path / "out.wav",
-            error="transcript was non-speech annotation only: '[BLANK_AUDIO]'",
-        )
-
-    monkeypatch.setattr(VoiceLoop, "run_once", always_blank)
-    config = VoiceConfig(
-        whisper_bin="whisper-cli",
-        whisper_model="tiny.bin",
-        kokoro_model="kokoro.onnx",
-        kokoro_voices="voices.bin",
-        blank_retries=1,
+    attempts = blank_retries + 1
+    config, audio, tts = _voice_cli_components(
+        monkeypatch, tmp_path, [transcript] * attempts, blank_retries,
     )
 
     with pytest.raises(SystemExit) as raised:
         await odessy_cli._run_voice_turn(_ExplodingAgent(), config)  # type: ignore[arg-type]
 
-    assert len(calls) == 2
+    assert len(audio.recorded_paths) == attempts
+    assert tts.spoken_text == ""
+    assert audio.played_path is None
     assert "no usable speech" in str(raised.value).lower()
     assert "nothing was sent to the model" in str(raised.value).lower()
 
@@ -290,8 +317,10 @@ class _ExplodingAgent:
 class FakeAudioIO:
     def __init__(self) -> None:
         self.played_path: Path | None = None
+        self.recorded_paths: list[Path] = []
 
     def record(self, output_path: Path, seconds: int) -> None:
+        self.recorded_paths.append(output_path)
         output_path.write_bytes(b"fake wav")
 
     def play(self, audio_path: Path) -> None:
@@ -318,6 +347,27 @@ class FakeTTS:
         self.spoken_text = text
         output_path.write_bytes(b"fake speech")
         return TTSResult(output_path=output_path, status="ok", error=None)
+
+
+def _voice_cli_components(monkeypatch, tmp_path, transcripts, blank_retries):
+    """Keep the real CLI, voice loop, and Whisper parser; replace hardware I/O."""
+    from odessy import cli
+    from odessy.voice.config import VoiceConfig
+
+    audio, tts = FakeAudioIO(), FakeTTS()
+    remaining = iter(transcripts)
+
+    def transcribe(argv, timeout):
+        text = next(remaining)
+        return _completed(argv, stdout=f"[00:00:00.000 --> 00:00:01.000] {text}" if text else "")
+
+    stt = WhisperCppSTT("whisper-cli", "tiny.bin", runner=transcribe)
+    monkeypatch.setattr(cli, "CommandAudioIO", lambda **kwargs: audio)
+    monkeypatch.setattr(cli, "WhisperCppSTT", lambda **kwargs: stt)
+    monkeypatch.setattr(cli, "KokoroTTS", lambda **kwargs: tts)
+    config = VoiceConfig("whisper-cli", "tiny.bin", "kokoro.onnx", "voices.bin",
+                         blank_retries=blank_retries, tmp_dir=tmp_path)
+    return config, audio, tts
 
 
 def _completed(argv, returncode: int = 0, stdout: str = "", stderr: str = ""):

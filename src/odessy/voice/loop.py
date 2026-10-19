@@ -65,7 +65,9 @@ class VoiceLoop:
             self._status("Transcribing speech")
             stt_result = self.stt.transcribe(input_audio)
             transcript = stt_result.text
-            if stt_result.status != "ok":
+            if stt_result.status != "ok" and not (
+                stt_result.status == "empty" and not transcript.strip()
+            ):
                 return VoiceLoopResult(
                     status=stt_result.status,
                     transcript=transcript,

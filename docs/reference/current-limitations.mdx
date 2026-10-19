@@ -125,7 +125,7 @@ Current benchmark status:
 | Kokoro TTS | ONNX int8 model runs on Jetson and can generate speech | Measured generation is about 14.8 seconds for 5.7 seconds of audio, about 2.6x real time. The figure is a v0.2.0 measurement and is still the current one. Acceptable for feasibility, but not natural low-latency speech. |
 | Full voice stack | STT, LFM, and TTS have completed staged live turns | The staged turn-based pipeline established in v0.2.0 remains the design: STT + LFM + TTS are not required to stay active in parallel. |
 | Voice implementation | `python -m odessy voice` wires recording, STT, runtime, TTS, and playback | The command still depends on configured local binaries, model files, audio devices, and a real Jetson manual run. |
-| Blank audio handling | **Resolved in the v0.4.0 cycle.** `blank_transcript_reason` classifies annotation-only transcripts (`[BLANK_AUDIO]`, `(silence)`, `[MUSIC]`) and punctuation-only text as blank, and `VoiceLoop` returns before the model is called | The transcript must be annotation-only or punctuation-only; any word outside an annotation still reaches the model, so `[inaudible] hello` is a request. The retry (`ODESSY_VOICE_BLANK_RETRIES`, default 2) re-records; it never re-sends the previous request. **Not yet validated on real audio hardware** |
+| Blank audio handling | **Implemented in v0.4.0 development, unreleased.** Empty transcripts, known non-speech markers (`[BLANK_AUDIO]`, silence, music, or inaudible in matched brackets/parentheses), and punctuation-only text return `blank` before any model call | Unknown bracketed text and speech outside known markers are preserved. STT failures remain failures. `ODESSY_VOICE_BLANK_RETRIES` (default 2; 0 disables retries) controls fresh recordings, including actual empty STT output. **Not yet validated on real audio hardware.** |
 
 ### Blank Audio Failure Evidence
 
@@ -150,7 +150,7 @@ Voice turn failed with status failed: Policy requires confirmation before execut
 A second run again transcribed `[BLANK_AUDIO]`; when the user allowed the command, Odessy entered the tool-observation/final-response path and was manually interrupted with `Ctrl-C`.
 
 This was a known limitation, first recorded in v0.2.0, open through released
-v0.3.0, and **resolved in the v0.4.0 cycle**. The evidence is kept as the record of
+v0.3.0, and **implemented in v0.4.0 development, unreleased**. The evidence is kept as the record of
 what the fix addresses. The behaviour it required is now enforced, and asserted by
 tests that fail if a blank turn reaches the model:
 

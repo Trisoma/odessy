@@ -370,15 +370,16 @@ reviewed and the answer holds, for a reason that is measurable rather than styli
 Measured on Windows, through `powershell -NoProfile -NonInteractive -Command`:
 
 ```text
-python -c "raise SystemExit(3)"            -> bridge exit_code 1
-a process killed with taskkill /T /F       -> bridge exit_code 1
+python -c "raise SystemExit(3)"            -> PowerShell process return code 1
+a process killed with taskkill /T /F       -> raw process return code 1
 ```
 
-The two are the same number. Keeping the code would make "Odessy stopped this" and
-"this failed with exit 1" indistinguishable in the one field a caller is most likely
-to read. POSIX is not the same problem -- a killed process reports `-15` or `-9`,
-which names the signal -- but one field cannot carry two meanings across platforms,
-so the value is withheld and the distinction lives in `timed_out` and `status`.
+These are raw process measurements, not timeout results returned by the bridge.
+The bridge reports `None` after its own timeout; it does not expose the incidental
+kill code as the command's outcome. On POSIX, a process terminated directly by a
+signal can report `-15` or `-9`; a shell may translate a child's signal into a
+different exit status. The chosen cross-platform contract withholds the code when
+Odessy terminates execution and records the distinction in `timed_out` and `status`.
 
 ```text
 Allowed       "a command Odessy terminated reports no exit code, with timed_out set"

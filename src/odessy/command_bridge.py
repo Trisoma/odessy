@@ -172,12 +172,11 @@ class CommandBridge:
                 "stdout": stdout,
                 "stderr": stderr_text,
                 # Decision (2026-10-19): a command Odessy terminated reports no exit
-                # code. Measured on Windows, a taskkill'd process reports 1, and 1 is
-                # also what PowerShell returns for any failing command -- so keeping
-                # the number would make "Odessy killed it" indistinguishable from "it
-                # failed with 1". POSIX would report -15/-9, which names the signal,
-                # but a single field cannot mean both. `timed_out` and `status` carry
-                # the distinction; `exit_code is None` always means this branch.
+                # code. A native kill code describes executor termination, not the
+                # command's own outcome. Raw Windows termination and failure codes
+                # can coincide; POSIX signal codes are platform-specific. Keep the
+                # same contract on both: None, with `timed_out` and `status` stating
+                # why no command exit code is available.
                 # See LIMITATION.md, "A Killed Command Reports No Exit Code".
                 "exit_code": None,
                 "duration": duration,
