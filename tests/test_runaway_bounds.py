@@ -313,6 +313,8 @@ def test_a_run_aborts_when_the_model_server_stops_answering(
             "tools-time",
             "--repeat",
             "5",
+            "--max-infra-errors",
+            "3",
             "--output-dir",
             str(run_dir),
         ]
@@ -320,11 +322,12 @@ def test_a_run_aborts_when_the_model_server_stops_answering(
 
     assert exit_code == 2
     metadata = json.loads((run_dir / "metadata.json").read_text(encoding="utf-8"))
-    assert metadata["aborted"]["attempts_completed"] == cli.ABORT_AFTER_CONSECUTIVE_UNREACHABLE
-    assert "unreachable" in metadata["aborted"]["reason"]
+    assert metadata["aborted"]["attempts_completed"] == 3
+    assert "Connection refused" in metadata["aborted"]["reason"]
+    assert "Run aborted after 3 attempts" in (run_dir / "summary.md").read_text(encoding="utf-8")
     # The remaining attempts were never made, so there is nothing to misread.
     written = (run_dir / "attempts.jsonl").read_text(encoding="utf-8").splitlines()
-    assert len(written) == cli.ABORT_AFTER_CONSECUTIVE_UNREACHABLE
+    assert len(written) == 3
 
 
 # -- cloud parity -------------------------------------------------------------

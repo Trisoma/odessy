@@ -16,6 +16,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
+from odessy.tool_contracts import build_openai_tools
 from odessy.ollama_model import (
     _OllamaStreamTimeout,
     _OllamaToolsUnsupported,
@@ -33,11 +34,10 @@ from odessy.ollama_model import (
     _observation_messages,
     _remember_observation,
     _start_turn,
+    _strip_thinking,
     _looks_like_generic_final_response,
     _model_output_error,
-    _proposal_tool_name_for_user_text,
     _repair_prompt,
-    _select_tools,
     _system_prompt,
     _text_system_prompt,
     PROGRESS_TIMEOUT_ENV,
@@ -117,13 +117,12 @@ class LlamaCppLFMModel:
         diagnostics = ModelTurnDiagnostics()
         object.__setattr__(self, "_last_turn_diagnostics", diagnostics)
         _start_turn(self)
-        tool_name = _proposal_tool_name_for_user_text(user_text)
         try:
-            action = self._chat_native_action(user_text, tool_name, diagnostics)
+            action = self._chat_native_action(user_text, diagnostics)
         except ValueError as error:
             diagnostics.proposal_valid = False
             diagnostics.repair_triggered = True
-            model_error = _model_output_error("", error, user_text, tool_name)
+            model_error = _model_output_error("", error, user_text)
             repair_prompt = _repair_prompt(user_text, model_error)
             _debug_model_repair(
                 [
@@ -174,23 +173,22 @@ class LlamaCppLFMModel:
     def _chat_native_action(
         self,
         user_text: str,
-        tool_name: str | None,
         diagnostics: ModelTurnDiagnostics,
     ) -> ModelAction:
         messages = [
-            {"role": "system", "content": _system_prompt(tool_name)},
+            {"role": "system", "content": _system_prompt()},
             {"role": "user", "content": user_text},
         ]
         try:
             started = time.perf_counter()
             _record_model_call_attempt(diagnostics)
-            response = self._chat(messages, tools=_select_tools(tool_name))
+            response = self._chat(messages, tools=build_openai_tools())
             _add_diagnostic_ms(diagnostics, "proposal_generation_ms", _elapsed_ms(started))
             _record_ollama_response(diagnostics, response)
         except _OllamaToolsUnsupported:
             return self._chat_text_action(
                 user_text,
-                _text_system_prompt(user_text, tool_name),
+                _text_system_prompt(user_text),
                 diagnostics,
             )
         parse_started = time.perf_counter()
@@ -270,7 +268,7 @@ class LlamaCppLFMModel:
         corrected = _corrected_tool_request(response, user_text)
         if corrected is not None:
             return corrected
-        text = ((response.get("message") or {}).get("content") or "").strip()
+        text = _strip_thinking((response.get("message") or {}).get("content") or "")
         if text and not _looks_like_generic_final_response(text):
             return FinalResponse(text=text)
         return FinalResponse(text=_fallback_observation_response(observation))
@@ -280,8 +278,10 @@ def _extract_lfm_native_action_from_chat(response: dict[str, Any], user_text: st
     message = response.get("message") or {}
     if message.get("tool_calls"):
         return _extract_model_action_from_chat(response, user_text)
-    content = (message.get("content") or "").strip()
+    content = _strip_thinking(message.get("content") or "")
     if not content:
+        # Includes content that was only unfinished reasoning: there is no answer to
+        # give, so the repair path asks again.
         raise ValueError("Ollama returned neither a tool call nor content")
     if content.startswith("{") or content.startswith("```"):
         return _extract_model_action_from_chat(response, user_text)

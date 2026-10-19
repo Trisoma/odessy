@@ -16,9 +16,14 @@ from odessy.tool_contracts import TOOL_REQUEST_SCHEMAS
 
 from evals.toml_compat import loads_toml
 
-Category = Literal["safety", "commands", "tools", "multistep"]
-CATEGORIES: tuple[Category, ...] = ("safety", "commands", "tools", "multistep")
+Category = Literal["safety", "commands", "tools", "multistep", "hard"]
+CATEGORIES: tuple[Category, ...] = ("safety", "commands", "tools", "multistep", "hard")
 CASES_DIR = Path(__file__).parent / "cases"
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+#: What each hard case measures. Reported separately, since a model can be good at
+#: one and poor at another.
+HARD_SUBTYPES = ("long_horizon", "recovery", "grounding", "ambiguity")
 
 #: Constructs that do not exist in Windows PowerShell 5.1, and PowerShell cmdlets
 #: that do not exist in sh. A command for the wrong shell fails even if it would
@@ -93,6 +98,26 @@ class Case:
     answer_contains: tuple[str, ...] = ()
     #: Optional stdout the recording server returns for terminal tools.
     terminal_stdout: str | None = None
+    #: Fixture workspace directory and git file under evals/fixtures/.
+    workspace: str = "workspace"
+    git: str = "git.toml"
+    #: hard: which ability the case measures (see HARD_SUBTYPES).
+    subtype: str | None = None
+    #: hard: regexes the final answer must ALL match (case-insensitive).
+    answer_patterns: tuple[str, ...] = ()
+    #: hard: regexes of which the final answer must match AT LEAST ONE.
+    answer_any: tuple[str, ...] = ()
+    #: hard: regexes the final answer must NOT match (a fabricated or stale value).
+    answer_excludes: tuple[str, ...] = ()
+    #: hard: calls that must ALL have run successfully, in any order (the files a
+    #: correct answer has to be read from).
+    required_calls: tuple[Matcher, ...] = ()
+    #: hard: calls that must never be proposed (destructive steps on a vague request).
+    must_not_propose: tuple[Matcher, ...] = ()
+    #: hard: the final answer must ask the user a question instead of acting.
+    ask_back: bool = False
+    #: hard: model calls an efficient solution needs. Reported, not graded.
+    optimal_calls: int | None = None
 
 
 class CaseError(ValueError):
@@ -131,6 +156,16 @@ def _parse(raw: dict[str, Any], source: str) -> Case:
             sequence=tuple(raw.get("sequence", [])),
             answer_contains=tuple(raw.get("answer_contains", [])),
             terminal_stdout=raw.get("terminal_stdout"),
+            workspace=raw.get("workspace", "workspace"),
+            git=raw.get("git", "git.toml"),
+            subtype=raw.get("subtype"),
+            answer_patterns=tuple(raw.get("answer_patterns", [])),
+            answer_any=tuple(raw.get("answer_any", [])),
+            answer_excludes=tuple(raw.get("answer_excludes", [])),
+            required_calls=tuple(Matcher(**item) for item in raw.get("required_calls", [])),
+            must_not_propose=tuple(Matcher(**item) for item in raw.get("must_not_propose", [])),
+            ask_back=bool(raw.get("ask_back", False)),
+            optimal_calls=raw.get("optimal_calls"),
         )
     except (KeyError, TypeError) as exc:
         raise CaseError(f"{where}: malformed case ({exc})") from exc
@@ -147,9 +182,11 @@ def _validate(case: Case, where: str) -> None:
     if not case.prompt.strip():
         fail("empty prompt")
 
-    regexes = [m.tool for m in (*case.forbidden, *case.expect_reached)]
-    regexes += [m.pattern for m in (*case.forbidden, *case.expect_reached) if m.pattern]
+    matchers = (*case.forbidden, *case.expect_reached, *case.required_calls, *case.must_not_propose)
+    regexes = [m.tool for m in matchers]
+    regexes += [m.pattern for m in matchers if m.pattern]
     regexes += list(case.expect_args.values()) + list(case.sequence)
+    regexes += [*case.answer_patterns, *case.answer_any, *case.answer_excludes]
     regexes += [pattern for group in case.command_patterns for pattern in group]
     for pattern in regexes:
         try:
@@ -161,9 +198,13 @@ def _validate(case: Case, where: str) -> None:
     for name in (*case.expect_tools, *case.accept_tools):
         if name != "none" and name not in known:
             fail(f"unknown tool {name!r}")
-    for matcher in (*case.forbidden, *case.expect_reached):
+    for matcher in matchers:
         if not any(re.fullmatch(matcher.tool, name) for name in known):
             fail(f"tool regex {matcher.tool!r} matches no tool")
+    if not (FIXTURES_DIR / case.workspace).is_dir():
+        fail(f"no fixture workspace {case.workspace!r}")
+    if not (FIXTURES_DIR / case.git).is_file():
+        fail(f"no git fixture {case.git!r}")
 
     if case.category == "safety":
         if case.kind == "dangerous" and not case.forbidden:
@@ -186,3 +227,10 @@ def _validate(case: Case, where: str) -> None:
     elif case.category == "multistep":
         if not case.sequence or not case.answer_contains:
             fail("multistep case needs `sequence` and `answer_contains`")
+    elif case.category == "hard":
+        if case.subtype not in HARD_SUBTYPES:
+            fail(f"hard case needs subtype in {HARD_SUBTYPES}")
+        if not (case.answer_patterns or case.answer_any or case.ask_back):
+            fail("hard case needs an answer check (answer_patterns, answer_any or ask_back)")
+        if case.optimal_calls is not None and (not isinstance(case.optimal_calls, int) or case.optimal_calls < 1):
+            fail("optimal_calls must be a positive integer")

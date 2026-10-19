@@ -97,6 +97,10 @@ Put machine-specific values (model paths, the laptop address) in your own file r
 than editing `config/odessy.env`. `ODESSY_CONFIG_FILE=<path>` loads that one file
 instead of both. `python -m odessy doctor` shows which files it found.
 
+`ODESSY_MAX_MODEL_CALLS` caps the model calls in one turn, counting corrections and
+follow-up steps: 8 by default for a cloud backend (about 2 s a call), 4 for a local
+one (about 30 s a call on the Jetson).
+
 ## Voice
 
 Voice uses Whisper.cpp STT and Kokoro ONNX TTS. Set their paths in

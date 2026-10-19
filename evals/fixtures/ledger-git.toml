@@ -1,0 +1,28 @@
+# Canned git state for the "ledger" evaluation workspace (the hard cases).
+
+status = """
+ M CHANGELOG.md
+?? notes/ideas.md
+"""
+
+changed_files = ["CHANGELOG.md"]
+
+diff = """
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,6 @@
+ # Changelog
+
+ ## 0.2
+
++- Configuration moved to `config/app.toml`.
+ - Monthly report page.
+"""
+
+commits = [
+    "c41f9e2 Add monthly report page",
+    "b7c1e2f Parse amounts as integers to speed up totals",
+    "8d2a6f0 Move configuration to config/app.toml",
+    "1e0b3c9 Initial commit",
+]

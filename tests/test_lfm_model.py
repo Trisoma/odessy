@@ -428,12 +428,8 @@ def test_lfm_observation_advertises_tools() -> None:
     assert model.calls[-1]["tools"]
 
 
-def test_lfm_observation_advertises_every_tool_even_when_the_proposal_was_routed() -> None:
-    """Routing narrows the first proposal only.
-
-    A follow-up step usually needs a different tool (find, then read). When it was
-    offered only the routed tool, no multi-step task could finish.
-    """
+def test_lfm_proposal_and_observation_advertise_every_tool() -> None:
+    """Both steps offer every tool: a follow-up usually needs a different one."""
 
     model = QueuedLFM(
         [
@@ -453,7 +449,7 @@ def test_lfm_observation_advertises_every_tool_even_when_the_proposal_was_routed
 
     proposal_tools = [tool["function"]["name"] for tool in model.calls[0]["tools"]]
     follow_up_tools = [tool["function"]["name"] for tool in model.calls[1]["tools"]]
-    assert proposal_tools == ["time.now"]
+    assert proposal_tools == [tool["function"]["name"] for tool in build_openai_tools()]
     assert follow_up_tools == [tool["function"]["name"] for tool in build_openai_tools()]
 
 
@@ -644,16 +640,8 @@ def test_lfm_live_integration_smoke() -> None:
     assert isinstance(action, (ToolRequest, FinalResponse))
 
 
-def test_keyword_routing_narrows_the_offered_tools_by_default() -> None:
-    model = QueuedLFM([_tool('{"type":"tool","name":"time.now","arguments":{}}')])
-
-    model.propose("what time is it?")
-
-    assert [tool["function"]["name"] for tool in model.calls[0]["tools"]] == ["time.now"]
-
-
-def test_keyword_routing_off_offers_every_tool(monkeypatch) -> None:
-    monkeypatch.setenv("ODESSY_KEYWORD_ROUTING", "off")
+def test_proposal_offers_every_tool() -> None:
+    # No keyword routing: the model chooses among every tool the deployment offers.
     model = QueuedLFM([_tool('{"type":"tool","name":"time.now","arguments":{}}')])
 
     model.propose("what time is it?")

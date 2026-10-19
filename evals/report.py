@@ -67,6 +67,7 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
     summary["multistep"]["mean_model_calls"] = (
         statistics.fmean(r["model_calls"] for r in multistep) if multistep else None
     )
+    summary["hard"] = _hard(graded)
 
     latencies = sorted(r["latency_ms"] for r in graded)
     summary["latency_ms"] = {
@@ -107,6 +108,28 @@ def _safety(graded: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _hard(graded: list[dict[str, Any]]) -> dict[str, Any]:
+    """Pass rate per subtype, and how many calls beyond an efficient solution."""
+
+    from evals.definitions import HARD_SUBTYPES
+
+    rows = [r for r in graded if r["category"] == "hard"]
+    by_subtype = {}
+    for subtype in HARD_SUBTYPES:
+        selected = [r for r in rows if r["grade"]["checks"].get("subtype") == subtype]
+        by_subtype[subtype] = {
+            "attempts": len(selected),
+            "pass_rate": _rate(sum(r["grade"]["passed"] for r in selected), len(selected)),
+        }
+    extras = [r["grade"]["checks"]["extra_calls"] for r in rows if r["grade"]["checks"].get("extra_calls") is not None]
+    return {
+        "subtypes": by_subtype,
+        "mean_extra_calls": statistics.fmean(extras) if extras else None,
+        # Within one call of the efficient solution: a check-before-answering step is fine.
+        "within_budget_rate": _rate(sum(extra <= 1 for extra in extras), len(extras)),
+    }
+
+
 def _checks_rate(graded: list[dict[str, Any]], category: str, names: tuple[str, ...]) -> dict[str, Any]:
     rows = [r for r in graded if r["category"] == category]
     result: dict[str, Any] = {}
@@ -128,6 +151,19 @@ def _num(value: float | None, digits: int = 0) -> str:
     return "n/a" if value is None else f"{value:,.{digits}f}"
 
 
+def _hard_lines(summary: dict[str, Any]) -> list[str]:
+    hard = summary.get("hard")
+    if not hard or not any(data["attempts"] for data in hard["subtypes"].values()):
+        return []
+    lines = [
+        f"| Hard: {subtype.replace('_', ' ')} | {_pct(data['pass_rate'])} ({data['attempts']} attempts) |"
+        for subtype, data in hard["subtypes"].items()
+    ]
+    lines.append(f"| Hard: mean calls beyond an efficient solution | {_num(hard['mean_extra_calls'], 2)} |")
+    lines.append(f"| Hard: within one call of efficient | {_pct(hard['within_budget_rate'])} |")
+    return lines
+
+
 def render_markdown(summary: dict[str, Any], metadata: dict[str, Any]) -> str:
     safety = summary["safety"]
     lines = [
@@ -136,8 +172,10 @@ def render_markdown(summary: dict[str, Any], metadata: dict[str, Any]) -> str:
         "| Setting | Value |",
         "|---|---|",
     ]
-    for key in ("backend", "model", "deployment", "keyword_routing", "repeat", "attempt_timeout_seconds", "odessy_version", "git_commit", "git_commit_note", "platform", "started_at"):
-        lines.append(f"| {key} | {metadata.get(key, '')} |")
+    for key in ("backend", "model", "deployment", "keyword_routing", "repeat", "attempt_timeout_seconds", "max_model_calls", "odessy_version", "git_commit", "git_commit_note", "platform", "started_at"):
+        # keyword_routing appears only in runs from before routing was removed.
+        if key in metadata or key in {"backend", "model", "repeat", "git_commit", "platform", "started_at"}:
+            lines.append(f"| {key} | {metadata.get(key, '')} |")
     if "graded" in metadata:
         lines.append(f"| graded | {metadata['graded']} |")
     aborted = metadata.get("aborted")
@@ -200,6 +238,7 @@ def render_markdown(summary: dict[str, Any], metadata: dict[str, Any]) -> str:
         f"| Multi-step: required tool sequence | {_pct(summary['multistep']['sequence_ok_rate'])} |",
         f"| Multi-step: correct final answer | {_pct(summary['multistep']['answer_ok_rate'])} |",
         f"| Multi-step: mean model calls | {_num(summary['multistep']['mean_model_calls'], 2)} |",
+        *_hard_lines(summary),
         "",
         "## Cost",
         "",
@@ -232,9 +271,21 @@ _COMPARE_ROWS: tuple[tuple[str, Any], ...] = (
     ("Tools: right arguments", lambda s: _pct(s["tools"]["args_ok_rate"])),
     ("Multi-step pass rate", lambda s: _pct(s["categories"]["multistep"]["pass_rate"])),
     ("Multi-step mean model calls", lambda s: _num(s["multistep"]["mean_model_calls"], 2)),
+    ("Hard pass rate", lambda s: _pct(s["categories"].get("hard", {}).get("pass_rate"))),
+    ("Hard: long horizon", lambda s: _hard_rate(s, "long_horizon")),
+    ("Hard: recovery", lambda s: _hard_rate(s, "recovery")),
+    ("Hard: grounding", lambda s: _hard_rate(s, "grounding")),
+    ("Hard: ambiguity", lambda s: _hard_rate(s, "ambiguity")),
+    ("Hard: mean extra calls", lambda s: _num((s.get("hard") or {}).get("mean_extra_calls"), 2)),
     ("Median latency (ms)", lambda s: _num(s["latency_ms"]["median"])),
     ("Excluded attempts", lambda s: str(s["excluded"])),
 )
+
+
+def _hard_rate(summary: dict[str, Any], subtype: str) -> str:
+    # Summaries written before the hard cases existed have no "hard" section.
+    data = ((summary.get("hard") or {}).get("subtypes") or {}).get(subtype)
+    return _pct(data["pass_rate"]) if data else "n/a"
 
 
 def render_comparison(runs: list[tuple[str, dict[str, Any]]]) -> str:

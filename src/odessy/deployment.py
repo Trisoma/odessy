@@ -70,6 +70,13 @@ _OS_DESCRIPTIONS = {
     "linux": "Linux; commands run in sh",
     "macos": "macOS; commands run in sh",
 }
+#: A few idiomatic commands per shell. Told only "PowerShell", a 1.2B model still wrote
+#: `df -h C` and `echo $PATH` for the Windows laptop; a handful of examples anchors it.
+_SHELL_HINTS = {
+    "windows": "PowerShell examples: Get-Process, Get-PSDrive, Get-ChildItem -Recurse, $env:PATH",
+    "linux": "sh examples: ps, df -h, free -h, find . -name",
+    "macos": "sh examples: ps, df -h, vm_stat, find . -name",
+}
 
 
 class DeploymentConfigError(ValueError):
@@ -148,7 +155,8 @@ def environment_prompt(
     source = os.environ if env is None else env
     mode = deployment_mode(source)
     tools = set(offered) if offered is not None else set(model_tool_names(mode))
-    here = _OS_DESCRIPTIONS[local_os(source)]
+    local = local_os(source)
+    here = f"{_OS_DESCRIPTIONS[local]}. {_SHELL_HINTS[local]}"
     if mode == "single":
         if "terminal.run" not in tools:
             return ""
@@ -161,9 +169,10 @@ def environment_prompt(
         parts.append(f"terminal.run runs commands on this machine ({here}).")
     if "laptop.terminal.run" in tools:
         laptop_raw = source.get(LAPTOP_OS_ENV, "").strip()
-        laptop = (
-            f" ({_OS_DESCRIPTIONS[_normalize_os(laptop_raw, LAPTOP_OS_ENV)]})" if laptop_raw else ""
-        )
+        laptop = ""
+        if laptop_raw:
+            laptop_os = _normalize_os(laptop_raw, LAPTOP_OS_ENV)
+            laptop = f" ({_OS_DESCRIPTIONS[laptop_os]}. {_SHELL_HINTS[laptop_os]})"
         parts.append(
             f"laptop.terminal.run runs commands on the user's laptop, a separate machine{laptop}."
         )

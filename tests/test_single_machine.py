@@ -18,8 +18,6 @@ from odessy.deployment import model_tool_names
 from odessy.mcp_server import build_odessy_mcp_server
 from odessy.ollama_model import (
     _model_output_error,
-    _proposal_tool_name_for_user_text,
-    _select_tools,
     _text_system_prompt,
 )
 from odessy.policy import OdessyPolicy
@@ -142,10 +140,7 @@ async def test_single_mode_without_node_runs_degraded_and_says_so(
         assert {tool["function"]["name"] for tool in cloud_tools_openai()} == {
             name.replace(".", "__") for name in mounted
         }
-        assert _proposal_tool_name_for_user_text("list files") is None
-        assert _proposal_tool_name_for_user_text("run echo hello") == "terminal.run"
-        assert {tool["function"]["name"] for tool in _select_tools("filesystem.list")} == mounted
-        assert "filesystem.list" not in _text_system_prompt("list files", None)
+        assert "filesystem.list" not in _text_system_prompt("list files")
         error = _model_output_error(
             '{"name":"filesystem.list","arguments":{}}', ValueError("unavailable"), "list files"
         )

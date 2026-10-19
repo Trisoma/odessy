@@ -97,7 +97,40 @@ def _build_agent(
         ),
         confirm=_confirm_tool_call,
         approver=TerminalEscalationApprover(),
+        max_model_calls=_max_model_calls_from_env(cloud=isinstance(model, CloudModel)),
     )
+
+
+#: Model generations allowed per turn, counting retries and follow-up steps.
+MAX_MODEL_CALLS_ENV = "ODESSY_MAX_MODEL_CALLS"
+DEFAULT_MAX_MODEL_CALLS = 4
+DEFAULT_CLOUD_MAX_MODEL_CALLS = 8
+
+
+def default_max_model_calls(*, cloud: bool) -> int:
+    """8 for a cloud model, 4 for a local one.
+
+    A cloud call takes about 2 s and a capable model explores before it answers: two
+    DeepSeek multi-step attempts in the evaluation stopped one call short at 4. A local
+    call takes about 30 s, so the local ceiling stays where it was.
+    """
+
+    return DEFAULT_CLOUD_MAX_MODEL_CALLS if cloud else DEFAULT_MAX_MODEL_CALLS
+
+
+def _max_model_calls_from_env(*, cloud: bool = False) -> int:
+    """The per-turn ceiling on model calls: ``ODESSY_MAX_MODEL_CALLS``, else the default."""
+
+    raw = os.environ.get(MAX_MODEL_CALLS_ENV, "").strip()
+    if not raw:
+        return default_max_model_calls(cloud=cloud)
+    try:
+        value = int(raw)
+    except ValueError:
+        raise SystemExit(f"{MAX_MODEL_CALLS_ENV} must be a positive integer (got {raw!r})") from None
+    if value < 1:
+        raise SystemExit(f"{MAX_MODEL_CALLS_ENV} must be a positive integer (got {raw!r})")
+    return value
 
 
 class TerminalEscalationApprover:
