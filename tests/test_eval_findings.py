@@ -620,6 +620,10 @@ def test_lfm_answer_that_is_only_unfinished_thinking_is_not_returned() -> None:
         ("dir | Out-String", "confirm"),
         ("pwd `whoami`", "confirm"),
         ("ls $(cat x)", "confirm"),
+        ("Get-ChildItem (python helper.py)", "confirm"),
+        ("gci (Write-Output hello)", "confirm"),
+        ("Get-ChildItem @(python helper.py)", "confirm"),
+        ("Get-ChildItem @{name=python helper.py}", "confirm"),
     ],
 )
 def test_allow_rule_covers_powershell_and_refuses_chaining(tmp_path: Path, command: str, decision: str) -> None:

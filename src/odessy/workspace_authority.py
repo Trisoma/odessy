@@ -62,11 +62,15 @@ class WorkspaceAuthority:
 
         try:
             resolved = candidate.resolve(strict=must_exist)
+            # Reject outside paths before stat/exists can contact a UNC share.
+            self._assert_inside(resolved)
+            exists = resolved.exists()
+            if not exists:
+                resolved = self._resolve_nonexistent(candidate)
+                self._assert_inside(resolved)
+                exists = resolved.exists()
         except OSError as exc:
             raise WorkspaceAuthorityError("path cannot be resolved safely") from exc
-
-        if not resolved.exists():
-            resolved = self._resolve_nonexistent(candidate)
 
         self._assert_inside(resolved)
         relative = self._relative(resolved)
@@ -75,7 +79,7 @@ class WorkspaceAuthority:
             requested=candidate_path,
             resolved=resolved,
             relative=relative,
-            exists=resolved.exists(),
+            exists=exists,
             sensitive=sensitive,
         )
 
