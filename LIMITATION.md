@@ -1,5 +1,9 @@
 # Odessy Current Limitations
 
+Release baseline: **v0.3.0**, released privately as a prerelease on October 19,
+2026. Unfinished feature work belongs to the [v0.4.0 roadmap](docs/releases/v0.4.0.md).
+Historical measurements below retain their original dates and versions.
+
 ## Voice Smoke Test Limitations
 
 The voice path is wired and runnable, but the first live smoke test exposed several limitations that should not be confused with wiring failure.
@@ -151,7 +155,7 @@ captured evidence and follow-up checks.
 
 ## LFM GPU / Offload Configuration Is Unexplored
 
-**Status: deferred to v0.3.0 (decided 2026-09-24). Not measured.**
+**Status: deferred to v0.4.0; originally assigned to v0.3.0 on 2026-09-24. Not measured.**
 
 The capability exists and has never been used:
 `benchmark/scenarios.py` defines `num_gpu`, `BenchmarkPartialGpuLFMModel` sends it
@@ -248,8 +252,9 @@ limitation set.
 
 ### Still absent
 
-- **Host pairing.** The host is a local subprocess; there is nothing remote to pair
-  with. A server must be explicitly marked an `ExecutionTarget` to be executable.
+- **Host pairing — v0.4.0.** Single mode starts a local subprocess; split mode can
+  reach a configured remote MCP URL without authenticated pairing. Pairing waits
+  on a concrete trust scenario and adversary model. `ExecutionTarget` remains required.
 - **Any device backend.** ESP32 / STM32 / RP2040 are declared and unbacked.
 - **A total wall-clock turn deadline.** Unchanged from the section above.
 

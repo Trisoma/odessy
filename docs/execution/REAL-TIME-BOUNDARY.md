@@ -1,5 +1,9 @@
 # The Real-Time Boundary
 
+Baseline: released v0.3.0 private prerelease. Device operations and multi-stream
+tooling belong to the [v0.4.0 roadmap](../releases/v0.4.0.md); neither changes the
+absence of a hard real-time guarantee described here.
+
 What Odessy does and does not promise about timing, and where the boundary between
 tiers actually falls.
 

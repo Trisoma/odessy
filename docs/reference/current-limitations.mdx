@@ -1,13 +1,16 @@
 ---
 title: "Current v0.3.0 Limitations"
 sidebar-title: "Current Limitations"
-description: "Reference for Odessy's current implementation limits, security limits, per-host isolation coverage, and intentionally deferred v0.3.0 capabilities."
+description: "Limits of the released v0.3.0 private prerelease, with unfinished capabilities tracked for v0.4.0."
 description-agent: "Use before claiming Odessy is sandboxed, paired, autonomous, voice-ready, local-only, or production-secure. Lists current known limitations, per-host isolation coverage, data egress, and deferred work."
 keywords: ["odessy limitations", "v0.3.0 scope", "security limitations", "isolation coverage", "deferred work"]
 content:
   type: "reference"
 ---
 Odessy v0.3.0 has a real local command-line authority boundary, and an isolation layer whose coverage depends on the host.
+It was released privately as a prerelease on October 19, 2026. Future feature work is
+tracked in the [v0.4.0 roadmap](../releases/v0.4.0.md); those items remain unavailable
+or undecided as described there.
 It is still not a complete operating-system sandbox, and on the Jetson board it is largely inactive — see **Isolation Layer** below.
 This page records the limits future agents must keep visible when changing the runtime, tools, policy, MCP integration, or public documentation.
 
@@ -19,7 +22,7 @@ This page records the limits future agents must keep visible when changing the r
 | Voice | Staged voice loop is integrated and has completed live Jetson turns | Automated tests still use fakes for hardware components, and physical audio quality depends on the configured device. |
 | GUI automation | Out of scope | No mouse, keyboard injection, screen capture, browser automation, desktop automation, or robotics. |
 | Multi-agent behavior | Out of scope | No delegation, background autonomy, scheduler, or multi-session agent orchestration. |
-| Writes | Still out of scope | `filesystem.write` and `log.append` are not implemented. Step 8 designed the confirmation and escalation semantics they will need; adding the tools themselves remains future work. |
+| Writes | Node provides `filesystem.write` and `log.append` | Writes remain subject to tool validation and authority checks; availability depends on the mounted server. This is not arbitrary filesystem access. |
 
 ## Security Boundary Limits
 
@@ -85,9 +88,10 @@ Reads, network, and process visibility are **not** restricted on Windows.
 
 ### Not isolated at all
 
-- **Host pairing does not exist.** The host is a local subprocess; there is nothing
-  remote to pair with. A server must be explicitly marked an `ExecutionTarget` before
-  anything will execute on it.
+- **Host pairing does not exist.** Single mode launches a local subprocess; split
+  mode supports configured remote MCP URLs without authenticated pairing. v0.4.0
+  pairing work waits on a concrete trust scenario and adversary model. A server
+  must be explicitly marked an `ExecutionTarget` before anything will execute on it.
 - **No device backend exists.** ESP32 / STM32 / RP2040 are declared and unbacked.
 - **No hard real-time guarantee anywhere.** The Linux host is upper-tier compute and
   control planning; a device that needs a deadline owns it in firmware.
@@ -145,7 +149,8 @@ Voice turn failed with status failed: Policy requires confirmation before execut
 
 A second run again transcribed `[BLANK_AUDIO]`; when the user allowed the command, Odessy entered the tool-observation/final-response path and was manually interrupted with `Ctrl-C`.
 
-This is a known limitation, first recorded in v0.2.0 and still open in v0.3.0:
+This is a known limitation, first recorded in v0.2.0, still open in released v0.3.0,
+and assigned to the v0.4.0 cycle:
 
 ```text
 [BLANK_AUDIO] or empty transcript
@@ -193,8 +198,8 @@ count or live coverage of every provider.
 
 | Area | Current state | Limitation |
 |---|---|---|
-| Python tests | Historical full-suite result: 530 passed, 3 skipped locally on 2026-10-17; focused October 18 checks are described above | The five previously quarantined ONNX and LFM tests are resolved — see `LIMITATION.md`. Tests cover important adversarial cases, but not every shell, filesystem race, or platform-specific reparse behavior. |
-| Node tests | `npm run typecheck` passes; 170 tests pass, 0 failed, 0 skipped | Earlier records cite "6/6 tests"; that was the Step 7 read-only tool count and is historical. In a restricted sandbox the Git test may skip because Node subprocess spawning is restricted, so normal Windows PowerShell is the source of truth. |
+| Python tests | Latest recorded local Windows full suite on 2026-10-19: 821 passed, 3 skipped | Local verification is not proof of all hosted CI jobs or Jetson hardware behavior. Tests cover important adversarial cases, not every shell or filesystem race. |
+| Node tests | Latest recorded local Windows suite on 2026-10-19: 174 passed, 1 skipped; typecheck and build passed | Earlier counts are historical. Process tests require child-process permissions; these results do not establish every Node/OS matrix outcome. |
 | Process cleanup tests | Timeout result is tested | Tests verify timeout reporting, but do not deeply inspect every possible descendant-process cleanup scenario. |
 
 ## Architecture Limits
@@ -234,8 +239,8 @@ work:
 3. How output redaction should work for reads, grep results, Git diffs, and terminal
    output -- both terminal executors are redacted (Node since v0.3.0); reads, grep, and
    Git results are still not redacted, so this remains genuinely open.
-4. Whether write paths need stricter rules than read paths -- unresolved, because no
-   write tools exist yet.
+4. Whether write paths need further restrictions beyond current tool and workspace
+   checks remains a policy-design question; write tools now exist.
 5. How confirmation is represented so the model cannot approve itself -- the model
    requests, an `EscalationApprover` decides, and a denied `danger-full-access` request
    cannot fall back to a wider mode. The text CLI composes a terminal approver that asks
