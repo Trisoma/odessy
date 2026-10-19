@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from odessy.agent_loop import OdessyAgent
-from odessy.command_bridge import CommandBridge
+from odessy.command_bridge import CommandBridge, build_sanitized_environment
 from odessy.fake_model import FakeModel
 from odessy.policy import OdessyPolicy
 from odessy.types import ToolRequest
@@ -109,16 +109,85 @@ def test_policy_denies_background_or_detached_terminal_requests(tmp_path: Path) 
 
 
 def test_command_bridge_uses_sanitized_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The boundary is a pure function, so assert it directly.
+
+    This used to spawn a shell and grep its output. That made a security invariant
+    depend on how fast ``powershell.exe`` starts: on a fresh Windows runner the first
+    start re-analyzes every installed module -- about 25 s, per the note in
+    ``command_bridge`` -- against a 10 s budget. The test then reported a timeout on a
+    job where sanitization was working perfectly, and passed on a warm one.
+    """
+
+    monkeypatch.setenv("ODESSY_TEST_SECRET", "secret-value")
+    monkeypatch.setenv("PATH", os.environ.get("PATH", "/usr/bin"))
+
+    env = build_sanitized_environment(os.environ)
+
+    assert "ODESSY_TEST_SECRET" not in env
+    assert "secret-value" not in env.values()
+    # The allowlisted names a child process needs to run at all.
+    assert env.get("PATH") == os.environ["PATH"]
+    for name in ("SYSTEMROOT", "COMSPEC", "PATHEXT"):
+        if os.environ.get(name):
+            assert env.get(name) == os.environ[name]
+
+
+def test_command_bridge_passes_the_sanitized_environment_to_the_child(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """What the bridge spawns with, without spawning anything.
+
+    ``Popen`` does not inherit when ``env=`` is given, so the dict recorded here is
+    exactly the child's complete environment. That is a stronger check than reading a
+    shell's rendering of it, and it costs no process start.
+    """
+
+    spawned: list[dict[str, object]] = []
+
+    class _RecordingPopen:
+        def __init__(self, argv: list[str], **kwargs: object) -> None:
+            self.argv = argv
+            self.returncode = 0
+            self.pid = 0
+            spawned.append(kwargs)
+
+        def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+            return "", ""
+
+    monkeypatch.setenv("ODESSY_TEST_SECRET", "secret-value")
+    monkeypatch.setattr("odessy.command_bridge.subprocess.Popen", _RecordingPopen)
+
+    result = CommandBridge(tmp_path).run(command="any command", timeout=10)
+
+    assert result["status"] == "ok"
+    child_env = spawned[0]["env"]
+    assert isinstance(child_env, dict)
+    assert "ODESSY_TEST_SECRET" not in child_env
+    assert "secret-value" not in child_env.values()
+
+
+def test_command_bridge_runs_with_the_sanitized_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One real end-to-end run, on a budget above a cold PowerShell start.
+
+    ``max_timeout`` (30 s) is deliberately the bridge's own ceiling rather than a
+    smaller number: the point of this test is that a sanitized environment still runs
+    a command, not that the shell starts within an arbitrary budget.
+    """
+
     monkeypatch.setenv("ODESSY_TEST_SECRET", "secret-value")
     bridge = CommandBridge(tmp_path)
     command = "Get-ChildItem Env:" if os.name == "nt" else "env"
 
-    result = bridge.run(command=command, timeout=10)
+    result = bridge.run(command=command, timeout=bridge.max_timeout)
 
     assert result["status"] == "ok"
+    assert "PATH" in result["stdout"]
     assert "ODESSY_TEST_SECRET" not in result["stdout"]
     assert "secret-value" not in result["stdout"]
 
@@ -142,12 +211,24 @@ def test_command_bridge_bounds_stdout(tmp_path: Path) -> None:
 
 
 def test_command_bridge_times_out_request_scoped_process(tmp_path: Path) -> None:
+    """The budget cuts off a running command, not a slow shell start.
+
+    With a 1 s budget this passed whenever ``powershell.exe`` alone took longer than
+    1 s to start, in which case nothing about the process lifecycle was exercised. The
+    child here records that it ran and then blocks, so the marker can only exist if
+    the process really started and was then killed.
+    """
+
+    marker = tmp_path / "child-started.txt"
+    script = f"open(r'{marker}', 'w').write('up'); import time; time.sleep(30)"
     bridge = CommandBridge(tmp_path)
 
-    result = bridge.run(command="python -c \"import time; time.sleep(5)\"", timeout=1)
+    result = bridge.run(command=f'python -c "{script}"', timeout=5)
 
     assert result["status"] == "timeout"
     assert result["timed_out"] is True
+    assert result["exit_code"] is None
+    assert marker.exists(), "the child never ran: this timed out on shell startup"
 
 
 class _UnknownToolModel:

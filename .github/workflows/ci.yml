@@ -35,6 +35,10 @@ jobs:
       # Never read the committed developer config (laptop MCP URL, model paths).
       ODESSY_CONFIG_FILE: ${{ github.workspace }}/.ci-no-config.env
       PYTHONUTF8: "1"
+      # Give the child powershell.exe somewhere writable to cache module analysis.
+      # ``build_sanitized_environment`` passes this name through, but nothing used to
+      # set it, so the allowlist entry did nothing. Ignored off Windows.
+      PSMODULEANALYSISCACHEPATH: ${{ runner.temp }}/ps-module-analysis-cache
     steps:
       - uses: actions/checkout@v5
 

@@ -322,9 +322,11 @@ def build_sanitized_environment(source: os._Environ[str]) -> dict[str, str]:
         "LC_ALL",
         "PATH",
         "PATHEXT",
-        # Where PowerShell keeps its module analysis cache. Without it, every
-        # powershell.exe start re-analyzes all installed modules: about 25 s on a
-        # host with many modules (GitHub's Windows runners), so commands time out.
+        # Passed through so a host can point PowerShell's module analysis cache at a
+        # writable location. Unset, every powershell.exe start re-analyzes all
+        # installed modules -- about 25 s on a host with many modules, such as GitHub's
+        # Windows runners -- and a command with a short budget times out. Allowing the
+        # name alone does nothing; something has to set it (CI does, in ``ci.yml``).
         "PSMODULEANALYSISCACHEPATH",
         "SYSTEMROOT",
         "TEMP",
