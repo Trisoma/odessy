@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from odessy.deployment import deployment_mode, model_tool_names, tool_is_available
+from odessy.external_tools import external_tool, external_tools
 from odessy.execution.contract import ESCALATION_TARGETS
 
 #: Spec keys that describe Odessy's own rendering rather than the JSON Schema, and so
@@ -162,6 +163,11 @@ def render_tool_contracts() -> str:
     for name in model_tool_names():
         lines.append(f"{name}:")
         lines.append(_render_tool_request_shape(name, TOOL_REQUEST_SCHEMAS[name]))
+    for tool in external_tools():
+        lines.append(f"{tool.public_name} (third-party tool from the {tool.server.name} server):")
+        lines.append(
+            json.dumps({"type": "tool", "name": tool.public_name, "arguments_schema": tool.input_schema})
+        )
     return "\n".join(lines)
 
 
@@ -215,6 +221,11 @@ _SINGLE_MACHINE_DESCRIPTIONS: dict[str, str] = {
 
 
 def tool_description(name: str) -> str:
+    external = external_tool(name)
+    if external is not None:
+        # Written by the server's author, not by Odessy: labelled as such, so neither
+        # the model nor a reader of the prompt mistakes it for Odessy's own text.
+        return f"[Third-party tool from the {external.server.name} server] {external.description}"
     if deployment_mode() == "single" and name in _SINGLE_MACHINE_DESCRIPTIONS:
         return _SINGLE_MACHINE_DESCRIPTIONS[name]
     return _TOOL_DESCRIPTIONS.get(name, name)
@@ -224,11 +235,25 @@ def build_openai_tools(names: list[str] | None = None) -> list[dict[str, Any]]:
     """Render tool schemas in OpenAI function-calling format for Ollama's /api/chat.
 
     With no ``names``, renders the tools this deployment offers
-    (``deployment.model_tool_names``), not every tool in the registry.
+    (``deployment.model_tool_names``) followed by the configured third-party tools of
+    this run (``external_tools``), not every tool in the registry.
     """
-    selected = names if names is not None else model_tool_names()
+    selected = names if names is not None else [*model_tool_names(), *(t.public_name for t in external_tools())]
     tools: list[dict[str, Any]] = []
     for name in selected:
+        external = external_tool(name)
+        if external is not None:
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": tool_description(name),
+                        "parameters": external.input_schema,
+                    },
+                }
+            )
+            continue
         if not tool_is_available(name):
             continue
         schema = TOOL_REQUEST_SCHEMAS.get(name)
@@ -257,6 +282,10 @@ def _to_openai_tool(name: str, schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def validate_tool_arguments(name: str, arguments: dict[str, Any]) -> None:
+    external = external_tool(name)
+    if external is not None:
+        _validate_external_arguments(name, external.input_schema, arguments)
+        return
     schema = TOOL_REQUEST_SCHEMAS.get(name)
     if schema is None:
         raise ValueError(f"Unknown tool requested by model: {name}")
@@ -279,6 +308,20 @@ def validate_tool_arguments(name: str, arguments: dict[str, Any]) -> None:
     for argument_name, argument_value in arguments.items():
         spec = properties[argument_name]
         _validate_argument_type(name, argument_name, argument_value, spec)
+
+
+def _validate_external_arguments(name: str, schema: dict[str, Any], arguments: Any) -> None:
+    """Check a third-party tool call against the server's own JSON Schema."""
+
+    if not isinstance(arguments, dict):
+        raise ValueError(f"{name} arguments must be a JSON object")
+    from jsonschema.validators import validator_for
+
+    validator = validator_for(schema)(schema)
+    error = next(iter(sorted(validator.iter_errors(arguments), key=lambda e: list(e.path))), None)
+    if error is not None:
+        where = ".".join(str(part) for part in error.path) or "arguments"
+        raise ValueError(f"Invalid argument for {name} ({where}): {error.message}")
 
 
 def _render_tool_request_shape(name: str, schema: dict[str, Any]) -> str:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from collections.abc import Callable, Collection, Sequence
@@ -9,6 +10,7 @@ from typing import Any, Protocol
 from mcp import Client
 
 from odessy.execution.escalation import EscalationApproval, EscalationApprover
+from odessy.external_tools import NamespacedServer, public_name
 from odessy.policy import OdessyPolicy
 from odessy.repeat_guard import RepeatGuard, build_guard
 from odessy.tool_contracts import validate_tool_arguments
@@ -574,11 +576,16 @@ class OdessyAgent:
 
         registry: dict[str, tuple[Any, Any]] = {}
         for server in self._mcp_servers:
-            async with Client(server) as client:
+            namespaced = isinstance(server, NamespacedServer)
+            async with Client(server.connection() if namespaced else server) as client:
                 tools = await client.list_tools()
             available_tools = getattr(tools, "tools", tools)
             for tool in available_tools:
-                registry.setdefault(tool.name, (tool, server))
+                # A configured third-party server's tools are offered as
+                # "<server>.<tool>": they cannot shadow a built-in or each other, and the
+                # stored tool keeps its own name for the call.
+                name = public_name(server.prefix, tool.name) if namespaced else tool.name
+                registry.setdefault(name, (tool, server))
         return registry
 
     async def _call_tool(
@@ -590,7 +597,12 @@ class OdessyAgent:
         entry = tool_registry.get(name)
         if entry is None:
             raise ValueError(f"Unknown MCP tool requested: {name}")
-        _, server = entry
+        tool, server = entry
+        if isinstance(server, NamespacedServer):
+            async with Client(server.connection()) as client:
+                return await asyncio.wait_for(
+                    client.call_tool(tool.name, arguments), timeout=server.config.timeout
+                )
         async with Client(server) as client:
             return await client.call_tool(name, arguments)
 
@@ -625,9 +637,20 @@ class OdessyAgent:
             "structured_content",
             getattr(result, "structuredContent", None),
         )
-        if not isinstance(structured, dict):
-            raise TypeError("MCP tool result did not include structured content")
-        return structured
+        if isinstance(structured, dict):
+            return structured
+        if structured is not None:
+            return {"status": "ok", "result": structured}
+        # Most third-party tools return text content only. Odessy's own servers always
+        # return structured content, so this path serves configured external servers.
+        texts = [
+            item.text
+            for item in getattr(result, "content", None) or []
+            if isinstance(getattr(item, "text", None), str)
+        ]
+        if texts:
+            return {"status": "ok", "content": "\n".join(texts)}
+        raise TypeError("MCP tool result included neither structured nor text content")
 
 
 def _split_mcp_servers(mcp_server: Any) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
