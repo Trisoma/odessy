@@ -250,6 +250,15 @@ class LlamaCppLFMModel:
                 ) from error
             raise RuntimeError(f"Ollama LFM API call failed: {error}") from error
 
+    def finalize_observations(self, observations) -> None:
+        for observation in observations:
+            _remember_observation(self, observation)
+
+    def respond_to_observations(self, user_text, observations) -> ModelAction:
+        for observation in observations[:-1]:
+            _remember_observation(self, observation)
+        return self.respond_to_observation(user_text, observations[-1])
+
     def respond_to_observation(
         self,
         user_text: str,

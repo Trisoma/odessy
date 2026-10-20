@@ -169,7 +169,11 @@ async def _run(args: argparse.Namespace) -> int:
     run_dir.mkdir(parents=True, exist_ok=False)
 
     git_commit, git_commit_note = _git_commit()
+    from odessy.runtime.scheduler import concurrency_from_env
     metadata = {
+        "tool_concurrency": concurrency_from_env(),
+        "max_tools_per_batch": 16,
+        "max_tools_per_turn": 64,
         "label": label,
         "backend": args.backend,
         "model": getattr(model, "model", type(model).__name__),

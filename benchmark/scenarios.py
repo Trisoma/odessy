@@ -220,7 +220,11 @@ class LFMCompareBenchmark:
 
         diagnostics = getattr(self.model, "last_turn_diagnostics", None)
         details = _diagnostic_details(diagnostics)
+        from odessy.runtime.types import ToolBatch
         selected_tool = action.name if isinstance(action, ToolRequest) else None
+        if isinstance(action, ToolBatch):
+            details["selected_tools"] = [c.request.name for c in action.calls]
+            details["selected_call_ids"] = [c.call_id for c in action.calls]
         proposal_valid = details.get("proposal_valid", True)
         if error is not None:
             proposal_valid = False

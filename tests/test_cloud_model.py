@@ -450,20 +450,19 @@ def test_openai_follow_up_still_invalid_after_correction_degrades_instead_of_rai
     assert action == FinalResponse(text="The current time is noon.")
 
 
-def test_parallel_calls_keep_only_the_first_and_answer_the_rest() -> None:
-    model = QueuedOpenAI(
-        [
-            openai_reply(calls=[("c1", "git__status", {}), ("c2", "git__log", {})]),
-            openai_reply(content="Clean tree."),
-        ]
-    )
-    request = model.propose("git status and log")
-
-    assert request == ToolRequest(name="git.status", arguments={})
-    model.respond_to_observation("git status and log", ToolObservation(request, {"clean": True}))
+def test_parallel_calls_are_preserved_and_answered_in_model_order() -> None:
+    from odessy.runtime.types import ToolBatch
+    model = QueuedOpenAI([
+        openai_reply(calls=[("c1", "git__status", {}), ("c2", "git__log", {})]),
+        openai_reply(content="Clean tree."),
+    ])
+    batch = model.propose("git status and log")
+    assert isinstance(batch, ToolBatch)
+    observations = [ToolObservation(c.request, {"status": "ok"}, c.call_id) for c in batch.calls]
+    model.respond_to_observations("git status and log", observations)
     tool_messages = [m for m in model.payloads[1]["messages"] if m["role"] == "tool"]
-    assert [m["tool_call_id"] for m in tool_messages] == ["c2", "c1"]
-    assert "Not executed" in tool_messages[0]["content"]
+    assert [m["tool_call_id"] for m in tool_messages] == ["c1", "c2"]
+    assert all("Not executed" not in m["content"] for m in tool_messages)
 
 
 def test_user_text_and_tool_output_are_redacted_before_sending() -> None:
@@ -526,7 +525,7 @@ def test_claude_tool_use_becomes_tool_request_with_expected_params() -> None:
     assert action == ToolRequest(name="time.now", arguments={})
     params = model.params[0]
     assert params["model"] == "claude-opus-5-5"
-    assert params["tool_choice"] == {"type": "auto", "disable_parallel_tool_use": True}
+    assert params["tool_choice"] == {"type": "auto", "disable_parallel_tool_use": False}
     assert params["fallbacks"] == "default"
     assert params["betas"] == ["server-side-fallback-2026-07-01"]
     assert "output_config" not in params
