@@ -4,6 +4,13 @@ Release baseline: **v0.3.0**, released privately as a prerelease on October 19,
 2026. Unfinished feature work belongs to the [v0.4.0 roadmap](docs/releases/v0.4.0.md).
 Historical measurements below retain their original dates and versions.
 
+Wake listening, automatic model selection, confirmation UX, and batch follow-ups
+are merged into `develop` for unreleased v0.4.0. Hardware wake detection,
+interruption latency, false activations, and model speed/memory benefits remain
+unqualified. [Jetson wake testing](docs/jetson-wake-testing.md) records the setup
+and acceptance procedure; the keyword-only download does not supply all detector
+assets needed by openWakeWord.
+
 Third-party MCP server support is v0.4.0 development work and is not part of the
 released v0.3.0 baseline. See `docs/reference/external-servers.mdx` for its
 transport, trust, schema, and policy boundaries.

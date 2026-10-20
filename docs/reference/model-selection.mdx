@@ -2,7 +2,8 @@
 title: Automatic model selection
 ---
 
-Automatic selection is opt-in, unreleased v0.4.0 work. It chooses a model; it
+Automatic selection is merged into `develop` via PR #19 (`ea2b973`), opt-in,
+unreleased v0.4.0 work. It chooses a model; it
 does not filter the capable model's tool list or authorize actions.
 
 ```bash
@@ -54,9 +55,11 @@ it does not abort a blocking HTTP read or undo an executed tool. The caller wait
 for that worker before it can start a replacement. Existing transport timeouts
 still apply. This may delay cancellation completion.
 
-The router accepts `run_turn(..., conversation_context=...)` with user/assistant
-message dictionaries. It redacts and forwards them, keeps no session store, and
-does not replace the separately developed wake-word session controller.
+The integrated wake controller supplies `run_turn(..., context=...)` with a
+`ConversationContext`. The legacy `conversation_context=...` API still accepts
+user/assistant message dictionaries. The router redacts and forwards history and
+keeps no session store; the wake controller owns bounded session memory. See
+[Jetson wake testing](../jetson-wake-testing.md) for setup and hardware checks.
 
 ## Diagnostics and evaluation
 

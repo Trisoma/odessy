@@ -123,6 +123,11 @@ Odessy exits. An http server gets a connection per listing and call.
   and you confirmed one call. Its session is closed, so the next call starts the
   server again.
 
+If a caller directly issues concurrent calls through one shared stdio session,
+a timeout or failure that closes it can also fail sibling calls. The built-in
+scheduler ordinarily treats external tools as exclusive; opt-in concurrency for
+selected built-in reads does not make third-party tools parallel.
+
 ## Audit log
 
 Every third-party call is recorded in `~/.local/state/odessy/external-audit.jsonl`,
@@ -159,6 +164,11 @@ exists. It fails on a malformed file, and warns, with the fix, when:
 - a tool will be left out;
 - the tool limit for the selected backend is exceeded;
 - the audit log is off.
+
+This check actively contacts each listed HTTP server or launches its listed stdio
+command to discover tools. It uses that server's configured `timeout`, per server;
+several unavailable servers can therefore make `doctor` take longer than one
+timeout. Running diagnostics is not a passive configuration inspection.
 
 ## Not covered yet
 

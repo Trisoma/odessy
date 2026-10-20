@@ -48,6 +48,13 @@ uncertain/tool requests use the configured capable model. Cloud fallback is off
 by default. See [model selection](docs/reference/model-selection.mdx); Jetson
 speed and memory benefits have not been established.
 
+Wake listening, confirmation UX (PR #17), automatic model selection (PR #19), and
+batch confirmation follow-ups (PR #18) are merged into `develop` and remain
+unreleased. `python -m odessy voice --listen` uses the integrated wake session;
+setup and physical audio acceptance are still pending. Follow
+[Jetson wake testing](docs/jetson-wake-testing.md), including the auxiliary
+openWakeWord model downloads, before trying it on the board.
+
 ## Python source layout
 
 Implementation modules under `src/odessy/` are grouped by responsibility:

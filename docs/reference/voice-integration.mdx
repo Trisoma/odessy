@@ -92,7 +92,7 @@ ODESSY_WHISPER_BIN      path/name of whisper-cli
 ODESSY_WHISPER_MODEL    path to ggml-tiny.en.bin or another Whisper model
 ODESSY_KOKORO_MODEL     path to kokoro-v1.0.int8.onnx
 ODESSY_KOKORO_VOICES    path to voices-v1.0.bin
-ODESSY_MODEL_BACKEND    local (lfm|ollama|llama_cpp) or a cloud provider; default lfm
+ODESSY_MODEL_BACKEND    local (lfm|ollama|llama_cpp), auto, or a cloud provider; default lfm
 ODESSY_OLLAMA_MODEL     Ollama model name used by voice mode; default config uses LFM2.5-Thinking
 ODESSY_MODEL_NAME       Default LFM model name, lfm2.5-thinking:1.2b-q8_0
 ODESSY_MODEL_ENDPOINT   Ollama endpoint, default http://127.0.0.1:11434
@@ -122,6 +122,11 @@ This latency was accepted for v0.2.0 because the priority is a working local voi
 
 ## Wake-Word Sessions
 
+Merged into `develop` in the unreleased v0.4.0 cycle. For Linux installation,
+support-model setup, audio checks, and a staged real-device test, follow the
+[Jetson wake test guide](../jetson-wake-testing.md). Automated CI does not qualify
+the Jetson microphone, detector, or playback latency.
+
 `odessy voice --listen` keeps the microphone open, waits for a wake phrase, and then
 runs exactly the same turn as a typed request. The existing single bounded turn is
 unchanged; `--listen` selects the session controller instead of one recording.
@@ -137,6 +142,11 @@ The interaction is: say the wake phrase, wait for the ready cue, then speak. Dur
 reply or a task, say the phrase again to interrupt; after the cue, "stop", "cancel" or
 "never mind" is handled locally without calling the model, and anything else becomes
 one pending replacement request that runs after the previous turn settles.
+
+`--setup-wake` installs Odessy's pinned keyword model. openWakeWord's feature and
+Silero VAD resources must also exist in the active environment; the Jetson guide
+documents their explicit upstream download and a detector-initialization check.
+Doctor does not load both detectors and cannot establish that these files work.
 
 | Interface | Behaviour |
 |---|---|
@@ -167,6 +177,15 @@ which is why the wake phrase still works while a turn executes or a reply plays.
 worker runs one turn at a time; two model generations never overlap on one adapter.
 Model generation itself runs in a worker thread, serialised by a lock, so the event
 loop keeps reading audio.
+
+Capture uses a bounded frame queue with explicit overflow failure. Transcription
+runs separately with one active STT operation and at most one pending recording;
+superseded transcripts are discarded. Activation/cancellation clears obsolete
+requests. Playback generation tokens discard queued or late-starting replies.
+Capture failure signals cooperative stop; closing wakes waiting tasks and closes
+the source, and startup failures release the recorder. Actual Whisper `empty`
+results use the same bounded blank retries. These are software behaviors covered
+by regression tests, not measured real-device guarantees.
 
 Authorization is untouched. The session decides when the microphone is open and what
 text to submit; every proposed action still passes validation, policy, confirmation,
