@@ -37,14 +37,14 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from odessy.ollama_model import (
+from odessy.models.ollama_model import (
     _fallback_observation_response,
     _looks_like_generic_final_response,
 )
-from odessy.deployment import command_tool_for_laptop, environment_prompt
-from odessy.redaction import redact_for_log, redact_text
-from odessy.tool_contracts import build_openai_tools, validate_tool_arguments
-from odessy.types import (
+from odessy.config.deployment import command_tool_for_laptop, environment_prompt
+from odessy.authority.redaction import redact_for_log, redact_text
+from odessy.tools.tool_contracts import build_openai_tools, validate_tool_arguments
+from odessy.runtime.types import (
     FinalResponse,
     ModelAction,
     ModelTurnDiagnostics,

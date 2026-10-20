@@ -13,11 +13,11 @@ from typing import Any
 
 import pytest
 
-from odessy.agent_loop import ExecutionTarget, OdessyAgent
-from odessy.mcp_server import build_odessy_mcp_server
-from odessy.policy import OdessyPolicy
-from odessy.types import FinalResponse, ModelAction, ToolRequest
-from odessy.tool_timeout import TOOL_TIMEOUT
+from odessy.runtime.agent_loop import ExecutionTarget, OdessyAgent
+from odessy.tools.mcp_server import build_odessy_mcp_server
+from odessy.authority.policy import OdessyPolicy
+from odessy.runtime.types import FinalResponse, ModelAction, ToolRequest
+from odessy.runtime.tool_timeout import TOOL_TIMEOUT
 
 
 @pytest.fixture

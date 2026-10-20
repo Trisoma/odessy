@@ -10,12 +10,12 @@ from typing import Any, Protocol
 from mcp import Client
 
 from odessy.execution.escalation import EscalationApproval, EscalationApprover
-from odessy.external_tools import NamespacedServer, public_name
-from odessy.policy import OdessyPolicy
-from odessy.repeat_guard import RepeatGuard, build_guard
-from odessy.tool_contracts import validate_tool_arguments
-from odessy.tool_timeout import Deadline, ToolTimeoutPolicy
-from odessy.types import (
+from odessy.tools.external_tools import NamespacedServer, public_name
+from odessy.authority.policy import OdessyPolicy
+from odessy.runtime.repeat_guard import RepeatGuard, build_guard
+from odessy.tools.tool_contracts import validate_tool_arguments
+from odessy.runtime.tool_timeout import Deadline, ToolTimeoutPolicy
+from odessy.runtime.types import (
     AgentTurnMetrics,
     AgentTurnResult,
     FinalResponse,

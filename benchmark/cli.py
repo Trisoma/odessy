@@ -483,7 +483,7 @@ def _seed_fake_audio(path: Path) -> Path:
     return path
 
 def _synthetic_observation():
-    from odessy.types import ToolObservation, ToolRequest
+    from odessy.runtime.types import ToolObservation, ToolRequest
 
     return ToolObservation(
         request=ToolRequest(name="time.now", arguments={}),

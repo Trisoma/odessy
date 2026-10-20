@@ -16,8 +16,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
-from odessy.tool_contracts import build_openai_tools
-from odessy.ollama_model import (
+from odessy.tools.tool_contracts import build_openai_tools
+from odessy.models.ollama_model import (
     _OllamaStreamTimeout,
     _OllamaToolsUnsupported,
     _accumulate_stream,
@@ -43,7 +43,7 @@ from odessy.ollama_model import (
     PROGRESS_TIMEOUT_ENV,
     generation_options,
 )
-from odessy.types import FinalResponse, ModelAction, ModelTurnDiagnostics, ToolObservation
+from odessy.runtime.types import FinalResponse, ModelAction, ModelTurnDiagnostics, ToolObservation
 
 DEFAULT_LFM_ENDPOINT = os.environ.get("ODESSY_MODEL_ENDPOINT", "http://127.0.0.1:11434")
 DEFAULT_LFM_MODEL = "lfm2.5-thinking:1.2b-q8_0"

@@ -22,8 +22,8 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 
-from odessy.config_file import config_files
-from odessy.deployment import (
+from odessy.config.config_file import config_files
+from odessy.config.deployment import (
     DEPLOYMENT_ENV,
     DeploymentConfigError,
     deployment_mode,
@@ -78,7 +78,7 @@ def _command_output(argv: list[str], timeout: float) -> str | None:
 def _node_tools_state() -> tuple[bool, bool]:
     """(dependencies installed, build current) for the repository's tools/ directory."""
 
-    from odessy.node_mcp import _build_is_current, _node_tools_dir, _public_repo_root
+    from odessy.tools.node_mcp import _build_is_current, _node_tools_dir, _public_repo_root
 
     tools_dir = _node_tools_dir(_public_repo_root())
     installed = (tools_dir / "node_modules" / "@modelcontextprotocol" / "sdk").exists()
@@ -147,7 +147,7 @@ def _deployment_check(mode: str, env: Mapping[str, str]) -> Check:
 
 
 def _model_checks(backend: str, env: Mapping[str, str], probes: Probes) -> list[Check]:
-    from odessy.cloud_model import CLOUD_PROVIDERS, CloudModelConfigError, build_cloud_model
+    from odessy.models.cloud_model import CLOUD_PROVIDERS, CloudModelConfigError, build_cloud_model
 
     backend = backend.lower()
     if backend in CLOUD_PROVIDERS:

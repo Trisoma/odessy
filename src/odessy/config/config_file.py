@@ -10,7 +10,7 @@ CONFIG_FILE_ENV = "ODESSY_CONFIG_FILE"
 def default_config_file() -> Path:
     """The repository's committed defaults."""
 
-    return Path(__file__).resolve().parents[2] / "config" / "odessy.env"
+    return Path(__file__).resolve().parents[3] / "config" / "odessy.env"
 
 
 def user_config_file() -> Path:

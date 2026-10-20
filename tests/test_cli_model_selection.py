@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from odessy.cli import _build_model
-from odessy.fake_model import FakeModel
-from odessy.lfm_model import LlamaCppLFMModel
-from odessy.ollama_model import OllamaModel
+from odessy.models.fake_model import FakeModel
+from odessy.models.lfm_model import LlamaCppLFMModel
+from odessy.models.ollama_model import OllamaModel
 
 
 def test_text_mode_defaults_to_lfm_model() -> None:

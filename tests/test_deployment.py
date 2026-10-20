@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from odessy.cloud_model import cloud_tools_openai, system_prompt as cloud_system_prompt
-from odessy.deployment import (
+from odessy.models.cloud_model import cloud_tools_openai, system_prompt as cloud_system_prompt
+from odessy.config.deployment import (
     DeploymentConfigError,
     command_tool_for_laptop,
     deployment_mode,
@@ -12,18 +12,18 @@ from odessy.deployment import (
     model_tool_names,
     remote_tool_server_urls,
 )
-from odessy.ollama_model import (
+from odessy.models.ollama_model import (
     _system_prompt,
     _text_system_prompt,
     _validate_tool_selection_for_user_intent,
 )
-from odessy.tool_contracts import (
+from odessy.tools.tool_contracts import (
     TOOL_REQUEST_SCHEMAS,
     build_openai_tools,
     render_tool_contracts,
     tool_description,
 )
-from odessy.types import ToolRequest
+from odessy.runtime.types import ToolRequest
 
 
 @pytest.fixture
