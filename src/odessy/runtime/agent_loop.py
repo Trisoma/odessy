@@ -197,7 +197,7 @@ class OdessyAgent:
                     await asyncio.shield(worker)
                 except asyncio.CancelledError:
                     cancelled = True
-                    request_stop = getattr(self._model, "request_stop", None)
+                    request_stop = getattr(getattr(self, "_model", None), "request_stop", None)
                     if callable(request_stop):
                         request_stop()
                 except Exception:

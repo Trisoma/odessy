@@ -10,7 +10,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from mcp.client import Client
 
