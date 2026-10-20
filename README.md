@@ -131,7 +131,8 @@ instead of both. `python -m odessy doctor` shows which files it found.
 Third-party MCP servers are listed in `~/.config/odessy/servers.toml`. Their tools are
 offered as `<server>.<tool>`. Calls require confirmation by default; explicit
 per-tool config may allow or deny them, and trusted read-only annotations may
-allow them under the documented rules. See `docs/reference/external-servers.mdx`.
+allow them under the documented rules. Each call is recorded in an audit log, and
+`python -m odessy doctor` checks the servers. See `docs/reference/external-servers.mdx`.
 
 `ODESSY_MAX_MODEL_CALLS` caps the model calls in one turn, counting corrections and
 follow-up steps: 8 by default for a cloud backend (about 2 s a call), 4 for a local

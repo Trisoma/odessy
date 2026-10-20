@@ -56,9 +56,10 @@ url = "http://127.0.0.1:9000/mcp"
 | `trust` | `untrusted` by default. See the decision order below |
 | `tools.<name>.policy` | Per-tool override. The only way to relax a decision |
 | `workspace_paths` | Argument names whose values must stay inside the workspace and not name credential files, checked even when a tool is allowed |
-| `timeout` | Seconds for listing the server's tools and for each call |
+| `timeout` | Seconds for starting the server, listing its tools, and each call |
 
-Server names are lowercase identifiers. The built-in families (`git`, `filesystem`,
+Server names are lowercase identifiers, without `__` and not ending in `_` (cloud
+adapters encode `.` as `__`). The built-in families (`git`, `filesystem`,
 `terminal`, `project`, `time`, `calculator`, `log`, `laptop`) and `odessy` are
 reserved. A malformed file stops Odessy with the file, server and problem named.
 
@@ -75,7 +76,8 @@ and the built-in tools are unaffected.
   Policy preflight can run before schema validation; confirmation may therefore
   be requested for arguments that are subsequently rejected.
 - **Left out, with a reason:** tool names that cannot travel through every model
-  adapter (anything but letters, digits, `_`, `.`, `-`, or containing `__`), schemas
+  adapter (anything but letters, digits, `_`, `.`, `-`, or containing `__` or `_.`),
+  schemas
   that are not objects, invalid, larger than 8000 characters or nested deeper than 8.
 - **Limit:** at most 64 third-party tools for a cloud model and 16 for a local one,
   in config order.
@@ -86,32 +88,78 @@ and the built-in tools are unaffected.
 
 Evaluated in order; the first rule that applies decides.
 
-| # | Rule | Decision |
-|---|---|---|
-| 1 | `policy = "deny"` for this tool | deny |
-| 2 | A `workspace_paths` argument leaves the workspace or names a credential file | deny |
-| 3 | `policy = "allow"` / `"confirm"` for this tool | allow / confirm |
-| 4 | The server is not `trusted` | confirm |
-| 5 | Trusted server, tool annotated `read_only_hint` and not `destructive_hint` | allow |
-| 6 | Anything else (trusted, but destructive, unannotated, or not read-only) | confirm |
+| # | Rule | Decision | Audit `rule` |
+|---|---|---|---|
+| 1 | `policy = "deny"` for this tool | deny | `config_deny` |
+| 2 | A `workspace_paths` argument leaves the workspace or names a credential file | deny | `workspace_path` |
+| 3 | `policy = "allow"` / `"confirm"` for this tool | allow / confirm | `config_allow` / `config_confirm` |
+| 4 | The server is not `trusted` | confirm | `untrusted_server` |
+| 5 | Trusted server, tool annotated `read_only_hint` and not `destructive_hint` | allow | `trusted_read_only` |
+| 6 | Anything else (trusted, but destructive, unannotated, or not read-only) | confirm | `default_confirm` |
 
 What a server says about its own tools only ever makes a decision stricter, with one
 exception: rule 5, which applies only to a server you marked `trusted`. Marking a
 server trusted is therefore a statement that you believe its annotations.
 
 Odessy's sandbox modes govern its own command tools; a third-party tool that is sent
-`sandbox_permissions` or `justification` without declaring them is denied.
+`sandbox_permissions` or `justification` without declaring them is denied
+(`sandbox_arguments`).
 
 A server must be listed to execute at all: the composition root wraps each listed
 server that answered in `ExecutionTarget`, and nothing found at runtime is added.
 
+## Sessions
+
+A stdio server is started once, on first use, and its session is kept for the run:
+the startup listing, every turn's listing, and every call share it. It is closed when
+Odessy exits. An http server gets a connection per listing and call.
+
+- A server that has exited is started again on its next use.
+- A call that fails or times out is **not retried**: the server may already have acted,
+  and you confirmed one call. Its session is closed, so the next call starts the
+  server again.
+
+## Audit log
+
+Every third-party call is recorded in `~/.local/state/odessy/external-audit.jsonl`,
+one JSON object per line. `ODESSY_AUDIT_FILE` sets another path; an empty value turns
+the log off. If the directory cannot be created, Odessy stops and says so; a later
+failed write is reported once and the run continues. Odessy's own tools are not
+recorded here (the turn log covers them).
+
+```json
+{"time": "...", "event": "decision", "server": "notes", "trust": "untrusted", "transport": "stdio",
+ "tool": "delete_note", "decision": "confirm", "rule": "untrusted_server", "risk": "medium",
+ "confirmed": false, "arguments": {"title": "<sha256>"}}
+{"time": "...", "event": "call", "server": "notes", "trust": "trusted", "transport": "stdio",
+ "tool": "search", "outcome": "ok", "duration_ms": 41.2}
+```
+
+- `decision` comes first for every proposed call. `confirmed` is `true` or `false` when
+  you were asked, `null` otherwise. A denied or declined call has only this record.
+- `call` follows for an executed call: `outcome` is `ok`, `error` (the server answered
+  with an error), `timeout`, or `failed` (with `error_type`).
+- **Arguments are names and SHA-256 hashes, never values.** Equal hashes show repeated
+  input. A short or guessable value can still be recovered by guessing, so keep the
+  log private.
+- `rule` names the decision rule above; the free-text reason is left out because it
+  can quote a path.
+
+## Doctor
+
+`python -m odessy doctor` has a "Third-party servers" section when a servers file
+exists. It fails on a malformed file, and warns, with the fix, when:
+
+- a stdio command is not on `PATH`;
+- a server does not answer;
+- a tool will be left out;
+- the tool limit for the selected backend is exceeded;
+- the audit log is off.
+
 ## Not covered yet
 
-- One connection per call. A stdio server is started for each listing and each call;
-  a session kept for the whole run is planned.
-- `python -m odessy doctor` does not yet check configured servers.
 - Confirmation is a terminal prompt in voice mode too.
-- No audit log of third-party calls beyond the turn log.
+- A call's `decision` and `call` records are linked by order only.
 - The merged snapshot imports `jsonschema` directly but obtains it through the
   `mcp` dependency; declaring it directly remains follow-up work.
 - Avoid `__` in server names: the merged config parser accepts it, but cloud

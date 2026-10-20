@@ -20,8 +20,9 @@ import json
 import os
 import re
 import sys
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+import time
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,6 +56,12 @@ MAX_DESCRIPTION_CHARS = 600
 MAX_SCHEMA_CHARS = 8000
 MAX_SCHEMA_DEPTH = 8
 DEFAULT_SERVER_TIMEOUT_SECONDS = 30
+#: Third-party tools offered in one run. Every tool's schema is sent with every model
+#: call, and a small local model chooses worse among many tools.
+MAX_EXTERNAL_TOOLS_CLOUD = 64
+MAX_EXTERNAL_TOOLS_LOCAL = 16
+#: Seconds a stdio server gets to exit when its session is closed.
+_SESSION_CLOSE_SECONDS = 5
 
 #: Environment variables every stdio server gets, so the command can start at all.
 #: Anything else must be listed in the server's `env`.
@@ -104,6 +111,9 @@ class NamespacedServer:
     """
 
     config: ServerConfig
+    #: Sessions kept open for the run. Without it (or for an http server) each listing
+    #: and call opens its own connection.
+    sessions: ExternalSessions | None = field(default=None, compare=False, repr=False)
 
     @property
     def prefix(self) -> str:
@@ -111,6 +121,173 @@ class NamespacedServer:
 
     def connection(self) -> Any:
         return self.config.connection()
+
+    @property
+    def _pooled(self) -> bool:
+        return self.sessions is not None and self.config.transport == "stdio"
+
+    @asynccontextmanager
+    async def session(self) -> AsyncIterator[Any]:
+        """A connected ``mcp.Client``: the run's kept session, or a fresh one."""
+
+        if self._pooled:
+            assert self.sessions is not None
+            yield await self.sessions.client(self.config.name, self.connection, timeout=self.config.timeout)
+            return
+        from mcp.client import Client
+
+        async with Client(self.connection()) as client:
+            yield client
+
+    async def list_tools(self) -> list[Any]:
+        async with self.session() as client:
+            result = await asyncio.wait_for(client.list_tools(), timeout=self.config.timeout)
+        return list(getattr(result, "tools", result))
+
+    async def call_tool(self, remote_name: str, arguments: dict[str, Any]) -> Any:
+        """Call the server's own ``remote_name``, bounded by the server's timeout.
+
+        A failed call is never retried: the server may have acted before the failure,
+        and the user confirmed one call. A kept session that failed or timed out is
+        closed, so the next call starts the server again.
+        """
+
+        from mcp.shared.exceptions import MCPError
+
+        from odessy.authority.audit import current_audit
+
+        started = time.perf_counter()
+        outcome, error_type = "failed", None
+        try:
+            async with self.session() as client:
+                result = await asyncio.wait_for(client.call_tool(remote_name, arguments), timeout=self.config.timeout)
+            outcome = "error" if _is_error_result(result) else "ok"
+            return result
+        except asyncio.TimeoutError:
+            outcome, error_type = "timeout", "TimeoutError"
+            await self._discard_session()
+            raise
+        except MCPError as error:
+            # An error answer: the session itself is fine.
+            error_type = error.__class__.__name__
+            raise
+        except Exception as error:
+            error_type = error.__class__.__name__
+            await self._discard_session()
+            raise
+        finally:
+            audit = current_audit()
+            if audit is not None:
+                audit.call(
+                    server=self.config,
+                    remote_name=remote_name,
+                    outcome=outcome,
+                    duration_ms=round((time.perf_counter() - started) * 1000, 1),
+                    error_type=error_type,
+                )
+
+    async def _discard_session(self) -> None:
+        if self._pooled:
+            assert self.sessions is not None
+            await self.sessions.discard(self.config.name)
+
+
+def _is_error_result(result: Any) -> bool:
+    return bool(getattr(result, "is_error", False) or getattr(result, "isError", False))
+
+
+class _Session:
+    """One kept connection, owned by its own task.
+
+    ``mcp.Client`` must be exited in the task that entered it. Listings and calls come
+    from different tasks (the tool scheduler dispatches in tasks), so the connection
+    lives in a dedicated owner task that enters it, waits to be told to close, and
+    exits it.
+    """
+
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+        self._ready: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._closing = asyncio.Event()
+        self._task = asyncio.create_task(self._own())
+
+    async def _own(self) -> None:
+        from mcp.client import Client
+
+        try:
+            async with Client(self._connection) as client:
+                self._ready.set_result(client)
+                await self._closing.wait()
+        except BaseException as error:
+            if not self._ready.done():
+                self._ready.set_exception(error if isinstance(error, Exception) else ConnectionError("session cancelled"))
+            if not isinstance(error, Exception):
+                raise
+
+    @property
+    def alive(self) -> bool:
+        return not self._task.done()
+
+    async def client(self, timeout: float) -> Any:
+        return await asyncio.wait_for(asyncio.shield(self._ready), timeout=timeout)
+
+    async def close(self) -> None:
+        self._closing.set()
+        try:
+            await asyncio.wait_for(asyncio.shield(self._task), timeout=_SESSION_CLOSE_SECONDS)
+        except BaseException:  # noqa: BLE001 - closing must not raise; cancel what lingers
+            self._task.cancel()
+        if self._ready.done() and not self._ready.cancelled():
+            self._ready.exception()  # mark retrieved: a failed start was already reported
+
+
+class ExternalSessions:
+    """The run's kept sessions to stdio servers, one per server, started on first use.
+
+    Starting a stdio server for every listing and call is slow and loses whatever
+    state the server keeps. A session that has ended (the server exited) is started
+    again on the next use; one that failed a call is closed by the caller.
+    """
+
+    def __init__(self) -> None:
+        self._sessions: dict[str, _Session] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._closed = False
+
+    async def client(self, name: str, connect: Callable[[], Any], *, timeout: float) -> Any:
+        if self._closed:
+            raise RuntimeError("external server sessions are closed")
+        lock = self._locks.setdefault(name, asyncio.Lock())
+        async with lock:
+            session = self._sessions.get(name)
+            if session is not None and not session.alive:
+                await session.close()
+                session = None
+            if session is None:
+                session = self._sessions[name] = _Session(connect())
+            try:
+                return await session.client(timeout)
+            except BaseException:
+                self._sessions.pop(name, None)
+                await session.close()
+                raise
+
+    async def discard(self, name: str) -> None:
+        session = self._sessions.pop(name, None)
+        if session is not None:
+            await session.close()
+
+    async def aclose(self) -> None:
+        self._closed = True
+        sessions, self._sessions = list(self._sessions.values()), {}
+        for session in sessions:
+            await session.close()
+
+    async def __aenter__(self) -> ExternalSessions:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.aclose()
 
 
 @dataclass(frozen=True)
@@ -163,6 +340,8 @@ def _parse_server(path: Path, name: str, raw: Any) -> ServerConfig:
         raise fail("must be a table")
     if not _SERVER_NAME.fullmatch(name):
         raise fail("name must be lowercase letters, digits, '-' or '_', starting with a letter (max 32)")
+    if not _round_trips(public_name(name, "tool")):
+        raise fail("name may not contain '__' or end with '_' (cloud adapters encode '.' as '__')")
     if name in RESERVED_SERVER_NAMES:
         raise fail("name is reserved for a built-in tool family")
 
@@ -235,6 +414,12 @@ def public_name(server: str, remote: str) -> str:
     return f"{server}.{remote}"
 
 
+def _round_trips(name: str) -> bool:
+    """Whether a public tool name survives the cloud adapters' '.' <-> '__' encoding."""
+
+    return name.replace(".", "__").replace("__", ".") == name
+
+
 def _depth(value: Any, level: int = 0) -> int:
     if isinstance(value, dict):
         return max((_depth(item, level + 1) for item in value.values()), default=level + 1)
@@ -247,7 +432,7 @@ def tool_from_mcp(server: ServerConfig, tool: Any) -> tuple[ExternalTool | None,
     """Turn one listed MCP tool into an ``ExternalTool``, or say why it is left out."""
 
     remote = str(getattr(tool, "name", "") or "")
-    if not _REMOTE_TOOL_NAME.fullmatch(remote) or "__" in remote:
+    if not _REMOTE_TOOL_NAME.fullmatch(remote) or not _round_trips(public_name(server.name, remote)):
         return None, f"{server.name}: tool {remote!r} skipped: unsupported name"
     schema = getattr(tool, "input_schema", None) or getattr(tool, "inputSchema", None) or {}
     if not isinstance(schema, dict) or schema.get("type", "object") != "object":

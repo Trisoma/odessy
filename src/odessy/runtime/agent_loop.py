@@ -10,7 +10,8 @@ from typing import Any, Protocol
 from mcp import Client
 
 from odessy.execution.escalation import EscalationApproval, EscalationApprover, EscalationDeniedError
-from odessy.tools.external_tools import NamespacedServer, public_name
+from odessy.authority.audit import current_audit
+from odessy.tools.external_tools import NamespacedServer, external_tool, public_name
 from odessy.authority.policy import OdessyPolicy
 from odessy.runtime.repeat_guard import RepeatGuard, build_guard
 from odessy.tools.tool_contracts import validate_tool_arguments
@@ -240,8 +241,10 @@ class OdessyAgent:
                 failure = None
                 reminders = {}
                 for call in action.calls:
-                    if self._policy.evaluate(call.request).action == "deny":
-                        failure = "Policy denied request: " + self._policy.evaluate(call.request).reason
+                    batch_decision = self._policy.evaluate(call.request)
+                    if batch_decision.action == "deny":
+                        self._audit_decision(call.request, batch_decision, confirmed=None)
+                        failure = "Policy denied request: " + batch_decision.reason
                         break
                 if failure is not None:
                     batch_observations = [ToolObservation(c.request, {"status": "denied", "reason": failure}, c.call_id) for c in action.calls]
@@ -339,6 +342,7 @@ class OdessyAgent:
             preflight_decision = self._policy.evaluate(action)
             _add_ms(metrics, "policy_validation_ms", _elapsed_ms(policy_started))
             if preflight_decision.action == "deny":
+                self._audit_decision(action, preflight_decision, confirmed=None)
                 log.append(
                     LogEntry(
                         "policy_denied",
@@ -510,6 +514,7 @@ class OdessyAgent:
         decision = self._policy.evaluate(action)
         _add_ms(metrics, "policy_validation_ms", _elapsed_ms(policy_started))
         if decision.action == "deny":
+            self._audit_decision(action, decision, confirmed=None)
             raise PermissionError(f"Policy denied request: {decision.reason}")
         if decision.requires_confirmation:
             log.append(
@@ -523,6 +528,7 @@ class OdessyAgent:
                 )
             )
             if not self._is_confirmed(decision, action):
+                self._audit_decision(action, decision, confirmed=False)
                 raise PermissionError(
                     f"Policy requires confirmation before execution: {decision.reason}"
                 )
@@ -536,9 +542,11 @@ class OdessyAgent:
                     },
                 )
             )
+            self._audit_decision(action, decision, confirmed=True)
         if not decision.allowed and not decision.requires_confirmation:
             raise PermissionError(decision.reason)
         if decision.allowed:
+            self._audit_decision(action, decision, confirmed=None)
             log.append(
                 LogEntry(
                     "policy_allowed",
@@ -660,6 +668,22 @@ class OdessyAgent:
             elapsed_seconds=float(elapsed) if isinstance(elapsed, (int, float)) else 0.0,
         )
 
+    @staticmethod
+    def _audit_decision(request: ToolRequest, decision: Any, *, confirmed: bool | None) -> None:
+        """Record a third-party call's decision; built-in tools are in the turn log only."""
+
+        audit = current_audit()
+        tool = external_tool(request.name)
+        if audit is None or tool is None:
+            return
+        audit.decision(
+            server=tool.server,
+            remote_name=tool.remote_name,
+            arguments=request.arguments,
+            decision=decision,
+            confirmed=confirmed,
+        )
+
     def _is_confirmed(self, decision: Any, request: ToolRequest) -> bool:
         if callable(self._confirm):
             return bool(self._confirm(decision, request))
@@ -693,9 +717,12 @@ class OdessyAgent:
         registry: dict[str, tuple[Any, Any]] = {}
         for server in self._mcp_servers:
             namespaced = isinstance(server, NamespacedServer)
-            async with Client(server.connection() if namespaced else server) as client:
-                tools = await client.list_tools()
-            available_tools = getattr(tools, "tools", tools)
+            if namespaced:
+                available_tools = await server.list_tools()
+            else:
+                async with Client(server) as client:
+                    tools = await client.list_tools()
+                available_tools = getattr(tools, "tools", tools)
             for tool in available_tools:
                 # A configured third-party server's tools are offered as
                 # "<server>.<tool>": they cannot shadow a built-in or each other, and the
@@ -715,10 +742,7 @@ class OdessyAgent:
             raise ValueError(f"Unknown MCP tool requested: {name}")
         tool, server = entry
         if isinstance(server, NamespacedServer):
-            async with Client(server.connection()) as client:
-                return await asyncio.wait_for(
-                    client.call_tool(tool.name, arguments), timeout=server.config.timeout
-                )
+            return await server.call_tool(tool.name, arguments)
         async with Client(server) as client:
             return await client.call_tool(name, arguments)
 
