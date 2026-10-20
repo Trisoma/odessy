@@ -236,10 +236,10 @@ class OllamaModel:
             return diagnostics
         return ModelTurnDiagnostics()
 
-    def propose(self, user_text: str) -> ModelAction:
+    def propose(self, user_text: str, *, context: Any = None) -> ModelAction:
         diagnostics = ModelTurnDiagnostics()
         object.__setattr__(self, "_last_turn_diagnostics", diagnostics)
-        _start_turn(self)
+        _start_turn_with_context(self, context)
         system_prompt = _system_prompt()
         fallback_prompt = _text_system_prompt(user_text)
         tools = build_openai_tools()
@@ -292,6 +292,7 @@ class OllamaModel:
     ) -> ModelAction:
         messages = [
             {"role": "system", "content": system_prompt},
+            *_history_messages(self),
             {"role": "user", "content": user_text},
         ]
         try:
@@ -414,6 +415,21 @@ def _start_turn(model: Any) -> None:
     """Forget the previous turn's tool results. Called from ``propose``."""
 
     object.__setattr__(model, "_turn_observations", [])
+
+
+def _start_turn_with_context(model: Any, context: Any = None) -> None:
+    """Reset turn state and record the history this turn is allowed to see."""
+
+    _start_turn(model)
+    object.__setattr__(model, "_turn_context", context)
+
+
+def _history_messages(model: Any) -> list[dict[str, str]]:
+    """Earlier exchanges for this turn, or nothing when the caller passed none."""
+
+    from odessy.runtime.types import conversation_messages
+
+    return conversation_messages(getattr(model, "_turn_context", None))
 
 
 def _remember_observation(model: Any, observation: ToolObservation) -> list[ToolObservation]:

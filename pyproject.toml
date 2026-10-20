@@ -22,6 +22,22 @@ test = [
 cloud = [
   "anthropic>=1.15",
 ]
+# Wake-word activation. Optional: importing `odessy.voice` must not require it, so
+# the detector and the VAD import openwakeword lazily and fail with a message that
+# says how to install it. Model weights are NOT covered by this extra and are not
+# Apache-licensed; `odessy voice --setup-wake` fetches them explicitly.
+wake = [
+  "openwakeword>=0.6.0",
+  "numpy>=1.26",
+]
+# The existing voice pipeline's Python dependencies. Declared now because the wake
+# session reuses them, and because a clone could not run `odessy voice` at all while
+# they were undeclared.
+voice = [
+  "kokoro-onnx>=0.4.0",
+  "onnxruntime>=1.17",
+  "numpy>=1.26",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

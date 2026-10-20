@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import os
 import sys
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -40,10 +42,21 @@ from odessy.models.ollama_model import OllamaModel
 from odessy.authority.policy import OdessyPolicy
 from odessy.runtime.types import PolicyDecision, ToolRequest
 from odessy.voice.audio_io import CommandAudioIO
+from odessy.voice.capture import CommandAudioStream, CommandPlayer
 from odessy.voice.config import VoiceConfig
+from odessy.voice.frames import WAKE_FRAME_BYTES
 from odessy.voice.loop import VoiceLoop
-from odessy.voice.stt import WhisperCppSTT
+from odessy.voice.memory import ConversationMemory
+from odessy.voice.segmentation import SegmenterConfig, UtteranceSegmenter
+from odessy.voice.session import (
+    SessionOptions,
+    VoiceSession,
+    pcm_to_wav,
+)
+from odessy.voice.stt import WhisperCppSTT, blank_transcript_reason
 from odessy.voice.tts import KokoroTTS
+from odessy.voice.vad import SileroSpeechDetector
+from odessy.voice.wake import OpenWakeWordDetector, WakeGate
 
 DEFAULT_LFM_ENDPOINT = "http://127.0.0.1:11434"
 DEFAULT_LFM_MODEL = "lfm2.5-thinking:1.2b-q8_0"
@@ -273,6 +286,112 @@ async def _run_voice_turn(agent: OdessyAgent, config: VoiceConfig) -> None:
         raise SystemExit(f"Voice turn failed with status {result.status}: {result.error}")
 
 
+async def _listen_async(
+    use_fake_model: bool,
+    backend: str | None = None,
+    interaction: str | None = None,
+) -> None:
+    """Continuous wake listening: the composition root for ``voice --listen``.
+
+    Everything hardware-specific is bound here and nowhere else: the session receives
+    plain callables, so it can be tested with recorded PCM and no device. Tool servers
+    stay open for the whole session rather than per turn — starting the local Node
+    server once per request would add seconds between the cue and the answer.
+    """
+
+    from odessy.voice.session import write_cue_wav
+
+    config = VoiceConfig.from_env()
+    workspace_root = Path.cwd()
+    model = _build_model(use_fake_model, backend=backend, model_name=config.ollama_model)
+    _announce_cloud(model)
+
+    stt = WhisperCppSTT(whisper_bin=config.whisper_bin, model_path=config.whisper_model)
+    tts = KokoroTTS(
+        model_path=config.kokoro_model,
+        voices_path=config.kokoro_voices,
+        provider=config.onnx_provider,
+        cache_dir=config.onnx_cache_dir,
+    )
+    player = CommandPlayer(player=config.audio_player, output_device=config.audio_output_device)
+    stream = CommandAudioStream(
+        recorder=config.audio_recorder, input_device=config.audio_input_device
+    ).start()
+    config.tmp_dir.mkdir(parents=True, exist_ok=True)
+    cue_path = config.tmp_dir / "odessy-cue.wav"
+    if not cue_path.exists():
+        write_cue_wav(cue_path)
+
+    async def next_frame() -> bytes:
+        return await asyncio.to_thread(stream.read, WAKE_FRAME_BYTES)
+
+    async def transcribe(pcm: bytes) -> str:
+        path = config.tmp_dir / f"odessy-utterance-{uuid.uuid4().hex}.wav"
+        path.write_bytes(pcm_to_wav(pcm))
+        try:
+            result = await asyncio.to_thread(stt.transcribe, path)
+        finally:
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
+        if result.status != "ok":
+            raise RuntimeError(result.error or result.status)
+        return result.text
+
+    async def speak(text: str) -> None:
+        path = config.tmp_dir / f"odessy-reply-{uuid.uuid4().hex}.wav"
+        result = await asyncio.to_thread(tts.synthesize, text, path)
+        try:
+            if result.status != "ok":
+                raise RuntimeError(result.error or result.status)
+            await asyncio.to_thread(player.play, path)
+        finally:
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
+
+    async def cue() -> None:
+        await asyncio.to_thread(player.play, cue_path)
+
+    async with _tool_servers(workspace_root, cloud=isinstance(model, CloudModel)) as servers:
+        agent = _build_agent(workspace_root, model, servers)
+
+        async def run_turn(text: str, stop: asyncio.Event, context: Any) -> str:
+            result = await agent.run_turn(text, stop_event=stop, context=context)
+            return result.final_text
+
+        session = VoiceSession(
+            frames=next_frame,
+            wake=OpenWakeWordDetector(str(config.wake_model)),
+            gate=WakeGate(threshold=config.wake_threshold),
+            vad=SileroSpeechDetector(),
+            transcribe=transcribe,
+            speak=speak,
+            stop_speaking=player.stop,
+            run_turn=run_turn,
+            classify_blank=blank_transcript_reason,
+            segmenter=UtteranceSegmenter(
+                SegmenterConfig(max_utterance_ms=config.max_utterance_seconds * 1000)
+            ),
+            options=SessionOptions(
+                interaction=cast(Any, interaction or config.interaction),
+                blank_retries=config.blank_retries,
+                followup_ms=config.followup_seconds * 1000,
+            ),
+            memory=ConversationMemory(),
+            status=print,
+            cue=cue,
+        )
+        try:
+            await session.run()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            await session.aclose()
+            player.stop()
+            stream.close()
+        if session.error is not None:
+            raise SystemExit(f"Voice session stopped: {session.error}")
+
+
 def _announce_cloud(model: object) -> None:
     """Say plainly, once per run, that this turn leaves the machine."""
     if isinstance(model, CloudModel):
@@ -421,14 +540,50 @@ def main(argv: list[str] | None = None) -> None:
 
         raise SystemExit(doctor_main(args.model_backend))
     if argv[:1] == ["voice"]:
-        parser = argparse.ArgumentParser(description="Run one bounded local Odessy voice turn.")
+        parser = argparse.ArgumentParser(
+            description="Run one bounded local Odessy voice turn, or listen for a wake phrase."
+        )
         parser.add_argument(
             "--fake-model",
             action="store_true",
             help="Use the deterministic fake model instead of Ollama/Gemma.",
         )
+        parser.add_argument(
+            "--listen",
+            action="store_true",
+            help="Keep listening for the wake phrase instead of recording one bounded turn.",
+        )
+        parser.add_argument(
+            "--interaction",
+            choices=["wake", "conversation"],
+            default=None,
+            help=(
+                "wake: require the phrase before every request (default). "
+                "conversation: keep a short follow-up window after each reply."
+            ),
+        )
+        parser.add_argument(
+            "--setup-wake",
+            action="store_true",
+            help="Download and verify the default wake-word model, then exit.",
+        )
         _model_backend_argument(parser)
         args = parser.parse_args(argv[1:])
+        if args.setup_wake:
+            from odessy.voice.assets import asset_dir, install
+
+            for line in install(asset_dir()):
+                print(line)
+            return
+        if args.listen:
+            asyncio.run(
+                _listen_async(
+                    use_fake_model=args.fake_model,
+                    backend=args.model_backend,
+                    interaction=args.interaction,
+                )
+            )
+            return
         asyncio.run(_voice_async(use_fake_model=args.fake_model, backend=args.model_backend))
         return
     parser = argparse.ArgumentParser(description="Run the Odessy text loop.")

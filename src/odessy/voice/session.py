@@ -1,0 +1,444 @@
+"""The wake-word voice session.
+
+This is the controller the plan describes: it owns one microphone stream, wakes on a
+phrase, captures one utterance, and hands the transcript to the existing agent turn.
+It never decides whether an action is allowed. Every proposed action still goes
+through validation, policy, confirmation, and the execution-target gate, exactly as
+typed input does — the session only decides *when the microphone is open* and *what
+text to submit*.
+
+The design rule that shapes everything here is: **one reader, one worker**.
+
+* The reader owns the device. It never blocks on a model call, so the wake phrase is
+  still heard while a turn is executing or a reply is playing.
+* The worker runs one turn at a time. Two turns can never overlap, because a second
+  model generation on the same instance while the first is still streaming is not a
+  thing the adapters support.
+
+Interruption is therefore cooperative: a wake event sets the turn's stop event and
+kills playback, and the running turn notices at its next check. Anything the turn
+already completed stays completed.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import io
+import wave
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, field, replace
+from typing import Literal
+
+from odessy.runtime.types import ConversationContext
+from odessy.voice.frames import (
+    WAKE_FRAME_BYTES,
+    WAKE_FRAME_MS,
+    FrameBuffer,
+)
+from odessy.voice.memory import ConversationMemory
+from odessy.voice.segmentation import SegmenterConfig, UtteranceSegmenter
+from odessy.voice.vad import SpeechDetector
+from odessy.voice.wake import WakeDetector, WakeGate
+
+SessionState = Literal[
+    "LISTENING",
+    "READY",
+    "RECORDING",
+    "TRANSCRIBING",
+    "THINKING",
+    "SPEAKING",
+    "FOLLOWUP",
+    "STOPPING",
+    "ERROR",
+]
+
+Interaction = Literal["wake", "conversation"]
+
+#: Exact phrases handled locally after the cue. Normalised to lowercase words.
+CANCEL_PHRASES = frozenset({"stop", "cancel", "never mind", "nevermind"})
+
+#: What a stopped turn is told, and what the user is told back. The wording matters:
+#: a cancellation does not undo an action that already ran.
+STOPPED_TEXT = "Stopped. Actions that already completed remain completed; remote completion may be unknown."
+
+FrameSource = Callable[[], Awaitable[bytes]]
+"""Reads one wake-sized frame. Raises on end of stream or device failure."""
+
+Transcribe = Callable[[bytes], Awaitable[str]]
+Speak = Callable[[str], Awaitable[None]]
+StopSpeaking = Callable[[], None]
+RunTurn = Callable[[str, asyncio.Event, ConversationContext], Awaitable[str]]
+
+
+@dataclass(frozen=True)
+class SessionOptions:
+    interaction: Interaction = "wake"
+    blank_retries: int = 2
+    followup_ms: int = 10_000
+    cue: bool = True
+
+    def __post_init__(self) -> None:
+        if self.interaction not in ("wake", "conversation"):
+            raise ValueError("interaction must be 'wake' or 'conversation'")
+        if self.blank_retries < 0:
+            raise ValueError("blank_retries must not be negative")
+
+
+@dataclass
+class VoiceSession:
+    """Drive wake → capture → turn → reply, with interruption."""
+
+    frames: FrameSource
+    wake: WakeDetector
+    gate: WakeGate
+    vad: SpeechDetector
+    transcribe: Transcribe
+    speak: Speak
+    stop_speaking: StopSpeaking
+    run_turn: RunTurn
+    classify_blank: Callable[[str], str | None]
+    options: SessionOptions = field(default_factory=SessionOptions)
+    segmenter: UtteranceSegmenter = field(default_factory=UtteranceSegmenter)
+    memory: ConversationMemory = field(default_factory=ConversationMemory)
+    status: Callable[[str], None] = lambda message: None
+    cue: Callable[[], Awaitable[None]] | None = None
+
+    state: SessionState = "LISTENING"
+    error: str | None = None
+
+    _stop: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+    _pending: str | None = field(default=None, repr=False)
+    _pending_ready: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+    _vad_frames: FrameBuffer = field(init=False, repr=False)
+    _frames_since_wake: int | None = None
+    _followup_frames: int = 0
+    _turn_active: bool = False
+    _turn_id: int = 0
+    _blank_attempts: int = 0
+    _closing: bool = False
+    _worker: asyncio.Task[None] | None = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        self._vad_frames = FrameBuffer(self.vad.frame_bytes)
+        # Keep the caller's timings; only the frame size is the session's to decide,
+        # because it has to match the VAD's frame size.
+        self.segmenter.config = replace(
+            self.segmenter.config, frame_ms=_frame_ms(self.vad.frame_bytes)
+        )
+
+    # -- lifecycle ---------------------------------------------------------------
+
+    async def run(self) -> None:
+        """Listen until the source ends, a device fails, or ``aclose`` is called."""
+
+        self._worker = asyncio.create_task(self._serve())
+        try:
+            await self._read_loop()
+        finally:
+            self._closing = True
+            self._pending_ready.set()
+            if self._worker is not None:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._worker
+                self._worker = None
+            if self.state != "ERROR":
+                self.state = "STOPPING"
+
+    async def aclose(self) -> None:
+        self._closing = True
+        self._stop.set()
+        with contextlib.suppress(Exception):
+            self.stop_speaking()
+
+    # -- the reader: owns the device, never blocks on a turn ---------------------
+
+    async def _read_loop(self) -> None:
+        while not self._closing:
+            try:
+                frame = await self.frames()
+            except Exception as error:  # noqa: BLE001 - device failure is reportable
+                self._fail(f"microphone capture failed: {error}")
+                return
+            if not frame:
+                self._fail("microphone capture ended")
+                return
+            try:
+                await self._handle_frame(frame)
+            except Exception as error:  # noqa: BLE001 - never lose the device loop
+                self._fail(f"voice session error: {error}")
+                return
+            # Yield once per frame. A frame source that returns without suspending --
+            # a file, a test script, an already-buffered socket -- would otherwise let
+            # this loop spin forever and starve the worker, so a turn queued during
+            # capture would never start.
+            await asyncio.sleep(0)
+
+    async def _handle_frame(self, frame: bytes) -> None:
+        if self.state == "RECORDING":
+            await self._feed_segmenter(frame)
+            return
+
+        if self.state == "FOLLOWUP":
+            if await self._followup_speech(frame):
+                return
+
+        # Wake scoring runs in every state except RECORDING (returned above), which is
+        # what lets the phrase interrupt processing and playback.
+        score = self.wake.score(frame)
+        accepted = self.gate.accepts(score, frames_since_activation=self._frames_since_wake)
+        self._frames_since_wake = (
+            0 if accepted else (None if self._frames_since_wake is None else self._frames_since_wake + 1)
+        )
+        if accepted:
+            await self._activate()
+
+    # -- activation and capture --------------------------------------------------
+
+    async def _activate(self) -> None:
+        """Wake phrase heard: interrupt, cue, then open one command window."""
+
+        self._turn_id += 1
+        interrupting = self._turn_active or self.state == "SPEAKING"
+        self._stop.set()
+        with contextlib.suppress(Exception):
+            self.stop_speaking()
+        if interrupting:
+            self.status("Interrupted")
+
+        # Model buffers hold audio from before the cue; without this the cue itself
+        # and the tail of the previous utterance are scored as the next command.
+        self.wake.reset()
+        self.vad.reset()
+        self._vad_frames.reset()
+
+        self.state = "READY"
+        if self.options.cue and self.cue is not None:
+            await self.cue()
+        # Capture starts after the cue returns: the contract is that the user speaks
+        # after the cue, so cue audio is never part of the utterance.
+        self.segmenter.begin()
+        self._blank_attempts = 0
+        self.state = "RECORDING"
+
+    async def _feed_segmenter(self, frame: bytes) -> None:
+        for vad_frame in self._vad_frames.push(frame):
+            outcome = self.segmenter.push(vad_frame, self.vad.is_speech(vad_frame))
+            if outcome == "ended":
+                await self._finish_capture()
+                return
+            if outcome == "no_speech":
+                self.status("No speech detected")
+                self._enter_listening()
+                return
+
+    async def _finish_capture(self) -> None:
+        audio = self.segmenter.utterance
+        turn_id = self._turn_id
+        self.state = "TRANSCRIBING"
+        self.status("Transcribing speech")
+        try:
+            transcript = await self.transcribe(audio)
+        except Exception as error:  # noqa: BLE001 - reported, admission continues
+            self.status(f"Transcription failed: {error}")
+            self._enter_listening()
+            return
+        await self._submit(transcript, turn_id)
+
+    async def _submit(self, transcript: str, turn_id: int) -> None:
+        """Decide locally, or queue exactly one pending request."""
+
+        text = " ".join(transcript.split())
+        if _is_cancel(text):
+            # Handled without the model: a cancellation instruction is not a request
+            # that needs a tool-call decision.
+            self.status(STOPPED_TEXT)
+            self._enter_listening()
+            return
+
+        blank = self.classify_blank(text)
+        if blank is not None:
+            self._blank_attempts += 1
+            if self._blank_attempts <= self.options.blank_retries:
+                # Re-record rather than resubmit: a new recording is a new request,
+                # and the blank one was never sent to the model.
+                total = self.options.blank_retries + 1
+                self.status(
+                    f"No usable speech ({blank}); recording again "
+                    f"({self._blank_attempts + 1}/{total})"
+                )
+                self._vad_frames.reset()
+                self.segmenter.begin()
+                self.state = "RECORDING"
+                return
+            self.status(f"No usable speech ({blank}); nothing was sent to the model")
+            self._enter_listening()
+            return
+
+        self._blank_attempts = 0
+        self._pending = text
+        self._pending_ready.set()
+        self.state = "THINKING"
+
+    # -- the worker: one turn at a time -----------------------------------------
+
+    async def _serve(self) -> None:
+        while True:
+            await self._pending_ready.wait()
+            text, self._pending = self._pending, None
+            self._pending_ready.clear()
+            if self._closing:
+                return
+            if text is None:
+                continue
+            await self._run(text)
+
+    async def _run(self, text: str) -> None:
+        turn_id = self._turn_id
+        self._stop = asyncio.Event()
+        self._turn_active = True
+        self.state = "THINKING"
+        self.status("Model is thinking")
+        try:
+            answer = await self.run_turn(text, self._stop, self.memory.context())
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:  # noqa: BLE001 - reported; the session continues
+            self._turn_active = False
+            self.status(f"Turn failed: {error}")
+            self._enter_listening()
+            return
+        self._turn_active = False
+
+        stopped = self._stop.is_set()
+        if stopped:
+            answer = STOPPED_TEXT
+        elif turn_id == self._turn_id:
+            self.memory.add(text, answer)
+
+        if self._closing:
+            return
+        if turn_id != self._turn_id:
+            # A newer activation superseded this turn: its answer is stale, and
+            # speaking it would talk over whatever the user is now saying.
+            return
+
+        await self._say(answer, turn_id)
+
+    async def _say(self, text: str, turn_id: int) -> None:
+        if not text.strip():
+            self._enter_listening()
+            return
+        self.state = "SPEAKING"
+        self.status("Speaking")
+        try:
+            await self.speak(text)
+        except Exception as error:  # noqa: BLE001 - a failed reply is not fatal
+            self.status(f"Speech output failed: {error}")
+        if turn_id != self._turn_id or self._closing:
+            return
+        if self.options.interaction == "conversation":
+            self.state = "FOLLOWUP"
+            self._followup_frames = self.options.followup_ms // WAKE_FRAME_MS
+            self.status("Listening for a follow-up")
+        else:
+            self._enter_listening()
+
+    # -- follow-up window --------------------------------------------------------
+
+    async def _followup_speech(self, frame: bytes) -> bool:
+        """Within the follow-up window, speech opens capture without a wake phrase."""
+
+        if self._followup_frames <= 0:
+            self.status("Follow-up window closed")
+            self._enter_listening()
+            return False
+        self._followup_frames -= 1
+        for vad_frame in self._vad_frames.push(frame):
+            if self.vad.is_speech(vad_frame):
+                self.vad.reset()
+                self._vad_frames.reset()
+                self.segmenter.begin()
+                self.state = "RECORDING"
+                return True
+        return False
+
+    # -- state helpers -----------------------------------------------------------
+
+    def _enter_listening(self) -> None:
+        self.wake.reset()
+        self.vad.reset()
+        self._vad_frames.reset()
+        self._stop = asyncio.Event()
+        self._followup_frames = 0
+        self._blank_attempts = 0
+        self.state = "LISTENING"
+
+    def _fail(self, message: str) -> None:
+        self.error = message
+        self.state = "ERROR"
+        self.status(message)
+        self._closing = True
+        self._pending_ready.set()
+        with contextlib.suppress(Exception):
+            self.stop_speaking()
+
+
+def _is_cancel(text: str) -> bool:
+    return " ".join(text.lower().split()).rstrip(".!?") in CANCEL_PHRASES
+
+
+def _frame_ms(frame_bytes: int) -> int:
+    from odessy.voice.frames import BYTES_PER_MS
+
+    return max(1, frame_bytes // BYTES_PER_MS)
+
+
+def pcm_to_wav(pcm: bytes, *, sample_rate: int = 16_000) -> bytes:
+    """Wrap raw 16-bit mono PCM in a WAV container for the existing STT adapter."""
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(sample_rate)
+        handle.writeframes(pcm)
+    return buffer.getvalue()
+
+
+def write_cue_wav(path: "Path", *, milliseconds: int = 150, frequency: int = 880) -> None:
+    """Write the short ready tone the user speaks after.
+
+    A cue rather than a spoken word: it must be recognisably not speech, so the
+    detector and the transcriber never see it as part of the request.
+    """
+
+    import math
+    import struct
+    from pathlib import Path
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    samples = int(16_000 * milliseconds / 1000)
+    frames = bytearray()
+    for index in range(samples):
+        # Linear fade in and out so the tone does not click.
+        fade = min(1.0, index / 400, (samples - index) / 400)
+        value = int(6000 * fade * math.sin(2 * math.pi * frequency * index / 16_000))
+        frames.extend(struct.pack("<h", value))
+    with wave.open(str(path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16_000)
+        handle.writeframes(bytes(frames))
+
+
+async def iter_frames(stream: AsyncIterator[bytes], size: int = WAKE_FRAME_BYTES) -> AsyncIterator[bytes]:
+    """Re-cut an async byte stream into fixed frames. Used by the CLI adapter."""
+
+    pending = bytearray()
+    async for chunk in stream:
+        pending.extend(chunk)
+        while len(pending) >= size:
+            yield bytes(pending[:size])
+            del pending[:size]

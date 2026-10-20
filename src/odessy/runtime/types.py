@@ -37,6 +37,44 @@ ModelAction = ToolRequest | ToolBatch | FinalResponse
 
 
 @dataclass(frozen=True)
+class ConversationTurn:
+    """One completed user/assistant exchange from earlier in a session."""
+
+    user: str
+    assistant: str
+
+
+@dataclass(frozen=True)
+class ConversationContext:
+    """Earlier exchanges to include in a request. Empty by default.
+
+    Defaulted to empty everywhere so text mode and the evaluation suite keep their
+    exact existing semantics: nothing about a turn changes unless a caller passes
+    history explicitly, and only the voice session does.
+
+    This carries *speech history only*. Prior approvals, tool-call identifiers, and
+    tool observations belong to the turn that produced them and are never replayed
+    from here.
+    """
+
+    turns: tuple[ConversationTurn, ...] = ()
+
+
+def conversation_messages(context: ConversationContext | None) -> list[dict[str, str]]:
+    """Render history as role-separated messages, oldest first."""
+
+    if context is None:
+        return []
+    messages: list[dict[str, str]] = []
+    for turn in context.turns:
+        if turn.user:
+            messages.append({"role": "user", "content": turn.user})
+        if turn.assistant:
+            messages.append({"role": "assistant", "content": turn.assistant})
+    return messages
+
+
+@dataclass(frozen=True)
 class ToolObservation:
     request: ToolRequest
     result: dict[str, Any]

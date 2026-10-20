@@ -295,11 +295,18 @@ class CloudModel:
 
     # -- ModelAdapter -------------------------------------------------------
 
-    def propose(self, user_text: str) -> ModelAction:
+    def propose(self, user_text: str, *, context: Any = None) -> ModelAction:
+        from odessy.runtime.types import conversation_messages
+
         self._diagnostics = ModelTurnDiagnostics()
         self._pending_call_id = None
         self._pending_batch = ()
-        self._messages = [{"role": "user", "content": redact_text(user_text)}]
+        # History first, then the request: role-separated, and redacted before it was
+        # stored, so a secret spoken once is not re-sent on every later turn.
+        self._messages = [
+            *conversation_messages(context),
+            {"role": "user", "content": redact_text(user_text)},
+        ]
         reply = self._exchange("proposal_generation_ms")
         try:
             return self._to_action(reply, user_text)

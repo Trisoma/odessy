@@ -18,6 +18,7 @@ from odessy.runtime.tool_timeout import Deadline, ToolTimeoutPolicy
 from odessy.runtime.types import (
     AgentTurnMetrics,
     AgentTurnResult,
+    ConversationContext,
     FinalResponse,
     LogEntry,
     ModelTurnDiagnostics,
@@ -160,7 +161,40 @@ class OdessyAgent:
         #: multi-tool continuation, and the adapter's own repair calls.
         self._max_model_calls = max(1, max_model_calls)
         self._guard_template = guard
+        #: Serialises model generation on this agent instance.
+        #:
+        #: The adapters are synchronous and stream over ``urllib``, so calling them
+        #: inline blocks the event loop. Text mode never noticed; a voice session
+        #: does, because a blocked loop cannot read the microphone and would not hear
+        #: the wake phrase during a generation. Generation therefore runs in a worker
+        #: thread, and the lock keeps exactly one generation in flight per adapter:
+        #: the adapters hold per-turn state (``_turn_observations``, ``_messages``)
+        #: that a second concurrent entry would corrupt.
+        self._model_lock = asyncio.Lock()
         self._timeouts = timeouts or ToolTimeoutPolicy()
+
+    async def _generate(self, call: Callable[[], ModelAction]) -> ModelAction:
+        """Run one synchronous model call without blocking the event loop."""
+
+        async with self._model_lock:
+            return await asyncio.to_thread(call)
+
+    async def _propose(self, user_text: str, context: ConversationContext | None) -> ModelAction:
+        """Propose with history only when there is history.
+
+        A caller that passes nothing gets exactly the call shape text mode and the
+        evaluation suite already use, so no adapter has to grow a parameter to keep
+        working. An adapter that *does* receive history must render it: passing it
+        where it is unsupported raises TypeError rather than silently dropping it.
+        """
+
+        if context is None or not context.turns:
+            return await self._generate(lambda: self._model.propose(user_text))
+        return await self._generate(lambda: self._model.propose(user_text, context=context))
+
+    @staticmethod
+    def _stop_requested(stop_event: asyncio.Event | None) -> bool:
+        return stop_event is not None and stop_event.is_set()
 
     async def run_turn(
         self,
@@ -168,13 +202,21 @@ class OdessyAgent:
         *,
         status_callback: Callable[[str], None] | None = None,
         stop_event: asyncio.Event | None = None,
+        context: ConversationContext | None = None,
     ) -> AgentTurnResult:
         turn_started = time.perf_counter()
         metrics = AgentTurnMetrics()
         log: list[LogEntry] = [LogEntry("user_input", {"text": user_text})]
+        if self._stop_requested(stop_event):
+            return _finish_turn_result(
+                final_text="Stopped before generation.",
+                log=log,
+                metrics=metrics,
+                turn_started=turn_started,
+            )
         _status(status_callback, "Generating action proposal")
         proposal_started = time.perf_counter()
-        action = self._model.propose(user_text)
+        action = await self._propose(user_text, context)
         proposal_elapsed = _elapsed_ms(proposal_started)
         _merge_model_diagnostics(
             metrics,
@@ -313,7 +355,9 @@ class OdessyAgent:
                     if callable(finalizer):
                         finalizer(batch_observations)
                     return _finish_turn_result(final_text=stopped or "Tool continuation budget exhausted.", log=log, metrics=metrics, turn_started=turn_started, tool_request=last_request, tool_result=last_result, tool_observations=observations)
-                action = self._model.respond_to_observations(user_text, batch_observations)
+                action = await self._generate(
+                    lambda: self._model.respond_to_observations(user_text, batch_observations)
+                )
                 model_calls += 1
                 _merge_model_diagnostics(metrics, _model_diagnostics(self._model))
                 if isinstance(action, FinalResponse):
@@ -387,7 +431,7 @@ class OdessyAgent:
                         tool_result=last_result,
                         tool_observations=observations,
                     )
-                next_action = self._resume(
+                next_action = await self._resume(
                     user_text,
                     ToolObservation(
                         request=action,
@@ -426,6 +470,19 @@ class OdessyAgent:
             _status(status_callback, "Running tool")
             mcp_started = time.perf_counter()
             dispatched += 1
+            if self._stop_requested(stop_event):
+                # The stop check sits immediately before dispatch, not only at the top
+                # of the loop: a confirmation or a repair can take long enough for the
+                # user to cancel in between, and a cancelled turn must not act.
+                return _finish_turn_result(
+                    final_text="Stopped before tool dispatch.",
+                    log=log,
+                    metrics=metrics,
+                    turn_started=turn_started,
+                    tool_request=last_request,
+                    tool_result=last_result,
+                    tool_observations=observations,
+                )
             result = await self._call_tool(action.name, call_arguments, tool_registry)
             log.append(LogEntry("mcp_tool_called", {"name": action.name}))
 
@@ -464,7 +521,9 @@ class OdessyAgent:
 
             _status(status_callback, "Generating response")
             final_started = time.perf_counter()
-            next_action = self._model.respond_to_observation(user_text, observation)
+            next_action = await self._generate(
+                lambda: self._model.respond_to_observation(user_text, observation)
+            )
             final_elapsed = _elapsed_ms(final_started)
             _merge_model_diagnostics(
                 metrics,
@@ -620,7 +679,7 @@ class OdessyAgent:
             return max(diagnostics.model_call_count, loop_count)
         return loop_count
 
-    def _resume(
+    async def _resume(
         self,
         user_text: str,
         observation: ToolObservation,
@@ -636,7 +695,7 @@ class OdessyAgent:
             )
         )
         _status(status_callback, message)
-        return self._model.respond_to_observation(user_text, observation)
+        return await self._generate(lambda: self._model.respond_to_observation(user_text, observation))
 
     @staticmethod
     def _drain_reminders(pending: list[str]) -> dict[str, Any]:
