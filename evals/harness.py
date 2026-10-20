@@ -106,6 +106,7 @@ class Attempt:
     latency_ms: float = 0.0
     model_calls: int = 0
     prompt_tokens: int | None = None
+    routing: dict[str, Any] | None = None
     completion_tokens: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -138,6 +139,20 @@ class RecordingModel:
     def last_turn_diagnostics(self) -> ModelTurnDiagnostics:
         diagnostics = getattr(self._inner, "last_turn_diagnostics", None)
         return diagnostics if isinstance(diagnostics, ModelTurnDiagnostics) else ModelTurnDiagnostics()
+
+    @property
+    def background_generation(self):
+        return getattr(self._inner, "background_generation", False) is True
+
+    def request_stop(self):
+        stop = getattr(self._inner, "request_stop", None)
+        if stop is not None:
+            stop()
+
+    def begin_turn(self, **kwargs):
+        begin = getattr(self._inner, "begin_turn", None)
+        if begin is not None:
+            begin(**kwargs)
 
     def propose(self, user_text: str) -> ModelAction:
         return self._record(self._inner.propose(user_text))
@@ -270,6 +285,7 @@ async def run_attempt(
             for call in recorder.calls
         ]
         diagnostics = recording_model.last_turn_diagnostics
+        record.routing = diagnostics.routing
         record.model_calls = diagnostics.model_call_count or len(recording_model.proposals)
         record.prompt_tokens = diagnostics.prompt_tokens
         record.completion_tokens = diagnostics.completion_tokens

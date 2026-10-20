@@ -173,13 +173,21 @@ class OdessyAgent:
         *,
         status_callback: Callable[[str], None] | None = None,
         stop_event: asyncio.Event | None = None,
+        conversation_context: tuple = (),
     ) -> AgentTurnResult:
         turn_started = time.perf_counter()
         metrics = AgentTurnMetrics()
         log: list[LogEntry] = [LogEntry("user_input", {"text": user_text})]
         _status(status_callback, "Generating action proposal")
         proposal_started = time.perf_counter()
-        action = self._model.propose(user_text)
+        deadline = Deadline(self._deadline_seconds if self._deadline_seconds is not None else float("inf")).start()
+        begin_turn = getattr(self._model, "begin_turn", None)
+        if callable(begin_turn):
+            begin_turn(max_model_calls=self._max_model_calls, stop_event=stop_event, deadline=deadline,
+                       conversation_context=conversation_context)
+        if stop_event is not None and stop_event.is_set():
+            return _finish_turn_result(final_text="Stopped. No tools were dispatched.", log=log, metrics=metrics, turn_started=turn_started)
+        action = await self._generate("propose", user_text)
         proposal_elapsed = _elapsed_ms(proposal_started)
         _merge_model_diagnostics(
             metrics,
@@ -201,9 +209,6 @@ class OdessyAgent:
         # One wall-clock budget for the whole turn, shared by rejection retries
         # and multi-tool continuation. Unset budget -> infinite, so the deadline
         # is always present rather than conditionally checked.
-        deadline = Deadline(
-            self._deadline_seconds if self._deadline_seconds is not None else float("inf")
-        ).start()
 
         model_calls = 1
 
@@ -321,7 +326,7 @@ class OdessyAgent:
                     if callable(finalizer):
                         finalizer(batch_observations)
                     return _finish_turn_result(final_text=stopped or "Tool continuation budget exhausted.", log=log, metrics=metrics, turn_started=turn_started, tool_request=last_request, tool_result=last_result, tool_observations=observations)
-                action = self._model.respond_to_observations(user_text, batch_observations)
+                action = await self._generate("respond_to_observations", user_text, batch_observations)
                 model_calls += 1
                 _merge_model_diagnostics(metrics, _model_diagnostics(self._model))
                 if isinstance(action, FinalResponse):
@@ -396,7 +401,7 @@ class OdessyAgent:
                         tool_result=last_result,
                         tool_observations=observations,
                     )
-                next_action = self._resume(
+                next_action = await self._resume(
                     user_text,
                     ToolObservation(
                         request=action,
@@ -431,6 +436,8 @@ class OdessyAgent:
             log.append(LogEntry("schema_validated", {"name": action.name}))
 
             call_arguments = await self._prepare_call(action, tool_registry, log, metrics)
+            if stop_event is not None and stop_event.is_set():
+                return _finish_turn_result(final_text="Stopped. No further tools were dispatched.", log=log, metrics=metrics, turn_started=turn_started, tool_observations=observations)
 
             _status(status_callback, "Running tool")
             mcp_started = time.perf_counter()
@@ -473,7 +480,7 @@ class OdessyAgent:
 
             _status(status_callback, "Generating response")
             final_started = time.perf_counter()
-            next_action = self._model.respond_to_observation(user_text, observation)
+            next_action = await self._generate("respond_to_observation", user_text, observation)
             final_elapsed = _elapsed_ms(final_started)
             _merge_model_diagnostics(
                 metrics,
@@ -513,6 +520,30 @@ class OdessyAgent:
                     tool_observations=observations,
                 )
             action = next_action
+
+    async def _generate(self, method, *args):
+        call = getattr(self._model, method)
+        if getattr(self._model, "background_generation", False) is not True:
+            return call(*args)
+        # Keep the event loop responsive, but never leave an orphan generation
+        # using mutable adapter state after a caller cancels its wait.
+        worker = asyncio.create_task(asyncio.to_thread(call, *args))
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            cancel = getattr(self._model, "request_stop", None)
+            if cancel is not None:
+                cancel()
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not worker.cancelled():
+                worker.exception()  # Retrieve a late failure; cancellation wins.
+            raise
 
     async def _prepare_call(self, action, tool_registry, log, metrics, answer: bool | None = None):
         """Authorize one call. ``answer`` is the user's reply already given in a batch prompt."""
@@ -641,7 +672,7 @@ class OdessyAgent:
             return max(diagnostics.model_call_count, loop_count)
         return loop_count
 
-    def _resume(
+    async def _resume(
         self,
         user_text: str,
         observation: ToolObservation,
@@ -657,7 +688,7 @@ class OdessyAgent:
             )
         )
         _status(status_callback, message)
-        return self._model.respond_to_observation(user_text, observation)
+        return await self._generate("respond_to_observation", user_text, observation)
 
     def _ask_batch(self, calls: Sequence[ToolCall], log: list[LogEntry]) -> dict[int, bool]:
         """One question for the calls in a batch that need confirmation, keyed by ``id(call)``.
@@ -912,6 +943,7 @@ def _merge_model_diagnostics(
         "repair_generation_ms",
         "final_generation_ms",
         "model_total_duration_ms",
+        "model_load_duration_ms",
         "prompt_eval_duration_ms",
         "eval_duration_ms",
         "generation_tokens_per_sec",
@@ -923,6 +955,7 @@ def _merge_model_diagnostics(
         value = getattr(diagnostics, name)
         if value is not None:
             setattr(metrics, name, value)
+    metrics.routing = diagnostics.routing
     metrics.model_call_count = diagnostics.model_call_count
     metrics.thinking_exposed = diagnostics.thinking_exposed
     metrics.thinking_chars = diagnostics.thinking_chars

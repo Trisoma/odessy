@@ -70,6 +70,7 @@ def normalize_ollama_chat_response(data: dict[str, Any]) -> dict[str, Any]:
         normalized["message"]["thinking"] = message.get("thinking")
     for key in (
         "total_duration",
+        "load_duration",
         "prompt_eval_duration",
         "prompt_eval_count",
         "eval_duration",
@@ -105,6 +106,8 @@ class LlamaCppLFMModel:
     #: Stream wall-time budget checked between lines; includes silence, excludes
     #: connection/header waits, and can overrun during a blocking read.
     call_timeout: float = field(default_factory=_default_call_timeout)
+    keep_alive: int | None = None
+    conversation_context: tuple = ()
 
     @property
     def last_turn_diagnostics(self) -> ModelTurnDiagnostics:
@@ -206,6 +209,11 @@ class LlamaCppLFMModel:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        from odessy.models.generation_control import before_generation
+        before_generation()
+        if self.conversation_context:
+            split = 1 if messages and messages[0].get("role") == "system" else 0
+            messages = [*messages[:split], *self.conversation_context, *messages[split:]]
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -217,6 +225,8 @@ class LlamaCppLFMModel:
         }
         if self.think is not None:
             payload["think"] = self.think
+        if self.keep_alive is not None:
+            payload["keep_alive"] = self.keep_alive
         if tools:
             payload["tools"] = tools
         request = urllib.request.Request(
@@ -319,6 +329,7 @@ def _record_ollama_response(
     response: dict[str, Any],
 ) -> None:
     _add_duration_ms(diagnostics, "model_total_duration_ms", response.get("total_duration"))
+    _add_duration_ms(diagnostics, "model_load_duration_ms", response.get("load_duration"))
     _add_duration_ms(
         diagnostics,
         "prompt_eval_duration_ms",

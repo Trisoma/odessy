@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument(
         "--backend",
         required=True,
-        help="Model backend, as for `python -m odessy --model-backend`: lfm, ollama, claude, openai, deepseek, qwen, kimi, custom.",
+        help="Model backend, as for `python -m odessy --model-backend`: auto, lfm, ollama, claude, openai, deepseek, qwen, kimi, custom.",
     )
     run.add_argument("--repeat", type=int, default=3, help="Attempts per case (default 3).")
     run.add_argument(
@@ -153,6 +153,8 @@ async def _run(args: argparse.Namespace) -> int:
         raise SystemExit("no cases selected")
 
     model = _build_model(False, backend=args.backend)
+    from odessy.cli import _announce_cloud
+    _announce_cloud(model)
     attempt_timeout = args.attempt_timeout
     if attempt_timeout is None:
         attempt_timeout = DEFAULT_ATTEMPT_TIMEOUT_SECONDS
@@ -160,9 +162,9 @@ async def _run(args: argparse.Namespace) -> int:
     if args.max_model_calls is None:
         # Evaluate what the product does by default for this backend.
         from odessy.cli import default_max_model_calls
-        from odessy.models.cloud_model import CloudModel
+        from odessy.models.routed_model import model_uses_cloud
 
-        args.max_model_calls = default_max_model_calls(cloud=isinstance(model, CloudModel))
+        args.max_model_calls = default_max_model_calls(cloud=model_uses_cloud(model))
     label = args.label or args.backend
     started = datetime.now(timezone.utc)
     run_dir = args.output_dir or RESULTS_DIR / f"{started.strftime('%Y%m%d-%H%M%S')}-{label}"
@@ -188,6 +190,8 @@ async def _run(args: argparse.Namespace) -> int:
         "platform": f"{platform.system()} {platform.release()} ({platform.machine()}), Python {platform.python_version()}",
         "started_at": started.isoformat(),
     }
+    if getattr(model, "routing_config", None) is not None:
+        metadata["model_routing"] = model.routing_config
     (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
     total = len(cases) * args.repeat

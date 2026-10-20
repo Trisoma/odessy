@@ -172,7 +172,7 @@ def render_markdown(summary: dict[str, Any], metadata: dict[str, Any]) -> str:
         "| Setting | Value |",
         "|---|---|",
     ]
-    for key in ("backend", "model", "deployment", "keyword_routing", "repeat", "attempt_timeout_seconds", "max_model_calls", "odessy_version", "git_commit", "git_commit_note", "platform", "started_at"):
+    for key in ("backend", "model", "model_routing", "deployment", "keyword_routing", "repeat", "attempt_timeout_seconds", "max_model_calls", "odessy_version", "git_commit", "git_commit_note", "platform", "started_at"):
         # keyword_routing appears only in runs from before routing was removed.
         if key in metadata or key in {"backend", "model", "repeat", "git_commit", "platform", "started_at"}:
             lines.append(f"| {key} | {metadata.get(key, '')} |")

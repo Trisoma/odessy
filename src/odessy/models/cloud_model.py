@@ -271,6 +271,8 @@ class CloudModel:
     #: How to wait between retries. Replaced in tests.
     _sleep: Any = field(default=time.sleep, repr=False)
 
+    conversation_context: tuple = ()
+
     _messages: list[Any] = field(default_factory=list, init=False, repr=False)
     _pending_call_id: str | None = field(default=None, init=False, repr=False)
     _pending_batch: tuple[str, ...] = field(default=(), init=False, repr=False)
@@ -299,7 +301,11 @@ class CloudModel:
         self._diagnostics = ModelTurnDiagnostics()
         self._pending_call_id = None
         self._pending_batch = ()
-        self._messages = [{"role": "user", "content": redact_text(user_text)}]
+        self._messages = [
+            {"role": item["role"], "content": redact_text(item["content"])}
+            for item in self.conversation_context
+            if item.get("role") in {"user", "assistant"} and isinstance(item.get("content"), str)
+        ] + [{"role": "user", "content": redact_text(user_text)}]
         reply = self._exchange("proposal_generation_ms")
         try:
             return self._to_action(reply, user_text)
@@ -423,6 +429,8 @@ class CloudModel:
             self._append_result(call.call_id, message, is_error=is_error)
 
     def _exchange(self, timing_field: str) -> _ParsedReply:
+        from odessy.models.generation_control import before_generation
+        before_generation()
         started = time.perf_counter()
         self._diagnostics.model_call_count += 1
         if self.protocol == "anthropic":
@@ -503,13 +511,14 @@ class CloudModel:
 
     def _create_message(self, params: dict[str, Any]) -> Any:
         """One Messages API call. Overridden in tests."""
+        from odessy.models.generation_control import generation_guard
         anthropic = _import_anthropic()
         if self._client is None:
             self._client = anthropic.Anthropic(
                 api_key=self.api_key,
                 base_url=self.base_url or None,
                 timeout=float(self.timeout),
-                max_retries=self.retries,
+                max_retries=0 if generation_guard.get() is not None else self.retries,
             )
         try:
             if "betas" in params:
@@ -568,6 +577,11 @@ class CloudModel:
 
         attempt = 0
         while True:
+            if attempt:
+                from odessy.models.generation_control import generation_guard, before_generation
+                if generation_guard.get() is not None:
+                    before_generation()
+                    self._diagnostics.model_call_count += 1
             try:
                 return self._post_chat_once(payload)
             except _TransientCloudError as error:
