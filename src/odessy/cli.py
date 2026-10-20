@@ -28,7 +28,11 @@ from odessy.models.fake_model import FakeModel
 from odessy.models.lfm_model import LlamaCppLFMModel
 from odessy.tools.mcp_server import build_odessy_mcp_server
 from odessy.tools.external_tools import (
+    MAX_EXTERNAL_TOOLS_CLOUD,
+    MAX_EXTERNAL_TOOLS_LOCAL,
+    ExternalSessions,
     NamespacedServer,
+    ServerConfig,
     ServerConfigError,
     discover_tools,
     external_tool_scope,
@@ -36,6 +40,7 @@ from odessy.tools.external_tools import (
 )
 from odessy.tools.node_mcp import NodeToolServerHttp, node_tool_server_dependencies_installed
 from odessy.models.ollama_model import OllamaModel
+from odessy.authority.audit import AuditLogError, ExternalAuditLog, audit_scope
 from odessy.authority.policy import OdessyPolicy
 from odessy.runtime.confirmation import TerminalConfirmer, printable
 from odessy.runtime.types import PolicyDecision, ToolRequest
@@ -287,39 +292,44 @@ _NO_NODE_WARNING = (
 )
 
 
-#: Third-party tools offered to the model at most, by backend. Every tool's schema is
-#: sent with every model call; a 1B local model also chooses worse among many tools.
-MAX_EXTERNAL_TOOLS_CLOUD = 64
-MAX_EXTERNAL_TOOLS_LOCAL = 16
-
-
 @asynccontextmanager
 async def _tool_servers(workspace_root: Path, *, cloud: bool = False) -> AsyncIterator[tuple[object, ...]]:
     """Built-in servers for this deployment, plus the third-party servers in servers.toml.
 
     A configured server is listed once at startup; its tools become model-facing for
     the run as ``<server>.<tool>``. A server that does not answer is reported and left
-    out; it does not stop the run or affect the built-in tools.
+    out; it does not stop the run or affect the built-in tools. A stdio server keeps one
+    session for the run, and every third-party call is recorded in the audit log.
     """
 
     try:
         configs = load_server_configs()
     except ServerConfigError as error:
         raise SystemExit(str(error)) from error
+    try:
+        audit = ExternalAuditLog.open() if configs else None
+    except AuditLogError as error:
+        raise SystemExit(str(error)) from error
 
     async with _builtin_tool_servers(workspace_root) as builtins:
         if not configs:
             yield builtins
             return
-        limit = MAX_EXTERNAL_TOOLS_CLOUD if cloud else MAX_EXTERNAL_TOOLS_LOCAL
-        tools, reachable, problems = await discover_tools(configs, limit=limit)
-        for problem in problems:
-            print(f"[odessy] external server {problem}", file=sys.stderr)
-        # Being configured is the authorization: only listed servers that answered are
-        # execution targets. Nothing found at runtime is ever added here.
-        externals = tuple(ExecutionTarget(NamespacedServer(config)) for config in reachable)
-        with external_tool_scope(tools):
-            yield (*builtins, *externals)
+        async with ExternalSessions() as sessions:
+            servers = {config.name: NamespacedServer(config, sessions) for config in configs}
+
+            async def list_tools(config: ServerConfig) -> list[object]:
+                return await servers[config.name].list_tools()
+
+            limit = MAX_EXTERNAL_TOOLS_CLOUD if cloud else MAX_EXTERNAL_TOOLS_LOCAL
+            tools, reachable, problems = await discover_tools(configs, limit=limit, list_tools=list_tools)
+            for problem in problems:
+                print(f"[odessy] external server {problem}", file=sys.stderr)
+            # Being configured is the authorization: only listed servers that answered
+            # are execution targets. Nothing found at runtime is ever added here.
+            externals = tuple(ExecutionTarget(servers[config.name]) for config in reachable)
+            with external_tool_scope(tools), audit_scope(audit):
+                yield (*builtins, *externals)
 
 
 @asynccontextmanager

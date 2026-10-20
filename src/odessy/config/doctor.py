@@ -89,6 +89,16 @@ def _path_exists(path: str) -> bool:
     return Path(path).expanduser().exists()
 
 
+def _list_server_tools(config: Any) -> list[Any]:
+    """One configured third-party server's tools, through a connection of its own."""
+
+    import asyncio
+
+    from odessy.tools.external_tools import NamespacedServer
+
+    return asyncio.run(asyncio.wait_for(NamespacedServer(config).list_tools(), timeout=config.timeout))
+
+
 @dataclass(frozen=True)
 class Probes:
     which: Callable[[str], str | None] = _which
@@ -97,6 +107,7 @@ class Probes:
     command_output: Callable[[list[str], float], str | None] = _command_output
     node_tools_state: Callable[[], tuple[bool, bool]] = _node_tools_state
     path_exists: Callable[[str], bool] = _path_exists
+    list_server_tools: Callable[[Any], list[Any]] = _list_server_tools
 
 
 def run_checks(
@@ -117,6 +128,7 @@ def run_checks(
         checks.extend(_node_checks(probes))
     else:
         checks.extend(_remote_checks(source, probes))
+    checks.extend(_server_checks(backend or source.get("ODESSY_MODEL_BACKEND") or "lfm", source, probes))
     checks.extend(_voice_checks(source, probes))
     return checks
 
@@ -287,6 +299,87 @@ def _remote_checks(env: Mapping[str, str], probes: Probes) -> list[Check]:
                     "(see README, 'Laptop MCP Server').",
                 )
             )
+    return checks
+
+
+def _server_checks(backend: str, env: Mapping[str, str], probes: Probes) -> list[Check]:
+    """Third-party MCP servers in servers.toml. Silent when there is no servers file.
+
+    A malformed file fails (Odessy refuses to start with it). A server that cannot be
+    started or reached only warns: Odessy runs without it.
+    """
+
+    from odessy.authority.audit import AUDIT_FILE_ENV, audit_file
+    from odessy.models.cloud_model import CLOUD_PROVIDERS
+    from odessy.tools.external_tools import (
+        MAX_EXTERNAL_TOOLS_CLOUD,
+        MAX_EXTERNAL_TOOLS_LOCAL,
+        ServerConfigError,
+        load_server_configs,
+        servers_file,
+        tool_from_mcp,
+    )
+
+    section = "Third-party servers"
+    path = servers_file(env)
+    try:
+        configs = load_server_configs(path)
+    except ServerConfigError as error:
+        return [Check(section, "fail", str(error), f"Correct {path}; see docs/reference/external-servers.mdx.")]
+    if not configs:
+        return []
+
+    checks = [Check(section, "ok", f"{len(configs)} configured in {path}")]
+    offered = 0
+    for config in configs:
+        label = f"{config.name} ({config.transport}, {config.trust})"
+        if config.transport == "stdio":
+            program = config.command[0]
+            if probes.which(program) is None and not probes.path_exists(program):
+                checks.append(
+                    Check(section, "warn", f"{label}: command not found: {program}", f"Install {program}, or put its full path in command.")
+                )
+                continue
+        try:
+            listed = probes.list_server_tools(config)
+        except Exception as error:  # noqa: BLE001 - any failure means "not available"
+            where = config.url if config.transport == "http" else " ".join(config.command)
+            checks.append(
+                Check(
+                    section,
+                    "warn",
+                    f"{label}: not available ({error.__class__.__name__}: {error})",
+                    f"Start the server at {where}, or remove it from {path.name}.",
+                )
+            )
+            continue
+        usable = 0
+        for raw in listed:
+            tool, problem = tool_from_mcp(config, raw)
+            if problem:
+                checks.append(Check(section, "warn", problem, "Left out; the server's other tools are offered."))
+            else:
+                usable += 1
+        offered += usable
+        checks.append(Check(section, "ok", f"{label}: {usable} tool(s)"))
+
+    cloud = backend.lower() in CLOUD_PROVIDERS
+    limit = MAX_EXTERNAL_TOOLS_CLOUD if cloud else MAX_EXTERNAL_TOOLS_LOCAL
+    if offered > limit:
+        checks.append(
+            Check(
+                section,
+                "warn",
+                f"{offered} third-party tools; only the first {limit} are offered to a {'cloud' if cloud else 'local'} model",
+                f"Deny unneeded tools in {path.name} or remove a server.",
+            )
+        )
+
+    log = audit_file(env)
+    if log is None:
+        checks.append(Check(section, "warn", f"audit log is off ({AUDIT_FILE_ENV} is empty)", f"Unset {AUDIT_FILE_ENV} to record third-party calls."))
+    else:
+        checks.append(Check(section, "ok", f"audit log: {log}"))
     return checks
 
 

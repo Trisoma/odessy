@@ -104,6 +104,9 @@ class PolicyDecision:
     action: Literal["allow", "confirm", "deny"]
     reason: str
     risk: Literal["low", "medium", "high"] = "low"
+    #: Which rule decided, for third-party tools (see external-servers.mdx); recorded
+    #: in the audit log instead of the reason, which may quote arguments.
+    rule: str | None = None
 
     @property
     def allowed(self) -> bool:
