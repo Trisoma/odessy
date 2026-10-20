@@ -131,10 +131,27 @@ def run_checks(
     else:
         checks.extend(_remote_checks(source, probes))
     checks.extend(_server_checks(backend or source.get("ODESSY_MODEL_BACKEND") or "lfm", source, probes))
+    checks.extend(_commands_checks(source))
     checks.extend(_voice_checks(source, probes))
     if voice:
         checks.extend(_wake_checks(source, probes))
     return checks
+
+
+def _commands_checks(env: Mapping[str, str]) -> list[Check]:
+    """Commands approved in advance (commands.toml). Silent when there is no file."""
+
+    from odessy.config.commands import CommandsConfigError, commands_file, load_preapproved_commands
+
+    path = commands_file(env)
+    if not path.is_file():
+        return []
+    try:
+        approved = load_preapproved_commands(Path.cwd(), path)
+    except CommandsConfigError as error:
+        return [Check("Approved commands", "fail", str(error), f"Correct {path}; see policy/README.md.")]
+    listed = ", ".join(" ".join(words) for words in approved) or "none"
+    return [Check("Approved commands", "ok", f"for this folder, local terminal.run only, without asking: {listed}; laptop.terminal.run still requires confirmation")]
 
 
 def _python_check() -> Check:

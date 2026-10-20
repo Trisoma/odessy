@@ -44,6 +44,7 @@ from odessy.tools.node_mcp import NodeToolServerHttp, node_tool_server_dependenc
 from odessy.models.ollama_model import OllamaModel
 from odessy.authority.audit import AuditLogError, ExternalAuditLog, audit_scope
 from odessy.authority.policy import OdessyPolicy
+from odessy.config.commands import CommandsConfigError, load_preapproved_commands
 from odessy.runtime.confirmation import TerminalConfirmer, printable
 from odessy.runtime.types import PolicyDecision, ToolRequest
 from odessy.voice.audio_io import CommandAudioIO
@@ -114,19 +115,26 @@ def _build_agent(
     mcp_servers: tuple[object, ...] | None = None,
 ) -> OdessyAgent:
     from odessy.runtime.scheduler import concurrency_from_env
+    try:
+        preapproved = load_preapproved_commands(workspace_root)
+    except CommandsConfigError as error:
+        raise SystemExit(str(error)) from error
+    confirmer = TerminalConfirmer(workspace_root)
     return OdessyAgent(
         tool_concurrency=concurrency_from_env(),
         model=model,
         policy=OdessyPolicy(
             workspace_root=workspace_root,
             isolation=_isolation_from_env(),
+            preapproved_commands=preapproved,
         ),
         mcp_server=(
             mcp_servers
             if mcp_servers is not None
             else (ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root)),)
         ),
-        confirm=TerminalConfirmer(workspace_root),
+        confirm=confirmer,
+        confirm_batch=confirmer.batch,
         approver=TerminalEscalationApprover(),
         max_model_calls=_max_model_calls_from_env(cloud=model_uses_cloud(model)),
     )
