@@ -107,7 +107,7 @@ def model_tool_names(mode: Deployment | None = None) -> list[str]:
     """The tools the model is offered in this deployment, in contract order."""
 
     # Imported here: tool_contracts imports this module for the same reason.
-    from odessy.tool_contracts import TOOL_REQUEST_SCHEMAS
+    from odessy.tools.tool_contracts import TOOL_REQUEST_SCHEMAS
 
     resolved = mode or deployment_mode()
     return [

@@ -126,7 +126,7 @@ def _select(cases: list[Case], categories: list[str] | None, case_ids: list[str]
 async def _run(args: argparse.Namespace) -> int:
     # Imported here so `list`/`compare` work without the model stack configured.
     from odessy.cli import _build_model
-    from odessy.config_file import load_config_env
+    from odessy.config.config_file import load_config_env
 
     from evals.graders import grade
     from evals.harness import (
@@ -160,7 +160,7 @@ async def _run(args: argparse.Namespace) -> int:
     if args.max_model_calls is None:
         # Evaluate what the product does by default for this backend.
         from odessy.cli import default_max_model_calls
-        from odessy.cloud_model import CloudModel
+        from odessy.models.cloud_model import CloudModel
 
         args.max_model_calls = default_max_model_calls(cloud=isinstance(model, CloudModel))
     label = args.label or args.backend
@@ -169,7 +169,11 @@ async def _run(args: argparse.Namespace) -> int:
     run_dir.mkdir(parents=True, exist_ok=False)
 
     git_commit, git_commit_note = _git_commit()
+    from odessy.runtime.scheduler import concurrency_from_env
     metadata = {
+        "tool_concurrency": concurrency_from_env(),
+        "max_tools_per_batch": 16,
+        "max_tools_per_turn": 64,
         "label": label,
         "backend": args.backend,
         "model": getattr(model, "model", type(model).__name__),

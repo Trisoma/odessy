@@ -1,9 +1,9 @@
 import pytest
 
-from odessy.agent_loop import ExecutionTarget, OdessyAgent
-from odessy.fake_model import FakeModel
-from odessy.mcp_server import build_odessy_mcp_server
-from odessy.policy import OdessyPolicy
+from odessy.runtime.agent_loop import ExecutionTarget, OdessyAgent
+from odessy.models.fake_model import FakeModel
+from odessy.tools.mcp_server import build_odessy_mcp_server
+from odessy.authority.policy import OdessyPolicy
 
 
 @pytest.fixture
@@ -60,7 +60,7 @@ async def test_fake_model_time_request_flows_through_policy_and_mcp() -> None:
 @pytest.mark.anyio
 async def test_agent_reports_direct_response_metrics() -> None:
     from pathlib import Path
-    from odessy.types import FinalResponse
+    from odessy.runtime.types import FinalResponse
 
     class DirectModel:
         def propose(self, user_text: str):

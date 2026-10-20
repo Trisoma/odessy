@@ -14,14 +14,14 @@ from typing import Any
 
 import pytest
 
-from odessy.ollama_model import (
+from odessy.models.ollama_model import (
     DEFAULT_PROGRESS_TIMEOUT_SECONDS,
     PROGRESS_TIMEOUT_ENV,
     ModelTurnDiagnostics,
     _accumulate_stream,
     _default_progress_timeout,
 )
-from odessy.lfm_model import LlamaCppLFMModel
+from odessy.models.lfm_model import LlamaCppLFMModel
 
 
 def stream(*chunks: dict[str, Any]) -> list[bytes]:

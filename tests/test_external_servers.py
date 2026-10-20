@@ -17,9 +17,9 @@ from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 
 import odessy.cli as cli
-from odessy.agent_loop import ExecutionTarget, OdessyAgent
-from odessy.cloud_model import cloud_tools_openai, decode_tool_name
-from odessy.external_tools import (
+from odessy.runtime.agent_loop import ExecutionTarget, OdessyAgent
+from odessy.models.cloud_model import cloud_tools_openai, decode_tool_name
+from odessy.tools.external_tools import (
     ExternalTool,
     NamespacedServer,
     ServerConfig,
@@ -30,9 +30,9 @@ from odessy.external_tools import (
     load_server_configs,
     tool_from_mcp,
 )
-from odessy.policy import OdessyPolicy
-from odessy.tool_contracts import build_openai_tools, tool_description, validate_tool_arguments
-from odessy.types import FinalResponse, ToolRequest
+from odessy.authority.policy import OdessyPolicy
+from odessy.tools.tool_contracts import build_openai_tools, tool_description, validate_tool_arguments
+from odessy.runtime.types import FinalResponse, ToolRequest
 
 
 @pytest.fixture
@@ -450,7 +450,7 @@ async def test_without_a_servers_file_nothing_changes(tmp_path: Path) -> None:
 
 
 def test_the_confirmation_prompt_names_the_server(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    from odessy.types import PolicyDecision
+    from odessy.runtime.types import PolicyDecision
 
     monkeypatch.setattr("builtins.input", lambda prompt: "n")
     with external_tool_scope([_external()]):

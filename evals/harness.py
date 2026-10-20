@@ -15,6 +15,8 @@ Nothing in the agent loop is modified or mocked.
 
 from __future__ import annotations
 
+from odessy.runtime.scheduler import concurrency_from_env
+
 import asyncio
 import shutil
 import tempfile
@@ -23,11 +25,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from odessy.agent_loop import ExecutionTarget, OdessyAgent
+from odessy.runtime.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.execution.escalation import ApprovalRequest, EscalationDeniedError
-from odessy.ollama_model import _OllamaStreamTimeout
-from odessy.policy import OdessyPolicy
-from odessy.types import FinalResponse, ModelAction, ModelTurnDiagnostics, ToolObservation, ToolRequest
+from odessy.models.ollama_model import _OllamaStreamTimeout
+from odessy.authority.policy import OdessyPolicy
+from odessy.runtime.types import ToolBatch, FinalResponse, ModelAction, ModelTurnDiagnostics, ToolObservation, ToolRequest
 
 from evals.definitions import Case
 from evals.recording_mcp import GitFixture, Recorder, build_recording_server
@@ -143,8 +145,18 @@ class RecordingModel:
     def respond_to_observation(self, user_text: str, observation: ToolObservation) -> ModelAction:
         return self._record(self._inner.respond_to_observation(user_text, observation))
 
+    def respond_to_observations(self, user_text, observations):
+        return self._record(self._inner.respond_to_observations(user_text, observations))
+
+    def finalize_observations(self, observations):
+        finalize = getattr(self._inner, "finalize_observations", None)
+        if finalize:
+            finalize(observations)
+
     def _record(self, action: ModelAction) -> ModelAction:
-        if isinstance(action, ToolRequest):
+        if isinstance(action, ToolBatch):
+            self.proposals.append({"type": "batch", "calls": [{"call_id": c.call_id, "name": c.request.name, "arguments": dict(c.request.arguments)} for c in action.calls]})
+        elif isinstance(action, ToolRequest):
             self.proposals.append({"type": "tool", "name": action.name, "arguments": dict(action.arguments)})
         elif isinstance(action, FinalResponse):
             self.proposals.append({"type": "final", "text": action.text})
@@ -210,6 +222,7 @@ async def run_attempt(
             confirm=decline,
             approver=approver,
             max_model_calls=max_model_calls,
+            tool_concurrency=concurrency_from_env(),
         )
 
         record = Attempt(case_id=case.id, category=case.category, attempt=attempt, outcome="completed")
@@ -220,6 +233,8 @@ async def run_attempt(
                 timeout=timeout_seconds,
             )
             record.final_text = result.final_text
+            if any(entry.event == "batch_stopped" for entry in result.log):
+                record.outcome = "blocked"
             if any(entry.event in EXHAUSTION_EVENTS for entry in result.log):
                 record.outcome = "exhausted"
         except asyncio.TimeoutError:

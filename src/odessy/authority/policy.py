@@ -20,9 +20,9 @@ from odessy.execution.escalation import (
     approve_escalation,
     validate_escalation_args,
 )
-from odessy.external_tools import ExternalTool, external_tool
-from odessy.types import PolicyDecision, ToolRequest
-from odessy.workspace_authority import WorkspaceAuthority, WorkspaceAuthorityError
+from odessy.tools.external_tools import ExternalTool, external_tool
+from odessy.runtime.types import PolicyDecision, ToolRequest
+from odessy.authority.workspace_authority import WorkspaceAuthority, WorkspaceAuthorityError
 
 #: The tools whose action spawns a process, and which therefore have an *execution*
 #: isolation mode at all.

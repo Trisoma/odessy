@@ -5,7 +5,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from odessy.config_file import load_config_env
+from odessy.config.config_file import load_config_env
 
 
 @dataclass(frozen=True)

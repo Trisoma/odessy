@@ -10,10 +10,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from odessy.agent_loop import OdessyAgent
-from odessy.lfm_model import LlamaCppLFMModel, normalize_ollama_chat_response
-from odessy.policy import OdessyPolicy
-from odessy.types import FinalResponse, ToolObservation, ToolRequest
+from odessy.runtime.agent_loop import OdessyAgent
+from odessy.models.lfm_model import LlamaCppLFMModel, normalize_ollama_chat_response
+from odessy.authority.policy import OdessyPolicy
+from odessy.runtime.types import FinalResponse, ToolObservation, ToolRequest
 from odessy.voice.audio_io import CommandAudioIO
 from odessy.voice.config import VoiceConfig
 from odessy.voice.stt import WhisperCppSTT
@@ -108,7 +108,7 @@ class BenchmarkPartialGpuLFMModel(LlamaCppLFMModel):
         except urllib.error.HTTPError as error:
             body = _read_error_body(error)
             if "does not support tools" in body:
-                from odessy.ollama_model import _OllamaToolsUnsupported
+                from odessy.models.ollama_model import _OllamaToolsUnsupported
 
                 raise _OllamaToolsUnsupported(body) from error
             raise RuntimeError(
@@ -220,7 +220,11 @@ class LFMCompareBenchmark:
 
         diagnostics = getattr(self.model, "last_turn_diagnostics", None)
         details = _diagnostic_details(diagnostics)
+        from odessy.runtime.types import ToolBatch
         selected_tool = action.name if isinstance(action, ToolRequest) else None
+        if isinstance(action, ToolBatch):
+            details["selected_tools"] = [c.request.name for c in action.calls]
+            details["selected_call_ids"] = [c.call_id for c in action.calls]
         proposal_valid = details.get("proposal_valid", True)
         if error is not None:
             proposal_valid = False
