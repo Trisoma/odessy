@@ -419,7 +419,7 @@ async def test_the_cli_adds_configured_servers_as_execution_targets(
     )
     monkeypatch.setenv("ODESSY_SERVERS_FILE", str(path))
 
-    async def fake_discover(configs: list[ServerConfig], *, limit: int):
+    async def fake_discover(configs: list[ServerConfig], *, limit: int, list_tools: Any = None):
         assert limit == cli.MAX_EXTERNAL_TOOLS_CLOUD
         notes = next(c for c in configs if c.name == "notes")
         tool, _ = tool_from_mcp(notes, _tool("search"))

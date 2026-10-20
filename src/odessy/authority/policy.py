@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -369,11 +369,12 @@ class OdessyPolicy:
                 f"{name} does not accept {sorted(stray)[0]}: sandbox modes govern Odessy's own "
                 "command tools, not third-party tools",
                 "medium",
+                rule="sandbox_arguments",
             )
 
         configured = server.tool_policies.get(tool.remote_name)
         if configured == "deny":
-            return PolicyDecision("deny", f"{name} is denied by the {server.name} server's config", "high")
+            return PolicyDecision("deny", f"{name} is denied by the {server.name} server's config", "high", rule="config_deny")
 
         # Path arguments the user declared are held to the workspace, whatever the
         # tool-level policy says: an `allow` covers the tool, not where it reaches.
@@ -382,29 +383,32 @@ class OdessyPolicy:
             if isinstance(value, str):
                 decision = self._check_workspace_path(value, name)
                 if decision is not None:
-                    return decision
+                    return replace(decision, rule="workspace_path")
 
         if configured == "allow":
-            return PolicyDecision("allow", f"{name} is allowed by the {server.name} server's config", "low")
+            return PolicyDecision("allow", f"{name} is allowed by the {server.name} server's config", "low", rule="config_allow")
         if configured == "confirm":
-            return PolicyDecision("confirm", f"{name} requires confirmation by the {server.name} server's config", "medium")
+            return PolicyDecision("confirm", f"{name} requires confirmation by the {server.name} server's config", "medium", rule="config_confirm")
         if server.trust != "trusted":
             return PolicyDecision(
                 "confirm",
                 f"{name} requires confirmation because the {server.name} server is not marked trusted",
                 "medium",
+                rule="untrusted_server",
             )
         if tool.read_only is True and tool.destructive is not True:
             return PolicyDecision(
                 "allow",
                 f"{name} is annotated read-only by the trusted {server.name} server",
                 "low",
+                rule="trusted_read_only",
             )
         why = "annotated destructive" if tool.destructive else "not annotated read-only"
         return PolicyDecision(
             "confirm",
             f"{name} requires confirmation because it is {why}",
             "medium" if not tool.destructive else "high",
+            rule="default_confirm",
         )
 
     def _check_workspace_cwd(self, cwd: str, tool_name: str) -> PolicyDecision | None:

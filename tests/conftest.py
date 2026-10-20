@@ -30,6 +30,11 @@ def _isolate_config_environment(
         "ODESSY_SERVERS_FILE",
         str(tmp_path_factory.mktemp("servers") / "missing.toml"),
     )
+    # And the audit log of third-party calls, which defaults to the home directory.
+    monkeypatch.setenv(
+        "ODESSY_AUDIT_FILE",
+        str(tmp_path_factory.mktemp("audit") / "external-audit.jsonl"),
+    )
     # Most of the suite describes the two-machine deployment (laptop routing, the full
     # tool list). Pin it, so a test never depends on whether the developer's shell has
     # a tool server URL set; single-machine tests set "single" themselves.
