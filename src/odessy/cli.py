@@ -535,10 +535,15 @@ def main(argv: list[str] | None = None) -> None:
             description="Check this machine's Odessy setup and print how to fix what is missing.",
         )
         _model_backend_argument(parser)
+        parser.add_argument(
+            "--voice",
+            action="store_true",
+            help="Also check what a wake-word voice session needs.",
+        )
         args = parser.parse_args(argv[1:])
         from odessy.config.doctor import main as doctor_main
 
-        raise SystemExit(doctor_main(args.model_backend))
+        raise SystemExit(doctor_main(args.model_backend, voice=args.voice))
     if argv[:1] == ["voice"]:
         parser = argparse.ArgumentParser(
             description="Run one bounded local Odessy voice turn, or listen for a wake phrase."

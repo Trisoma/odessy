@@ -303,19 +303,23 @@ def test_memory_redacts_what_the_shared_filter_catches() -> None:
     assert "sk-ant-1" not in memory.turns[0].user
 
 
-def test_memory_keeps_a_bare_key_because_the_filter_is_name_based() -> None:
-    """A recorded limitation, not a bug: redaction is best effort and name-based.
+def test_memory_keeps_a_short_secret_below_the_filter_floor() -> None:
+    """A recorded limitation, not a bug: redaction has minimum lengths.
 
-    The session redacts before storing, using the same filter as the rest of the
-    runtime. A secret with no recognisable name around it survives, which is why the
-    memory is RAM-only and bounded rather than treated as safe.
+    Two independent floors decide this, and neither is about the name list:
+    ``NAME=value`` only fires for values of at least 6 characters, and the shape
+    patterns need at least 16 characters after the prefix. The value below is 15, so
+    it survives. That is why the memory is RAM-only and bounded rather than treated as
+    safe.
     """
 
     memory = ConversationMemory()
 
     memory.add("my key is sk-live-1234567890", "noted")
+    memory.add("DATABASE_PASSWORD=zzz", "noted")
 
     assert "sk-live-1234567890" in memory.turns[0].user
+    assert "zzz" in memory.turns[1].user
 
 
 def test_memory_honours_the_character_budget() -> None:

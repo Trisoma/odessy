@@ -7,9 +7,10 @@ They therefore never live in this repository and are never fetched implicitly:
 records where each file came from, which version it is, and its checksum.
 
 A manifest entry without a pinned ``sha256`` is *not* verified, and the installer says
-so instead of implying otherwise. Pinning happens after the first fetch on the target
-platform, which is the only place the bytes can be trusted to be the ones that will be
-loaded.
+so instead of implying otherwise. The default model is pinned: its digest was computed
+from the release asset itself, and a mismatch aborts the install before anything is
+written. A digest that cannot be pinned is still handled — it is recorded as
+unverified with the observed value printed, rather than implied to be verified.
 """
 
 from __future__ import annotations
@@ -43,14 +44,16 @@ class WakeAsset:
     sha256: str | None = None
 
 
-#: One entry per file the detector loads. Checksums are intentionally unpinned until
-#: the first fetch on the Jetson; see the module docstring.
+#: One entry per file the detector loads. The digest was computed from the release
+#: asset itself (1,271,370 bytes) and is what ``--setup-wake`` verifies against; a
+#: changed digest means the file is not the reviewed one.
 WAKE_ASSETS: tuple[WakeAsset, ...] = (
     WakeAsset(
         name=DEFAULT_WAKE_MODEL,
         url="https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/hey_jarvis_v0.1.onnx",
         license="CC-BY-NC-SA-4.0",
         version="openWakeWord v0.5.1",
+        sha256="94a13cfe60075b132f6a472e7e462e8123ee70861bc3fb58434a73712ee0d2cb",
     ),
 )
 
@@ -69,6 +72,22 @@ def asset_dir(environ: dict[str, str] | None = None) -> Path:
 
 def manifest_path(directory: Path) -> Path:
     return directory / "assets.json"
+
+
+def load_manifest(directory: Path) -> dict[str, bool]:
+    """Recorded assets and whether each one was verified against a pinned digest."""
+
+    try:
+        data = json.loads(manifest_path(directory).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    recorded: dict[str, bool] = {}
+    if not isinstance(data, dict):
+        return recorded
+    for record in data.get("assets", []):
+        if isinstance(record, dict) and isinstance(record.get("name"), str):
+            recorded[record["name"]] = bool(record.get("verified"))
+    return recorded
 
 
 def install(

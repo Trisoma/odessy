@@ -103,6 +103,8 @@ def run_checks(
     backend: str | None = None,
     env: Mapping[str, str] | None = None,
     probes: Probes | None = None,
+    *,
+    voice: bool = False,
 ) -> list[Check]:
     source = os.environ if env is None else env
     probes = probes or Probes()
@@ -118,6 +120,8 @@ def run_checks(
     else:
         checks.extend(_remote_checks(source, probes))
     checks.extend(_voice_checks(source, probes))
+    if voice:
+        checks.extend(_wake_checks(source, probes))
     return checks
 
 
@@ -314,8 +318,109 @@ def _voice_checks(env: Mapping[str, str], probes: Probes) -> list[Check]:
     return checks
 
 
-_MARKS = {"ok": "[ok]  ", "warn": "[warn]", "fail": "[FAIL]"}
+def _wake_checks(env: Mapping[str, str], probes: Probes) -> list[Check]:
+    """Everything ``voice --listen`` needs, checked without opening the microphone.
 
+    These are warnings, not failures: a host can run text mode perfectly while the
+    wake session is impossible. Each one names the command that fixes it, because the
+    first failure a new user hits is "it says wake support is missing" with no next
+    step.
+    """
+
+    checks: list[Check] = []
+    section = "Wake session (optional)"
+
+    try:
+        import openwakeword  # noqa: F401
+    except ImportError:
+        checks.append(
+            Check(
+                section,
+                "warn",
+                "wake-word support is not installed (openwakeword)",
+                "pip install -e '.[wake]'",
+            )
+        )
+
+    from odessy.voice.assets import DEFAULT_WAKE_MODEL, asset_dir, load_manifest
+
+    configured = env.get("ODESSY_WAKE_MODEL", "").strip()
+    model_path = Path(configured).expanduser() if configured else asset_dir(env) / DEFAULT_WAKE_MODEL
+    if not probes.path_exists(str(model_path)):
+        checks.append(
+            Check(
+                section,
+                "warn",
+                f"wake model not found: {model_path}",
+                "odessy voice --setup-wake",
+            )
+        )
+    else:
+        manifest = load_manifest(model_path.parent)
+        verified = manifest.get(model_path.name)
+        if verified is True:
+            checks.append(Check(section, "ok", f"wake model verified: {model_path.name}"))
+        elif verified is False:
+            checks.append(
+                Check(
+                    section,
+                    "warn",
+                    f"wake model is present but its digest is not pinned: {model_path.name}",
+                    "Pin the printed sha256 in odessy.voice.assets.WAKE_ASSETS.",
+                )
+            )
+
+    recorder = env.get("ODESSY_AUDIO_RECORDER") or "arecord"
+    player = env.get("ODESSY_AUDIO_PLAYER") or "aplay"
+    capture = probes.command_output([recorder, "-l"], 5) if probes.which(recorder) else None
+    if probes.which(recorder) and (capture is None or "card" not in capture.lower()):
+        checks.append(
+            Check(
+                section,
+                "warn",
+                f"no capture device reported by {recorder} -l",
+                "Connect a microphone or set ODESSY_AUDIO_INPUT_DEVICE.",
+            )
+        )
+    playback = probes.command_output([player, "-l"], 5) if probes.which(player) else None
+    if probes.which(player) and (playback is None or "card" not in playback.lower()):
+        checks.append(
+            Check(
+                section,
+                "warn",
+                f"no playback device reported by {player} -l",
+                "Connect headphones or set ODESSY_AUDIO_OUTPUT_DEVICE.",
+            )
+        )
+
+    # Simultaneous readiness: the session listens while it speaks, so one device for
+    # both directions is the classic way this fails on ALSA. It is checkable without
+    # playing anything.
+    input_device = (env.get("ODESSY_AUDIO_INPUT_DEVICE") or "").strip()
+    output_device = (env.get("ODESSY_AUDIO_OUTPUT_DEVICE") or "").strip()
+    if input_device and input_device == output_device:
+        checks.append(
+            Check(
+                section,
+                "warn",
+                f"capture and playback use the same device: {input_device}",
+                "Set different ODESSY_AUDIO_INPUT_DEVICE and ODESSY_AUDIO_OUTPUT_DEVICE, "
+                "or use a headset that exposes both.",
+            )
+        )
+
+    if not checks:
+        checks.append(
+            Check(
+                section,
+                "ok",
+                "wake model, capture and playback devices are available together",
+            )
+        )
+    return checks
+
+
+_MARKS = {"ok": "[ok]  ", "warn": "[warn]", "fail": "[FAIL]"}
 
 def render(checks: list[Check]) -> str:
     lines = ["Odessy doctor", ""]
@@ -337,7 +442,7 @@ def render(checks: list[Check]) -> str:
     return "\n".join(lines)
 
 
-def main(backend: str | None = None) -> int:
-    checks = run_checks(backend)
+def main(backend: str | None = None, *, voice: bool = False) -> int:
+    checks = run_checks(backend, voice=voice)
     print(render(checks))
     return 1 if any(check.status == "fail" for check in checks) else 0
