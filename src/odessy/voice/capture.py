@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import Lock
 from pathlib import Path
 from typing import Protocol
 
@@ -111,18 +112,38 @@ class CommandAudioStream:
 
 @dataclass
 class CommandPlayer:
-    """A ``aplay`` process that can be stopped mid-file."""
+    """Own playback across cancellation, queued jobs, and slow process startup."""
 
     player: str = "aplay"
     output_device: str | None = None
-    _process: subprocess.Popen[bytes] | None = None
+    _process: subprocess.Popen[bytes] | None = field(default=None, init=False)
+    _lock: Lock = field(default_factory=Lock, init=False, repr=False)
+    _generation: int = field(default=0, init=False)
+    _sequence: int = field(default=0, init=False)
 
-    def play(self, audio_path: Path) -> None:
-        self.stop()
+    @property
+    def generation(self) -> int:
+        """Snapshot before scheduling work that may outlive cancellation."""
+        with self._lock:
+            return self._generation
+
+    def play(self, audio_path: Path, *, generation: int | None = None) -> None:
+        with self._lock:
+            if generation is not None and generation != self._generation:
+                return
+            if generation is None:
+                self._generation += 1
+            generation = self._generation
+            self._sequence += 1
+            sequence = self._sequence
+            previous, self._process = self._process, None
+        self._terminate(previous)
         argv = [self.player]
         if self.output_device:
             argv.extend(["-D", self.output_device])
         argv.append(str(audio_path))
+        # Popen can block. Never hold the state lock across process creation:
+        # stop must invalidate a startup even before a process handle exists.
         try:
             process = subprocess.Popen(
                 argv,
@@ -132,15 +153,29 @@ class CommandPlayer:
             )
         except OSError as error:
             raise AudioStreamError(f"could not start {self.player}: {error}") from error
-        self._process = process
+        with self._lock:
+            current = generation == self._generation and sequence == self._sequence
+            if current:
+                self._process = process
+        if not current:
+            self._terminate(process)
+            return
         try:
             process.wait(timeout=300)
         finally:
-            if self._process is process:
-                self._process = None
+            with self._lock:
+                if self._process is process:
+                    self._process = None
 
     def stop(self) -> None:
-        process, self._process = self._process, None
+        with self._lock:
+            self._generation += 1
+            self._sequence += 1
+            process, self._process = self._process, None
+        self._terminate(process)
+
+    @staticmethod
+    def _terminate(process: subprocess.Popen[bytes] | None) -> None:
         if process is None:
             return
         process.terminate()

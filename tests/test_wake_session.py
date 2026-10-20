@@ -600,8 +600,37 @@ async def test_cli_drops_reply_interrupted_during_synthesis(tmp_path):
     namespace = dict(asyncio=asyncio, contextlib=contextlib, uuid=uuid,
                      config=SimpleNamespace(tmp_dir=tmp_path), session=session,
                      tts=SimpleNamespace(synthesize=synthesize),
-                     player=SimpleNamespace(play=played.append))
+                     player=SimpleNamespace(play=played.append, generation=0))
     exec(compile(ast.Module(body=[speak], type_ignores=[]), str(cli.__file__), 'exec'), namespace)
     await namespace['speak']('old reply')
     assert played == []
     assert list(tmp_path.iterdir()) == []
+
+@pytest.mark.anyio
+async def test_close_unblocks_stalled_capture_and_idle_worker():
+    session = Harness([]).build()
+    from threading import Event
+    entered = asyncio.Event()
+    release = Event()
+    closed = Event()
+    def close_source():
+        closed.set()
+        release.set()
+    session.close_frames = close_source
+    async def blocked():
+        entered.set()
+        await asyncio.to_thread(release.wait, 2)
+        return SILENCE
+    session.frames = blocked
+    task = asyncio.create_task(session.run())
+    await entered.wait()
+    await session.aclose()
+    try:
+        await asyncio.wait_for(asyncio.shield(task), .2)
+    finally:
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+    assert session._worker is None
+    assert closed.is_set()

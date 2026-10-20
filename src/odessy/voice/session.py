@@ -106,6 +106,8 @@ class VoiceSession:
     status: Callable[[str], None] = lambda message: None
     cue: Callable[[], Awaitable[None]] | None = None
 
+    close_frames: Callable[[], None] | None = None
+
     state: SessionState = "LISTENING"
     error: str | None = None
 
@@ -121,6 +123,8 @@ class VoiceSession:
     _closing: bool = False
     _worker: asyncio.Task[None] | None = field(default=None, repr=False)
 
+    _reader: asyncio.Task[None] | None = field(default=None, repr=False)
+    _frames_ready: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     _transcription: asyncio.Task[None] | None = field(default=None, repr=False)
     _capture_pending: tuple[bytes, int] | None = field(default=None, repr=False)
 
@@ -141,11 +145,7 @@ class VoiceSession:
         try:
             await self._read_loop()
         finally:
-            self._closing = True
-            self._stop.set()
-            self._pending = None
-            self._capture_pending = None
-            self._pending_ready.set()
+            await self.aclose()
             if self._transcription is not None:
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._transcription
@@ -161,6 +161,13 @@ class VoiceSession:
         self._pending = None
         self._capture_pending = None
         self._stop.set()
+        self._pending_ready.set()
+        self._frames_ready.set()
+        if self._reader is not None:
+            self._reader.cancel()
+        close, self.close_frames = self.close_frames, None
+        if close is not None:
+            await asyncio.to_thread(close)
         with contextlib.suppress(Exception):
             self.stop_speaking()
 
@@ -169,7 +176,7 @@ class VoiceSession:
     async def _read_loop(self) -> None:
         # Two seconds of audio; fail rather than silently splice an utterance.
         queue = FrameQueue(max_frames=25)
-        ready = asyncio.Event()
+        ready = self._frames_ready
 
         async def capture() -> None:
             index = 0
@@ -190,7 +197,7 @@ class VoiceSession:
                     ready.set()
                 await asyncio.sleep(0)
 
-        reader = asyncio.create_task(capture())
+        reader = self._reader = asyncio.create_task(capture())
         try:
             while not self._closing:
                 await ready.wait()
@@ -213,6 +220,7 @@ class VoiceSession:
             reader.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await reader
+            self._reader = None
 
     async def _handle_frame(self, frame: bytes) -> None:
         if self.state == "RECORDING":
