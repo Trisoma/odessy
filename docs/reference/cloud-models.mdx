@@ -119,9 +119,11 @@ results when comparing runs.
 - **Native tool-result messages.** Tool results go back as `tool` / `tool_result`
   messages tied to the call id, so the model sees the whole turn. Returned
   `reasoning_content` is retained for OpenAI-compatible conversations.
-- **One tool call per step.** Claude is asked for one call at a time
-  (`disable_parallel_tool_use`). If an OpenAI-compatible model returns several,
-  Odessy runs the first and answers the rest as "not executed".
+- **Native tool batches in v0.4.0 development.** Cloud adapters preserve multiple
+  calls from a completed assistant response. Execution defaults to sequential;
+  `ODESSY_TOOL_CONCURRENCY` permits bounded overlap only for eligible built-in
+  tools. Authorization, ordering barriers, and cancellation still apply to each
+  call. Text-JSON fallbacks remain singular. See [tool concurrency](tool-concurrency.mdx).
 - **One repair per step.** An invalid proposal (unknown tool, bad arguments,
   malformed JSON) is sent back as an error tool result once. A second invalid first
   proposal fails the turn; a second invalid follow-up ends it with a summary of the

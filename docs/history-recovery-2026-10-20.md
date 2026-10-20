@@ -11,9 +11,12 @@ Old revisions and seven previously unreachable stash commits have been preserved
 under local `rescue/*` branches. No existing shared branch was reset, rebased,
 merged, or pushed during this recovery.
 
-This report lives on `fix/history-recovery-audit`, based on current `develop`, in
-the separate `odessy-history-recovery` worktree. Merging this report is optional;
-it does not repair or change runtime behavior.
+This report was committed as `ecd2d0b` on `fix/history-recovery-audit` in a separate
+worktree. The user subsequently fast-forwarded `develop` to that commit. At the
+documentation follow-up, local `develop` and `origin/develop` both point to it,
+and the recovery worktree has been removed. The merge added only this report;
+it did not change runtime behavior or reapply displaced patches. Rescue refs
+and backup files survive removal of the worktree.
 
 ## Recorded branch rewrites
 
@@ -81,6 +84,10 @@ The older displaced tips are preserved as:
 A complete bundle is saved outside the checkout at
 `../odessy-recovery-complete-20261020.bundle`. Keep a separate copy of this file;
 the rescue branches and bundle have not been uploaded to GitHub.
+
+The remaining 25 unreachable trees and blobs were also archived and verified in
+`../odessy-orphan-objects-20261020.zip`. These unattached file snapshots are stored
+separately because a branch-history bundle does not include unreachable objects.
 
 ## Verification
 
