@@ -153,7 +153,9 @@ def test_command_tools_say_what_a_shell_is_for(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(("answer", "outcome"), [("y", "allowed-once"), ("yes", "allowed-once"), ("", "rejected")])
+@pytest.mark.parametrize(
+    ("answer", "outcome"), [("yes", "allowed-once"), ("YES", "allowed-once"), ("y", "rejected"), ("", "rejected")]
+)
 async def test_terminal_approver_asks_the_user(monkeypatch: pytest.MonkeyPatch, answer: str, outcome: str) -> None:
     monkeypatch.setattr("builtins.input", lambda prompt: answer)
     request = ApprovalRequest(agent=object(), tool_name="terminal.run", call_id="c1", reason="escalate sandbox to x: y")

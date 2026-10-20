@@ -8,7 +8,7 @@ import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 from mcp.client import Client
 
@@ -35,7 +35,6 @@ from odessy.tools.external_tools import (
     ServerConfig,
     ServerConfigError,
     discover_tools,
-    external_tool,
     external_tool_scope,
     load_server_configs,
 )
@@ -43,6 +42,7 @@ from odessy.tools.node_mcp import NodeToolServerHttp, node_tool_server_dependenc
 from odessy.models.ollama_model import OllamaModel
 from odessy.authority.audit import AuditLogError, ExternalAuditLog, audit_scope
 from odessy.authority.policy import OdessyPolicy
+from odessy.runtime.confirmation import TerminalConfirmer, printable
 from odessy.runtime.types import PolicyDecision, ToolRequest
 from odessy.voice.audio_io import CommandAudioIO
 from odessy.voice.config import VoiceConfig
@@ -110,7 +110,7 @@ def _build_agent(
             if mcp_servers is not None
             else (ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root)),)
         ),
-        confirm=_confirm_tool_call,
+        confirm=TerminalConfirmer(workspace_root),
         approver=TerminalEscalationApprover(),
         max_model_calls=_max_model_calls_from_env(cloud=isinstance(model, CloudModel)),
     )
@@ -157,13 +157,13 @@ class TerminalEscalationApprover:
     """
 
     async def ask(self, request: ApprovalRequest) -> EscalationOutcome:
-        print(f"Odessy asks to run {request.tool_name} with a wider sandbox.")
-        print(f"Reason: {request.reason}")
+        print(f"!! HIGH RISK: Odessy asks to run {request.tool_name} with a wider sandbox.")
+        print(f"Reason: {printable(request.reason)}")
         try:
-            answer = await asyncio.to_thread(input, "Allow the wider sandbox for this one call? [y/N] ")
+            answer = await asyncio.to_thread(input, "Type 'yes' to allow the wider sandbox for this one call: ")
         except EOFError:
             return "unavailable"
-        return "allowed-once" if answer.strip().lower() in {"y", "yes"} else "rejected"
+        return "allowed-once" if answer.strip().lower() == "yes" else "rejected"
 
 
 def _isolation_from_env() -> IsolationRequirement:
@@ -184,25 +184,9 @@ def _isolation_from_env() -> IsolationRequirement:
 
 
 def _confirm_tool_call(decision: PolicyDecision, request: ToolRequest) -> bool:
-    print(f"Odessy needs confirmation to run {request.name}.")
-    external = external_tool(request.name)
-    if external is not None:
-        print(f"Server: {external.server.name} ({external.server.trust}), its tool {external.remote_name!r}")
-    print(f"Risk: {decision.risk}")
-    print(f"Reason: {decision.reason}")
-    print(f"Arguments: {_summarize_arguments(request.arguments)}")
-    answer = input("Allow this tool call? [y/N] ")
-    return answer.strip().lower() in {"y", "yes"}
+    """One confirmation with no session memory; the agent gets a ``TerminalConfirmer``."""
 
-
-def _summarize_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
-    summary: dict[str, Any] = {}
-    for key, value in arguments.items():
-        if key == "content" and isinstance(value, str):
-            summary[key] = f"<{len(value.encode('utf-8'))} bytes>"
-        else:
-            summary[key] = value
-    return summary
+    return TerminalConfirmer(Path.cwd())(decision, request)
 
 
 async def _text_async(user_text: str, use_fake_model: bool, backend: str | None = None) -> None:

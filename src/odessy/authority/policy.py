@@ -210,13 +210,19 @@ class OdessyPolicy:
                 f"{tool_name} denied because the command is destructive or credential-seeking",
                 "high",
             )
+        if _matches_install_rule(tokens):
+            return PolicyDecision(
+                "confirm",
+                f"{tool_name} requires confirmation because it installs packages from the network",
+                "high",
+            )
         if _matches_confirm_rule(lowered, tokens):
             return PolicyDecision(
                 "confirm",
                 f"{tool_name} requires confirmation because the command may modify state",
                 "medium",
             )
-        if _matches_allow_rule(lowered, tokens):
+        if _matches_allow_rule(lowered, tokens) or self._reads_workspace_files(command, cwd, tokens):
             return PolicyDecision(
                 "allow",
                 f"{tool_name} allowed as a read-only workspace command",
@@ -227,6 +233,30 @@ class OdessyPolicy:
             f"{tool_name} requires confirmation because the command is outside the low-risk allow rules",
             "medium",
         )
+
+    def _reads_workspace_files(self, command: str, cwd: str, tokens: list[str]) -> bool:
+        """A file-printing command (``cat``, ``Get-Content``, ...) whose files are all here.
+
+        Listing a directory reveals names; printing a file reveals its contents, so a
+        reader runs unasked only when every argument resolves inside the workspace and
+        names no credential file. Anything else (a path outside, ``~``, a variable) is
+        left to the confirmation rule, not denied.
+        """
+
+        if not tokens or tokens[0] not in _FILE_READERS or _CHAINING.search(command.lower()):
+            return False
+        arguments = [part.strip("'\"") for part in command.split()[1:]]
+        paths = [part for part in arguments if part and not part.startswith("-")]
+        if not paths or any(mark in part for part in paths for mark in ("$", "%", "~")):
+            return False
+        for part in paths:
+            try:
+                resolved = self.authority.resolve_path(str(Path(cwd) / part), must_exist=False)
+            except WorkspaceAuthorityError:
+                return False
+            if resolved.sensitive:
+                return False
+        return True
 
     def _check_escalation_arguments(
         self, arguments: dict[str, Any]
@@ -494,7 +524,36 @@ class OdessyPolicy:
 #: Read-only commands allowed without confirmation, in both shells. PowerShell's own
 #: names were missing, so on the Windows laptop the idiomatic `Get-ChildItem` needed a
 #: confirmation that `ls` did not.
-_ALLOWED_FIRST_TOKENS = frozenset({"pwd", "ls", "dir", "get-childitem", "gci", "get-location", "gl"})
+_ALLOWED_FIRST_TOKENS = frozenset(
+    {
+        "pwd", "ls", "dir", "get-childitem", "gci", "get-location", "gl",
+        # Where a program is: prints a path, runs nothing.
+        "which", "where", "where.exe", "get-command", "gcm",
+    }
+)
+
+#: Commands that print files. Allowed unasked only for files inside the workspace;
+#: see ``OdessyPolicy._reads_workspace_files``.
+_FILE_READERS = frozenset({"cat", "type", "get-content", "gc", "head", "tail", "wc"})
+
+#: Well-known programs whose ``--version`` / ``--help`` prints and exits. A named list,
+#: not "anything with --version": a script in the workspace runs its own code first.
+_VERSION_PROGRAMS = frozenset(
+    {
+        "python", "python3", "py", "pip", "pip3", "node", "npm", "pnpm", "yarn", "deno", "bun",
+        "git", "go", "cargo", "rustc", "java", "javac", "dotnet", "uv", "gcc", "g++", "clang",
+        "cmake", "make", "ruby", "perl", "php", "ollama", "pwsh", "powershell",
+    }
+)
+_VERSION_FLAGS = frozenset({"--version", "-version", "--help"})
+
+#: Read-only git subcommands. Options that write a file, run an external diff program,
+#: or read outside the repository are excluded.
+_GIT_READS = frozenset({"status", "log", "show", "diff", "branch"})
+_GIT_UNSAFE_OPTION_PREFIXES = ("--output", "--ext-diff", "--textconv", "--no-index")
+_GIT_BRANCH_LIST_OPTIONS = frozenset(
+    {"-a", "-r", "-v", "-vv", "--list", "--all", "--remotes", "--verbose", "--show-current"}
+)
 
 #: Anything that runs a second command. The allow rule looks at the first word only, so
 #: without this `ls && python evil.py` was "low risk" because it began with `ls`.
@@ -503,12 +562,53 @@ _ALLOWED_FIRST_TOKENS = frozenset({"pwd", "ls", "dir", "get-childitem", "gci", "
 _CHAINING = re.compile(r"[;&|`\n(){}]")
 
 
+def _is_git_read(tokens: list[str]) -> bool:
+    """``git status|log|show|diff|branch`` without options that write or reach out.
+
+    ``git -C dir log`` and ``git -c key=value log`` do not match: the subcommand must
+    come first. Like ``git status`` before it, a repository's own config can still run
+    a program (a filter or hook); allowed commands run in read-only mode.
+    """
+
+    if len(tokens) < 2 or tokens[0] != "git" or tokens[1] not in _GIT_READS:
+        return False
+    rest = tokens[2:]
+    if any(token.startswith(_GIT_UNSAFE_OPTION_PREFIXES) for token in rest):
+        return False
+    if tokens[1] == "branch":
+        # `git branch name` creates a branch; only listing options are reads.
+        return all(token in _GIT_BRANCH_LIST_OPTIONS for token in rest)
+    return True
+
+
+def _is_version_query(tokens: list[str]) -> bool:
+    return len(tokens) == 2 and tokens[0] in _VERSION_PROGRAMS and tokens[1] in _VERSION_FLAGS
+
+
 def _matches_allow_rule(command: str, tokens: list[str]) -> bool:
     if not tokens or _CHAINING.search(command):
         return False
     if tokens[0] in _ALLOWED_FIRST_TOKENS:
         return True
-    return len(tokens) >= 2 and tokens[:2] == ["git", "status"]
+    if _is_version_query(tokens):
+        return True
+    if tokens[0] == "echo" and not any(mark in command for mark in ("$", "%")):
+        # Without variables: `echo $env:API_KEY` would print a secret into the turn.
+        return True
+    return _is_git_read(tokens)
+
+
+_INSTALLERS = frozenset({"pip", "pip3", "npm", "pnpm", "yarn", "uv", "cargo", "go"})
+
+
+def _matches_install_rule(tokens: list[str]) -> bool:
+    """Installing packages: code from the network that runs on this machine."""
+
+    if not tokens:
+        return False
+    if tokens[0] in _INSTALLERS and ("install" in tokens or "add" in tokens[1:2]):
+        return True
+    return tokens[:3] in (["python", "-m", "pip"], ["python3", "-m", "pip"]) and "install" in tokens
 
 def _matches_confirm_rule(command: str, tokens: list[str]) -> bool:
     if not tokens:
@@ -523,22 +623,9 @@ def _matches_confirm_rule(command: str, tokens: list[str]) -> bool:
         "set-content",
         "new-item",
     }
-    installers = {
-        "pip",
-        "npm",
-        "pnpm",
-        "yarn",
-        "uv",
-        "cargo",
-        "go",
-    }
     if ">" in command or ">>" in command:
         return True
-    if tokens[0] in installers and "install" in tokens:
-        return True
-    if tokens[:3] == ["python", "-m", "pip"] and "install" in tokens:
-        return True
-    if tokens[0] == "git" and not (len(tokens) >= 2 and tokens[:2] == ["git", "status"]):
+    if tokens[0] == "git" and not (_is_git_read(tokens) or _is_version_query(tokens)):
         return True
     return tokens[0] in write_commands
 
