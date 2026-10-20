@@ -503,3 +503,105 @@ def test_pcm_is_wrapped_as_a_playable_wav() -> None:
     assert data[:4] == b"RIFF"
     assert data[8:12] == b"WAVE"
     assert len(data) > 320
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('action', ['activate', 'cancel', 'fail'])
+async def test_superseding_actions_discard_pending_requests(action):
+    session = Harness([]).build()
+    session._pending = 'obsolete replacement'
+    session._pending_ready.set()
+    stop = session._stop
+    if action == 'activate':
+        await session._activate()
+    elif action == 'cancel':
+        await session._submit('cancel', session._turn_id)
+    else:
+        session._fail('device lost')
+    assert session._pending is None
+    assert stop.is_set()
+
+@pytest.mark.anyio
+async def test_transcription_does_not_block_wake_and_stale_text_is_discarded():
+    session = Harness([]).build()
+    started, release = asyncio.Event(), asyncio.Event()
+    async def transcribe(audio):
+        started.set()
+        await release.wait()
+        return 'obsolete request'
+    session.transcribe = transcribe
+    capture = asyncio.create_task(session._finish_capture())
+    await started.wait()
+    try:
+        assert capture.done(), 'capture must hand STT to a background task'
+        await session._activate()
+    finally:
+        release.set()
+        await capture
+        await asyncio.sleep(0)
+    assert session._pending is None
+
+@pytest.mark.anyio
+async def test_generation_lock_survives_repeated_cancellation():
+    import threading
+    from odessy.runtime.agent_loop import OdessyAgent
+    agent = object.__new__(OdessyAgent)
+    agent._model_lock = asyncio.Lock()
+    started, release = threading.Event(), threading.Event()
+    def generate():
+        started.set()
+        release.wait(3)
+    first = asyncio.create_task(agent._generate(generate))
+    await asyncio.to_thread(started.wait, 2)
+    try:
+        first.cancel()
+        await asyncio.sleep(0)
+        first.cancel()
+        await asyncio.sleep(0)
+        assert agent._model_lock.locked()
+        assert not first.done()
+    finally:
+        release.set()
+        with contextlib.suppress(asyncio.CancelledError):
+            await first
+
+@pytest.mark.anyio
+async def test_live_capture_overflow_stops_admission():
+    harness = Harness([WAKE])
+    session = harness.build()
+    overflow = asyncio.Event()
+    async def cue():
+        await overflow.wait()
+    session.cue = cue
+    def status(message):
+        if 'overflow' in message:
+            overflow.set()
+    session.status = status
+    await asyncio.wait_for(session.run(), 2)
+    assert 'overflow' in session.error
+    assert session.state == 'ERROR'
+    assert session._stop.is_set()
+    assert harness.turns == []
+
+@pytest.mark.anyio
+async def test_cli_drops_reply_interrupted_during_synthesis(tmp_path):
+    import ast
+    import uuid
+    from pathlib import Path
+    from types import SimpleNamespace
+    import odessy.cli as cli
+    session = SimpleNamespace(_turn_id=1, _closing=False)
+    played = []
+    def synthesize(text, path):
+        path.write_bytes(b'audio')
+        session._turn_id += 1
+        return SimpleNamespace(status='ok')
+    tree = ast.parse(Path(cli.__file__).read_text(encoding='utf-8'))
+    speak = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == 'speak')
+    namespace = dict(asyncio=asyncio, contextlib=contextlib, uuid=uuid,
+                     config=SimpleNamespace(tmp_dir=tmp_path), session=session,
+                     tts=SimpleNamespace(synthesize=synthesize),
+                     player=SimpleNamespace(play=played.append))
+    exec(compile(ast.Module(body=[speak], type_ignores=[]), str(cli.__file__), 'exec'), namespace)
+    await namespace['speak']('old reply')
+    assert played == []
+    assert list(tmp_path.iterdir()) == []

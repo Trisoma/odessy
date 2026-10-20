@@ -177,7 +177,22 @@ class OdessyAgent:
         """Run one synchronous model call without blocking the event loop."""
 
         async with self._model_lock:
-            return await asyncio.to_thread(call)
+            # Cancellation cannot stop a thread: retain ownership until it exits,
+            # even if the caller cancels repeatedly during the drain.
+            worker = asyncio.create_task(asyncio.to_thread(call))
+            cancelled = False
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    cancelled = True
+                except Exception:
+                    break
+            if cancelled:
+                if not worker.cancelled():
+                    worker.exception()
+                raise asyncio.CancelledError
+            return worker.result()
 
     async def _propose(self, user_text: str, context: ConversationContext | None) -> ModelAction:
         """Propose with history only when there is history.

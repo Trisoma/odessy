@@ -35,6 +35,8 @@ from odessy.voice.frames import (
     WAKE_FRAME_BYTES,
     WAKE_FRAME_MS,
     FrameBuffer,
+    FrameQueue,
+    AudioFrame,
 )
 from odessy.voice.memory import ConversationMemory
 from odessy.voice.segmentation import SegmenterConfig, UtteranceSegmenter
@@ -119,6 +121,9 @@ class VoiceSession:
     _closing: bool = False
     _worker: asyncio.Task[None] | None = field(default=None, repr=False)
 
+    _transcription: asyncio.Task[None] | None = field(default=None, repr=False)
+    _capture_pending: tuple[bytes, int] | None = field(default=None, repr=False)
+
     def __post_init__(self) -> None:
         self._vad_frames = FrameBuffer(self.vad.frame_bytes)
         # Keep the caller's timings; only the frame size is the session's to decide,
@@ -137,7 +142,13 @@ class VoiceSession:
             await self._read_loop()
         finally:
             self._closing = True
+            self._stop.set()
+            self._pending = None
+            self._capture_pending = None
             self._pending_ready.set()
+            if self._transcription is not None:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._transcription
             if self._worker is not None:
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._worker
@@ -147,6 +158,8 @@ class VoiceSession:
 
     async def aclose(self) -> None:
         self._closing = True
+        self._pending = None
+        self._capture_pending = None
         self._stop.set()
         with contextlib.suppress(Exception):
             self.stop_speaking()
@@ -154,25 +167,52 @@ class VoiceSession:
     # -- the reader: owns the device, never blocks on a turn ---------------------
 
     async def _read_loop(self) -> None:
-        while not self._closing:
-            try:
-                frame = await self.frames()
-            except Exception as error:  # noqa: BLE001 - device failure is reportable
-                self._fail(f"microphone capture failed: {error}")
-                return
-            if not frame:
-                self._fail("microphone capture ended")
-                return
-            try:
-                await self._handle_frame(frame)
-            except Exception as error:  # noqa: BLE001 - never lose the device loop
-                self._fail(f"voice session error: {error}")
-                return
-            # Yield once per frame. A frame source that returns without suspending --
-            # a file, a test script, an already-buffered socket -- would otherwise let
-            # this loop spin forever and starve the worker, so a turn queued during
-            # capture would never start.
-            await asyncio.sleep(0)
+        # Two seconds of audio; fail rather than silently splice an utterance.
+        queue = FrameQueue(max_frames=25)
+        ready = asyncio.Event()
+
+        async def capture() -> None:
+            index = 0
+            while not self._closing:
+                try:
+                    frame = await self.frames()
+                    if not frame:
+                        raise RuntimeError("microphone capture ended")
+                    queue.push(AudioFrame(pcm=frame, index=index))
+                    index += 1
+                    if queue.overflowed:
+                        self._fail("microphone capture queue overflow")
+                        return
+                except Exception as error:
+                    self._fail(f"microphone capture failed: {error}")
+                    return
+                finally:
+                    ready.set()
+                await asyncio.sleep(0)
+
+        reader = asyncio.create_task(capture())
+        try:
+            while not self._closing:
+                await ready.wait()
+                ready.clear()
+                for frame in queue.pop_all():
+                    if self._closing:
+                        return
+                    activation = self._turn_id
+                    try:
+                        await self._handle_frame(frame.pcm)
+                    except Exception as error:
+                        self._fail(f"voice session error: {error}")
+                        return
+                    if activation != self._turn_id:
+                        # Discard audio captured before/during the ready cue.
+                        queue.clear()
+                        break
+                    await asyncio.sleep(0)
+        finally:
+            reader.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reader
 
     async def _handle_frame(self, frame: bytes) -> None:
         if self.state == "RECORDING":
@@ -199,6 +239,9 @@ class VoiceSession:
         """Wake phrase heard: interrupt, cue, then open one command window."""
 
         self._turn_id += 1
+        self._pending = None
+        self._pending_ready.clear()
+        self._capture_pending = None
         interrupting = self._turn_active or self.state == "SPEAKING"
         self._stop.set()
         with contextlib.suppress(Exception):
@@ -215,6 +258,8 @@ class VoiceSession:
         self.state = "READY"
         if self.options.cue and self.cue is not None:
             await self.cue()
+        if self._closing:
+            return
         # Capture starts after the cue returns: the contract is that the user speaks
         # after the cue, so cue audio is never part of the utterance.
         self.segmenter.begin()
@@ -233,23 +278,36 @@ class VoiceSession:
                 return
 
     async def _finish_capture(self) -> None:
-        audio = self.segmenter.utterance
-        turn_id = self._turn_id
+        self._capture_pending = (self.segmenter.utterance, self._turn_id)
         self.state = "TRANSCRIBING"
         self.status("Transcribing speech")
-        try:
-            transcript = await self.transcribe(audio)
-        except Exception as error:  # noqa: BLE001 - reported, admission continues
-            self.status(f"Transcription failed: {error}")
-            self._enter_listening()
-            return
-        await self._submit(transcript, turn_id)
+        if self._transcription is None or self._transcription.done():
+            self._transcription = asyncio.create_task(self._transcribe_pending())
+
+    async def _transcribe_pending(self) -> None:
+        # Serialize STT, retaining at most one replacement recording.
+        while self._capture_pending is not None and not self._closing:
+            audio, turn_id = self._capture_pending
+            self._capture_pending = None
+            try:
+                transcript = await self.transcribe(audio)
+            except Exception as error:
+                if turn_id == self._turn_id and not self._closing:
+                    self.status(f"Transcription failed: {error}")
+                    self._enter_listening()
+                continue
+            await self._submit(transcript, turn_id)
 
     async def _submit(self, transcript: str, turn_id: int) -> None:
         """Decide locally, or queue exactly one pending request."""
 
+        if turn_id != self._turn_id or self._closing:
+            return
         text = " ".join(transcript.split())
         if _is_cancel(text):
+            self._pending = None
+            self._pending_ready.clear()
+            self._stop.set()
             # Handled without the model: a cancellation instruction is not a request
             # that needs a tool-call decision.
             self.status(STOPPED_TEXT)
@@ -306,7 +364,8 @@ class VoiceSession:
         except Exception as error:  # noqa: BLE001 - reported; the session continues
             self._turn_active = False
             self.status(f"Turn failed: {error}")
-            self._enter_listening()
+            if turn_id == self._turn_id and not self._closing:
+                self._enter_listening()
             return
         self._turn_active = False
 
@@ -369,12 +428,14 @@ class VoiceSession:
         self.wake.reset()
         self.vad.reset()
         self._vad_frames.reset()
-        self._stop = asyncio.Event()
         self._followup_frames = 0
         self._blank_attempts = 0
         self.state = "LISTENING"
 
     def _fail(self, message: str) -> None:
+        self._stop.set()
+        self._pending = None
+        self._capture_pending = None
         self.error = message
         self.state = "ERROR"
         self.status(message)

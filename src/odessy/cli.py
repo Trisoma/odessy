@@ -338,11 +338,14 @@ async def _listen_async(
         return result.text
 
     async def speak(text: str) -> None:
+        turn_id = session._turn_id
         path = config.tmp_dir / f"odessy-reply-{uuid.uuid4().hex}.wav"
         result = await asyncio.to_thread(tts.synthesize, text, path)
         try:
             if result.status != "ok":
                 raise RuntimeError(result.error or result.status)
+            if session._closing or turn_id != session._turn_id:
+                return
             await asyncio.to_thread(player.play, path)
         finally:
             with contextlib.suppress(OSError):
