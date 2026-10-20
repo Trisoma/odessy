@@ -31,9 +31,11 @@ from odessy.models.ollama_model import (
     _extract_model_action_from_chat,
     _fallback_observation_response,
     _follow_up_tools,
+    _history_messages,
     _observation_messages,
     _remember_observation,
     _start_turn,
+    _start_turn_with_context,
     _strip_thinking,
     _looks_like_generic_final_response,
     _model_output_error,
@@ -116,10 +118,10 @@ class LlamaCppLFMModel:
             return diagnostics
         return ModelTurnDiagnostics()
 
-    def propose(self, user_text: str) -> ModelAction:
+    def propose(self, user_text: str, *, context: Any = None) -> ModelAction:
         diagnostics = ModelTurnDiagnostics()
         object.__setattr__(self, "_last_turn_diagnostics", diagnostics)
-        _start_turn(self)
+        _start_turn_with_context(self, context)
         try:
             action = self._chat_native_action(user_text, diagnostics)
         except ValueError as error:
@@ -180,6 +182,7 @@ class LlamaCppLFMModel:
     ) -> ModelAction:
         messages = [
             {"role": "system", "content": _system_prompt()},
+            *_history_messages(self),
             {"role": "user", "content": user_text},
         ]
         try:

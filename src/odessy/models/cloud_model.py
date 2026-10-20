@@ -297,15 +297,19 @@ class CloudModel:
 
     # -- ModelAdapter -------------------------------------------------------
 
-    def propose(self, user_text: str) -> ModelAction:
+    def propose(self, user_text: str, *, context: Any = None) -> ModelAction:
+        from odessy.models.ollama_model import _context_messages
+
         self._diagnostics = ModelTurnDiagnostics()
         self._pending_call_id = None
         self._pending_batch = ()
+        # History first, then the request: role-separated, and redacted before it was
+        # stored, so a secret spoken once is not re-sent on every later turn. A session
+        # passes its turns, a router stores dicts; one helper reads both.
         self._messages = [
-            {"role": item["role"], "content": redact_text(item["content"])}
-            for item in self.conversation_context
-            if item.get("role") in {"user", "assistant"} and isinstance(item.get("content"), str)
-        ] + [{"role": "user", "content": redact_text(user_text)}]
+            *_context_messages(context if context is not None else self.conversation_context),
+            {"role": "user", "content": redact_text(user_text)},
+        ]
         reply = self._exchange("proposal_generation_ms")
         try:
             return self._to_action(reply, user_text)
