@@ -111,7 +111,43 @@ def _parse_command(where: str, command: str) -> tuple[str, ...]:
         raise CommandsConfigError(f"{where}: an empty command")
     if SHELL_SYNTAX.search(command):
         raise CommandsConfigError(f"{where}: {command!r} contains shell syntax (chaining, redirection or variables)")
-    if len(words) == 1 and words[0] in _TOO_BROAD:
+    executable = re.split(r"[\\/]", words[0].strip('"\''))[-1].removesuffix(".exe")
+    if re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", executable):
+        executable = "python"
+    arguments = words[1:]
+    shells = {"bash", "sh", "zsh"}
+    powershells = {"pwsh", "powershell"}
+    eval_mode = any(
+        (executable in shells and argument.startswith("-") and not argument.startswith("--") and "c" in argument[1:])
+        or (executable in powershells and argument.startswith("-") and any(
+            flag.startswith(argument[1:]) for flag in ("command", "encodedcommand", "commandwithargs", "ec")
+        ))
+        or (executable == "cmd" and argument.startswith(("/c", "/k")))
+        or (executable in {"python", "py"} and argument.startswith("-c"))
+        or (executable in {"node", "deno", "bun", "ruby", "perl", "php"} and (
+            argument in {"-e", "-p", "-r", "--eval", "--print", "eval"}
+            or argument.startswith(("--eval=", "--print=", "-e", "-p"))
+        ))
+        for argument in arguments
+    )
+    incomplete = not arguments or all(argument.startswith("-") for argument in arguments)
+    if arguments and arguments[0].startswith("-"):
+        # An option value is not a fixed script: e.g. python -W ignore -c CODE.
+        incomplete = True
+        if executable in {"python", "py"} and arguments[0] == "-m":
+            incomplete = len(arguments) < 2 or arguments[1].startswith("-")
+    if executable == "cmd" and arguments and arguments[0].startswith("/"):
+        incomplete = True
+    if executable in {"npm", "pnpm", "yarn", "uv", "go", "cargo", "bun", "deno"} and arguments:
+        if arguments[0] in {"run", "run-script", "exec", "x"}:
+            task = arguments[1:]
+            incomplete = not task or task[0].startswith("-")
+            # Cargo selects a concrete executable with --bin NAME or --example NAME.
+            if executable == "cargo" and len(task) >= 2 and task[0] in {"--bin", "--example"}:
+                incomplete = task[1].startswith("-")
+    if executable in {"python", "py"} and arguments and arguments[-1] == "-m":
+        incomplete = True
+    if eval_mode or (executable in _TOO_BROAD and incomplete):
         raise CommandsConfigError(
             f"{where}: {command!r} alone would approve anything it runs; name the script, e.g. '{words[0]} test'"
         )

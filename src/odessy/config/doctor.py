@@ -147,7 +147,7 @@ def _commands_checks(env: Mapping[str, str]) -> list[Check]:
     except CommandsConfigError as error:
         return [Check("Approved commands", "fail", str(error), f"Correct {path}; see policy/README.md.")]
     listed = ", ".join(" ".join(words) for words in approved) or "none"
-    return [Check("Approved commands", "ok", f"for this folder, without asking: {listed}")]
+    return [Check("Approved commands", "ok", f"for this folder, local terminal.run only, without asking: {listed}; laptop.terminal.run still requires confirmation")]
 
 
 def _python_check() -> Check:

@@ -352,3 +352,11 @@ def test_doctor_fails_a_broken_commands_file(tmp_path: Path) -> None:
 
     (check,) = _commands_checks({"ODESSY_COMMANDS_FILE": str(_commands_file(tmp_path, tmp_path, "npx"))})
     assert check.status == "fail" and "alone would approve" in check.summary
+
+def test_doctor_identifies_local_only_preapproval_scope(tmp_path, monkeypatch):
+    from odessy.config.doctor import _commands_checks
+    monkeypatch.chdir(tmp_path)
+    path = _commands_file(tmp_path, tmp_path, 'pytest')
+    (check,) = _commands_checks({'ODESSY_COMMANDS_FILE': str(path)})
+    assert 'local terminal.run only' in check.summary
+    assert 'laptop.terminal.run still requires confirmation' in check.summary

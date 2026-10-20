@@ -89,7 +89,14 @@ commands = ["pytest", "npm test", "npm run build"]
 - The file is never read from the workspace, so a repository cannot approve its own
   commands. Entries with shell syntax, or a bare interpreter such as `python` or
   `npx`, are refused at startup. Only `terminal.run` on this machine is covered.
-- `python -m odessy doctor` shows the approved commands for the current folder.
+- Eval prefixes such as `python -c`, `bash -c`, and `powershell -Command`, and
+  incomplete task runners such as `npm run` or `uv run`, are refused. Name the
+  script or task, for example `python -m pytest` or `npm run build`.
+- In split mode, `laptop.terminal.run` does not use these local entries and still
+  requires its normal confirmation. Configure local commands on the machine
+  that owns the local workspace; this file does not authorize a remote host.
+- `python -m odessy doctor` shows the approved commands for the current folder
+  and identifies this local-only scope.
 
 ### DENY
 
