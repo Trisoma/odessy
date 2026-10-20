@@ -1,0 +1,77 @@
+---
+title: Automatic model selection
+---
+
+Automatic selection is opt-in, unreleased v0.4.0 work. It chooses a model; it
+does not filter the capable model's tool list or authorize actions.
+
+```bash
+python -m odessy --model-backend auto "hello"
+python -m odessy --model-backend auto "read README.md"
+python -m odessy voice --model-backend auto
+python -m odessy doctor --model-backend auto
+```
+
+Full-message greetings (`hello`, `hi`, `hey`, `thanks`, `thank you`, ignoring
+case and trailing punctuation) and explicit `rewrite:`, `rephrase:`,
+`translate to <language>:`, and `summarize:` text tasks use Gemma3 1B without
+tools. Text following a transformation prefix is data to transform. Unknown
+requests and requests with conversation history use the capable local model.
+
+The fast adapter has a 256-token output ceiling. Native or structured tool
+proposals, empty/malformed output, and model errors escalate once to capable.
+Fluent wrong answers cannot reliably be detected; this is a conservative routing
+policy, not a correctness checker. LFM's historical tool failures remain relevant.
+
+| Variable | Default |
+|---|---|
+| `ODESSY_MODEL_BACKEND` | Existing `lfm`; set `auto` to opt in |
+| `ODESSY_AUTO_FAST_MODEL` | `gemma3:1b` |
+| `ODESSY_AUTO_CAPABLE_BACKEND` | `lfm` (`ollama` and `llama_cpp` also accepted) |
+| `ODESSY_AUTO_CAPABLE_MODEL` | `lfm2.5-thinking:1.2b-q8_0` |
+| `ODESSY_AUTO_CLOUD_FALLBACK` | `off`; accepts `on` or `off` |
+| `ODESSY_AUTO_CLOUD_BACKEND` | Unset; required when fallback is `on` |
+
+Both local roles use `ODESSY_MODEL_ENDPOINT` and `keep_alive=0`. Models are built
+lazily; Odessy neither pulls weights nor warms them at startup. Releasing weights
+after requests can add reload latency, including between tool continuations. It
+does not guarantee a memory boundary or improve measured Jetson performance.
+
+Cloud fallback is possible only after the initial capable proposal fails. It
+requires both explicit enablement and normal provider credentials/configuration.
+Odessy announces the possibility at startup and actual escalation when it occurs.
+Tool errors, policy denials, declined confirmation, and failed continuations
+never switch models. After a capable/cloud proposal, that adapter owns the rest
+of the turn, including batches and observations.
+
+Repairs, model transitions, and OpenAI-compatible transport retries share one
+generation budget. Auto mode disables opaque Anthropic SDK retries so they cannot
+bypass that budget. Existing explicit cloud-backend retry defaults are unchanged.
+
+Auto generation runs in a worker while the event loop remains responsive.
+Cancellation prevents another generation or dispatch and discards late output;
+it does not abort a blocking HTTP read or undo an executed tool. The caller waits
+for that worker before it can start a replacement. Existing transport timeouts
+still apply. This may delay cancellation completion.
+
+The router accepts `run_turn(..., conversation_context=...)` with user/assistant
+message dictionaries. It redacts and forwards them, keeps no session store, and
+does not replace the separately developed wake-word session controller.
+
+## Diagnostics and evaluation
+
+Turn metrics expose additive `routing` diagnostics: policy version, reason,
+selected role, cancellation flag, and ordered stages with backend/model, calls,
+wall time, tokens, and available model-load time. Evaluation metadata adds
+`model_routing`; each attempt retains its route. Existing metadata keys remain.
+
+`python -m evals run --backend auto ...` uses the same router. The existing 56-case
+suite is unchanged; deterministic routing fixtures are separate under `tests`.
+
+Before recommending this mode on Jetson, compare Gemma-only, LFM-only, and auto
+on a small fixed set of greetings, text transformations, and tool requests. Run
+both repeated and alternating requests. Record correctness, tool completion,
+p50/p95 total latency, load time, peak memory, and failures. Acceptance requires
+lower median latency for eligible fast tasks, no tool-fixture regression, and no
+additional memory failures. Hardware measurements remain pending. No paid cloud
+evaluation is needed for scripted regression tests.

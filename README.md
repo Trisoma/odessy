@@ -42,6 +42,12 @@ their namespaced tools under Odessy's validation and authorization path. See
 boundaries, and the [roadmap](docs/releases/v0.4.0.md) for status and follow-ups.
 This feature is not part of the released v0.3.0 private prerelease.
 
+Opt-in automatic selection is also available in v0.4.0 development with
+`--model-backend auto`: narrow text tasks use a tool-free fast model, while
+uncertain/tool requests use the configured capable model. Cloud fallback is off
+by default. See [model selection](docs/reference/model-selection.mdx); Jetson
+speed and memory benefits have not been established.
+
 ## Python source layout
 
 Implementation modules under `src/odessy/` are grouped by responsibility:

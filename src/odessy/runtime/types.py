@@ -56,6 +56,7 @@ class ModelTurnDiagnostics:
     repair_generation_ms: float | None = None
     final_generation_ms: float | None = None
     model_total_duration_ms: float | None = None
+    model_load_duration_ms: float | None = None
     prompt_eval_duration_ms: float | None = None
     prompt_eval_count: int | None = None
     eval_duration_ms: float | None = None
@@ -68,6 +69,7 @@ class ModelTurnDiagnostics:
     response_chars: int = 0
     proposal_valid: bool = True
     repair_triggered: bool = False
+    routing: dict[str, Any] | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
 
@@ -82,6 +84,7 @@ class AgentTurnMetrics:
     mcp_execution_ms: float | None = None
     final_generation_ms: float | None = None
     model_total_duration_ms: float | None = None
+    model_load_duration_ms: float | None = None
     prompt_eval_duration_ms: float | None = None
     prompt_eval_count: int | None = None
     eval_duration_ms: float | None = None
@@ -95,6 +98,7 @@ class AgentTurnMetrics:
     proposal_valid: bool = True
     repair_triggered: bool = False
     tool_called: bool = False
+    routing: dict[str, Any] | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
 

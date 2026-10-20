@@ -363,6 +363,14 @@ python -m evals run --backend deepseek --repeat 5 --label deepseek-all
 Send back the results folder as usual. `tests/test_hard_evals.py` holds a passing
 reference behaviour for every hard case and checks that the typical failures fail.
 
+## Automatic model selection (v0.4.0 development)
+
+`--backend auto` uses the opt-in router. Metadata adds `model_routing` with role
+models and cloud opt-in; attempts add routing stages and cumulative calls/tokens.
+The separate deterministic routing fixtures do not change the existing 56 cases.
+See [model selection](../docs/reference/model-selection.mdx) for the targeted Jetson
+comparison protocol. No hardware speedup is established by automated tests.
+
 ## Changing the cases
 
 Cases live in `evals/cases/*.toml`, the fixture workspaces in `evals/fixtures/`. Every

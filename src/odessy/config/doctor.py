@@ -162,6 +162,18 @@ def _model_checks(backend: str, env: Mapping[str, str], probes: Probes) -> list[
     from odessy.models.cloud_model import CLOUD_PROVIDERS, CloudModelConfigError, build_cloud_model
 
     backend = backend.lower()
+    if backend == "auto":
+        from odessy.models.routed_model import RoutingConfig
+        try:
+            config = RoutingConfig.from_env(env)
+        except ValueError as error:
+            return [Check("Model", "fail", str(error), "See docs/reference/model-selection.mdx.")]
+        checks = [Check("Model", "ok", "auto routing is opt-in; fast text-only and capable local roles")]
+        for name in dict.fromkeys((config.fast_model, config.capable_model)):
+            checks.extend(_model_checks("lfm", {**env, "ODESSY_MODEL_NAME": name}, probes))
+        if config.cloud_fallback:
+            checks.extend(_model_checks(config.cloud_backend, env, probes))
+        return checks
     if backend in CLOUD_PROVIDERS:
         try:
             model = build_cloud_model(backend, dict(env))
