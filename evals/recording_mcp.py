@@ -21,8 +21,8 @@ from typing import Any
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from odessy.calculator import evaluate_arithmetic_expression
-from odessy.tool_contracts import TOOL_REQUEST_SCHEMAS
+from odessy.tools.calculator import evaluate_arithmetic_expression
+from odessy.tools.tool_contracts import TOOL_REQUEST_SCHEMAS
 
 from evals.toml_compat import loads_toml
 

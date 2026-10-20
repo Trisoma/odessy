@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from odessy.agent_loop import ExecutionTarget, OdessyAgent
+from odessy.runtime.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.cli import _build_model
-from odessy.cloud_model import (
+from odessy.models.cloud_model import (
     CLOUD_PROVIDERS,
     CloudModel,
     CloudModelConfigError,
@@ -19,10 +19,10 @@ from odessy.cloud_model import (
     decode_tool_name,
     encode_tool_name,
 )
-from odessy.mcp_server import build_odessy_mcp_server
-from odessy.policy import OdessyPolicy
-from odessy.tool_contracts import TOOL_REQUEST_SCHEMAS
-from odessy.types import FinalResponse, ToolObservation, ToolRequest
+from odessy.tools.mcp_server import build_odessy_mcp_server
+from odessy.authority.policy import OdessyPolicy
+from odessy.tools.tool_contracts import TOOL_REQUEST_SCHEMAS
+from odessy.runtime.types import FinalResponse, ToolObservation, ToolRequest
 
 SECRET = "sk-" + "a" * 32
 

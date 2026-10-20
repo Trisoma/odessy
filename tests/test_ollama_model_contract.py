@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from odessy.agent_loop import OdessyAgent
-from odessy.ollama_model import (
+from odessy.runtime.agent_loop import OdessyAgent
+from odessy.models.ollama_model import (
     OllamaModel,
     _parse_model_action,
     _system_prompt,
 )
-from odessy.policy import OdessyPolicy
-from odessy.types import FinalResponse, ToolObservation, ToolRequest
+from odessy.authority.policy import OdessyPolicy
+from odessy.runtime.types import FinalResponse, ToolObservation, ToolRequest
 
 
 class QueuedOllamaModel(OllamaModel):

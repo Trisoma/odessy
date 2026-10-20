@@ -42,6 +42,27 @@ their namespaced tools under Odessy's validation and authorization path. See
 boundaries, and the [roadmap](docs/releases/v0.4.0.md) for status and follow-ups.
 This feature is not part of the released v0.3.0 private prerelease.
 
+## Python source layout
+
+Implementation modules under `src/odessy/` are grouped by responsibility:
+
+| Package | Responsibility |
+|---|---|
+| `runtime/` | Agent loop, shared message types, repeat guard, and tool deadlines |
+| `models/` | Cloud, Ollama, LFM, and fake model adapters |
+| `tools/` | MCP servers, external tools, tool schemas, and calculator |
+| `authority/` | Policy, workspace boundaries, command bridge, redaction, and output retention |
+| `config/` | Configuration files, deployment selection, and setup diagnostics |
+| `execution/` | Execution contracts, providers, isolation, and escalation |
+| `devices/` | Device descriptors and profiles |
+| `voice/` | Audio input/output, STT, TTS, and voice loop |
+
+`cli.py` and `__main__.py` remain at the package root, so CLI commands and console
+entry points stay the same. New Python code should use the grouped imports, such
+as `from odessy.runtime.agent_loop import OdessyAgent`. Historical imports such as
+`odessy.agent_loop` still resolve through the small aliases in `_compat/`; these
+return the canonical module rather than duplicating classes or module state.
+
 ## Deployment
 
 Odessy runs in one of two deployments:

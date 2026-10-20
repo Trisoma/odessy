@@ -20,7 +20,7 @@ class NodeToolServerTransport(AbstractAsyncContextManager):
     """MCP stdio transport for Odessy's laptop-side Node tool server."""
 
     def __init__(self, workspace_root: Path | str) -> None:
-        public_repo_root = Path(__file__).resolve().parents[2]
+        public_repo_root = Path(__file__).resolve().parents[3]
         self._context = stdio_client(
             StdioServerParameters(
                 command="npm",
@@ -165,7 +165,7 @@ def node_tool_server_dependencies_installed() -> bool:
     )
 
 def _public_repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[3]
 
 def _node_tools_dir(public_repo_root: Path) -> Path:
     return public_repo_root / "tools"

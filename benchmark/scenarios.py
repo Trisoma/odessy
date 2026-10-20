@@ -10,10 +10,10 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from odessy.agent_loop import OdessyAgent
-from odessy.lfm_model import LlamaCppLFMModel, normalize_ollama_chat_response
-from odessy.policy import OdessyPolicy
-from odessy.types import FinalResponse, ToolObservation, ToolRequest
+from odessy.runtime.agent_loop import OdessyAgent
+from odessy.models.lfm_model import LlamaCppLFMModel, normalize_ollama_chat_response
+from odessy.authority.policy import OdessyPolicy
+from odessy.runtime.types import FinalResponse, ToolObservation, ToolRequest
 from odessy.voice.audio_io import CommandAudioIO
 from odessy.voice.config import VoiceConfig
 from odessy.voice.stt import WhisperCppSTT
@@ -108,7 +108,7 @@ class BenchmarkPartialGpuLFMModel(LlamaCppLFMModel):
         except urllib.error.HTTPError as error:
             body = _read_error_body(error)
             if "does not support tools" in body:
-                from odessy.ollama_model import _OllamaToolsUnsupported
+                from odessy.models.ollama_model import _OllamaToolsUnsupported
 
                 raise _OllamaToolsUnsupported(body) from error
             raise RuntimeError(
