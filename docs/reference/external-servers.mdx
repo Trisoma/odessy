@@ -160,7 +160,3 @@ exists. It fails on a malformed file, and warns, with the fix, when:
 
 - Confirmation is a terminal prompt in voice mode too.
 - A call's `decision` and `call` records are linked by order only.
-- The merged snapshot imports `jsonschema` directly but obtains it through the
-  `mcp` dependency; declaring it directly remains follow-up work.
-- Avoid `__` in server names: the merged config parser accepts it, but cloud
-  tool-name decoding cannot preserve it. Remote tool names already reject `__`.
