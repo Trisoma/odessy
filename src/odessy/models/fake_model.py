@@ -6,7 +6,7 @@ from odessy.runtime.types import FinalResponse, ModelAction, ToolObservation, To
 class FakeModel:
     """Deterministic stand-in for Gemma during runtime development."""
 
-    def propose(self, user_text: str) -> ModelAction:
+    def propose(self, user_text: str, *, context: Any = None) -> ModelAction:
         normalized = user_text.strip().lower()
         if normalized.startswith("run "):
             return _terminal_request(user_text.strip()[4:])

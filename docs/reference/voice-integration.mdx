@@ -120,15 +120,94 @@ about 2.6x real time
 
 This latency was accepted for v0.2.0 because the priority is a working local voice loop before optimization. The figure is a v0.2.0 measurement, not a fresh v0.3.0 one.
 
+## Wake-Word Sessions
+
+`odessy voice --listen` keeps the microphone open, waits for a wake phrase, and then
+runs exactly the same turn as a typed request. The existing single bounded turn is
+unchanged; `--listen` selects the session controller instead of one recording.
+
+```powershell
+odessy voice --setup-wake          # fetch and record the model assets, then exit
+odessy voice --listen              # wake phrase before every request (default)
+odessy voice --listen --interaction conversation
+```
+
+The interaction is: say the wake phrase, wait for the ready cue, then speak. During a
+reply or a task, say the phrase again to interrupt; after the cue, "stop", "cancel" or
+"never mind" is handled locally without calling the model, and anything else becomes
+one pending replacement request that runs after the previous turn settles.
+
+| Interface | Behaviour |
+|---|---|
+| `odessy voice` | One bounded turn, exactly as before |
+| `odessy voice --listen` | Continuous wake listening |
+| `--interaction wake` | The phrase is required before every request (default) |
+| `--interaction conversation` | A short follow-up window stays open after each reply |
+| `odessy voice --setup-wake` | Downloads and records the default model assets, explicitly |
+
+Settings: `ODESSY_VOICE_INTERACTION` (`wake`\|`conversation`, default `wake`),
+`ODESSY_WAKE_MODEL`, `ODESSY_WAKE_THRESHOLD` (default `0.5`),
+`ODESSY_VOICE_FOLLOWUP_SECONDS` (default `10`), and
+`ODESSY_VOICE_MAX_UTTERANCE_SECONDS` (default `20`). An invalid value stops startup
+with a message naming the setting.
+
+### How the session is built
+
+One long-lived `arecord` process owns the microphone for the whole session, producing
+16 kHz mono signed 16-bit PCM. Its frames are re-cut per consumer: 80 ms for wake
+detection, 32 ms for the VAD, because the two models have different frame sizes and
+re-recording for each would be wrong. A wake event discards the pre-cue buffers,
+plays a short cue, and only then opens capture, so cue audio is never part of a
+request.
+
+The session is *one reader and one worker*. The reader never blocks on a model call,
+which is why the wake phrase still works while a turn executes or a reply plays. The
+worker runs one turn at a time; two model generations never overlap on one adapter.
+Model generation itself runs in a worker thread, serialised by a lock, so the event
+loop keeps reading audio.
+
+Authorization is untouched. The session decides when the microphone is open and what
+text to submit; every proposed action still passes validation, policy, confirmation,
+and the execution-target gate, and a wake transcript or a spoken word can never supply
+an approval.
+
+Conversation mode keeps at most six completed exchanges and 8,000 characters in RAM,
+redacted with the same best-effort, name-based filter as the rest of the runtime before
+storage, cleared on exit, and never carried into a new turn as a prior approval or
+tool-call identifier. Interrupted turns are not recorded.
+
+### Boundaries of this version
+
+- **Headset first.** Listening stays active during playback, but reliable
+  open-speaker operation needs echo cancellation and is not claimed.
+- The contract is "phrase, then cue, then speak". A same-breath "phrase + command" is
+  out of scope.
+- Custom wake phrases are not supported: the default is a pretrained "Hey Jarvis"
+  model, and a custom "Hey Odessy" phrase needs its own training run.
+- **Model weights are not Apache-2.0.** The openWakeWord code is Apache-2.0; its
+  bundled pretrained models are CC BY-NC-SA 4.0, which forbids commercial use. They
+  are never in this repository, are fetched only by `odessy voice --setup-wake`, and
+  that command records source, version, checksum, and license. A digest that has not
+  been pinned is reported as *unverified* rather than implied to be verified.
+- Qualification targets — at least 90% detection over 50 spoken activations, at most
+  one false activation per hour of background audio, and p95 playback interruption
+  within one second of finishing the phrase — are **acceptance targets, not
+  measurements**. None of them has been measured on hardware.
+- Wake activation alone promises no faster answers: the Jetson's model and TTS
+  latency are unchanged and remain visible.
+
 ## Current Limits
 
-The v0.3.0 private prerelease retains these limits. Wake-up activation, blank-audio
-handling, spoken escalation approval, and further voice/local-model optimization
-belong to the [v0.4.0 roadmap](../releases/v0.4.0.md), with hardware and composition
-prerequisites still open.
+The v0.3.0 private prerelease retains these limits. Blank-audio handling is
+implemented; wake-up activation is implemented in software and awaiting hardware
+qualification; spoken escalation approval and further voice/local-model optimization
+belong to the [v0.4.0 roadmap](../releases/v0.4.0.md), with their prerequisites still
+open.
 
-Voice mode is staged and turn-based.
-It is not always-on listening, wake-word detection, streaming TTS, or a real-time voice assistant.
+Voice mode is staged and turn-based unless `--listen` is used.
+It is not streaming TTS and not a real-time voice assistant: a reply is synthesised in
+full before it is played, and interruptions stop playback rather than the synthesis
+of the next sentence.
 
 The ordinary automated tests use fake audio/STT/TTS components.
 A real Bluetooth headset test must still be run on the Jetson environment before claiming the physical voice loop is complete.

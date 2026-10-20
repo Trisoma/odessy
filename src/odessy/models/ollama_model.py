@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from odessy.config.deployment import command_tool_for_laptop, environment_prompt
-from odessy.authority.redaction import redact_for_log
+from odessy.authority.redaction import redact_for_log, redact_text
 from odessy.runtime.types import (
     FinalResponse,
     ModelAction,
@@ -240,10 +240,10 @@ class OllamaModel:
             return diagnostics
         return ModelTurnDiagnostics()
 
-    def propose(self, user_text: str) -> ModelAction:
+    def propose(self, user_text: str, *, context: Any = None) -> ModelAction:
         diagnostics = ModelTurnDiagnostics()
         object.__setattr__(self, "_last_turn_diagnostics", diagnostics)
-        _start_turn(self)
+        _start_turn_with_context(self, context)
         if self.text_only:
             started = time.perf_counter()
             response = self._chat([
@@ -318,6 +318,7 @@ class OllamaModel:
     ) -> ModelAction:
         messages = [
             {"role": "system", "content": system_prompt},
+            *_history_messages(self),
             {"role": "user", "content": user_text},
         ]
         try:
@@ -447,6 +448,46 @@ def _start_turn(model: Any) -> None:
     """Forget the previous turn's tool results. Called from ``propose``."""
 
     object.__setattr__(model, "_turn_observations", [])
+
+
+def _start_turn_with_context(model: Any, context: Any = None) -> None:
+    """Reset turn state and record the history this turn is allowed to see."""
+
+    _start_turn(model)
+    object.__setattr__(model, "_turn_context", context)
+
+
+def _history_messages(model: Any) -> list[dict[str, str]]:
+    """Earlier exchanges for this turn, or nothing when the caller passed none."""
+
+    from odessy.runtime.types import conversation_messages
+
+    return conversation_messages(getattr(model, "_turn_context", None))
+
+
+def _context_messages(context: Any) -> list[dict[str, str]]:
+    """History for a chat request, from either form a caller supplies.
+
+    ``context`` is a ``ConversationContext`` (a session's turns) or the tuple of
+    role/content dicts a router stores. Both are reduced to user/assistant turns and
+    redacted here, so a secret spoken once is not re-sent on a later turn.
+    """
+
+    if context is None:
+        return []
+    if hasattr(context, "turns"):
+        from odessy.runtime.types import conversation_messages
+
+        items: list[Any] = list(conversation_messages(context))
+    else:
+        items = list(context)
+    return [
+        {"role": item["role"], "content": redact_text(item["content"])}
+        for item in items
+        if isinstance(item, dict)
+        and item.get("role") in {"user", "assistant"}
+        and isinstance(item.get("content"), str)
+    ]
 
 
 def _remember_observation(model: Any, observation: ToolObservation) -> list[ToolObservation]:

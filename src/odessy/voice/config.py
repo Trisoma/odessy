@@ -6,6 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from odessy.config.config_file import load_config_env
+from odessy.voice.assets import DEFAULT_WAKE_MODEL, asset_dir
+
+#: Seconds a follow-up window stays open in conversation mode.
+DEFAULT_FOLLOWUP_SECONDS = 10
+#: Hard ceiling on one utterance, silence included.
+DEFAULT_MAX_UTTERANCE_SECONDS = 20
+
+INTERACTIONS = ("wake", "conversation")
 
 
 @dataclass(frozen=True)
@@ -26,10 +34,30 @@ class VoiceConfig:
     #: recordings per turn is this plus one.
     blank_retries: int = 2
     tmp_dir: Path = Path(tempfile.gettempdir()) / "odessy-voice"
+    #: ``wake`` requires the phrase before every request; ``conversation`` keeps a
+    #: short follow-up window open after each reply.
+    interaction: str = "wake"
+    #: Path to an openWakeWord-compatible model. Never inside the repository.
+    wake_model: Path = Path(DEFAULT_WAKE_MODEL)
+    wake_threshold: float = 0.5
+    followup_seconds: int = DEFAULT_FOLLOWUP_SECONDS
+    max_utterance_seconds: int = DEFAULT_MAX_UTTERANCE_SECONDS
+
+    def __post_init__(self) -> None:
+        if self.interaction not in INTERACTIONS:
+            raise ValueError(
+                f"ODESSY_VOICE_INTERACTION must be one of: {', '.join(INTERACTIONS)} "
+                f"(got {self.interaction!r})"
+            )
+        if not 0.0 < self.wake_threshold <= 1.0:
+            raise ValueError(
+                f"ODESSY_WAKE_THRESHOLD must be greater than 0 and at most 1 (got {self.wake_threshold})"
+            )
 
     @classmethod
     def from_env(cls) -> "VoiceConfig":
         load_config_env()
+        wake_model = os.environ.get("ODESSY_WAKE_MODEL", "").strip()
         return cls(
             whisper_bin=os.environ.get("ODESSY_WHISPER_BIN", "whisper-cli"),
             whisper_model=os.environ.get("ODESSY_WHISPER_MODEL", "models/ggml-tiny.en.bin"),
@@ -45,6 +73,17 @@ class VoiceConfig:
             voice_seconds=_env_int("ODESSY_VOICE_SECONDS", 5),
             blank_retries=_env_retries("ODESSY_VOICE_BLANK_RETRIES", 2),
             tmp_dir=Path(os.environ.get("ODESSY_VOICE_TMPDIR", str(Path(tempfile.gettempdir()) / "odessy-voice"))),
+            interaction=os.environ.get("ODESSY_VOICE_INTERACTION", "wake").strip().lower() or "wake",
+            wake_model=(
+                Path(wake_model).expanduser()
+                if wake_model
+                else asset_dir() / DEFAULT_WAKE_MODEL
+            ),
+            wake_threshold=_env_float("ODESSY_WAKE_THRESHOLD", 0.5),
+            followup_seconds=_env_int("ODESSY_VOICE_FOLLOWUP_SECONDS", DEFAULT_FOLLOWUP_SECONDS),
+            max_utterance_seconds=_env_int(
+                "ODESSY_VOICE_MAX_UTTERANCE_SECONDS", DEFAULT_MAX_UTTERANCE_SECONDS
+            ),
         )
 
 
@@ -68,6 +107,16 @@ def _env_retries(name: str, default: int) -> int:
         return max(0, int(value))
     except ValueError:
         return default
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        return default
+    try:
+        return float(value)
+    except ValueError as error:
+        raise ValueError(f"{name} must be a number (got {value!r})") from error
 
 
 def _env_path(name: str) -> Path | None:

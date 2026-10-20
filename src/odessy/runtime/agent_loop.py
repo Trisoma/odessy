@@ -19,6 +19,7 @@ from odessy.runtime.tool_timeout import Deadline, ToolTimeoutPolicy
 from odessy.runtime.types import (
     AgentTurnMetrics,
     AgentTurnResult,
+    ConversationContext,
     FinalResponse,
     LogEntry,
     ModelTurnDiagnostics,
@@ -161,7 +162,74 @@ class OdessyAgent:
         #: multi-tool continuation, and the adapter's own repair calls.
         self._max_model_calls = max(1, max_model_calls)
         self._guard_template = guard
+        #: Serialises model generation on this agent instance.
+        #:
+        #: The adapters are synchronous and stream over ``urllib``, so calling them
+        #: inline blocks the event loop. Text mode never noticed; a voice session
+        #: does, because a blocked loop cannot read the microphone and would not hear
+        #: the wake phrase during a generation. Generation therefore runs in a worker
+        #: thread, and the lock keeps exactly one generation in flight per adapter:
+        #: the adapters hold per-turn state (``_turn_observations``, ``_messages``)
+        #: that a second concurrent entry would corrupt.
+        self._model_lock = asyncio.Lock()
         self._timeouts = timeouts or ToolTimeoutPolicy()
+
+    async def _generate(self, call: Callable[[], ModelAction] | str, *args: Any) -> ModelAction:
+        """Run one synchronous model call without blocking the event loop.
+
+        ``call`` is either a bound adapter method name (the text-mode and evaluation
+        shape) or a prepared callable (a proposal that carries conversation context).
+        Generation always runs in a worker thread: a voice session that blocked the
+        loop here could not read the microphone, so the wake phrase would be missed
+        during any generation. The lock keeps one generation in flight per adapter,
+        because the adapters hold per-turn state.
+        """
+
+        if isinstance(call, str):
+            call = getattr(self._model, call)
+        async with self._model_lock:
+            # Cancellation cannot stop a thread: retain ownership until it exits,
+            # even if the caller cancels repeatedly during the drain.
+            worker = asyncio.create_task(asyncio.to_thread(call, *args))
+            cancelled = False
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    cancelled = True
+                    request_stop = getattr(self._model, "request_stop", None)
+                    if callable(request_stop):
+                        request_stop()
+                except Exception:
+                    break
+            if cancelled:
+                if not worker.cancelled():
+                    worker.exception()  # Retrieve a late failure; cancellation wins.
+                raise asyncio.CancelledError
+            return worker.result()
+
+    async def _propose(self, user_text: str, context: ConversationContext | None) -> ModelAction:
+        """Propose with history only when there is history.
+
+        A caller that passes nothing gets exactly the call shape text mode and the
+        evaluation suite already use, so no adapter has to grow a parameter to keep
+        working. An adapter that *does* receive history must render it: passing it
+        where it is unsupported raises TypeError rather than silently dropping it.
+
+        A router is the exception: it receives the same history through ``begin_turn``
+        in ``run_turn`` and hands it to whichever child it selects, so its proposal
+        interface stays the shape typed and evaluation turns already use.
+        """
+
+        if callable(getattr(self._model, "begin_turn", None)):
+            return await self._generate("propose", user_text)
+        if context is None or not context.turns:
+            return await self._generate(lambda: self._model.propose(user_text))
+        return await self._generate(lambda: self._model.propose(user_text, context=context))
+
+    @staticmethod
+    def _stop_requested(stop_event: asyncio.Event | None) -> bool:
+        return stop_event is not None and stop_event.is_set()
 
     async def run_turn(
         self,
@@ -170,20 +238,34 @@ class OdessyAgent:
         status_callback: Callable[[str], None] | None = None,
         stop_event: asyncio.Event | None = None,
         conversation_context: tuple = (),
+        context: ConversationContext | None = None,
     ) -> AgentTurnResult:
         turn_started = time.perf_counter()
         metrics = AgentTurnMetrics()
         log: list[LogEntry] = [LogEntry("user_input", {"text": user_text})]
+        if self._stop_requested(stop_event):
+            return _finish_turn_result(
+                final_text="Stopped before generation.",
+                log=log,
+                metrics=metrics,
+                turn_started=turn_started,
+            )
         _status(status_callback, "Generating action proposal")
         proposal_started = time.perf_counter()
         deadline = Deadline(self._deadline_seconds if self._deadline_seconds is not None else float("inf")).start()
+        if context is not None:
+            # A session carries its turns as a ConversationContext; the adapters and the
+            # router take the rendered tuple. One conversation, two entry points.
+            from odessy.runtime.types import conversation_messages
+
+            conversation_context = tuple(conversation_messages(context))
         begin_turn = getattr(self._model, "begin_turn", None)
         if callable(begin_turn):
             begin_turn(max_model_calls=self._max_model_calls, stop_event=stop_event, deadline=deadline,
                        conversation_context=conversation_context)
         if stop_event is not None and stop_event.is_set():
             return _finish_turn_result(final_text="Stopped. No tools were dispatched.", log=log, metrics=metrics, turn_started=turn_started)
-        action = await self._generate("propose", user_text)
+        action = await self._propose(user_text, context)
         proposal_elapsed = _elapsed_ms(proposal_started)
         _merge_model_diagnostics(
             metrics,
@@ -437,6 +519,19 @@ class OdessyAgent:
             _status(status_callback, "Running tool")
             mcp_started = time.perf_counter()
             dispatched += 1
+            if self._stop_requested(stop_event):
+                # The stop check sits immediately before dispatch, not only at the top
+                # of the loop: a confirmation or a repair can take long enough for the
+                # user to cancel in between, and a cancelled turn must not act.
+                return _finish_turn_result(
+                    final_text="Stopped before tool dispatch.",
+                    log=log,
+                    metrics=metrics,
+                    turn_started=turn_started,
+                    tool_request=last_request,
+                    tool_result=last_result,
+                    tool_observations=observations,
+                )
             result = await self._call_tool(action.name, call_arguments, tool_registry)
             log.append(LogEntry("mcp_tool_called", {"name": action.name}))
 
@@ -515,30 +610,6 @@ class OdessyAgent:
                     tool_observations=observations,
                 )
             action = next_action
-
-    async def _generate(self, method, *args):
-        call = getattr(self._model, method)
-        if getattr(self._model, "background_generation", False) is not True:
-            return call(*args)
-        # Keep the event loop responsive, but never leave an orphan generation
-        # using mutable adapter state after a caller cancels its wait.
-        worker = asyncio.create_task(asyncio.to_thread(call, *args))
-        try:
-            return await asyncio.shield(worker)
-        except asyncio.CancelledError:
-            cancel = getattr(self._model, "request_stop", None)
-            if cancel is not None:
-                cancel()
-            while not worker.done():
-                try:
-                    await asyncio.shield(worker)
-                except asyncio.CancelledError:
-                    continue
-                except Exception:
-                    break
-            if not worker.cancelled():
-                worker.exception()  # Retrieve a late failure; cancellation wins.
-            raise
 
     async def _prepare_call(self, action, tool_registry, log, metrics):
         policy_started = time.perf_counter()
