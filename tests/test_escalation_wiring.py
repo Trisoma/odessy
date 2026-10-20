@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from odessy.agent_loop import ExecutionTarget, OdessyAgent
+from odessy.runtime.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.execution.contract import (
     ConfineResult,
     Evaluation,
@@ -25,10 +25,10 @@ from odessy.execution.contract import (
     Requirement,
 )
 from odessy.execution.escalation import EscalationDeniedError
-from odessy.mcp_server import build_odessy_mcp_server
-from odessy.policy import OdessyPolicy
-from odessy.tool_contracts import validate_tool_arguments
-from odessy.types import FinalResponse, ToolObservation, ToolRequest
+from odessy.tools.mcp_server import build_odessy_mcp_server
+from odessy.authority.policy import OdessyPolicy
+from odessy.tools.tool_contracts import validate_tool_arguments
+from odessy.runtime.types import FinalResponse, ToolObservation, ToolRequest
 
 
 class _RecordingProvider:

@@ -23,11 +23,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from odessy.agent_loop import ExecutionTarget, OdessyAgent
+from odessy.runtime.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.execution.escalation import ApprovalRequest, EscalationDeniedError
-from odessy.ollama_model import _OllamaStreamTimeout
-from odessy.policy import OdessyPolicy
-from odessy.types import FinalResponse, ModelAction, ModelTurnDiagnostics, ToolObservation, ToolRequest
+from odessy.models.ollama_model import _OllamaStreamTimeout
+from odessy.authority.policy import OdessyPolicy
+from odessy.runtime.types import FinalResponse, ModelAction, ModelTurnDiagnostics, ToolObservation, ToolRequest
 
 from evals.definitions import Case
 from evals.recording_mcp import GitFixture, Recorder, build_recording_server

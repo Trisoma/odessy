@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from odessy.command_bridge import CommandBridge, TerminalRunResult
+from odessy.authority.command_bridge import CommandBridge, TerminalRunResult
 from odessy.execution.contract import (
     ConfineResult,
     ExecutionPolicy,
@@ -193,7 +193,7 @@ def test_the_mcp_server_threads_the_backend_through(tmp_path: Path) -> None:
     # `build_odessy_mcp_server` must not construct a bare bridge: doing so would
     # make confinement unreachable from the tool surface however well the layers
     # below it worked.
-    from odessy.mcp_server import build_odessy_mcp_server
+    from odessy.tools.mcp_server import build_odessy_mcp_server
 
     # An unpaired provider reaches `CommandBridge.__post_init__`, which rejects it.
     # That the rejection surfaces proves the argument is threaded rather than

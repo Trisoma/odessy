@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from odessy.types import FinalResponse, ModelAction, ToolObservation, ToolRequest
+from odessy.runtime.types import FinalResponse, ModelAction, ToolObservation, ToolRequest
 
 
 class FakeModel:

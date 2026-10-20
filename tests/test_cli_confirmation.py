@@ -1,8 +1,8 @@
 from pathlib import Path
 
 from odessy.cli import _build_agent, _confirm_tool_call
-from odessy.fake_model import FakeModel
-from odessy.types import PolicyDecision, ToolRequest
+from odessy.models.fake_model import FakeModel
+from odessy.runtime.types import PolicyDecision, ToolRequest
 
 
 def test_cli_confirmation_accepts_explicit_yes(monkeypatch) -> None:

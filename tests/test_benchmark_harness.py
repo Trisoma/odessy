@@ -20,9 +20,9 @@ from benchmark.scenarios import (
     build_real_components,
     parse_lfm_variant,
 )
-from odessy.agent_loop import OdessyAgent
-from odessy.policy import OdessyPolicy
-from odessy.types import (
+from odessy.runtime.agent_loop import OdessyAgent
+from odessy.authority.policy import OdessyPolicy
+from odessy.runtime.types import (
     FinalResponse,
     ModelTurnDiagnostics,
     ToolObservation,

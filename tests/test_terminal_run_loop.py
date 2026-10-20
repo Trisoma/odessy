@@ -4,9 +4,9 @@ import pytest
 
 from shell_model import ShellModel
 
-from odessy.agent_loop import ExecutionTarget, OdessyAgent
-from odessy.mcp_server import build_odessy_mcp_server
-from odessy.policy import OdessyPolicy
+from odessy.runtime.agent_loop import ExecutionTarget, OdessyAgent
+from odessy.tools.mcp_server import build_odessy_mcp_server
+from odessy.authority.policy import OdessyPolicy
 
 
 @pytest.fixture

@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from odessy.cli import main
-from odessy.doctor import Check, Probes, render, run_checks
+from odessy.config.doctor import Check, Probes, render, run_checks
 
 ALL_PATHS = lambda path: True  # noqa: E731
 
@@ -145,7 +145,7 @@ def test_voice_problems_are_only_warnings() -> None:
 
 def test_doctor_subcommand_exits_nonzero_on_failure(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr(
-        "odessy.doctor.run_checks",
+        "odessy.config.doctor.run_checks",
         lambda backend: [Check("Model", "fail", "Ollama is not reachable", "start it")],
     )
     with pytest.raises(SystemExit) as raised:
@@ -158,7 +158,7 @@ def test_doctor_subcommand_exits_nonzero_on_failure(monkeypatch: pytest.MonkeyPa
 
 def test_doctor_subcommand_passes_the_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[str | None] = []
-    monkeypatch.setattr("odessy.doctor.run_checks", lambda backend: seen.append(backend) or [])
+    monkeypatch.setattr("odessy.config.doctor.run_checks", lambda backend: seen.append(backend) or [])
     with pytest.raises(SystemExit) as raised:
         main(["doctor", "--model-backend", "qwen"])
     assert raised.value.code == 0

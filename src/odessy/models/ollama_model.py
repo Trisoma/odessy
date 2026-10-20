@@ -9,16 +9,16 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
-from odessy.deployment import command_tool_for_laptop, environment_prompt
-from odessy.redaction import redact_for_log
-from odessy.types import (
+from odessy.config.deployment import command_tool_for_laptop, environment_prompt
+from odessy.authority.redaction import redact_for_log
+from odessy.runtime.types import (
     FinalResponse,
     ModelAction,
     ModelTurnDiagnostics,
     ToolObservation,
     ToolRequest,
 )
-from odessy.tool_contracts import (
+from odessy.tools.tool_contracts import (
     TOOL_REQUEST_SCHEMAS,
     build_openai_tools,
     render_tool_contract,
