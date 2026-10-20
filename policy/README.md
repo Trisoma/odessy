@@ -64,6 +64,32 @@ to be read:
   lines), cut at 40 lines.
 - Model-written text in the prompt is shown with control characters escaped, so an
   escape sequence cannot hide part of it.
+- **Several calls proposed together** are listed and answered once: `y` all, `n`
+  none, `s` one by one. High-risk calls are listed but always asked on their own,
+  and a declined call stops the calls after it.
+
+### Commands approved in advance
+
+Commands run dozens of times a day (`pytest`, `npm test`) can be approved once per
+workspace in `~/.config/odessy/commands.toml` (or `ODESSY_COMMANDS_FILE`):
+
+```toml
+[[workspaces]]
+path = "D:/projects/odessy"
+commands = ["pytest", "npm test", "npm run build"]
+```
+
+- A command matches when its words start with an entry's words (`pytest -q tests`
+  matches `pytest`; `npm testx` does not match `npm test`) and it has no chaining,
+  redirection or variables.
+- It skips the question only. It still runs in `workspace-write` mode, and every
+  rule checked before confirmation still applies: deny rules, the workspace
+  boundary, the timeout limit, and installers (always a typed `yes`). A read-only
+  command stays read-only.
+- The file is never read from the workspace, so a repository cannot approve its own
+  commands. Entries with shell syntax, or a bare interpreter such as `python` or
+  `npx`, are refused at startup. Only `terminal.run` on this machine is covered.
+- `python -m odessy doctor` shows the approved commands for the current folder.
 
 ### DENY
 

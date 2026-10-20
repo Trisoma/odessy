@@ -107,6 +107,9 @@ class PolicyDecision:
     #: Which rule decided, for third-party tools (see external-servers.mdx); recorded
     #: in the audit log instead of the reason, which may quote arguments.
     rule: str | None = None
+    #: A confirmation the user gave in advance (``commands.toml``): the call runs
+    #: without asking, still with the confirmed outcome's execution mode.
+    preapproved: bool = False
 
     @property
     def allowed(self) -> bool:

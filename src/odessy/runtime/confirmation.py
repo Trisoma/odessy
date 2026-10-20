@@ -12,6 +12,9 @@ as possible and makes what it does ask readable:
   it relaxes nothing the user did not answer this run. High-risk calls never offer it.
 * **Writes show what they change.** ``filesystem.write`` shows a diff against the
   current file instead of a byte count.
+* **One question for a batch.** When the model proposes several calls together, the
+  ones needing confirmation are listed and answered at once: all, none, or one by one.
+  High-risk calls are left out of "all" and asked on their own.
 
 What the model wrote (commands, file contents) is shown with control characters
 escaped, so a terminal escape sequence cannot hide or rewrite part of the prompt.
@@ -30,6 +33,8 @@ from odessy.tools.external_tools import external_tool
 
 #: Lines of a write preview shown before it is cut short.
 PREVIEW_LINES = 40
+#: The same, per write, inside a batch list.
+BATCH_PREVIEW_LINES = 12
 #: Existing files larger than this are summarized, not diffed.
 MAX_DIFF_BYTES = 1_000_000
 
@@ -167,3 +172,48 @@ class TerminalConfirmer:
             self._session.add(key)
             return True
         return answer in {"y", "yes"}
+
+    def batch(self, items: list[tuple[PolicyDecision, ToolRequest]]) -> list[bool | None]:
+        """One question for several calls. ``None`` means "ask about this one when reached".
+
+        Calls already allowed for the session are answered without being listed;
+        high-risk calls are listed but always asked on their own.
+        """
+
+        replies: list[bool | None] = [None] * len(items)
+        listed: list[int] = []
+        for index, (decision, request) in enumerate(items):
+            key = None if decision.risk == "high" else session_key(request)
+            if key is not None and key in self._session:
+                replies[index] = True
+            elif decision.risk != "high":
+                listed.append(index)
+        if len(listed) < 2:
+            return replies
+
+        say = self._say
+        say(f"Odessy wants to run {len(items)} tool calls that need confirmation:")
+        for number, (decision, request) in enumerate(items, start=1):
+            index = number - 1
+            if replies[index] is True:
+                say(f"  {number}. {request.name} (allowed for this session)")
+                continue
+            tag = "HIGH RISK, asked separately" if decision.risk == "high" else decision.risk
+            say(f"  {number}. {request.name} [{tag}]")
+            path, content = request.arguments.get("path"), request.arguments.get("content")
+            if request.name == "filesystem.write" and isinstance(path, str) and isinstance(content, str):
+                for line in write_preview(self._workspace_root, path, content, max_lines=BATCH_PREVIEW_LINES):
+                    say(f"     {line}")
+            else:
+                say(f"     {summarize_arguments(request.arguments)}")
+        say("A call that is declined stops the calls after it.")
+        try:
+            answer = self._ask("Run them? [y] all listed / [N] none / [s] ask one by one: ").strip().lower()
+        except EOFError:
+            answer = "n"
+        if answer in {"s", "step"}:
+            return replies
+        approved = answer in {"y", "yes", "all"}
+        for index in listed:
+            replies[index] = approved
+        return replies

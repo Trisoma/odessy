@@ -111,6 +111,7 @@ class OdessyAgent:
         policy: OdessyPolicy,
         mcp_server: Any,
         confirm: Callable[[Any, ToolRequest], bool] | bool = False,
+        confirm_batch: Callable[[list[tuple[Any, ToolRequest]]], list[bool | None]] | None = None,
         approver: EscalationApprover | None = None,
         max_rejections: int = 2,
         deadline_seconds: float | None = None,
@@ -126,6 +127,9 @@ class OdessyAgent:
         self._policy = policy
         self._mcp_servers, self._authorized_targets = _split_mcp_servers(mcp_server)
         self._confirm = confirm
+        #: Asks once about several calls the model proposed together. Each answer is
+        #: True / False, or None to ask about that call on its own when it is reached.
+        self._confirm_batch = confirm_batch
         #: The human approval channel for a *sandbox escalation* request. Distinct from
         #: `confirm`, which answers the authority question "may this action run at
         #: all?". This one answers only "did the human approve the wider sandbox mode?".
@@ -267,6 +271,7 @@ class OdessyAgent:
                         batch_observations = [ToolObservation(c.request, {"status": "skipped", "reason": "64-call turn limit reached"}, c.call_id) for c in action.calls]
                         stopped = "64-call turn limit reached"
                     else:
+                        answers = self._ask_batch(action.calls, log)
                         def safe(call):
                             request = call.request
                             decision = self._policy.evaluate(request)
@@ -279,7 +284,7 @@ class OdessyAgent:
                                 reminders[call.call_id] = reminder
                                 log.append(LogEntry("repeat_tool_reminder", {"name": call.request.name}))
                             try:
-                                args = await self._prepare_call(call.request, tool_registry, log, metrics)
+                                args = await self._prepare_call(call.request, tool_registry, log, metrics, answer=answers.get(id(call)))
                             except EscalationDeniedError as exc:
                                 raise PermissionError(str(exc)) from exc
                             dispatched += 1
@@ -509,7 +514,8 @@ class OdessyAgent:
                 )
             action = next_action
 
-    async def _prepare_call(self, action, tool_registry, log, metrics):
+    async def _prepare_call(self, action, tool_registry, log, metrics, answer: bool | None = None):
+        """Authorize one call. ``answer`` is the user's reply already given in a batch prompt."""
         policy_started = time.perf_counter()
         decision = self._policy.evaluate(action)
         _add_ms(metrics, "policy_validation_ms", _elapsed_ms(policy_started))
@@ -527,7 +533,14 @@ class OdessyAgent:
                     },
                 )
             )
-            if not self._is_confirmed(decision, action):
+            if decision.preapproved:
+                confirmed = True
+                log.append(LogEntry("policy_preapproved", {"name": action.name, "reason": decision.reason}))
+            elif answer is not None:
+                confirmed = answer
+            else:
+                confirmed = self._is_confirmed(decision, action)
+            if not confirmed:
                 self._audit_decision(action, decision, confirmed=False)
                 raise PermissionError(
                     f"Policy requires confirmation before execution: {decision.reason}"
@@ -645,6 +658,33 @@ class OdessyAgent:
         )
         _status(status_callback, message)
         return self._model.respond_to_observation(user_text, observation)
+
+    def _ask_batch(self, calls: Sequence[ToolCall], log: list[LogEntry]) -> dict[int, bool]:
+        """One question for the calls in a batch that need confirmation, keyed by ``id(call)``.
+
+        Asked only when two or more calls need it; a single one is asked as usual when
+        it is reached. Calls approved in advance are not asked about.
+        """
+
+        if not callable(self._confirm_batch):
+            return {}
+        pending = []
+        for call in calls:
+            decision = self._policy.evaluate(call.request)
+            if decision.requires_confirmation and not decision.preapproved:
+                pending.append((call, decision))
+        if len(pending) < 2:
+            return {}
+        replies = list(self._confirm_batch([(decision, call.request) for call, decision in pending]))
+        if len(replies) != len(pending):
+            raise ValueError("confirm_batch must answer every call it is asked about")
+        log.append(
+            LogEntry(
+                "batch_confirmation",
+                {"asked": len(pending), "approved": sum(reply is True for reply in replies), "deferred": sum(reply is None for reply in replies)},
+            )
+        )
+        return {id(call): reply for (call, _), reply in zip(pending, replies) if reply is not None}
 
     @staticmethod
     def _drain_reminders(pending: list[str]) -> dict[str, Any]:

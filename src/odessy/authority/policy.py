@@ -20,6 +20,7 @@ from odessy.execution.escalation import (
     approve_escalation,
     validate_escalation_args,
 )
+from odessy.config.commands import matches_preapproved
 from odessy.tools.external_tools import ExternalTool, external_tool
 from odessy.runtime.types import PolicyDecision, ToolRequest
 from odessy.authority.workspace_authority import WorkspaceAuthority, WorkspaceAuthorityError
@@ -65,6 +66,9 @@ class OdessyPolicy:
     #: escalation. Defaults to ``preferred`` because that accepts a weaker boundary,
     #: which is the behaviour every existing caller already has.
     isolation: IsolationRequirement = "preferred"
+    #: Command prefixes the user approved in advance for this workspace, from
+    #: ``commands.toml`` (``odessy.config.commands``). Only ``terminal.run``.
+    preapproved_commands: tuple[tuple[str, ...], ...] = ()
 
     @property
     def authority(self) -> WorkspaceAuthority:
@@ -216,13 +220,25 @@ class OdessyPolicy:
                 f"{tool_name} requires confirmation because it installs packages from the network",
                 "high",
             )
+        read_only = _matches_allow_rule(lowered, tokens) or self._reads_workspace_files(command, cwd, tokens)
+        if (
+            tool_name == "terminal.run"
+            and not read_only
+            and matches_preapproved(command, self.preapproved_commands)
+        ):
+            return PolicyDecision(
+                "confirm",
+                f"{tool_name} approved in advance for this workspace in commands.toml",
+                "medium",
+                preapproved=True,
+            )
         if _matches_confirm_rule(lowered, tokens):
             return PolicyDecision(
                 "confirm",
                 f"{tool_name} requires confirmation because the command may modify state",
                 "medium",
             )
-        if _matches_allow_rule(lowered, tokens) or self._reads_workspace_files(command, cwd, tokens):
+        if read_only:
             return PolicyDecision(
                 "allow",
                 f"{tool_name} allowed as a read-only workspace command",
