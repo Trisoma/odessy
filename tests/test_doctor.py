@@ -146,7 +146,7 @@ def test_voice_problems_are_only_warnings() -> None:
 def test_doctor_subcommand_exits_nonzero_on_failure(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr(
         "odessy.config.doctor.run_checks",
-        lambda backend: [Check("Model", "fail", "Ollama is not reachable", "start it")],
+        lambda backend, **kwargs: [Check("Model", "fail", "Ollama is not reachable", "start it")],
     )
     with pytest.raises(SystemExit) as raised:
         main(["doctor"])
@@ -158,8 +158,20 @@ def test_doctor_subcommand_exits_nonzero_on_failure(monkeypatch: pytest.MonkeyPa
 
 def test_doctor_subcommand_passes_the_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[str | None] = []
-    monkeypatch.setattr("odessy.config.doctor.run_checks", lambda backend: seen.append(backend) or [])
+    monkeypatch.setattr("odessy.config.doctor.run_checks", lambda backend, **kwargs: seen.append(backend) or [])
     with pytest.raises(SystemExit) as raised:
         main(["doctor", "--model-backend", "qwen"])
     assert raised.value.code == 0
     assert seen == ["qwen"]
+
+
+def test_the_voice_flag_reaches_the_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[bool] = []
+    monkeypatch.setattr(
+        "odessy.config.doctor.run_checks", lambda backend, *, voice=False: seen.append(voice) or []
+    )
+    for argv in (["doctor"], ["doctor", "--voice"]):
+        with pytest.raises(SystemExit):
+            main(argv)
+
+    assert seen == [False, True]
