@@ -316,83 +316,96 @@ async def _listen_async(
     player = CommandPlayer(player=config.audio_player, output_device=config.audio_output_device)
     stream = CommandAudioStream(
         recorder=config.audio_recorder, input_device=config.audio_input_device
-    ).start()
-    config.tmp_dir.mkdir(parents=True, exist_ok=True)
-    cue_path = config.tmp_dir / "odessy-cue.wav"
-    if not cue_path.exists():
-        write_cue_wav(cue_path)
+    )
+    session: VoiceSession | None = None
+    try:
+        stream.start()
+        config.tmp_dir.mkdir(parents=True, exist_ok=True)
+        cue_path = config.tmp_dir / "odessy-cue.wav"
+        if not cue_path.exists():
+            write_cue_wav(cue_path)
 
-    async def next_frame() -> bytes:
-        return await asyncio.to_thread(stream.read, WAKE_FRAME_BYTES)
+        async def next_frame() -> bytes:
+            return await asyncio.to_thread(stream.read, WAKE_FRAME_BYTES)
 
-    async def transcribe(pcm: bytes) -> str:
-        path = config.tmp_dir / f"odessy-utterance-{uuid.uuid4().hex}.wav"
-        path.write_bytes(pcm_to_wav(pcm))
-        try:
-            result = await asyncio.to_thread(stt.transcribe, path)
-        finally:
-            with contextlib.suppress(OSError):
-                path.unlink(missing_ok=True)
-        if result.status != "ok":
-            raise RuntimeError(result.error or result.status)
-        return result.text
-
-    async def speak(text: str) -> None:
-        turn_id = session._turn_id
-        path = config.tmp_dir / f"odessy-reply-{uuid.uuid4().hex}.wav"
-        result = await asyncio.to_thread(tts.synthesize, text, path)
-        try:
+        async def transcribe(pcm: bytes) -> str:
+            path = config.tmp_dir / f"odessy-utterance-{uuid.uuid4().hex}.wav"
+            path.write_bytes(pcm_to_wav(pcm))
+            try:
+                result = await asyncio.to_thread(stt.transcribe, path)
+            finally:
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
+            if result.status == "empty":
+                return ""
             if result.status != "ok":
                 raise RuntimeError(result.error or result.status)
-            if session._closing or turn_id != session._turn_id:
-                return
-            await asyncio.to_thread(player.play, path)
-        finally:
-            with contextlib.suppress(OSError):
-                path.unlink(missing_ok=True)
+            return result.text
 
-    async def cue() -> None:
-        await asyncio.to_thread(player.play, cue_path)
+        async def speak(text: str) -> None:
+            turn_id = session._turn_id
+            generation = player.generation
+            path = config.tmp_dir / f"odessy-reply-{uuid.uuid4().hex}.wav"
+            result = await asyncio.to_thread(tts.synthesize, text, path)
+            try:
+                if result.status != "ok":
+                    raise RuntimeError(result.error or result.status)
+                if session._closing or turn_id != session._turn_id:
+                    return
+                await asyncio.to_thread(player.play, path, generation=generation)
+            finally:
+                with contextlib.suppress(OSError):
+                    path.unlink(missing_ok=True)
 
-    async with _tool_servers(workspace_root, cloud=isinstance(model, CloudModel)) as servers:
-        agent = _build_agent(workspace_root, model, servers)
+        async def cue() -> None:
+            generation = player.generation
+            await asyncio.to_thread(player.play, cue_path, generation=generation)
 
-        async def run_turn(text: str, stop: asyncio.Event, context: Any) -> str:
-            result = await agent.run_turn(text, stop_event=stop, context=context)
-            return result.final_text
+        async with _tool_servers(workspace_root, cloud=isinstance(model, CloudModel)) as servers:
+            agent = _build_agent(workspace_root, model, servers)
 
-        session = VoiceSession(
-            frames=next_frame,
-            wake=OpenWakeWordDetector(str(config.wake_model)),
-            gate=WakeGate(threshold=config.wake_threshold),
-            vad=SileroSpeechDetector(),
-            transcribe=transcribe,
-            speak=speak,
-            stop_speaking=player.stop,
-            run_turn=run_turn,
-            classify_blank=blank_transcript_reason,
-            segmenter=UtteranceSegmenter(
-                SegmenterConfig(max_utterance_ms=config.max_utterance_seconds * 1000)
-            ),
-            options=SessionOptions(
-                interaction=cast(Any, interaction or config.interaction),
-                blank_retries=config.blank_retries,
-                followup_ms=config.followup_seconds * 1000,
-            ),
-            memory=ConversationMemory(),
-            status=print,
-            cue=cue,
-        )
+            async def run_turn(text: str, stop: asyncio.Event, context: Any) -> str:
+                result = await agent.run_turn(text, stop_event=stop, context=context)
+                return result.final_text
+
+            session = VoiceSession(
+                frames=next_frame,
+                close_frames=stream.close,
+                wake=OpenWakeWordDetector(str(config.wake_model)),
+                gate=WakeGate(threshold=config.wake_threshold),
+                vad=SileroSpeechDetector(),
+                transcribe=transcribe,
+                speak=speak,
+                stop_speaking=player.stop,
+                run_turn=run_turn,
+                classify_blank=blank_transcript_reason,
+                segmenter=UtteranceSegmenter(
+                    SegmenterConfig(max_utterance_ms=config.max_utterance_seconds * 1000)
+                ),
+                options=SessionOptions(
+                    interaction=cast(Any, interaction or config.interaction),
+                    blank_retries=config.blank_retries,
+                    followup_ms=config.followup_seconds * 1000,
+                ),
+                memory=ConversationMemory(),
+                status=print,
+                cue=cue,
+            )
+            try:
+                await session.run()
+            except KeyboardInterrupt:
+                pass
+            if session.error is not None:
+                raise SystemExit(f"Voice session stopped: {session.error}")
+    finally:
         try:
-            await session.run()
-        except KeyboardInterrupt:
-            pass
+            if session is not None:
+                await session.aclose()
         finally:
-            await session.aclose()
-            player.stop()
-            stream.close()
-        if session.error is not None:
-            raise SystemExit(f"Voice session stopped: {session.error}")
+            try:
+                player.stop()
+            finally:
+                stream.close()
 
 
 def _announce_cloud(model: object) -> None:
