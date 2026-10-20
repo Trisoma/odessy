@@ -5,10 +5,10 @@ import os
 import pytest
 
 from odessy.cli import _build_model
-from odessy.models.lfm_model import LlamaCppLFMModel, normalize_ollama_chat_response
-from odessy.models.ollama_model import _OllamaToolsUnsupported, _looks_like_generic_final_response
-from odessy.tools.tool_contracts import TOOL_REQUEST_SCHEMAS, build_openai_tools
-from odessy.runtime.types import FinalResponse, ToolObservation, ToolRequest
+from odessy.lfm_model import LlamaCppLFMModel, normalize_ollama_chat_response
+from odessy.ollama_model import _OllamaToolsUnsupported, _looks_like_generic_final_response
+from odessy.tool_contracts import TOOL_REQUEST_SCHEMAS, build_openai_tools
+from odessy.types import FinalResponse, ToolObservation, ToolRequest
 
 
 class QueuedLFM(LlamaCppLFMModel):

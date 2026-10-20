@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from odessy.tools.tool_contracts import TOOL_REQUEST_SCHEMAS
+from odessy.tool_contracts import TOOL_REQUEST_SCHEMAS
 
 from evals.toml_compat import loads_toml
 

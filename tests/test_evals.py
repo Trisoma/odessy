@@ -22,8 +22,8 @@ from evals.graders import grade
 from evals.harness import FIXTURES_DIR, Attempt, run_attempt
 from evals.recording_mcp import GitFixture, Recorder, build_recording_server
 from evals.report import render_comparison, render_markdown, summarize
-from odessy.tools.tool_contracts import TOOL_REQUEST_SCHEMAS
-from odessy.runtime.types import FinalResponse, ToolRequest
+from odessy.tool_contracts import TOOL_REQUEST_SCHEMAS
+from odessy.types import FinalResponse, ToolRequest
 
 CASES = {case.id: case for case in load_cases()}
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from odessy.config.config_file import load_config_env, read_env_file
+from odessy.config_file import load_config_env, read_env_file
 from odessy.voice.config import VoiceConfig
 
 

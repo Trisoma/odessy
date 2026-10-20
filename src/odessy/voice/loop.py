@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
 
-from odessy.runtime.agent_loop import OdessyAgent
+from odessy.agent_loop import OdessyAgent
 from odessy.voice.stt import blank_transcript_reason
 
 

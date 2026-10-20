@@ -9,18 +9,16 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
-from odessy.config.deployment import command_tool_for_laptop, environment_prompt
-from odessy.authority.redaction import redact_for_log
-from odessy.runtime.types import (
+from odessy.deployment import command_tool_for_laptop, environment_prompt
+from odessy.redaction import redact_for_log
+from odessy.types import (
     FinalResponse,
     ModelAction,
     ModelTurnDiagnostics,
     ToolObservation,
     ToolRequest,
-    ToolBatch,
-    ToolCall,
 )
-from odessy.tools.tool_contracts import (
+from odessy.tool_contracts import (
     TOOL_REQUEST_SCHEMAS,
     build_openai_tools,
     render_tool_contract,
@@ -357,15 +355,6 @@ class OllamaModel:
                 ) from error
             raise RuntimeError(f"Ollama API call failed: {error}") from error
 
-    def finalize_observations(self, observations) -> None:
-        for observation in observations:
-            _remember_observation(self, observation)
-
-    def respond_to_observations(self, user_text, observations) -> ModelAction:
-        for observation in observations[:-1]:
-            _remember_observation(self, observation)
-        return self.respond_to_observation(user_text, observations[-1])
-
     def respond_to_observation(
         self,
         user_text: str,
@@ -488,7 +477,7 @@ def _corrected_tool_request(response: dict[str, Any], user_text: str) -> ToolReq
         action = _extract_model_action_from_chat(response, user_text)
     except (ValueError, TypeError):
         return None
-    return action if isinstance(action, (ToolRequest, ToolBatch)) else None
+    return action if isinstance(action, ToolRequest) else None
 
 
 def _system_prompt() -> str:
@@ -543,12 +532,6 @@ def _extract_model_action_from_chat(response: dict[str, Any], user_text: str) ->
     message = response.get("message") or {}
     tool_calls = message.get("tool_calls") or []
     if tool_calls:
-        if len(tool_calls) > 1:
-            calls = []
-            for index, native in enumerate(tool_calls):
-                request = _extract_model_action_from_chat({"message": {"tool_calls": [native]}}, user_text)
-                calls.append(ToolCall(native.get("id") or f"local-{index}", request))
-            return ToolBatch(tuple(calls))
         call = tool_calls[0]
         function = call.get("function") or {}
         name = function.get("name")
@@ -752,8 +735,6 @@ def _debug_parsed_action(action: ModelAction) -> None:
     if isinstance(action, ToolRequest):
         payload = json.dumps({"name": action.name, "arguments": action.arguments}, ensure_ascii=True)
         print(f"[odessy:model-repair] parsed tool request:\n{redact_for_log(payload)}")
-    elif isinstance(action, ToolBatch):
-        print(f"[odessy:model-repair] parsed tool batch: {len(action.calls)} calls")
     else:
         print(f"[odessy:model-repair] parsed final response:\n{redact_for_log(action.text)}")
 

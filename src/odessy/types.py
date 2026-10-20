@@ -17,30 +17,13 @@ class FinalResponse:
     text: str
 
 
-@dataclass(frozen=True)
-class ToolCall:
-    call_id: str
-    request: ToolRequest
-
-
-@dataclass(frozen=True)
-class ToolBatch:
-    calls: tuple[ToolCall, ...]
-
-    def __post_init__(self) -> None:
-        ids = [call.call_id for call in self.calls]
-        if not ids or len(ids) > 16 or any(not isinstance(i, str) or not i for i in ids) or len(set(ids)) != len(ids):
-            raise ValueError("Tool batches require 1-16 calls with unique nonempty IDs")
-
-
-ModelAction = ToolRequest | ToolBatch | FinalResponse
+ModelAction = ToolRequest | FinalResponse
 
 
 @dataclass(frozen=True)
 class ToolObservation:
     request: ToolRequest
     result: dict[str, Any]
-    call_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -121,4 +104,3 @@ class AgentTurnResult:
     tool_request: ToolRequest | None = None
     tool_result: dict[str, Any] | None = None
     metrics: AgentTurnMetrics = field(default_factory=AgentTurnMetrics)
-    tool_observations: list[ToolObservation] = field(default_factory=list)

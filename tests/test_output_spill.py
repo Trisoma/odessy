@@ -18,15 +18,15 @@ from pathlib import Path
 
 import pytest
 
-from odessy.runtime.agent_loop import ExecutionTarget, OdessyAgent
-from odessy.authority.command_bridge import CommandBridge, TerminalRunResult
-from odessy.tools.mcp_server import build_odessy_mcp_server
-from odessy.authority.output_retention import TextRetainer, format_retention_notice
-from odessy.authority.policy import OdessyPolicy
-from odessy.authority.redaction import REDACTED, looks_like_secret_name, redact_text
-from odessy.authority.spill import SpillLocator, SpillStore
-from odessy.runtime.types import FinalResponse, ToolObservation, ToolRequest
-from odessy.authority.workspace_authority import WorkspaceAuthorityError
+from odessy.agent_loop import ExecutionTarget, OdessyAgent
+from odessy.command_bridge import CommandBridge, TerminalRunResult
+from odessy.mcp_server import build_odessy_mcp_server
+from odessy.output_retention import TextRetainer, format_retention_notice
+from odessy.policy import OdessyPolicy
+from odessy.redaction import REDACTED, looks_like_secret_name, redact_text
+from odessy.spill import SpillLocator, SpillStore
+from odessy.types import FinalResponse, ToolObservation, ToolRequest
+from odessy.workspace_authority import WorkspaceAuthorityError
 
 
 def build_bridge(workspace: Path, **kwargs) -> CommandBridge:
@@ -375,7 +375,7 @@ def test_secret_absent_from_observation_spill_and_debug_log(
     assert secret not in spilled
     assert REDACTED in spilled
     # 3. Debug log.
-    from odessy.models.ollama_model import _debug_model_repair
+    from odessy.ollama_model import _debug_model_repair
 
     _debug_model_repair([("raw output", payload)])
     assert secret not in capsys.readouterr().out

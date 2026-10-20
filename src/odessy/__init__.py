@@ -22,10 +22,3 @@ __all__ = [
     "types",
     "voice",
 ]
-
-# Resolve historical imports from aliases kept outside the implementation folders.
-# Each alias returns the canonical module, preserving class identity and patches.
-from os.path import dirname as _dirname, join as _join
-
-__path__.append(_join(_dirname(__file__), "_compat"))
-__all__ += ["runtime", "models", "tools", "authority", "config"]

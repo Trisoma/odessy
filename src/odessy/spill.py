@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from odessy.authority.workspace_authority import WorkspaceAuthority
+from odessy.workspace_authority import WorkspaceAuthority
 
 #: Spill root, relative to the workspace root. Dot-prefixed so tooling treats it
 #: as metadata rather than content.

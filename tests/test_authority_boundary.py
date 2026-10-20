@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from odessy.runtime.agent_loop import OdessyAgent
-from odessy.authority.command_bridge import CommandBridge, build_sanitized_environment
-from odessy.models.fake_model import FakeModel
-from odessy.authority.policy import OdessyPolicy
-from odessy.runtime.types import ToolRequest
-from odessy.authority.workspace_authority import WorkspaceAuthority, WorkspaceAuthorityError
+from odessy.agent_loop import OdessyAgent
+from odessy.command_bridge import CommandBridge, build_sanitized_environment
+from odessy.fake_model import FakeModel
+from odessy.policy import OdessyPolicy
+from odessy.types import ToolRequest
+from odessy.workspace_authority import WorkspaceAuthority, WorkspaceAuthorityError
 
 
 @pytest.fixture
@@ -173,7 +173,7 @@ def test_command_bridge_passes_the_sanitized_environment_to_the_child(
             return "", ""
 
     monkeypatch.setenv("ODESSY_TEST_SECRET", "secret-value")
-    monkeypatch.setattr("odessy.authority.command_bridge.subprocess.Popen", _RecordingPopen)
+    monkeypatch.setattr("odessy.command_bridge.subprocess.Popen", _RecordingPopen)
 
     result = CommandBridge(tmp_path).run(command="any command", timeout=10)
 

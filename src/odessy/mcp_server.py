@@ -7,8 +7,8 @@ from typing import TypedDict
 
 from mcp.server import MCPServer
 
-from odessy.tools.calculator import CalculatorEvalResult, evaluate_arithmetic_expression
-from odessy.authority.command_bridge import CommandBridge, TerminalRunResult
+from odessy.calculator import CalculatorEvalResult, evaluate_arithmetic_expression
+from odessy.command_bridge import CommandBridge, TerminalRunResult
 from odessy.execution.contract import ExecutionPolicy, ExecutionProvider, ProviderError
 
 

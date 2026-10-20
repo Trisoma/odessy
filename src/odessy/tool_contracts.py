@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from odessy.config.deployment import deployment_mode, model_tool_names, tool_is_available
-from odessy.tools.external_tools import external_tool, external_tools
+from odessy.deployment import deployment_mode, model_tool_names, tool_is_available
+from odessy.external_tools import external_tool, external_tools
 from odessy.execution.contract import ESCALATION_TARGETS
 
 #: Spec keys that describe Odessy's own rendering rather than the JSON Schema, and so

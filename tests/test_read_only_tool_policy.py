@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from odessy.authority.policy import OdessyPolicy
-from odessy.runtime.types import ToolRequest
+from odessy.policy import OdessyPolicy
+from odessy.types import ToolRequest
 
 
 def test_read_only_workspace_tools_are_low_risk_allowed(tmp_path: Path) -> None:

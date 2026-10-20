@@ -27,8 +27,8 @@ from odessy.execution.escalation import (
     EscalationDeniedError,
     EscalationOutcome,
 )
-from odessy.authority.policy import OdessyPolicy
-from odessy.runtime.types import PolicyDecision, ToolRequest
+from odessy.policy import OdessyPolicy
+from odessy.types import PolicyDecision, ToolRequest
 
 
 class _Approver:

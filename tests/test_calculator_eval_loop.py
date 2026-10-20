@@ -1,9 +1,9 @@
 import pytest
 
-from odessy.runtime.agent_loop import ExecutionTarget, OdessyAgent
-from odessy.models.fake_model import FakeModel
-from odessy.tools.mcp_server import build_odessy_mcp_server
-from odessy.authority.policy import OdessyPolicy
+from odessy.agent_loop import ExecutionTarget, OdessyAgent
+from odessy.fake_model import FakeModel
+from odessy.mcp_server import build_odessy_mcp_server
+from odessy.policy import OdessyPolicy
 
 
 @pytest.fixture

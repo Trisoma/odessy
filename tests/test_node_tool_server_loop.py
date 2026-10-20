@@ -2,13 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from odessy.runtime.agent_loop import ExecutionTarget, OdessyAgent
-from odessy.models.fake_model import FakeModel
-from odessy.tools.node_mcp import (
+from odessy.agent_loop import ExecutionTarget, OdessyAgent
+from odessy.fake_model import FakeModel
+from odessy.node_mcp import (
     build_node_tool_server_http,
     node_tool_server_dependencies_installed,
 )
-from odessy.authority.policy import OdessyPolicy
+from odessy.policy import OdessyPolicy
 
 
 @pytest.fixture

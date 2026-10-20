@@ -18,10 +18,10 @@ from odessy.execution.contract import (
     Requirement,
 )
 from odessy.execution.providers import UnconfinedProvider
-from odessy.authority.output_retention import TextRetainer, format_retention_notice
-from odessy.authority.redaction import looks_like_secret_name, redact_text
-from odessy.authority.spill import SpillStore
-from odessy.authority.workspace_authority import WorkspaceAuthority
+from odessy.output_retention import TextRetainer, format_retention_notice
+from odessy.redaction import looks_like_secret_name, redact_text
+from odessy.spill import SpillStore
+from odessy.workspace_authority import WorkspaceAuthority
 
 
 class _TerminalRunResultOptional(TypedDict, total=False):

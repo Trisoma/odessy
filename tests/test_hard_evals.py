@@ -14,7 +14,7 @@ from evals.definitions import HARD_SUBTYPES, load_cases
 from evals.graders import grade
 from evals.harness import run_attempt
 from evals.report import render_comparison, render_markdown, summarize
-from odessy.runtime.types import FinalResponse, ToolRequest
+from odessy.types import FinalResponse, ToolRequest
 
 HARD = {case.id: case for case in load_cases() if case.category == "hard"}
 

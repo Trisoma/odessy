@@ -12,10 +12,10 @@ from typing import Any, cast
 
 from mcp.client import Client
 
-from odessy.runtime.agent_loop import ExecutionTarget, OdessyAgent
-from odessy.models.cloud_model import CLOUD_PROVIDERS, CloudModel, CloudModelConfigError, build_cloud_model
-from odessy.config.config_file import load_config_env
-from odessy.config.deployment import (
+from odessy.agent_loop import ExecutionTarget, OdessyAgent
+from odessy.cloud_model import CLOUD_PROVIDERS, CloudModel, CloudModelConfigError, build_cloud_model
+from odessy.config_file import load_config_env
+from odessy.deployment import (
     DEPLOYMENT_ENV,
     DeploymentConfigError,
     deployment_mode,
@@ -24,10 +24,10 @@ from odessy.config.deployment import (
 )
 from odessy.execution.contract import ISOLATION_REQUIREMENTS, IsolationRequirement
 from odessy.execution.escalation import ApprovalRequest, EscalationDeniedError, EscalationOutcome
-from odessy.models.fake_model import FakeModel
-from odessy.models.lfm_model import LlamaCppLFMModel
-from odessy.tools.mcp_server import build_odessy_mcp_server
-from odessy.tools.external_tools import (
+from odessy.fake_model import FakeModel
+from odessy.lfm_model import LlamaCppLFMModel
+from odessy.mcp_server import build_odessy_mcp_server
+from odessy.external_tools import (
     NamespacedServer,
     ServerConfigError,
     discover_tools,
@@ -35,10 +35,10 @@ from odessy.tools.external_tools import (
     external_tool_scope,
     load_server_configs,
 )
-from odessy.tools.node_mcp import NodeToolServerHttp, node_tool_server_dependencies_installed
-from odessy.models.ollama_model import OllamaModel
-from odessy.authority.policy import OdessyPolicy
-from odessy.runtime.types import PolicyDecision, ToolRequest
+from odessy.node_mcp import NodeToolServerHttp, node_tool_server_dependencies_installed
+from odessy.ollama_model import OllamaModel
+from odessy.policy import OdessyPolicy
+from odessy.types import PolicyDecision, ToolRequest
 from odessy.voice.audio_io import CommandAudioIO
 from odessy.voice.config import VoiceConfig
 from odessy.voice.loop import VoiceLoop
@@ -92,9 +92,7 @@ def _build_agent(
     model: Model,
     mcp_servers: tuple[object, ...] | None = None,
 ) -> OdessyAgent:
-    from odessy.runtime.scheduler import concurrency_from_env
     return OdessyAgent(
-        tool_concurrency=concurrency_from_env(),
         model=model,
         policy=OdessyPolicy(
             workspace_root=workspace_root,
@@ -417,7 +415,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         _model_backend_argument(parser)
         args = parser.parse_args(argv[1:])
-        from odessy.config.doctor import main as doctor_main
+        from odessy.doctor import main as doctor_main
 
         raise SystemExit(doctor_main(args.model_backend))
     if argv[:1] == ["voice"]:

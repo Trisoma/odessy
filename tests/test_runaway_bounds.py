@@ -20,9 +20,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from odessy.models.cloud_model import DEFAULT_OPENAI_MAX_TOKENS, CloudModel
-from odessy.models.lfm_model import LlamaCppLFMModel
-from odessy.models.ollama_model import (
+from odessy.cloud_model import DEFAULT_OPENAI_MAX_TOKENS, CloudModel
+from odessy.lfm_model import LlamaCppLFMModel
+from odessy.ollama_model import (
     CALL_TIMEOUT_ENV,
     DEFAULT_NUM_CTX,
     DEFAULT_NUM_PREDICT,
@@ -144,7 +144,7 @@ def test_a_generation_that_never_ends_is_stopped_by_the_total_budget(
     # in-memory lines finish inside one tick, so a real clock makes this a race. One
     # second per line means the budget is exceeded on a known line.
     ticks = iter(range(10_000))
-    monkeypatch.setattr("odessy.models.ollama_model.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr("odessy.ollama_model.time.monotonic", lambda: next(ticks))
 
     # num_predict is the first line of defence; this proves the second, for a server
     # that ignores it or a stream that ignores the model's stop token.
@@ -171,7 +171,7 @@ async def test_model_generation_timeout_is_recorded_distinctly(error_type) -> No
 
 
 def test_documented_limit_settings_can_be_uncommented(tmp_path: Path) -> None:
-    from odessy.config.config_file import read_env_file
+    from odessy.config_file import read_env_file
 
     names = (NUM_PREDICT_ENV, NUM_CTX_ENV, CALL_TIMEOUT_ENV, "ODESSY_CLOUD_OPENAI_MAX_TOKENS")
     config = Path(__file__).parents[1] / "config" / "odessy.env"

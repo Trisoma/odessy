@@ -37,21 +37,19 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from odessy.models.ollama_model import (
+from odessy.ollama_model import (
     _fallback_observation_response,
     _looks_like_generic_final_response,
 )
-from odessy.config.deployment import command_tool_for_laptop, environment_prompt
-from odessy.authority.redaction import redact_for_log, redact_text
-from odessy.tools.tool_contracts import build_openai_tools, validate_tool_arguments
-from odessy.runtime.types import (
+from odessy.deployment import command_tool_for_laptop, environment_prompt
+from odessy.redaction import redact_for_log, redact_text
+from odessy.tool_contracts import build_openai_tools, validate_tool_arguments
+from odessy.types import (
     FinalResponse,
     ModelAction,
     ModelTurnDiagnostics,
     ToolObservation,
     ToolRequest,
-    ToolBatch,
-    ToolCall,
 )
 
 Protocol = Literal["anthropic", "openai"]
@@ -273,7 +271,6 @@ class CloudModel:
 
     _messages: list[Any] = field(default_factory=list, init=False, repr=False)
     _pending_call_id: str | None = field(default=None, init=False, repr=False)
-    _pending_batch: tuple[str, ...] = field(default=(), init=False, repr=False)
     _diagnostics: ModelTurnDiagnostics = field(
         default_factory=ModelTurnDiagnostics, init=False, repr=False
     )
@@ -298,7 +295,6 @@ class CloudModel:
     def propose(self, user_text: str) -> ModelAction:
         self._diagnostics = ModelTurnDiagnostics()
         self._pending_call_id = None
-        self._pending_batch = ()
         self._messages = [{"role": "user", "content": redact_text(user_text)}]
         reply = self._exchange("proposal_generation_ms")
         try:
@@ -314,24 +310,6 @@ class CloudModel:
                 raise ValueError(
                     f"Model repair failed after one retry: {retry_error}"
                 ) from retry_error
-
-    def finalize_observations(self, observations) -> None:
-        ids = tuple(observation.call_id for observation in observations)
-        if ids != self._pending_batch:
-            raise ValueError("Batch observations do not match pending call IDs")
-        for observation in observations:
-            content = _cap_result(redact_text(json.dumps(observation.result, ensure_ascii=False, default=str)), self.max_result_chars)
-            self._append_result(observation.call_id, content, is_error=observation.result.get("status") in {"rejected", "error", "denied", "skipped", "unknown"})
-        self._pending_batch = ()
-
-    def respond_to_observations(self, user_text, observations) -> ModelAction:
-        self.finalize_observations(observations)
-        reply = self._exchange("final_generation_ms")
-        try:
-            return self._to_action(reply, user_text)
-        except ValueError as error:
-            self._append_tool_results(reply, _REPAIR_MESSAGE.format(error=error), is_error=True)
-            return self._to_action(self._exchange("repair_generation_ms"), user_text)
 
     def respond_to_observation(
         self,
@@ -387,18 +365,6 @@ class CloudModel:
             if not reply.text:
                 raise ValueError("Model returned neither a tool call nor text")
             return FinalResponse(text=reply.text)
-        if len(reply.calls) > 1:
-            calls = []
-            for call in reply.calls:
-                if call.error is not None:
-                    raise ValueError(call.error)
-                arguments = call.arguments or {}
-                validate_tool_arguments(call.name, arguments)
-                calls.append(ToolCall(call.call_id, ToolRequest(call.name, arguments)))
-            batch = ToolBatch(tuple(calls))
-            self._pending_batch = tuple(call.call_id for call in calls)
-            self._pending_call_id = None
-            return batch
         call = reply.calls[0]
         if call.error is not None:
             raise ValueError(call.error)
@@ -466,7 +432,7 @@ class CloudModel:
             "system": system_prompt(),
             "messages": self._messages,
             "tools": cloud_tools_anthropic(),
-            "tool_choice": {"type": "auto", "disable_parallel_tool_use": False},
+            "tool_choice": {"type": "auto", "disable_parallel_tool_use": True},
         }
         if self.effort:
             params["output_config"] = {"effort": self.effort}

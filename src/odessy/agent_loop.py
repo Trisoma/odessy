@@ -9,13 +9,13 @@ from typing import Any, Protocol
 
 from mcp import Client
 
-from odessy.execution.escalation import EscalationApproval, EscalationApprover, EscalationDeniedError
-from odessy.tools.external_tools import NamespacedServer, public_name
-from odessy.authority.policy import OdessyPolicy
-from odessy.runtime.repeat_guard import RepeatGuard, build_guard
-from odessy.tools.tool_contracts import validate_tool_arguments
-from odessy.runtime.tool_timeout import Deadline, ToolTimeoutPolicy
-from odessy.runtime.types import (
+from odessy.execution.escalation import EscalationApproval, EscalationApprover
+from odessy.external_tools import NamespacedServer, public_name
+from odessy.policy import OdessyPolicy
+from odessy.repeat_guard import RepeatGuard, build_guard
+from odessy.tool_contracts import validate_tool_arguments
+from odessy.tool_timeout import Deadline, ToolTimeoutPolicy
+from odessy.types import (
     AgentTurnMetrics,
     AgentTurnResult,
     FinalResponse,
@@ -24,8 +24,6 @@ from odessy.runtime.types import (
     ModelAction,
     ToolObservation,
     ToolRequest,
-    ToolBatch,
-    ToolCall,
 )
 
 
@@ -116,11 +114,7 @@ class OdessyAgent:
         max_model_calls: int = 4,
         guard: RepeatGuard | None = None,
         timeouts: ToolTimeoutPolicy | None = None,
-        tool_concurrency: int = 1,
     ) -> None:
-        if not 1 <= tool_concurrency <= 8:
-            raise ValueError("tool_concurrency must be from 1 to 8")
-        self._tool_concurrency = tool_concurrency
         self._model = model
         self._policy = policy
         self._mcp_servers, self._authorized_targets = _split_mcp_servers(mcp_server)
@@ -167,7 +161,6 @@ class OdessyAgent:
         user_text: str,
         *,
         status_callback: Callable[[str], None] | None = None,
-        stop_event: asyncio.Event | None = None,
     ) -> AgentTurnResult:
         turn_started = time.perf_counter()
         metrics = AgentTurnMetrics()
@@ -219,109 +212,7 @@ class OdessyAgent:
         # a rejection correction, or a follow-up call after a successful
         # execution -- passes through the same validation, policy, and execution
         # path. That is what makes a ToolRequest returned after execution safe.
-        observations: list[ToolObservation] = []
-        dispatched = 0
-        batch_number = 0
         while True:
-            if stop_event is not None and stop_event.is_set():
-                if isinstance(action, ToolBatch):
-                    skipped = [ToolObservation(c.request, {"status": "skipped", "reason": "stopped by user"}, c.call_id) for c in action.calls]
-                    observations.extend(skipped)
-                    finalizer = getattr(self._model, "finalize_observations", None)
-                    if callable(finalizer):
-                        finalizer(skipped)
-                return _finish_turn_result(final_text="Stopped. No further tools were dispatched.", log=log, metrics=metrics, turn_started=turn_started, tool_request=last_request, tool_result=last_result, tool_observations=observations)
-            if isinstance(action, ToolBatch):
-                from odessy.runtime.scheduler import schedule_calls, is_concurrency_safe
-                if not callable(getattr(self._model, "respond_to_observations", None)):
-                    raise TypeError("A model emitting ToolBatch must implement respond_to_observations")
-                batch_number += 1
-                batch_id = f"batch-{batch_number}"
-                failure = None
-                reminders = {}
-                for call in action.calls:
-                    if self._policy.evaluate(call.request).action == "deny":
-                        failure = "Policy denied request: " + self._policy.evaluate(call.request).reason
-                        break
-                if failure is not None:
-                    batch_observations = [ToolObservation(c.request, {"status": "denied", "reason": failure}, c.call_id) for c in action.calls]
-                    stopped = failure
-                else:
-                    if tool_registry is None:
-                        tool_registry = await self._collect_tool_registry()
-                    invalid = None
-                    for call in action.calls:
-                        try:
-                            self._validate_tool_request(call.request, tool_registry)
-                        except (ValueError, TypeError) as exc:
-                            invalid = str(exc)
-                            break
-                    if invalid:
-                        rejections += 1
-                        batch_observations = [ToolObservation(c.request, {"status": "rejected", "reason": invalid}, c.call_id) for c in action.calls]
-                        stopped = None
-                    elif dispatched + len(action.calls) > 64:
-                        batch_observations = [ToolObservation(c.request, {"status": "skipped", "reason": "64-call turn limit reached"}, c.call_id) for c in action.calls]
-                        stopped = "64-call turn limit reached"
-                    else:
-                        def safe(call):
-                            request = call.request
-                            decision = self._policy.evaluate(request)
-                            return is_concurrency_safe(request) and decision.allowed and self._policy.requirement_for(request, decision) is None
-                        async def prepare(call):
-                            nonlocal dispatched
-                            reminder = guard.observe(call.request.name, call.request.arguments)
-                            log.append(LogEntry("model_tool_request", {"name": call.request.name, "arguments": call.request.arguments, "call_id": call.call_id, "batch_id": batch_id}))
-                            if reminder:
-                                reminders[call.call_id] = reminder
-                                log.append(LogEntry("repeat_tool_reminder", {"name": call.request.name}))
-                            try:
-                                args = await self._prepare_call(call.request, tool_registry, log, metrics)
-                            except EscalationDeniedError as exc:
-                                raise PermissionError(str(exc)) from exc
-                            dispatched += 1
-                            return args
-                        async def dispatch(call, args):
-                            started = time.perf_counter()
-                            try:
-                                result = await self._call_tool(call.request.name, args, tool_registry)
-                                structured = {"status": "error", "error": _error_text(result)} if _is_error_result(result) else self._extract_structured_result(result)
-                            except Exception as exc:
-                                structured = {"status": "error", "error": str(exc)}
-                            return {**structured, "_dispatch_timing": {"started": started, "completed": time.perf_counter()}}
-                        batch_observations, stopped = await schedule_calls(action, limit=self._tool_concurrency, safe=safe, prepare=prepare, dispatch=dispatch, stop=stop_event)
-                for index, observation in enumerate(batch_observations):
-                    if observation.call_id in reminders:
-                        observation.result["repeat_reminder"] = reminders[observation.call_id]
-                    timeout_info = self._classify_timeout(observation.request.name, observation.result)
-                    if timeout_info is not None:
-                        log.append(LogEntry("tool_timeout", {"name": observation.request.name, "call_id": observation.call_id, **timeout_info}))
-                    timing = observation.result.pop("_dispatch_timing", None)
-                    if timing:
-                        log.append(LogEntry("mcp_tool_called", {"name": observation.request.name, "call_id": observation.call_id, "batch_id": batch_id, "index": index, **timing}))
-                        last_request, last_result = observation.request, observation.result
-                        _add_ms(metrics, "mcp_execution_ms", (timing["completed"]-timing["started"])*1000)
-                    log.append(LogEntry("tool_observation", {"name": observation.request.name, "call_id": observation.call_id, "batch_id": batch_id, "index": index, "result": observation.result}))
-                observations.extend(batch_observations)
-                if stopped:
-                    event = "continuation_budget_exhausted" if "limit" in stopped else "batch_stopped"
-                    log.append(LogEntry(event, {"reason": stopped}))
-                if stopped or not self._may_continue(rejections=rejections, model_calls=model_calls, deadline=deadline):
-                    if not stopped:
-                        log.append(LogEntry("continuation_budget_exhausted", {"model_calls": model_calls}))
-                    finalizer = getattr(self._model, "finalize_observations", None)
-                    if callable(finalizer):
-                        finalizer(batch_observations)
-                    return _finish_turn_result(final_text=stopped or "Tool continuation budget exhausted.", log=log, metrics=metrics, turn_started=turn_started, tool_request=last_request, tool_result=last_result, tool_observations=observations)
-                action = self._model.respond_to_observations(user_text, batch_observations)
-                model_calls += 1
-                _merge_model_diagnostics(metrics, _model_diagnostics(self._model))
-                if isinstance(action, FinalResponse):
-                    log.append(LogEntry("model_final_response", {"text": action.text}))
-                    return _finish_turn_result(final_text=action.text, log=log, metrics=metrics, turn_started=turn_started, tool_request=last_request, tool_result=last_result, tool_observations=observations)
-                continue
-            if dispatched >= 64:
-                return _finish_turn_result(final_text="64-call turn limit reached.", log=log, metrics=metrics, turn_started=turn_started, tool_request=last_request, tool_result=last_result, tool_observations=observations)
             reminder = guard.observe(action.name, action.arguments)
             if reminder is not None:
                 pending_reminders.append(reminder)
@@ -385,7 +276,6 @@ class OdessyAgent:
                         turn_started=turn_started,
                         tool_request=last_request,
                         tool_result=last_result,
-                        tool_observations=observations,
                     )
                 next_action = self._resume(
                     user_text,
@@ -414,18 +304,96 @@ class OdessyAgent:
                         turn_started=turn_started,
                         tool_request=last_request,
                         tool_result=last_result,
-                        tool_observations=observations,
                     )
                 action = next_action
                 continue
 
             log.append(LogEntry("schema_validated", {"name": action.name}))
 
-            call_arguments = await self._prepare_call(action, tool_registry, log, metrics)
+            policy_started = time.perf_counter()
+            decision = self._policy.evaluate(action)
+            _add_ms(metrics, "policy_validation_ms", _elapsed_ms(policy_started))
+            if decision.action == "deny":
+                raise PermissionError(f"Policy denied request: {decision.reason}")
+            if decision.requires_confirmation:
+                log.append(
+                    LogEntry(
+                        "policy_requires_confirmation",
+                        {
+                            "name": action.name,
+                            "risk": decision.risk,
+                            "reason": decision.reason,
+                        },
+                    )
+                )
+                if not self._is_confirmed(decision, action):
+                    raise PermissionError(
+                        f"Policy requires confirmation before execution: {decision.reason}"
+                    )
+                log.append(
+                    LogEntry(
+                        "policy_confirmed",
+                        {
+                            "name": action.name,
+                            "risk": decision.risk,
+                            "reason": decision.reason,
+                        },
+                    )
+                )
+            if not decision.allowed and not decision.requires_confirmation:
+                raise PermissionError(decision.reason)
+            if decision.allowed:
+                log.append(
+                    LogEntry(
+                        "policy_allowed",
+                        {
+                            "name": action.name,
+                            "risk": decision.risk,
+                            "reason": decision.reason,
+                        },
+                    )
+                )
+
+            self._assert_execution_target(action.name, tool_registry)
+
+            # Isolation is resolved HERE, on the authority side, before anything
+            # executes. The granted mode travels with the call; the model never sets
+            # it, because a model-settable mode would make escalation bypassable in a
+            # single argument.
+            call_arguments = dict(action.arguments)
+            if self._policy.requirement_for(action, decision) is not None:
+                resolved_mode = await self._policy.resolve_execution_mode(
+                    action,
+                    decision,
+                    approval=EscalationApproval(
+                        approver=self._approver,
+                        agent=self,
+                        call_id=uuid.uuid4().hex[:12],
+                        tool_name=action.name,
+                    ),
+                )
+                # `sandbox_permissions` and `justification` are the escalating
+                # requester's vocabulary and stay on this side. Only the GRANTED mode
+                # crosses to the executor, so the executor never re-decides and never
+                # even sees what was asked for.
+                call_arguments.pop("sandbox_permissions", None)
+                call_arguments.pop("justification", None)
+                call_arguments["mode"] = resolved_mode
+                # The requirement travels WITH the mode. Sending only the mode would
+                # leave the executor to infer how strict this side is, and inferring
+                # permissively would be the executor weakening the authority layer's
+                # requirement -- a `required` demand silently satisfied by a `partial`
+                # backend. They are a pair, like the escalation arguments themselves.
+                call_arguments["isolation"] = self._policy.isolation
+                log.append(
+                    LogEntry(
+                        "execution_mode_resolved",
+                        {"name": action.name, "mode": resolved_mode},
+                    )
+                )
 
             _status(status_callback, "Running tool")
             mcp_started = time.perf_counter()
-            dispatched += 1
             result = await self._call_tool(action.name, call_arguments, tool_registry)
             log.append(LogEntry("mcp_tool_called", {"name": action.name}))
 
@@ -454,7 +422,6 @@ class OdessyAgent:
                 )
 
             observation = ToolObservation(request=action, result=structured_result)
-            observations.append(observation)
             log.append(
                 LogEntry(
                     "tool_observation",
@@ -485,11 +452,14 @@ class OdessyAgent:
                     turn_started=turn_started,
                     tool_request=last_request,
                     tool_result=last_result,
-                    tool_observations=observations,
                 )
 
-            if isinstance(next_action, ToolRequest):
-                log.append(LogEntry("model_tool_request", {"name": next_action.name, "arguments": next_action.arguments}))
+            log.append(
+                LogEntry(
+                    "model_tool_request",
+                    {"name": next_action.name, "arguments": next_action.arguments},
+                )
+            )
             if not self._may_continue(
                 rejections=rejections, model_calls=model_calls, deadline=deadline
             ):
@@ -501,94 +471,8 @@ class OdessyAgent:
                     turn_started=turn_started,
                     tool_request=last_request,
                     tool_result=last_result,
-                    tool_observations=observations,
                 )
             action = next_action
-
-    async def _prepare_call(self, action, tool_registry, log, metrics):
-        policy_started = time.perf_counter()
-        decision = self._policy.evaluate(action)
-        _add_ms(metrics, "policy_validation_ms", _elapsed_ms(policy_started))
-        if decision.action == "deny":
-            raise PermissionError(f"Policy denied request: {decision.reason}")
-        if decision.requires_confirmation:
-            log.append(
-                LogEntry(
-                    "policy_requires_confirmation",
-                    {
-                        "name": action.name,
-                        "risk": decision.risk,
-                        "reason": decision.reason,
-                    },
-                )
-            )
-            if not self._is_confirmed(decision, action):
-                raise PermissionError(
-                    f"Policy requires confirmation before execution: {decision.reason}"
-                )
-            log.append(
-                LogEntry(
-                    "policy_confirmed",
-                    {
-                        "name": action.name,
-                        "risk": decision.risk,
-                        "reason": decision.reason,
-                    },
-                )
-            )
-        if not decision.allowed and not decision.requires_confirmation:
-            raise PermissionError(decision.reason)
-        if decision.allowed:
-            log.append(
-                LogEntry(
-                    "policy_allowed",
-                    {
-                        "name": action.name,
-                        "risk": decision.risk,
-                        "reason": decision.reason,
-                    },
-                )
-            )
-
-        self._assert_execution_target(action.name, tool_registry)
-
-        # Isolation is resolved HERE, on the authority side, before anything
-        # executes. The granted mode travels with the call; the model never sets
-        # it, because a model-settable mode would make escalation bypassable in a
-        # single argument.
-        call_arguments = dict(action.arguments)
-        if self._policy.requirement_for(action, decision) is not None:
-            resolved_mode = await self._policy.resolve_execution_mode(
-                action,
-                decision,
-                approval=EscalationApproval(
-                    approver=self._approver,
-                    agent=self,
-                    call_id=uuid.uuid4().hex[:12],
-                    tool_name=action.name,
-                ),
-            )
-            # `sandbox_permissions` and `justification` are the escalating
-            # requester's vocabulary and stay on this side. Only the GRANTED mode
-            # crosses to the executor, so the executor never re-decides and never
-            # even sees what was asked for.
-            call_arguments.pop("sandbox_permissions", None)
-            call_arguments.pop("justification", None)
-            call_arguments["mode"] = resolved_mode
-            # The requirement travels WITH the mode. Sending only the mode would
-            # leave the executor to infer how strict this side is, and inferring
-            # permissively would be the executor weakening the authority layer's
-            # requirement -- a `required` demand silently satisfied by a `partial`
-            # backend. They are a pair, like the escalation arguments themselves.
-            call_arguments["isolation"] = self._policy.isolation
-            log.append(
-                LogEntry(
-                    "execution_mode_resolved",
-                    {"name": action.name, "mode": resolved_mode},
-                )
-            )
-
-        return call_arguments
 
     def _may_continue(
         self,
@@ -881,7 +765,6 @@ def _finish_turn_result(
     turn_started: float,
     tool_request: ToolRequest | None = None,
     tool_result: dict[str, Any] | None = None,
-    tool_observations: list[ToolObservation] | None = None,
 ) -> AgentTurnResult:
     metrics.agent_turn_total_ms = _elapsed_ms(turn_started)
     log.append(LogEntry("agent_turn_metrics", asdict(metrics)))
@@ -891,5 +774,4 @@ def _finish_turn_result(
         tool_request=tool_request,
         tool_result=tool_result,
         metrics=metrics,
-        tool_observations=tool_observations or [],
     )

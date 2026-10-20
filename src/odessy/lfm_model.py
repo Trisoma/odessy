@@ -16,8 +16,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any
 
-from odessy.tools.tool_contracts import build_openai_tools
-from odessy.models.ollama_model import (
+from odessy.tool_contracts import build_openai_tools
+from odessy.ollama_model import (
     _OllamaStreamTimeout,
     _OllamaToolsUnsupported,
     _accumulate_stream,
@@ -43,7 +43,7 @@ from odessy.models.ollama_model import (
     PROGRESS_TIMEOUT_ENV,
     generation_options,
 )
-from odessy.runtime.types import FinalResponse, ModelAction, ModelTurnDiagnostics, ToolObservation
+from odessy.types import FinalResponse, ModelAction, ModelTurnDiagnostics, ToolObservation
 
 DEFAULT_LFM_ENDPOINT = os.environ.get("ODESSY_MODEL_ENDPOINT", "http://127.0.0.1:11434")
 DEFAULT_LFM_MODEL = "lfm2.5-thinking:1.2b-q8_0"
@@ -249,15 +249,6 @@ class LlamaCppLFMModel:
                     f"({PROGRESS_TIMEOUT_ENV})"
                 ) from error
             raise RuntimeError(f"Ollama LFM API call failed: {error}") from error
-
-    def finalize_observations(self, observations) -> None:
-        for observation in observations:
-            _remember_observation(self, observation)
-
-    def respond_to_observations(self, user_text, observations) -> ModelAction:
-        for observation in observations[:-1]:
-            _remember_observation(self, observation)
-        return self.respond_to_observation(user_text, observations[-1])
 
     def respond_to_observation(
         self,

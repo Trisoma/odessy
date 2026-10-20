@@ -11,18 +11,18 @@ from mcp.client import Client
 from shell_model import ShellModel
 
 import odessy.cli as cli
-import odessy.config.config_file as config_file
-import odessy.tools.node_mcp as node_mcp
-from odessy.runtime.agent_loop import ExecutionTarget, OdessyAgent
-from odessy.models.cloud_model import cloud_tools_openai
-from odessy.config.deployment import model_tool_names
-from odessy.tools.mcp_server import build_odessy_mcp_server
-from odessy.models.ollama_model import (
+import odessy.config_file as config_file
+import odessy.node_mcp as node_mcp
+from odessy.agent_loop import ExecutionTarget, OdessyAgent
+from odessy.cloud_model import cloud_tools_openai
+from odessy.deployment import model_tool_names
+from odessy.mcp_server import build_odessy_mcp_server
+from odessy.ollama_model import (
     _model_output_error,
     _text_system_prompt,
 )
-from odessy.authority.policy import OdessyPolicy
-from odessy.tools.tool_contracts import build_openai_tools
+from odessy.policy import OdessyPolicy
+from odessy.tool_contracts import build_openai_tools
 
 
 @pytest.fixture

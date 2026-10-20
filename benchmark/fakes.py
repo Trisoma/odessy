@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from odessy.models.fake_model import FakeModel
-from odessy.runtime.types import FinalResponse, ToolObservation, ToolRequest
+from odessy.fake_model import FakeModel
+from odessy.types import FinalResponse, ToolObservation, ToolRequest
 from odessy.voice.stt import STTResult
 from odessy.voice.tts import TTSResult
 
