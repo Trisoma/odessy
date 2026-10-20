@@ -338,10 +338,11 @@ accept an answer, but cannot demand a tool call.
 
 **v0.2 shipped with this observed single-tool behaviour.** On October 18, both
 local LFM eval sweeps still passed 0/18 multi-step attempts, while the separate
-`deepseek-flash` reference passed 17/18. The continuation machinery can therefore
-work with a real cloud model in these fixtures. Keyword routing on also limits
-follow-ups to the selected tool, constraining sequences that need a different
-second tool. These results do not establish general multi-step reliability.
+`deepseek-flash` reference passed 16/18 (88.9%). The continuation machinery can
+therefore work with a real cloud model in these fixtures. Keyword routing on also
+limits follow-ups to the selected tool, constraining sequences that need a
+different second tool. These results do not establish general multi-step
+reliability.
 
 See [the eval guide](evals/README.md) for the saved artifacts and comparison limits.
 
