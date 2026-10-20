@@ -92,7 +92,9 @@ def _build_agent(
     model: Model,
     mcp_servers: tuple[object, ...] | None = None,
 ) -> OdessyAgent:
+    from odessy.runtime.scheduler import concurrency_from_env
     return OdessyAgent(
+        tool_concurrency=concurrency_from_env(),
         model=model,
         policy=OdessyPolicy(
             workspace_root=workspace_root,
