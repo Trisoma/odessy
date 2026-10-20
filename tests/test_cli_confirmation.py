@@ -28,7 +28,7 @@ def test_cli_confirmation_rejects_default_empty_response(monkeypatch) -> None:
 
 
 def test_cli_build_agent_wires_human_confirmation(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr("odessy.cli._confirm_tool_call", lambda decision, request: True)
+    monkeypatch.setattr("builtins.input", lambda prompt: "y")
     agent = _build_agent(tmp_path, FakeModel())
 
     accepted = agent._is_confirmed(

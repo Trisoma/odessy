@@ -102,6 +102,10 @@ server trusted is therefore a statement that you believe its annotations.
 Odessy's sandbox modes govern its own command tools; a third-party tool that is sent
 `sandbox_permissions` or `justification` without declaring them is denied.
 
+When asked, you can answer `a` to allow every call to that one tool until Odessy
+exits (held in memory only). A tool rated high risk (annotated destructive) is never
+offered this and needs a typed `yes` each time.
+
 A server must be listed to execute at all: the composition root wraps each listed
 server that answered in `ExecutionTarget`, and nothing found at runtime is added.
 
