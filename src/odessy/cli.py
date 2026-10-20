@@ -44,13 +44,14 @@ from odessy.voice.config import VoiceConfig
 from odessy.voice.loop import VoiceLoop
 from odessy.voice.stt import WhisperCppSTT
 from odessy.voice.tts import KokoroTTS
+from odessy.models.routed_model import RoutedModel, RoutingConfig, model_uses_cloud
 
 DEFAULT_LFM_ENDPOINT = "http://127.0.0.1:11434"
 DEFAULT_LFM_MODEL = "lfm2.5-thinking:1.2b-q8_0"
 LOCAL_BACKENDS = ("lfm", "ollama", "llama_cpp")
-MODEL_BACKENDS = (*LOCAL_BACKENDS, *CLOUD_PROVIDERS)
+MODEL_BACKENDS = (*LOCAL_BACKENDS, "auto", *CLOUD_PROVIDERS)
 
-Model = FakeModel | OllamaModel | LlamaCppLFMModel | CloudModel
+Model = FakeModel | OllamaModel | LlamaCppLFMModel | CloudModel | RoutedModel
 
 
 def _build_model(
@@ -63,6 +64,8 @@ def _build_model(
     if use_fake_model:
         return FakeModel()
     backend = (backend or os.environ.get("ODESSY_MODEL_BACKEND", "lfm")).lower()
+    if backend == "auto":
+        return RoutedModel(RoutingConfig.from_env())
     if backend in CLOUD_PROVIDERS:
         # Cloud models ignore model_name: callers pass Ollama names, and the cloud
         # model is configured separately through ODESSY_CLOUD_MODEL.
@@ -107,7 +110,7 @@ def _build_agent(
         ),
         confirm=_confirm_tool_call,
         approver=TerminalEscalationApprover(),
-        max_model_calls=_max_model_calls_from_env(cloud=isinstance(model, CloudModel)),
+        max_model_calls=_max_model_calls_from_env(cloud=model_uses_cloud(model)),
     )
 
 
@@ -204,7 +207,7 @@ async def _text_async(user_text: str, use_fake_model: bool, backend: str | None 
     workspace_root = Path.cwd()
     model = _build_model(use_fake_model, backend=backend)
     _announce_cloud(model)
-    async with _tool_servers(workspace_root, cloud=isinstance(model, CloudModel)) as servers:
+    async with _tool_servers(workspace_root, cloud=model_uses_cloud(model)) as servers:
         agent = _build_agent(workspace_root, model, servers)
         try:
             result = await agent.run_turn(user_text)
@@ -220,7 +223,7 @@ async def _voice_async(use_fake_model: bool, backend: str | None = None) -> None
     workspace_root = Path.cwd()
     model = _build_model(use_fake_model, backend=backend, model_name=config.ollama_model)
     _announce_cloud(model)
-    async with _tool_servers(workspace_root, cloud=isinstance(model, CloudModel)) as servers:
+    async with _tool_servers(workspace_root, cloud=model_uses_cloud(model)) as servers:
         agent = _build_agent(workspace_root, model, servers)
         await _run_voice_turn(agent, config)
 
@@ -275,6 +278,8 @@ async def _run_voice_turn(agent: OdessyAgent, config: VoiceConfig) -> None:
 
 def _announce_cloud(model: object) -> None:
     """Say plainly, once per run, that this turn leaves the machine."""
+    if isinstance(model, RoutedModel) and model.uses_cloud:
+        print("[odessy] auto cloud fallback enabled: eligible requests and redacted tool output may be sent to " + str(model.config.cloud_backend), file=sys.stderr)
     if isinstance(model, CloudModel):
         print(
             f"[odessy] cloud model {model.provider}/{model.model}: your request and "
