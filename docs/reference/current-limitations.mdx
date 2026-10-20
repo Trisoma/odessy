@@ -117,6 +117,17 @@ Design detail (internal record, outside this docs set):
 
 ## Jetson Voice Benchmark Limits
 
+October 20 manual smoke tests reached transcription, model execution, and
+speaking in fake-model and auto wake sessions. These used a board-local Silero
+VAD frame-size correction; the checked repository adapter still needs that fix.
+The Q8 test profile (15 GPU layers, batch 64, context 1024) also experienced
+intermittent CUDA allocation failures. Spoken `Hi` followed by visible LFM
+residency remains unexplained without transcript/history/escalation evidence;
+successful text answers do not establish route correctness. See the
+[Jetson procedure](../jetson-wake-testing.md) and
+[routing observations](model-selection.mdx#routing-boundary-and-october-20-jetson-observations).
+No new latency, detection-rate, or memory-stability benchmark is established.
+
 Odessy has started voice feasibility benchmarking on Jetson Orin Nano Super 4GB and now has an initial staged voice interface in code.
 The benchmark result is not yet the same as a manually verified Bluetooth voice demo.
 

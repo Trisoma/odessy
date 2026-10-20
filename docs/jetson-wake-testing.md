@@ -1,9 +1,24 @@
 # Test current Odessy on Jetson
 
-Updated October 20, 2026, against merged `develop` at `b86aea9`. This is a
-hardware test procedure, not a report that the Jetson tests have passed.
+Updated October 20, 2026, against merged `develop` at `b86aea9`, with the
+user-reported Jetson smoke-test results below. This procedure does not establish
+full hardware qualification or an automatic-selection performance improvement.
 v0.4.0 development remains unreleased. Start with headphones and a microphone;
 open-speaker echo cancellation is not implemented.
+
+Observed on October 20: the fake-model listening test reached transcription,
+model execution, and speech output. The Q8 profile was created successfully with
+`num_gpu=15`, `num_batch=64`, and `num_ctx=1024`. Automatic-selection routing,
+long-running stability, and cancellation qualification remain test steps below,
+not completed hardware results.
+
+Later text auto smoke tests returned a greeting, an unchanged rewrite sentence,
+and a time answer. The auto voice run also reached transcription, thinking, and
+speaking. The user then reported saying `Hi` while Q8 LFM appeared in
+`ollama ps`. That observation remains unresolved: the actual Whisper transcript,
+history state, and fast-model escalation reason were not captured. It does not
+establish correct routing or a router defect. See the
+[routing boundary and observations](reference/model-selection.mdx#routing-boundary-and-october-20-jetson-observations).
 
 ## 1. Update and install
 
@@ -72,6 +87,14 @@ tests open the microphone; doctor does not. Environment exports override user
 configuration. Put persistent machine paths in `~/.config/odessy/odessy.env`.
 Whisper currently runs CPU-only through the adapter's `-ng` argument.
 
+Turn on and unmute the microphone before testing. In the October 20 session,
+wake stopped responding after an accidental suspend and SSH reconnection. Raw
+recording showed a 0% meter and the recorded wake score was about 0.000096 against
+the unchanged 0.5 threshold. The user subsequently confirmed that the microphone
+was off; this incident was not evidence of a suspend-related wake-detector fault.
+Exports from an earlier SSH shell must be restored if they are not saved in the
+user configuration.
+
 ## 3. Install wake assets and initialize both detectors
 
 The phrase is **Hey Jarvis**, not Hey Odessy. The pretrained keyword weights are
@@ -91,6 +114,26 @@ setup is based on the [openWakeWord v0.6 downloader](https://github.com/dscripka
 and [VAD defaults](https://github.com/dscripka/openWakeWord/blob/v0.6.0/openwakeword/vad.py).
 Review upstream asset licenses separately. If another version is installed,
 check its downloader API before using this command.
+
+### Confirmed VAD frame-size correction
+
+The checked `b86aea9` source calls `self._vad.predict(frame)` even though Odessy
+supplies 512-sample frames. The installed openWakeWord VAD defaults to 480 samples;
+the user's direct test reproduced `Conv_73` / `If_25` invalid input shape `{224}`
+with `frame_size=480`, while `frame_size=512` succeeded. For this snapshot, apply
+the following one-line correction on Jetson before running wake tests:
+
+```bash
+sed -i 's/self\._vad\.predict(frame)/self._vad.predict(frame, frame_size=512)/' src/odessy/voice/vad.py
+
+python -c 'from odessy.voice.vad import SileroSpeechDetector; print("Silence detected as speech:", SileroSpeechDetector().is_speech(bytes(1024)))'
+```
+
+The reported result was `Silence detected as speech: False`, without the
+convolution error. This command edits the Jetson checkout; review `git diff`
+before a later update. Skip the substitution when the source already passes the
+correct frame size. This guide records the workaround; it does not apply a source
+fix to the repository.
 
 Check actual model loading without opening the microphone:
 
@@ -153,31 +196,87 @@ actions or guarantee that a remote operation stopped.
 ## 5. Enable the real local model, then automatic selection
 
 Ensure Ollama is already serving and the named models exist (`ollama list`).
-If your board uses another installed LFM tag, substitute its actual name.
+The October 20 baseline uses **LFM Q8**, specifically
+`lfm2.5-thinking:1.2b-q8_0`, with 15 GPU layers, a 64-token batch, and a
+1,024-token context. Both 12- and 15-layer short requests succeeded. Fifteen
+layers is a working starting point, not a measured optimum: a later 15-layer
+allocation failed, and a subsequent 12-layer request followed by 15 layers
+succeeded. Full voice-pipeline memory headroom remains to be measured.
+
+Odessy at this snapshot sends context/output limits but does not send `num_gpu`
+or `num_batch`. A successful `curl` request does not persist those options for
+later Odessy calls. Save them in a separate profile based on the existing Q8
+model; the original tag and quantization are preserved. See the
+[Ollama Modelfile reference](https://docs.ollama.com/modelfile).
+
+```bash
+cat > /tmp/odessy-q8.Modelfile <<'EOF'
+FROM lfm2.5-thinking:1.2b-q8_0
+PARAMETER num_gpu 15
+PARAMETER num_batch 64
+PARAMETER num_ctx 1024
+EOF
+
+ollama create odessy-lfm-q8:jetson -f /tmp/odessy-q8.Modelfile
+ollama show odessy-lfm-q8:jetson --parameters
+ollama stop lfm2.5-thinking:1.2b-q8_0
+```
+
+Configure Odessy in the same shell. The text backend reads `ODESSY_MODEL_NAME`;
+the explicit voice backend receives `ODESSY_OLLAMA_MODEL` from voice configuration.
+Keep the existing Whisper/Kokoro asset paths and audio-device settings.
 
 ```bash
 export ODESSY_MODEL_ENDPOINT=http://127.0.0.1:11434
-export ODESSY_MODEL_NAME=lfm2.5-thinking:1.2b-q8_0
+export ODESSY_MODEL_NAME=odessy-lfm-q8:jetson
+export ODESSY_OLLAMA_MODEL=odessy-lfm-q8:jetson
+export ODESSY_MODEL_NUM_CTX=1024
+export ODESSY_MODEL_NUM_PREDICT=512
+export ODESSY_ONNX_PROVIDER=cpu
+
+export ODESSY_AUTO_FAST_MODEL=gemma3:1b
+export ODESSY_AUTO_CAPABLE_BACKEND=lfm
+export ODESSY_AUTO_CAPABLE_MODEL=odessy-lfm-q8:jetson
+export ODESSY_AUTO_CLOUD_FALLBACK=off
+```
+
+First repeat the fake-model wake test from section 4. Say **Hey Jarvis**, wait
+for the cue, then **what time is it?** Check transcription, spoken output,
+another activation, and Ctrl+C cleanup. Then enable Q8:
+
+```bash
 python -m odessy --model-backend lfm 'what time is it?'
 python -m odessy voice --listen --model-backend lfm
 ```
 
-Only after that passes, make both auto-role models available and test:
+Only after that passes, test automatic selection. Run each text command as a
+separate process, then start listening:
 
 ```bash
-export ODESSY_AUTO_FAST_MODEL=gemma3:1b
-export ODESSY_AUTO_CAPABLE_MODEL=lfm2.5-thinking:1.2b-q8_0
-export ODESSY_AUTO_CLOUD_FALLBACK=off
 python -m odessy --model-backend auto 'hello'
+python -m odessy --model-backend auto 'rewrite: The meeting starts tomorrow.'
 python -m odessy --model-backend auto 'what time is it?'
 python -m odessy voice --listen --model-backend auto
 ```
 
-Greetings/text transforms may use the fast model; tool/uncertain requests and
-requests carrying conversation history use capable. Default model names are not
-an automatic weight download. Auto uses `keep_alive=0`, so reloading can increase
-latency; no Jetson speedup is established. In split mode, commands.toml entries
-apply only to local `terminal.run`, not `laptop.terminal.run`.
+Expected initial routes for the three text requests are Gemma, Gemma, and Q8 LFM;
+a fast-model failure may escalate to capable. For a voice greeting, use the first
+request in a fresh session: requests carrying conversation history use capable.
+Record what Whisper actually submitted and the routing diagnostics; the current
+voice status messages and `ollama ps` cannot distinguish initial selection from
+fallback. A model shown as `Stopping...` is consistent with auto's unload policy.
+Default model names are not an automatic weight download. Auto uses
+`keep_alive=0`, so reloading can increase latency; no Jetson speedup is established.
+In split mode, commands.toml entries apply only to local `terminal.run`, not
+`laptop.terminal.run`.
+
+Keep `tegrastats` running in another terminal throughout the tests. The
+1,024-token context was demonstrated with a short greeting; tool prompts may
+need more. If context is the failure, try `ODESSY_MODEL_NUM_CTX=2048` separately
+and recheck memory. If CUDA allocation fails with voice running, change the
+profile's `num_gpu` to 12 and recreate it, keeping the other settings fixed.
+The 32-token diagnostic requests consumed their output budget on thinking;
+their empty answer text was not a model-loading failure.
 
 ## 6. Record qualification results
 

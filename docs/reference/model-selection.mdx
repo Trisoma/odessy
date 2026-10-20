@@ -24,6 +24,46 @@ proposals, empty/malformed output, and model errors escalate once to capable.
 Fluent wrong answers cannot reliably be detected; this is a conservative routing
 policy, not a correctness checker. LFM's historical tool failures remain relevant.
 
+## Routing boundary and October 20 Jetson observations
+
+The boundary applies to the text received by the router, including the supplied
+history; spoken intent alone does not establish what Whisper submitted.
+
+| Input and state | Expected initial route |
+|---|---|
+| Exact standalone greeting such as `hi`, with no conversation history | Fast Gemma |
+| Explicit supported text-transformation prefix, with no history | Fast Gemma |
+| Time/tool request or an uncertain request | Capable LFM by default |
+| Request carrying conversation history, including a greeting | Capable |
+| Fast attempt fails or returns rejected output | Escalate to capable |
+
+On October 20 the user obtained text answers for `hello`,
+`rewrite: The meeting starts tomorrow.`, and `what time is it?` on Jetson.
+The rewrite repeated the original sentence. The voice auto run reached
+transcription, thinking, and speaking. These are smoke-test observations;
+the printed answers do not prove model selection or time-tool execution.
+
+The user also reported speaking only `Hi` while `ollama ps` showed Q8 LFM.
+This remains unresolved: the transcript, history state, and whether Gemma failed
+were not captured in the pasted console output. An exact first-turn `Hi` without
+history should start on Gemma. If it instead starts directly on LFM, that would
+violate the intended routing boundary. A later fallback to LFM is a different case.
+
+`ollama ps` identifies a resident model, not the router's initial decision or its
+reason. `Stopping...` is consistent with local `keep_alive=0`; it is not evidence
+of incorrect routing. To investigate, capture the actual transcript, whether
+history was supplied, and the ordered routing stages and escalation reason from
+turn diagnostics. The current voice status lines alone do not show those details.
+Making that evidence visible in the interactive voice flow is follow-up work,
+not a feature implemented by this documentation update.
+
+The board's current test profile is **Q8**, `odessy-lfm-q8:jetson`, derived from
+`lfm2.5-thinking:1.2b-q8_0` with 15 GPU layers, batch 64, and context 1024.
+Set `ODESSY_AUTO_CAPABLE_MODEL` to that profile for this test setup; it does not
+change the application default. Intermittent GPU allocation failures mean this
+is not a qualified memory or performance configuration. See the
+[Jetson guide](../jetson-wake-testing.md) for the full commands and VAD workaround.
+
 | Variable | Default |
 |---|---|
 | `ODESSY_MODEL_BACKEND` | Existing `lfm`; set `auto` to opt in |

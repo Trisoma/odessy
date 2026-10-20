@@ -50,10 +50,12 @@ speed and memory benefits have not been established.
 
 Wake listening, confirmation UX (PR #17), automatic model selection (PR #19), and
 batch confirmation follow-ups (PR #18) are merged into `develop` and remain
-unreleased. `python -m odessy voice --listen` uses the integrated wake session;
-setup and physical audio acceptance are still pending. Follow
+unreleased. `python -m odessy voice --listen` uses the integrated wake session.
+October 20 Jetson smoke tests reached transcription, model execution, and speaking;
+full hardware acceptance remains pending. Auto using LFM after spoken `Hi` is an
+unresolved routing observation. Follow
 [Jetson wake testing](docs/jetson-wake-testing.md), including the auxiliary
-openWakeWord model downloads, before trying it on the board.
+openWakeWord model downloads, the board-local VAD correction, and the Q8 profile.
 
 ## Python source layout
 

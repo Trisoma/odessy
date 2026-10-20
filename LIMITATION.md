@@ -11,6 +11,15 @@ unqualified. [Jetson wake testing](docs/jetson-wake-testing.md) records the setu
 and acceptance procedure; the keyword-only download does not supply all detector
 assets needed by openWakeWord.
 
+October 20 user-reported Jetson smoke tests now reached transcription, model
+execution, and speaking with fake-model and auto wake listening, after a local
+Silero VAD `frame_size=512` correction. The repository adapter has not been fixed
+by this documentation change. Q8 with 15 GPU layers remains a test baseline with
+intermittent allocation failures. Auto voice using LFM after spoken `Hi` needs
+transcript, history, and escalation evidence before calling it a routing bug;
+see [model selection](docs/reference/model-selection.mdx). Hardware qualification
+and automatic-selection performance benefits remain open.
+
 Third-party MCP server support is v0.4.0 development work and is not part of the
 released v0.3.0 baseline. See `docs/reference/external-servers.mdx` for its
 transport, trust, schema, and policy boundaries.

@@ -127,6 +127,15 @@ support-model setup, audio checks, and a staged real-device test, follow the
 [Jetson wake test guide](../jetson-wake-testing.md). Automated CI does not qualify
 the Jetson microphone, detector, or playback latency.
 
+October 20 user-reported Jetson runs reached transcription, model execution,
+and speaking with fake-model and auto listening. The installed Silero VAD needed
+a board-local `frame_size=512` correction, recorded in the guide; this is not a
+committed adapter fix. A later apparent wake failure was traced by the user to
+the microphone being off. Auto voice using LFM after spoken `Hi` remains an
+unresolved routing observation; see the
+[routing boundary](model-selection.mdx#routing-boundary-and-october-20-jetson-observations).
+These smoke tests do not qualify detection rate, interruption, or shutdown.
+
 `odessy voice --listen` keeps the microphone open, waits for a wake phrase, and then
 runs exactly the same turn as a typed request. The existing single bounded turn is
 unchanged; `--listen` selects the session controller instead of one recording.
