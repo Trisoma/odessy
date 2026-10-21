@@ -24,7 +24,8 @@ Codex advice requests its read-only sandbox. Claude Code advice requests its
 read tools only. Child CLIs retain their own permissions and authentication;
 configured custom commands need their own controls. Job `permissions` metadata
 reports requested restrictions with `enforcement: child_cli_not_verified`.
-Coding CLI usage remains unknown and outside Odessy's cloud API budget.
+Coding CLI usage is reported separately when the integration supplies it; absent
+figures remain unknown. All coding CLI usage stays outside Odessy's cloud API budget.
 
 Controllers preserve a remote workspace string for validation on that worker's
 OS. A lost remote connection leaves the job in `needs_attention` and retains its

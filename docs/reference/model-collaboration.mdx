@@ -2,7 +2,8 @@
 title: Model collaboration and session API
 ---
 
-Unreleased. Collaboration is disabled until configured. The coordinator can ask
+Merged into `develop` in `b4faf2b`, with session event handling updated in
+`85e7c10`; still unreleased. Collaboration is disabled until configured. The coordinator can ask
 another participant about any topic. A consultation returns attributed advice
 for local synthesis; it does not execute the participant's tools or grant permissions.
 
@@ -170,7 +171,16 @@ unpriced profile requests before sending. Budgets are pre-request admission
 checks; a request already sent may exceed the threshold. Cached tokens count.
 Coding CLI usage is separate and unknown unless the integration reports it.
 Odessy's API ledger does **not** cap independently billed CLI agents.
+Codex JSONL and Claude result usage, when present, are recorded as separately
+reported CLI figures, including reported cost where available.
+
+`doctor` currently validates the environment-based cloud pricing settings. It
+does not inspect collaboration profiles or validate their individual prices;
+profile-aware diagnostics remain follow-up work. Runtime profile admission and
+budget checks are enforced independently.
 
 Offline tests use fake providers, models, and child processes. Live provider
 caching, installed coding CLI compatibility, remote permissions, Jetson memory,
 and wake microphones require separate opt-in checks.
+The October 21 audit of merged `85e7c10` passed **1,387 tests, with 3 skipped**,
+including **137 focused collaboration, session/API, job, and usage tests**.
