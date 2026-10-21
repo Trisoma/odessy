@@ -123,7 +123,10 @@ class CancelTests(unittest.TestCase):
                 self.assertEqual(download.call_count, 1)
 
     def test_workflow_passes_cancel_token_to_stage_runner(self):
-        plan = dict(install_dir='D:/fixture', cache_dir='D:/cache', tool_bundle='D:/bundle', endpoint='http://127.0.0.1:11435', timeout=180)
+        # Drive-letter fixtures are relative on POSIX; the guards require absolute paths.
+        base = Path(tempfile.gettempdir()) / 'odessy-workflow-fixture'
+        plan = dict(install_dir=str(base / 'install'), cache_dir=str(base / 'cache'), tool_bundle=str(base / 'bundle'),
+                    endpoint='http://127.0.0.1:11435', timeout=180)
         token = lambda: True
         with patch.object(workflow.ollama_runtime, 'require_windows'), patch.object(workflow, 'build_plan', return_value=plan), \
              patch.object(workflow, 'combined_budget', return_value=[]), patch.object(workflow, 'steps_for', return_value=[]) as steps, \

@@ -10,13 +10,13 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
-from installer import application, connection, model, ollama_runtime, workflow
+from installer import application, connection, model, ollama_runtime, pathing, workflow
 from installer.checkpoint import fingerprint, read_state, save_state, writer_lock
 from installer.download import DownloadError
 from installer.manifest import _unique_keys
 from installer.process import child_env, run_step
 from installer.session_process import ProcessTree, run_application
-from installer.shortcuts import digest, powershell, user_folders
+from installer.shortcuts import digest, matches_launcher_arguments, powershell, user_folders
 from installer.space import RESERVE_BYTES
 from installer.uninstall import _tree, removal_started, running_processes
 
@@ -29,11 +29,16 @@ def journal(root):
     if not path.exists():return None
     if path.stat().st_size>4*1024*1024:raise ValueError('维护记录过大，已停止。')
     data=json.loads(path.read_text(encoding='utf-8'),object_pairs_hook=_unique_keys)
-    if (not isinstance(data,dict) or data.get('install_dir')!=str(root.resolve()) or
+    # Records may spell the same directory long or short (8.3), so compare them as paths.
+    recorded=data.get('install_dir') if isinstance(data,dict) else None
+    old_state=data.get('old_state') if isinstance(data,dict) else None
+    old_plan=old_state.get('plan') if isinstance(old_state,dict) else None
+    recorded_old=old_plan.get('install_dir') if isinstance(old_plan,dict) else None
+    if (not isinstance(data,dict) or not isinstance(recorded,str) or not pathing.same(recorded,root) or
         not re.fullmatch('[0-9a-f]{32}',str(data.get('id',''))) or
         data.get('status') not in ACTIVE|{'completed','rolled_back'} or
-        not isinstance(data.get('old_state'),dict) or fingerprint(data['old_state'])!=data.get('old_state_sha256') or
-        data['old_state'].get('plan',{}).get('install_dir')!=str(root.resolve())):
+        not isinstance(old_state,dict) or fingerprint(old_state)!=data.get('old_state_sha256') or
+        not isinstance(recorded_old,str) or not pathing.same(recorded_old,root)):
         raise ValueError('维护记录损坏，已保留现有文件。')
     return data
 
@@ -54,14 +59,16 @@ def _save(root,data):
 
 def launcher_record(root,executable,*,folders=None):
     folders=user_folders() if folders is None else folders
-    target=root/'launcher/OdessyLauncher.exe';arguments=subprocess.list2cmdline(['--mode','launcher','--install-dir',str(root)])
+    target=root/'launcher/OdessyLauncher.exe'
     links=[];hashes={};retained=[]
     for folder in folders.values():
         path=folder/'Odessy.lnk';model.guard_path(path)
         if not path.exists():continue
         try:
             info=json.loads(powershell("$p=$env:ODESSY_SHORTCUT_JSON|ConvertFrom-Json; $s=(New-Object -ComObject WScript.Shell).CreateShortcut($p.path); @{target=$s.TargetPath;arguments=$s.Arguments;working=$s.WorkingDirectory}|ConvertTo-Json -Compress",payload=dict(path=str(path))))
-            if Path(info['target'])!=target or info['arguments']!=arguments or Path(info['working'])!=target.parent:
+            if (not all(isinstance(info[key],str) and Path(info[key]).is_absolute() for key in ('target','working'))
+                or not pathing.same(info['target'],target) or not matches_launcher_arguments(info['arguments'],root)
+                or not pathing.same(info['working'],target.parent)):
                 retained.append(str(path));continue
         except (OSError,ValueError,KeyError):retained.append(str(path));continue
         links.append(str(path));hashes[str(path)]=digest(path)

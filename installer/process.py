@@ -7,6 +7,7 @@ import subprocess
 import uuid
 from pathlib import Path
 from installer.runtime import destination, load_release, DEFAULT_RESOURCES, probe_runtime
+from installer import pathing
 
 class StepError(ValueError):
     pass
@@ -44,7 +45,7 @@ def owned_directory(path: Path):
     except BaseException:
         # Same-user hostile ancestor replacement is outside the supported boundary.
         try:
-            owned=target.exists() and not target.is_symlink() and target.resolve()==target and marker.read_text(encoding='ascii')==token
+            owned=target.exists() and not target.is_symlink() and pathing.link_free(target) and marker.read_text(encoding='ascii')==token
         except OSError:
             owned=False
         if owned:

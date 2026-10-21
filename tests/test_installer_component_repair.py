@@ -1,8 +1,11 @@
 """Component repair selection, fixed-path rebuilding and transaction recovery."""
 import copy
+import subprocess
+import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from installer import component_repair as repair, maintenance
 from installer.checkpoint import fingerprint,read_state
 import test_installer_maintenance as fixtures
@@ -102,6 +105,22 @@ class ComponentTransactions(unittest.TestCase):
 
 
 class ComponentSelection(unittest.TestCase):
+    def test_timed_out_probes_select_the_component_for_repair(self):
+        for stage in ('runtime','dependencies','ollama_runtime','stdlib','integrity'):
+            with self.subTest(stage=stage):
+                steps=[SimpleNamespace(name=name,validate=lambda:{}) for name in ('runtime','dependencies','ollama_runtime','configuration')]
+                timeout=subprocess.TimeoutExpired('fixture probe',30)
+                if stage in ('runtime','dependencies','ollama_runtime'):
+                    next(step for step in steps if step.name==stage).validate=Mock(side_effect=timeout)
+                with patch.object(repair.workflow,'steps_for',return_value=steps), \
+                     patch.object(repair,'run_step',side_effect=timeout if stage=='stdlib' else None), \
+                     patch.object(repair,'dependency_integrity',side_effect=timeout if stage=='integrity' else None), \
+                     patch.object(repair,'model_targets',return_value=[]):
+                    names,issues=repair._health(Path(tempfile.gettempdir())/'installed',{})
+                component={'stdlib':'runtime','integrity':'dependencies','ollama_runtime':'ollama-runtime'}.get(stage,stage)
+                self.assertIn(component,names);self.assertIn('timed out',issues[component])
+                if component=='runtime':self.assertIn('dependencies',names)
+
     def test_repairs_only_damaged_blob_and_keeps_old_bytes_for_rollback(self):
         import hashlib,tempfile
         from types import SimpleNamespace
@@ -163,6 +182,36 @@ class ComponentSelection(unittest.TestCase):
         steps.append(SimpleNamespace(name='configuration',validate=lambda:None))
         with patch.object(repair.workflow,'steps_for',return_value=steps),patch.object(repair,'dependency_integrity'),patch.object(repair,'run_step'):
             with self.assertRaisesRegex(ValueError,'配置缺失'):repair._health(Path('D:/fixture'),{})
+
+
+class RepairPlanConfirmation(unittest.TestCase):
+    def setUp(self):
+        self.root=Path(tempfile.gettempdir())/'repair-plan-fixture'
+        self.free=10**12
+        self.inventory=[]
+        def base_plan(*args,**kwargs):
+            return dict(install_dir=str(self.root),new_plan=dict(cache_dir=str(self.root.parent/'cache')),
+                        required_free_bytes=1024,inventory=list(self.inventory),plan_sha256='base')
+        for mocked in (patch.object(repair.maintenance,'plan',side_effect=base_plan),
+                       patch.object(repair,'_health',return_value=([],{})),
+                       patch.object(repair,'_artifacts',return_value=[]),
+                       patch.object(repair,'volume_for',side_effect=lambda path:SimpleNamespace(id='disk',free_bytes=self.free))):
+            mocked.start();self.addCleanup(mocked.stop)
+
+    def preview(self):return repair.plan(self.root,self.root,self.root)
+
+    def test_free_space_changes_do_not_invalidate_confirmation(self):
+        before=self.preview();self.free-=4096;after=self.preview()
+        self.assertNotEqual(before['space_budget'],after['space_budget'])
+        self.assertEqual(before['plan_sha256'],after['plan_sha256'])
+
+    def test_insufficient_space_still_stops_a_previously_confirmed_plan(self):
+        self.preview();self.free=1
+        with self.assertRaisesRegex(ValueError,'空间不足'):self.preview()
+
+    def test_changed_files_still_invalidate_confirmation(self):
+        before=self.preview();self.inventory.append(dict(path='application/changed.py',size=7))
+        self.assertNotEqual(before['plan_sha256'],self.preview()['plan_sha256'])
 
 
 if __name__=='__main__':unittest.main()

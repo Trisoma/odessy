@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from installer import shortcuts, exe_entry
+from installer import shortcuts, exe_entry, maintenance
 from installer.checkpoint import Step, run_steps
 
 
@@ -30,6 +30,35 @@ class ShortcutTests(unittest.TestCase):
         self.assertFalse(result['existing']);self.assertEqual(len(result['links']),2)
         self.assertFalse((self.root/'launcher').exists())
         self.assertTrue(all(not list(folder.iterdir()) for folder in self.folders.values()))
+
+    def test_creation_uses_the_recorded_resolved_installation_path(self):
+        spelling=self.root/'..'/self.root.name
+        result=shortcuts.create(spelling,self.source,folders=self.folders,writer=self.fake_writer)
+        for link in result['links']:
+            self.assertEqual(json.loads(Path(link).read_text())['root'],result['install_dir'])
+
+    def test_maintenance_recognizes_equivalent_installation_arguments(self):
+        self.create()
+        target=self.root.resolve()/'launcher/OdessyLauncher.exe'
+        spellings=[self.root/'..'/self.root.name]
+        if os.name=='nt':spellings.append(Path(str(self.root).upper()))
+        for spelling in spellings:
+            with self.subTest(spelling=spelling):
+                info=dict(target=str(target),arguments=shortcuts.launcher_arguments(spelling),working=str(target.parent))
+                with patch.object(maintenance,'powershell',return_value=json.dumps(info)):
+                    record,retained=maintenance.launcher_record(self.root.resolve(),self.source,folders=self.folders)
+                self.assertEqual(len(record['links']),2);self.assertEqual(retained,[])
+
+    def test_maintenance_preserves_links_with_extra_arguments_or_other_locations(self):
+        self.create();target=self.root.resolve()/'launcher/OdessyLauncher.exe'
+        original=dict(target=str(target),arguments=shortcuts.launcher_arguments(self.root.resolve()),working=str(target.parent))
+        variants=[dict(original,arguments=original['arguments']+' --mode uninstall'),
+                  dict(original,arguments=shortcuts.launcher_arguments(self.base/'other')),
+                  dict(original,target=str(self.source)),dict(original,working=str(self.base))]
+        for info in variants:
+            with self.subTest(info=info),patch.object(maintenance,'powershell',return_value=json.dumps(info)):
+                record,retained=maintenance.launcher_record(self.root.resolve(),self.source,folders=self.folders)
+                self.assertEqual(record['links'],[]);self.assertEqual(len(retained),2)
 
     def test_copy_survives_source_removal_and_identical_creation_is_idempotent(self):
         first=self.create();target=Path(first['executable']);timestamp=target.stat().st_mtime_ns
@@ -139,7 +168,7 @@ class ShortcutTests(unittest.TestCase):
     def test_direct_installed_executable_defaults_to_its_own_launcher(self):
         result=self.create()
         with patch.object(exe_entry.sys,'frozen',True,create=True),patch.object(exe_entry.sys,'executable',result['executable']):
-            self.assertEqual(exe_entry.installed_launcher_root(),self.root)
+            self.assertEqual(exe_entry.installed_launcher_root(),self.root.resolve())
         with patch.object(exe_entry.sys,'frozen',True,create=True),patch.object(exe_entry.sys,'executable',str(self.source)):
             self.assertIsNone(exe_entry.installed_launcher_root())
 
@@ -150,8 +179,8 @@ class ShortcutTests(unittest.TestCase):
         data=json.loads(shortcuts.powershell("$p=$env:ODESSY_SHORTCUT_JSON|ConvertFrom-Json; $s=(New-Object -ComObject WScript.Shell).CreateShortcut($p.path); @{target=$s.TargetPath;arguments=$s.Arguments;working=$s.WorkingDirectory}|ConvertTo-Json -Compress",payload=dict(path=str(link))))
         import subprocess
         self.assertEqual(data['target'],result['executable'])
-        self.assertEqual(data['arguments'],subprocess.list2cmdline(['--mode','launcher','--install-dir',str(self.root)]))
-        self.assertEqual(data['working'],str(self.root/'launcher'))
+        self.assertEqual(data['arguments'],subprocess.list2cmdline(['--mode','launcher','--install-dir',result['install_dir']]))
+        self.assertEqual(data['working'],str((self.root/'launcher').resolve()))
         self.assertTrue(self.create()['existing'])
 
 

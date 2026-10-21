@@ -7,6 +7,7 @@ from pathlib import Path
 from installer import maintenance
 from installer.checkpoint import fingerprint,read_state,writer_lock
 from installer.model import guard_path
+from installer import pathing
 from installer.uninstall import _tree,_entry,removal_started,running_processes
 
 
@@ -17,7 +18,7 @@ def plan(root,*,probe=running_processes):
     if removal_started(root):raise ValueError('正在卸载的安装不能清理维护备份。')
     maintenance.require_idle(root)
     state=read_state(root)
-    if state['status']!='completed' or state['plan'].get('install_dir')!=str(root):raise ValueError('需要原位置的完整安装记录。')
+    if state['status']!='completed' or not pathing.same(state['plan'].get('install_dir'),root):raise ValueError('需要原位置的完整安装记录。')
     if probe(root):raise ValueError('请先关闭此安装的终端、启动面板和模型服务。')
     data=maintenance.journal(root);inventory=[];components=[];retained=[]
     if data:
@@ -78,7 +79,7 @@ def execute(root,expected,*,probe=running_processes):
                 path.unlink();result['removed_files']+=1;result['removed_bytes']+=item['size']
             for item in sorted(directories,key=lambda item:len(Path(item['path']).parts),reverse=True):
                 path=root/item['path'];guard_path(path)
-                if root not in path.parents or path.resolve()!=path:raise ValueError('备份路径超出清理范围。')
+                if root not in path.parents or not pathing.link_free(path):raise ValueError('备份路径超出清理范围。')
                 path.rmdir() # Unlisted new files stop cleanup; never recursively delete.
             result['status']='completed';maintenance._save(root,data)
         except BaseException as error:

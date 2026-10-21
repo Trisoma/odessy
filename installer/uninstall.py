@@ -11,6 +11,7 @@ from installer.download import DownloadError
 from installer.checkpoint import fingerprint, read_state, writer_lock
 from installer.model import guard_path
 from installer.manifest import _unique_keys
+from installer import pathing
 from installer.shortcuts import digest, powershell, user_folders
 
 RECORD = '.installer/uninstall.json'
@@ -41,7 +42,9 @@ def _json(path):
 
 def _entry(root,path):
     guard_path(path)
-    if root not in path.parents or path.resolve()!=path: raise ValueError('清理路径超出安装目录。')
+    # guard_path already rejects links/reparse points; comparing Path.resolve()
+    # with Path would reject every 8.3 short installation path instead.
+    if root not in path.parents or not pathing.link_free(path): raise ValueError('清理路径超出安装目录。')
     info=path.stat()
     if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
         raise ValueError('安装目录含非普通文件，已停止预览：'+str(path))
@@ -69,7 +72,7 @@ def plan(root, *, keep_models=True, keep_config=True, folders=None, probe=runnin
     # A source checkout is never an uninstall target, even if a record was copied in.
     if (root/'.git').exists() or (root/'pyproject.toml').exists(): raise ValueError('源码目录不能作为卸载目标。')
     state=read_state(root)
-    if Path(state['plan'].get('install_dir','')).resolve()!=root: raise ValueError('安装目录已移动，拒绝清理。')
+    if not pathing.same(state['plan'].get('install_dir',''),root): raise ValueError('安装目录已移动，拒绝清理。')
     if state['status']!='completed' or not state['summary']['workflow_complete']:
         raise ValueError('本模块仅支持有完整记录的安装；未完成安装先保留。')
     previous=_json(root/RECORD) if removal_started(root) else None
@@ -153,7 +156,7 @@ def execute(root, expected, *, keep_models=True,keep_config=True,folders=None,pr
                 path.unlink();result['removed_files']+=1
             for item in sorted(directories,key=lambda item:len(Path(item['path']).parts),reverse=True):
                 path=root/item['path'];guard_path(path)
-                if root not in path.parents or path.resolve()!=path: raise ValueError('目录超出卸载范围。')
+                if root not in path.parents or not pathing.link_free(path): raise ValueError('目录超出卸载范围。')
                 path.rmdir()  # New/unlisted files cause a stop; never recursively erase them.
             result['status']='completed';_save(root,result)
         except BaseException as error:

@@ -68,7 +68,7 @@ class WorkflowTests(unittest.TestCase):
     def test_configuration_round_trip_matches_plan(self):
         plan = self.plan(); step = workflow.steps_for(plan)[-1]
         self.assertIsNone(step.validate()); step.prepare()
-        self.assertEqual(step.validate()['config_file'], str(self.root / 'config/odessy.env'))
+        self.assertEqual(step.validate()['config_file'], str((self.root / 'config/odessy.env').resolve()))
 
     def test_model_partial_download_can_continue_but_corruption_is_not_ignored(self):
         plan = self.plan(); step = workflow.steps_for(plan)[5]

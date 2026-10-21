@@ -61,7 +61,7 @@ class BackupCleanupTests(unittest.TestCase):
     def test_partial_failure_is_recorded_and_rollback_stays_disabled(self):
         original=Path.unlink
         def fail(path,*args,**kwargs):
-            if path==self.folder/'backup-launcher/old.txt':raise PermissionError('fixture locked')
+            if Path(path).resolve()==(self.folder/'backup-launcher/old.txt').resolve():raise PermissionError('fixture locked')
             return original(path,*args,**kwargs)
         with patch.object(Path,'unlink',fail):
             with self.assertRaisesRegex(PermissionError,'locked'):self.remove()
@@ -73,7 +73,7 @@ class BackupCleanupTests(unittest.TestCase):
     def test_unlisted_file_appearing_mid_removal_is_preserved_and_retry_refused(self):
         original=Path.unlink
         def add(path,*args,**kwargs):
-            if path==self.folder/'backup-application/old.txt':(path.parent/'new-note').write_text('keep new note')
+            if Path(path).resolve()==(self.folder/'backup-application/old.txt').resolve():(path.parent/'new-note').write_text('keep new note')
             return original(path,*args,**kwargs)
         with patch.object(Path,'unlink',add):
             with self.assertRaises(OSError):self.remove()
@@ -93,7 +93,7 @@ class BackupCleanupTests(unittest.TestCase):
         # Junction/reparse checks are covered by the shared _tree tests; reject via guard here too.
         original=cleanup.guard_path
         def refuse(path):
-            if path==self.folder/'backup-application':raise ValueError('reparse fixture')
+            if Path(path).resolve()==(self.folder/'backup-application').resolve():raise ValueError('reparse fixture')
             return original(path)
         with patch.object(cleanup,'guard_path',refuse):
             with self.assertRaisesRegex(ValueError,'reparse'):self.preview()

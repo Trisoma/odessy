@@ -13,9 +13,28 @@ from pathlib import Path
 from installer.checkpoint import read_state, writer_lock
 from installer.model import guard_path
 from installer.process import owned_directory
+from installer import pathing
 
 NAME = 'Odessy.lnk'
 MARKER = 'odessy-shortcuts.json'
+
+
+def launcher_arguments(root):
+    return subprocess.list2cmdline(['--mode','launcher','--install-dir',str(root)])
+
+
+def matches_launcher_arguments(arguments, root):
+    """Recognize our generated arguments, allowing equivalent path spellings.
+
+    Require the exact generated command shape so extra flags or requests never
+    make a modified shortcut eligible for adoption during maintenance.
+    """
+    prefix='--mode launcher --install-dir '
+    if not isinstance(arguments,str) or not arguments.startswith(prefix):return False
+    directory=arguments[len(prefix):]
+    if directory.startswith('"') and directory.endswith('"'):directory=directory[1:-1]
+    return (bool(directory) and Path(directory).is_absolute()
+            and launcher_arguments(directory)==arguments and pathing.same(directory,root))
 
 
 def digest(path):
@@ -30,10 +49,16 @@ def powershell(script, *, payload=None):
     env={k:v for k,v in os.environ.items() if k.upper()!='PSMODULEPATH'}
     if payload is not None: env['ODESSY_SHORTCUT_JSON']=json.dumps(payload,ensure_ascii=True)
     executable=Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe'
-    result=subprocess.run([str(executable),'-NoProfile','-NonInteractive','-Command',
-        "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new(); "+script],
-        env=env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=30,
-        creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+    # A cold WSH/COM activation under a busy CI machine can exceed one window.
+    for attempt in (1, 2):
+        try:
+            result=subprocess.run([str(executable),'-NoProfile','-NonInteractive','-Command',
+                "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new(); "+script],
+                env=env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=30,
+                creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            break
+        except subprocess.TimeoutExpired:
+            if attempt == 2: raise
     if result.returncode: raise ValueError('无法创建快捷方式：'+(result.stderr or result.stdout)[-1000:])
     return result.stdout.strip()
 
@@ -49,7 +74,7 @@ def write_link(path, target, root):
     # is read back and verified before publishing a shortcut with exclusive create.
     with tempfile.TemporaryDirectory(prefix='odessy-shortcut-') as folder:
         staging=Path(folder)/NAME
-        payload=dict(path=str(staging),target=str(target),arguments=subprocess.list2cmdline(['--mode','launcher','--install-dir',str(root)]),working=str(target.parent))
+        payload=dict(path=str(staging),target=str(target),arguments=launcher_arguments(root),working=str(target.parent))
         powershell("$p=$env:ODESSY_SHORTCUT_JSON|ConvertFrom-Json; $shell=New-Object -ComObject WScript.Shell; "
             "$link=$shell.CreateShortcut($p.path); $link.TargetPath=$p.target; $link.Arguments=$p.arguments; "
             "$link.WorkingDirectory=$p.working; $link.Description='Start Odessy'; $link.IconLocation=$p.target+',0'; $link.Save(); "
@@ -121,7 +146,8 @@ def plan(root, executable, *, desktop=True, start_menu=True, folders=None):
 
 
 def create(root, executable, *, desktop=True, start_menu=True, folders=None, writer=write_link):
-    plan(root,executable,desktop=desktop,start_menu=start_menu,folders=folders)
+    preview=plan(root,executable,desktop=desktop,start_menu=start_menu,folders=folders)
+    root=Path(preview['install_dir'])
     with writer_lock(root):
         preview=plan(root,executable,desktop=desktop,start_menu=start_menu,folders=folders)
         if preview['existing']:return preview

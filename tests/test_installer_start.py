@@ -112,7 +112,7 @@ class StartTests(unittest.TestCase):
     def test_workspace_is_explicit_existing_and_separate(self):
         for folder in (self.root,self.root/'child',self.base,self.base/'missing',Path('relative')):
             with self.assertRaises((ValueError,OSError)): start.workspace_path(self.root,folder)
-        self.assertEqual(start.workspace_path(self.root,self.workspace),self.workspace)
+        self.assertEqual(start.workspace_path(self.root,self.workspace),self.workspace.resolve())
 
     def test_turn_preserves_argument_text_and_interactive_stdio(self):
         class Process:
@@ -156,13 +156,14 @@ class StartTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'incomplete'): start.inspect_installation(self.root)
         inspect.assert_not_called()
 
+    @unittest.skipUnless(os.name=='nt','The Windows launcher only targets Windows')
     def test_launch_console_command_never_uses_shell(self):
         (self.root / '.installer').rmdir()
         plan={'install_dir':str(self.root)}; run_steps(self.root,plan,[Step('fixture',lambda:{},lambda:{})])
         with patch.object(launcher.subprocess,'CREATE_NEW_CONSOLE',0x10,create=True):
             calls=[]; launcher.launch_console(self.root,self.workspace,popen=lambda *args,**kwargs:calls.append((args,kwargs)))
         self.assertNotIn('shell',calls[0][1]); self.assertEqual(calls[0][1]['creationflags'],0x10)
-        self.assertIn(str(self.workspace),calls[0][0][0]); self.assertIn('--pause-on-exit',calls[0][0][0])
+        self.assertIn(str(self.workspace.resolve()),calls[0][0][0]); self.assertIn('--pause-on-exit',calls[0][0][0])
 
 
 class LauncherTkTests(unittest.TestCase):

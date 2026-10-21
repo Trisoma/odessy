@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 from installer import application,dependencies,maintenance,model,ollama_runtime,runtime,workflow
@@ -66,7 +67,7 @@ def _health(root,new):
                 run_step([str(root/'runtime/python-runtime/python.exe'),'-I','-B','-c','import venv,ensurepip,ssl,importlib.metadata,zipfile'],
                     cwd=root,env=child_env(root/'runtime'),label='Private Python standard library')
             if name=='dependencies':dependency_integrity(root)
-        except (OSError,ValueError,DownloadError) as error:
+        except (OSError,ValueError,DownloadError,subprocess.TimeoutExpired) as error:
             directory='ollama-runtime' if name=='ollama_runtime' else name
             repairs.append(directory);issues[directory]=str(error)
     if 'runtime' in repairs and 'dependencies' not in repairs:
@@ -108,7 +109,13 @@ def plan(root,bundle,executable,*,probe=maintenance.running_processes,folders=No
         item['required_bytes']+=max(RESERVE_BYTES,item['required_bytes']//10)
         if item['free_bytes']<item['required_bytes']:raise ValueError('修复空间不足，无法同时保留原组件和准备校验后的资源。')
     value['space_budget']=list(groups.values());value['required_free_bytes']+=2*extra
-    value.pop('plan_sha256',None);value['plan_sha256']=fingerprint(value)
+    value.pop('plan_sha256',None)
+    # Available space is checked on every preview, including immediately before
+    # execution, but unrelated disk writes must not invalidate user confirmation.
+    stable=dict(value,space_budget=[
+        {key:item for key,item in group.items() if key!='free_bytes'}
+        for group in value['space_budget']])
+    value['plan_sha256']=fingerprint(stable)
     return value
 
 
@@ -164,7 +171,6 @@ def execute(root,bundle,executable,expected,**kwargs):
 
 def main(argv=None):
     import argparse
-    import subprocess
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--install-dir',type=Path,required=True)
     parser.add_argument('--tool-bundle',type=Path,required=True)

@@ -153,7 +153,7 @@ class ApplicationTests(unittest.TestCase):
             self.assertEqual(__import__('sys').argv,['odessy','--fake-model',request,'--help'])
             self.assertEqual(os.environ['ODESSY_MODEL_BACKEND'],'deepseek')
             self.assertNotIn('NODE_OPTIONS',os.environ)
-            self.assertEqual(Path.cwd(),workspace)
+            self.assertEqual(Path.cwd(),workspace.resolve())
             run.assert_called_once_with('odessy',run_name='__main__')
 
     def test_malformed_encoded_argument_array_fails_cleanly(self):

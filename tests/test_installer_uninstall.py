@@ -99,7 +99,7 @@ class RemovalTests(unittest.TestCase):
     def test_partial_failure_is_recorded_blocks_launch_and_can_be_repreviewed(self):
         self.links();preview=self.preview();original=Path.unlink
         def fail(path,*args,**kwargs):
-            if path==self.root/'runtime/payload.bin':raise PermissionError('fixture locked file')
+            if Path(path).resolve()==(self.root/'runtime/payload.bin').resolve():raise PermissionError('fixture locked file')
             return original(path,*args,**kwargs)
         with patch.object(Path,'unlink',fail):
             with self.assertRaises(PermissionError):self.remove(preview)
