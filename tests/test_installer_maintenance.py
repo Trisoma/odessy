@@ -1,5 +1,6 @@
 """Staging, activation, rollback and interrupted-maintenance boundaries."""
 import copy
+import gc
 import json
 import tempfile
 import time
@@ -131,6 +132,7 @@ class MaintenanceTests(unittest.TestCase):
 
 class MaintenanceUiTests(unittest.TestCase):
     def test_preview_and_confirmation_are_required(self):
+        self.addCleanup(gc.collect)  # Run Tk finalizers on this main thread.
         import tkinter as tk
         from installer.maintenance_ui import Maintenance
         try:root=tk.Tk();root.withdraw()

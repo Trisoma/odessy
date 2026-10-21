@@ -175,7 +175,13 @@ class LauncherTkTests(unittest.TestCase):
         except tk.TclError as error:self.skipTest(str(error))
         self.process=SimpleNamespace(poll=lambda:None); self.calls=[]
         self.ui=launcher.Launcher(self.root,Path('D:/test-install'),launch=lambda *args:self.calls.append(args) or self.process)
-        self.addCleanup(self.ui.close)
+        self.addCleanup(self.cleanup)
+
+    def cleanup(self):
+        import gc
+        self.ui.close()
+        self.ui=None;self.root=None
+        gc.collect()  # Do not leave Tcl variables for a later worker's GC cycle.
 
     def test_workspace_required_and_duplicate_launch_blocked(self):
         self.ui.start(); self.assertEqual(self.calls,[])

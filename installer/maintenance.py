@@ -10,13 +10,14 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
-from installer import application, connection, model, ollama_runtime, pathing, workflow
+from installer import application, connection, model, ollama_runtime, pathing, shelllink, workflow
 from installer.checkpoint import fingerprint, read_state, save_state, writer_lock
 from installer.download import DownloadError
 from installer.manifest import _unique_keys
+from installer.atomic import replace as replace_record
 from installer.process import child_env, run_step
 from installer.session_process import ProcessTree, run_application
-from installer.shortcuts import digest, matches_launcher_arguments, powershell, user_folders
+from installer.shortcuts import digest, matches_launcher_arguments, user_folders
 from installer.space import RESERVE_BYTES
 from installer.uninstall import _tree, removal_started, running_processes
 
@@ -53,7 +54,7 @@ def _save(root,data):
     temporary=path.with_name('.maintenance-'+uuid.uuid4().hex+'.tmp');model.guard_path(temporary)
     with temporary.open('x',encoding='utf-8') as stream:
         json.dump(data,stream,indent=2);stream.flush();os.fsync(stream.fileno())
-    try:os.replace(temporary,path)
+    try:replace_record(temporary,path)
     finally:temporary.unlink(missing_ok=True)
 
 
@@ -65,7 +66,7 @@ def launcher_record(root,executable,*,folders=None):
         path=folder/'Odessy.lnk';model.guard_path(path)
         if not path.exists():continue
         try:
-            info=json.loads(powershell("$p=$env:ODESSY_SHORTCUT_JSON|ConvertFrom-Json; $s=(New-Object -ComObject WScript.Shell).CreateShortcut($p.path); @{target=$s.TargetPath;arguments=$s.Arguments;working=$s.WorkingDirectory}|ConvertTo-Json -Compress",payload=dict(path=str(path))))
+            info=shelllink.read(path)
             if (not all(isinstance(info[key],str) and Path(info[key]).is_absolute() for key in ('target','working'))
                 or not pathing.same(info['target'],target) or not matches_launcher_arguments(info['arguments'],root)
                 or not pathing.same(info['working'],target.parent)):
@@ -123,7 +124,7 @@ def verify_staging(root,app,state_dir,plan):
         except BaseException:process.terminate();process.wait(timeout=5);raise
         return process
     try:
-        with ollama_runtime.managed_service(root/'ollama-runtime',root/'models',state_dir,plan['endpoint'],plan['model'],popen=popen):
+        with ollama_runtime.managed_service(root/'ollama-runtime',root/'models',state_dir,plan['endpoint'],plan['model'],popen=popen,tree_factory=None):
             def run(command,**kwargs):
                 # Use the same finite thinking/output allowance as the installed session.
                 kwargs['env']=dict(kwargs['env'],ODESSY_MODEL_NUM_PREDICT='2048')

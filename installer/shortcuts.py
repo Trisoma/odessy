@@ -13,7 +13,8 @@ from pathlib import Path
 from installer.checkpoint import read_state, writer_lock
 from installer.model import guard_path
 from installer.process import owned_directory
-from installer import pathing
+from installer import pathing, shelllink
+from installer.atomic import replace as replace_record
 
 NAME = 'Odessy.lnk'
 MARKER = 'odessy-shortcuts.json'
@@ -47,18 +48,17 @@ def digest(path):
 def powershell(script, *, payload=None):
     if os.name != 'nt': raise ValueError('Shortcuts require Windows.')
     env={k:v for k,v in os.environ.items() if k.upper()!='PSMODULEPATH'}
+    # Use only Windows' built-in modules. Dropping PSModulePath entirely makes
+    # cold runners rediscover unrelated installed modules and can time out.
+    env['PSModulePath']=str(Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/Modules')
     if payload is not None: env['ODESSY_SHORTCUT_JSON']=json.dumps(payload,ensure_ascii=True)
     executable=Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe'
-    # A cold WSH/COM activation under a busy CI machine can exceed one window.
-    for attempt in (1, 2):
-        try:
-            result=subprocess.run([str(executable),'-NoProfile','-NonInteractive','-Command',
-                "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new(); "+script],
-                env=env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=30,
-                creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
-            break
-        except subprocess.TimeoutExpired:
-            if attempt == 2: raise
+    # Callers may mutate files (e.g. create a junction); do not replay a script
+    # after a timeout when its side effects could already have happened.
+    result=subprocess.run([str(executable),'-NoProfile','-NonInteractive','-Command',
+        "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new(); "+script],
+        env=env,capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=30,
+        creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     if result.returncode: raise ValueError('无法创建快捷方式：'+(result.stderr or result.stdout)[-1000:])
     return result.stdout.strip()
 
@@ -70,15 +70,16 @@ def user_folders():
 
 
 def write_link(path, target, root):
-    # User paths are data, never interpolated into PowerShell source. WSH output
-    # is read back and verified before publishing a shortcut with exclusive create.
+    # WScript converts target paths through the system ANSI code page. Use the
+    # Unicode shell interface and verify the staged link before publishing it.
     with tempfile.TemporaryDirectory(prefix='odessy-shortcut-') as folder:
         staging=Path(folder)/NAME
-        payload=dict(path=str(staging),target=str(target),arguments=launcher_arguments(root),working=str(target.parent))
-        powershell("$p=$env:ODESSY_SHORTCUT_JSON|ConvertFrom-Json; $shell=New-Object -ComObject WScript.Shell; "
-            "$link=$shell.CreateShortcut($p.path); $link.TargetPath=$p.target; $link.Arguments=$p.arguments; "
-            "$link.WorkingDirectory=$p.working; $link.Description='Start Odessy'; $link.IconLocation=$p.target+',0'; $link.Save(); "
-            "$saved=$shell.CreateShortcut($p.path); if ($saved.TargetPath -ne $p.target -or $saved.Arguments -ne $p.arguments -or $saved.WorkingDirectory -ne $p.working) {throw 'Shortcut verification failed'}",payload=payload)
+        arguments=launcher_arguments(root)
+        shelllink.write(staging,target,arguments,target.parent)
+        saved=shelllink.read(staging)
+        if (not pathing.same(saved['target'],target) or saved['arguments']!=arguments
+            or not pathing.same(saved['working'],target.parent)):
+            raise ValueError('Shortcut verification failed.')
         data=staging.read_bytes()
         if not data: raise ValueError('快捷方式内容为空。')
         stream=path.open('xb')
@@ -166,7 +167,7 @@ def create(root, executable, *, desktop=True, start_menu=True, folders=None, wri
             try:
                 with temporary.open('x',encoding='utf-8') as stream:
                     json.dump(record,stream,indent=2);stream.flush();os.fsync(stream.fileno())
-                os.replace(temporary,marker)
+                replace_record(temporary,marker)
             finally:temporary.unlink(missing_ok=True)
         try:
             if preview['managed']:publish()

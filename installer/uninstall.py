@@ -11,6 +11,7 @@ from installer.download import DownloadError
 from installer.checkpoint import fingerprint, read_state, writer_lock
 from installer.model import guard_path
 from installer.manifest import _unique_keys
+from installer.atomic import replace as replace_record
 from installer import pathing
 from installer.shortcuts import digest, powershell, user_folders
 
@@ -127,7 +128,7 @@ def _save(root,value):
     guard_path(temporary)
     with temporary.open('x',encoding='utf-8') as stream:
         json.dump(value,stream,indent=2);stream.flush();os.fsync(stream.fileno())
-    try:os.replace(temporary,target)
+    try:replace_record(temporary,target)
     finally:temporary.unlink(missing_ok=True)
 
 

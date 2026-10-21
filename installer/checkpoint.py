@@ -12,6 +12,7 @@ from typing import Callable
 
 from installer.download import _reject_link
 from installer.manifest import _unique_keys
+from installer.atomic import replace as replace_record
 
 STEP_STATUSES = {'pending', 'running', 'completed', 'failed', 'cancelled'}
 
@@ -65,7 +66,7 @@ def save_state(root: Path, data: dict):
             temporary = Path(stream.name)
             stream.write((json.dumps(data, ensure_ascii=True, indent=2) + '\n').encode('utf-8'))
             stream.flush(); os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        replace_record(temporary, path)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)

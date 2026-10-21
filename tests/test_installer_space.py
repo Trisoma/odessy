@@ -59,9 +59,9 @@ class SpaceTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.prepare()
         self.assertEqual((self.output/'python-wheels.resources.json').read_bytes(), original)
 
-    def test_changed_source_manifest_or_lock_is_detected(self):
+    def test_changed_download_manifest_or_lock_is_detected(self):
         self.prepare()
-        paths = [self.root/'pyproject.toml', self.output/'python-wheels-windows-x64.json',
+        paths = [self.output/'python-wheels-windows-x64.json',
                  self.output/'requirements-windows-x64-py312.txt']
         for path in paths:
             with self.subTest(path=path.name):
@@ -69,6 +69,31 @@ class SpaceTests(unittest.TestCase):
                 path.write_bytes(original+b'\n')
                 with self.assertRaises(ValueError): self.load()
                 path.write_bytes(original)
+
+    def test_optional_dependencies_and_formatting_do_not_invalidate_runtime_lock(self):
+        self.prepare()
+        project=self.root/'pyproject.toml'
+        project.write_text('# different formatting\n[project]\nname="renamed"\n'
+                           '[project.optional-dependencies]\ntest=["httpx>=0.27,<1"]\n'
+                           'ui=["fastapi>=0.115,<1","uvicorn>=0.30,<1"]\n',encoding='utf-8')
+        self.assertEqual(len(self.load()[0].artifacts),1)
+
+    def test_runtime_requirements_or_python_version_change_requires_new_lock(self):
+        self.prepare();project=self.root/'pyproject.toml'
+        for declaration in ('dependencies=["new-runtime-dep>=1"]','requires-python=">=3.13"'):
+            with self.subTest(declaration=declaration):
+                project.write_text('[project]\nname="fixture"\n'+declaration+'\n',encoding='utf-8')
+                with self.assertRaisesRegex(ValueError,'Runtime dependency requirements changed'):self.load()
+
+    def test_legacy_resource_schema_keeps_its_full_source_validation(self):
+        self.prepare();path=self.output/'python-wheels.resources.json'
+        data=json.loads(path.read_text());data['schema_version']=1
+        data.pop('dependency_spec_sha256')
+        data['source_sha256']={'pyproject.toml':hashlib.sha256((self.root/'pyproject.toml').read_bytes().replace(b'\r\n',b'\n')).hexdigest()}
+        path.write_text(json.dumps(data),encoding='utf-8')
+        self.assertEqual(len(self.load()[0].artifacts),1)
+        with (self.root/'pyproject.toml').open('a',encoding='utf-8') as stream:stream.write('# changed\n')
+        with self.assertRaisesRegex(ValueError,'Resource reference changed'):self.load()
 
     def test_git_crlf_checkout_preserves_metadata_fingerprints(self):
         self.prepare()

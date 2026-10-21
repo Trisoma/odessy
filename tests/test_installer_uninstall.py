@@ -149,11 +149,14 @@ class RemovalUiTests(unittest.TestCase):
         self.addCleanup(self.cleanup)
 
     def cleanup(self):
+        import gc
         if self.ui.thread:self.ui.thread.join(3)
         try:
             for callback in self.root.tk.call('after','info'):self.root.after_cancel(callback)
             self.root.destroy()
         except Exception:pass
+        self.ui=None;self.root=None
+        gc.collect()
 
     def pump(self):
         end=time.monotonic()+3

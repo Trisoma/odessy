@@ -4,6 +4,7 @@ import ctypes
 import os
 import signal
 import subprocess
+import time
 from ctypes import wintypes
 from pathlib import Path
 
@@ -34,6 +35,14 @@ class ProcessTree:
         self.kernel.AssignProcessToJobObject.restype = wintypes.BOOL
         self.kernel.CloseHandle.argtypes = [wintypes.HANDLE]
         self.kernel.CloseHandle.restype = wintypes.BOOL
+        self.kernel.TerminateJobObject.argtypes = [wintypes.HANDLE,wintypes.UINT]
+        self.kernel.TerminateJobObject.restype = wintypes.BOOL
+        self.kernel.QueryInformationJobObject.argtypes = [wintypes.HANDLE,ctypes.c_int,ctypes.c_void_p,wintypes.DWORD,ctypes.c_void_p]
+        self.kernel.QueryInformationJobObject.restype = wintypes.BOOL
+        class Accounting(ctypes.Structure):
+            _fields_ = [(name,ctypes.c_longlong) for name in ('TotalUserTime','TotalKernelTime','ThisPeriodTotalUserTime','ThisPeriodTotalKernelTime')] + [
+                (name,wintypes.DWORD) for name in ('TotalPageFaultCount','TotalProcesses','ActiveProcesses','TotalTerminatedProcesses')]
+        self.accounting_type=Accounting
         self.handle = self.kernel.CreateJobObjectW(None, None)
         if not self.handle:
             raise ctypes.WinError(ctypes.get_last_error())
@@ -47,7 +56,18 @@ class ProcessTree:
 
     def close(self):
         if self.handle is not None:
-            self.kernel.CloseHandle(self.handle); self.handle = None
+            try:
+                if not self.kernel.TerminateJobObject(self.handle,1):raise ctypes.WinError(ctypes.get_last_error())
+                deadline=time.monotonic()+5
+                while True:
+                    info=self.accounting_type()
+                    if not self.kernel.QueryInformationJobObject(self.handle,1,ctypes.byref(info),ctypes.sizeof(info),None):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    if not info.ActiveProcesses:break
+                    if time.monotonic()>=deadline:raise ValueError('Owned child processes did not stop within five seconds.')
+                    time.sleep(.01)
+            finally:
+                self.kernel.CloseHandle(self.handle); self.handle = None
 
 
 def run_application(command: list[str], *, cwd: Path, env: dict, label: str, timeout: float) -> str:

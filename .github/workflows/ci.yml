@@ -29,6 +29,9 @@ jobs:
           - os: ubuntu-latest
             python: "3.13"
           # The laptop side runs on Windows.
+          # The installer pins its private application environment to CPython 3.12.
+          - os: windows-latest
+            python: "3.12"
           - os: windows-latest
             python: "3.13"
     env:

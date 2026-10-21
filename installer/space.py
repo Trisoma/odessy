@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 from installer.manifest import ManifestError, load_manifest, _unique_keys
+from installer.dependency_spec import fingerprint as dependency_fingerprint
 from installer.preflight import REPO_ROOT, default_locations
 
 RESERVE_BYTES = 256 * 1024 * 1024
@@ -66,19 +67,23 @@ def _verified_local(base: Path, name: object, digest: object) -> Path:
 
 def load_resources(path: Path, repo_root: Path = REPO_ROOT):
     data = json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=_unique_keys)
-    fields = {'schema_version','scope','python_version','platform','download_manifest',
-              'download_manifest_sha256','lock_file','lock_sha256','source_sha256','layout','pending_components'}
-    if not isinstance(data, dict) or set(data) != fields:
-        raise ValueError('Invalid release resource metadata fields.')
-    if type(data['schema_version']) is not int or data['schema_version'] != 1:
+    if not isinstance(data,dict) or type(data.get('schema_version')) is not int or data['schema_version'] not in {1,2}:
         raise ValueError('Unsupported resource schema.')
+    source_field='source_sha256' if data['schema_version']==1 else 'dependency_spec_sha256'
+    fields = {'schema_version','scope','python_version','platform','download_manifest',
+              'download_manifest_sha256','lock_file','lock_sha256',source_field,'layout','pending_components'}
+    if set(data) != fields:
+        raise ValueError('Invalid release resource metadata fields.')
     if (data['scope'] != 'python-runtime-dependencies-only' or data['python_version'] != '3.12'
             or data['platform'] != 'windows-x64'):
         raise ValueError('This resource subset targets CPython 3.12 / Windows x64 only.')
-    source = data['source_sha256']
-    if not isinstance(source, dict) or set(source) != {'pyproject.toml'}:
-        raise ValueError('Expected the pyproject.toml source fingerprint.')
-    _verified_local(repo_root, 'pyproject.toml', source['pyproject.toml'])
+    if data['schema_version']==1:
+        source = data['source_sha256']
+        if not isinstance(source, dict) or set(source) != {'pyproject.toml'}:
+            raise ValueError('Expected the pyproject.toml source fingerprint.')
+        _verified_local(repo_root, 'pyproject.toml', source['pyproject.toml'])
+    elif dependency_fingerprint(repo_root/'pyproject.toml')!=data['dependency_spec_sha256']:
+        raise ValueError('Runtime dependency requirements changed; regenerate the pinned wheel release.')
     manifest_path = _verified_local(path.parent, data['download_manifest'], data['download_manifest_sha256'])
     _verified_local(path.parent, data['lock_file'], data['lock_sha256'])
     manifest = load_manifest(manifest_path)

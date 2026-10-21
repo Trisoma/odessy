@@ -24,6 +24,7 @@ from installer.process import owned_directory
 from installer.runtime import destination
 from installer.space import _verified_local, budget
 from installer.unpack import unpack
+from installer.session_process import ProcessTree
 
 DEFAULT_RESOURCES = Path(__file__).resolve().parent / 'releases/windows-x64-ollama/ollama.resources.json'
 INSTALL_MARKER = 'odessy-ollama-runtime.json'
@@ -170,7 +171,8 @@ def check_directories(runtime: Path, models: Path, state: Path):
 @contextlib.contextmanager
 def managed_service(runtime: Path, models: Path, state: Path, endpoint: str, model: str, *,
                     resources_path=DEFAULT_RESOURCES, popen=subprocess.Popen,
-                    inspect=inspect_service, validate=validate_installation, startup_timeout=30):
+                    inspect=inspect_service, validate=validate_installation, startup_timeout=30,
+                    tree_factory=ProcessTree):
     require_windows()
     endpoint = local_endpoint(endpoint)
     check_directories(runtime, models, state)
@@ -205,14 +207,18 @@ def managed_service(runtime: Path, models: Path, state: Path, endpoint: str, mod
             stream.write(str(os.getpid()))
     except FileExistsError as error:
         raise ValueError(f'State session lock already exists: {lock}. Preserve the other session or choose a new --state-dir.') from error
-    process = None
+    process = None;tree = None
     try:
+        # Callers that already attach their children to an owned job pass None.
+        # Reused services return above and never enter an owned process tree.
+        if tree_factory is not None:tree=tree_factory()
         models.mkdir(parents=True, exist_ok=True)
         home = state / 'home'; home.mkdir(exist_ok=True)
         with (state / 'server.log').open('ab') as log:
             process = popen([str(runtime / 'cli/ollama.exe'), 'serve'], cwd=runtime / 'cli',
                 env=service_env(endpoint, models, home), stdin=subprocess.DEVNULL, stdout=log,
                 stderr=subprocess.STDOUT, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            if tree is not None:tree.attach(process)
             deadline = time.monotonic() + startup_timeout
             while True:
                 if process.poll() is not None:
@@ -236,7 +242,9 @@ def managed_service(runtime: Path, models: Path, state: Path, endpoint: str, mod
                 except subprocess.TimeoutExpired:
                     process.kill(); process.wait(timeout=5)
         finally:
-            lock.unlink()
+            try:
+                if tree is not None:tree.close()
+            finally:lock.unlink()
 
 
 def main(argv=None):

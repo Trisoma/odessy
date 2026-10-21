@@ -211,12 +211,15 @@ class TkTests(unittest.TestCase):
         self.addCleanup(self.cleanup)
 
     def cleanup(self):
+        import gc
         self.controller.request_cancel(); self.release.set()
         if self.controller.thread: self.controller.thread.join(3)
         try:
             for callback in self.root.tk.call('after', 'info'): self.root.after_cancel(callback)
             self.root.destroy()
         except Exception: pass
+        self.ui=None;self.root=None;self.controller=None;self.backend=None
+        gc.collect()
 
     def pump(self):
         deadline = time.monotonic() + 4

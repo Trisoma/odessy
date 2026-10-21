@@ -10,6 +10,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 from installer.manifest import Artifact, ManifestError, load_manifest
+from installer.dependency_spec import fingerprint as dependency_fingerprint
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -106,12 +107,12 @@ def prepare(wheel_dir: Path, resolved_lock: Path, output_dir: Path, *,
     manifest_name = 'python-wheels-windows-x64.json'
     lock_name = 'requirements-windows-x64-py312.txt'
     resources = {
-        "schema_version": 1, "scope": "python-runtime-dependencies-only",
+        "schema_version": 2, "scope": "python-runtime-dependencies-only",
         "python_version": "3.12", "platform": "windows-x64",
         "download_manifest": manifest_name,
         "download_manifest_sha256": hashlib.sha256(manifest_text.encode()).hexdigest(),
         "lock_file": lock_name, "lock_sha256": hashlib.sha256(lock_text.encode()).hexdigest(),
-        "source_sha256": {"pyproject.toml": hashlib.sha256((repo_root/'pyproject.toml').read_bytes().replace(b'\r\n', b'\n')).hexdigest()},
+        "dependency_spec_sha256": dependency_fingerprint(repo_root/'pyproject.toml'),
         "layout": {r['id']: {"destination": "app", "unpacked_bytes": r['unpacked_bytes']} for r in rows},
         "pending_components": ["python-runtime", "node-runtime", "tool-server", "ollama-runtime", "local-model", "application"],
     }

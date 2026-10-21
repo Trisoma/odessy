@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "scope": "python-runtime-dependencies-only",
   "python_version": "3.12",
   "platform": "windows-x64",
@@ -7,9 +7,7 @@
   "download_manifest_sha256": "2fd2487196f27269b9ee8c19601eddf171f49bbaca05e83991cd7407c0f583b3",
   "lock_file": "requirements-windows-x64-py312.txt",
   "lock_sha256": "c0222f3d5c6d8bbb3c1f63a6ef35980a2493a59388ea329eb5796bd29f26e762",
-  "source_sha256": {
-    "pyproject.toml": "5fa42f8e1fec7a33bca6591baa22ddb7e2479b1d1e4c983c68b189c649368a8a"
-  },
+  "dependency_spec_sha256": "bf0f0e8286cfc4a9c5f542c7e890909aec648e863539d395fef7032851669db0",
   "layout": {
     "annotated-types": {
       "destination": "app",

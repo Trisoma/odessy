@@ -112,7 +112,7 @@ def run_session(root: Path, workspace: Path, *, text=None, inspect=inspect_insta
             return process
         try:
             with service(info['paths']['ollama'], info['paths']['models'], session_state,
-                         info['endpoint'], info['model']['model'], popen=owned_popen) as current:
+                         info['endpoint'], info['model']['model'], popen=owned_popen,tree_factory=None) as current:
                 check_service(info['endpoint'], info['model'])
                 if not current['reused']: print('Service log:', session_state / 'server.log', flush=True)
                 print('Odessy ready. Workspace:', workspace, flush=True)

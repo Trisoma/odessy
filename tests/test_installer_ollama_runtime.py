@@ -140,11 +140,12 @@ class OllamaRuntimeTests(unittest.TestCase):
 
     def test_existing_service_is_reused_without_files_or_process(self):
         report = {'service_status': 'available', 'version': 'another-existing-version'}
-        with patch.object(runtime, 'subprocess') as subprocess_mock:
+        with patch.object(runtime, 'subprocess') as subprocess_mock,patch.object(runtime,'ProcessTree') as tree_factory:
             with self.session(self.unused_endpoint(), inspect=lambda *a, **k: report,
-                              popen=subprocess_mock.Popen) as session:
+                              popen=subprocess_mock.Popen,tree_factory=tree_factory) as session:
                 self.assertTrue(session['reused'])
             subprocess_mock.Popen.assert_not_called()
+            tree_factory.assert_not_called()
         self.assertFalse(self.state.exists()); self.assertFalse(self.models.exists())
 
     def test_occupied_other_service_port_is_preserved(self):
@@ -213,6 +214,9 @@ HTTPServer((url.hostname,url.port),Handler).serve_forever()
             self.assertFalse(session['report']['model_present'])
             self.assertIsNone(session['process'].poll())
         self.assertIsNotNone(session['process'].poll())
+        # A Windows venv launcher can exit while its interpreter/server survives.
+        # The owned job must be empty before returning, not just the parent dead.
+        self.assertEqual(runtime.inspect_service(endpoint,'fixture:latest',timeout=.2)['service_status'],'unavailable')
         self.assertFalse((self.state / 'serve.lock').exists())
         self.assertTrue((self.state / 'server.log').exists())
         self.assertTrue(self.models.is_dir())
@@ -261,7 +265,7 @@ HTTPServer((url.hostname,url.port),Handler).serve_forever()
                 return {'service_status': 'available', 'version': 'wrong' if scenario == 'wrong-version' else '0.40.6'}
             expected = KeyboardInterrupt if scenario == 'interrupt' else ValueError
             with self.subTest(scenario=scenario), self.assertRaises(expected):
-                with self.session(self.unused_endpoint(), inspect=inspect, popen=lambda *a, **k: process):
+                with self.session(self.unused_endpoint(), inspect=inspect, popen=lambda *a, **k: process,tree_factory=None):
                     raise KeyboardInterrupt()
             self.assertIsNotNone(process.poll())
             self.assertFalse((self.state / 'serve.lock').exists())

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from installer import shortcuts, exe_entry, maintenance
+from installer import shortcuts, exe_entry, maintenance, shelllink
 from installer.checkpoint import Step, run_steps
 
 
@@ -45,7 +45,7 @@ class ShortcutTests(unittest.TestCase):
         for spelling in spellings:
             with self.subTest(spelling=spelling):
                 info=dict(target=str(target),arguments=shortcuts.launcher_arguments(spelling),working=str(target.parent))
-                with patch.object(maintenance,'powershell',return_value=json.dumps(info)):
+                with patch.object(maintenance.shelllink,'read',return_value=info):
                     record,retained=maintenance.launcher_record(self.root.resolve(),self.source,folders=self.folders)
                 self.assertEqual(len(record['links']),2);self.assertEqual(retained,[])
 
@@ -56,7 +56,7 @@ class ShortcutTests(unittest.TestCase):
                   dict(original,arguments=shortcuts.launcher_arguments(self.base/'other')),
                   dict(original,target=str(self.source)),dict(original,working=str(self.base))]
         for info in variants:
-            with self.subTest(info=info),patch.object(maintenance,'powershell',return_value=json.dumps(info)):
+            with self.subTest(info=info),patch.object(maintenance.shelllink,'read',return_value=info):
                 record,retained=maintenance.launcher_record(self.root.resolve(),self.source,folders=self.folders)
                 self.assertEqual(record['links'],[]);self.assertEqual(len(retained),2)
 
@@ -97,7 +97,7 @@ class ShortcutTests(unittest.TestCase):
         self.assertFalse((self.folders['desktop']/shortcuts.NAME).exists())
 
     @unittest.skipUnless(os.name=='nt','Windows Shell shortcut')
-    def test_real_wsh_missing_link_repair(self):
+    def test_real_unicode_link_missing_link_repair(self):
         first=shortcuts.create(self.root,self.source,folders=self.folders)
         target=Path(first['executable']);stamp=target.stat().st_mtime_ns
         link=self.folders['desktop']/shortcuts.NAME;link.unlink()
@@ -173,15 +173,45 @@ class ShortcutTests(unittest.TestCase):
             self.assertIsNone(exe_entry.installed_launcher_root())
 
     @unittest.skipUnless(os.name=='nt','Windows Shell shortcut')
-    def test_actual_wsh_link_contains_exact_quoted_unicode_arguments(self):
+    def test_actual_link_contains_exact_quoted_unicode_arguments(self):
         result=shortcuts.create(self.root,self.source,folders=self.folders)
         link=self.folders['desktop']/shortcuts.NAME
-        data=json.loads(shortcuts.powershell("$p=$env:ODESSY_SHORTCUT_JSON|ConvertFrom-Json; $s=(New-Object -ComObject WScript.Shell).CreateShortcut($p.path); @{target=$s.TargetPath;arguments=$s.Arguments;working=$s.WorkingDirectory}|ConvertTo-Json -Compress",payload=dict(path=str(link))))
+        data=shelllink.read(link)
         import subprocess
         self.assertEqual(data['target'],result['executable'])
         self.assertEqual(data['arguments'],subprocess.list2cmdline(['--mode','launcher','--install-dir',result['install_dir']]))
         self.assertEqual(data['working'],str((self.root/'launcher').resolve()))
         self.assertTrue(self.create()['existing'])
+
+    @unittest.skipUnless(os.name=='nt','Windows Shell shortcut')
+    def test_non_ansi_paths_survive_maintenance_and_shortcut_repair(self):
+        self.root=self.base/'安装 🚀 $ folder'
+        run_steps(self.root,dict(install_dir=str(self.root)),[Step('fixture',lambda:{},lambda:{})])
+        first=shortcuts.create(self.root,self.source,folders=self.folders)
+        for link in first['links']:
+            self.assertEqual(shelllink.read(Path(link))['target'],first['executable'])
+        record,retained=maintenance.launcher_record(self.root.resolve(),self.source,folders=self.folders)
+        self.assertEqual(len(record['links']),2);self.assertEqual(retained,[])
+        (self.folders['desktop']/shortcuts.NAME).unlink()
+        result=shortcuts.create(self.root,self.source,folders=self.folders)
+        self.assertFalse(result['existing']);self.assertTrue(shortcuts.create(self.root,self.source,folders=self.folders)['existing'])
+
+    @unittest.skipUnless(os.name=='nt','Windows PowerShell environment')
+    def test_powershell_uses_only_builtin_modules_and_preserves_analysis_cache(self):
+        import subprocess
+        with patch.dict(os.environ,{'PSModulePath':'untrusted modules','PSModuleAnalysisCachePath':'cache-fixture'}), \
+             patch.object(shortcuts.subprocess,'run',return_value=subprocess.CompletedProcess([],0,'ready','')) as run:
+            self.assertEqual(shortcuts.powershell('Write-Output ready'),'ready')
+        child=run.call_args.kwargs['env']
+        self.assertEqual(child['PSModulePath'],str(Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/Modules'))
+        self.assertEqual({key.upper():value for key,value in child.items()}['PSMODULEANALYSISCACHEPATH'],'cache-fixture')
+
+    @unittest.skipUnless(os.name=='nt','Windows PowerShell environment')
+    def test_powershell_does_not_repeat_side_effects_after_timeout(self):
+        import subprocess
+        with patch.object(shortcuts.subprocess,'run',side_effect=subprocess.TimeoutExpired('fixture',30)) as run:
+            with self.assertRaises(subprocess.TimeoutExpired):shortcuts.powershell('New-Item fixture')
+        self.assertEqual(run.call_count,1)
 
 
 if __name__=='__main__':unittest.main()
