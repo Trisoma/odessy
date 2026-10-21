@@ -56,17 +56,17 @@ class RemovalTests(unittest.TestCase):
 
     def test_delete_model_and_config_requires_matching_explicit_options(self):
         preview=self.preview(keep_models=False,keep_config=False)
-        with self.assertRaisesRegex(ValueError,'变化'):self.remove(preview)
+        with self.assertRaisesRegex(ValueError,'Files or options changed'):self.remove(preview)
         self.remove(preview,keep_models=False,keep_config=False)
         self.assertFalse((self.root/'models').exists());self.assertFalse((self.root/'config/odessy.env').exists())
 
     def test_changed_file_aborts_before_starting_removal(self):
         preview=self.preview();(self.root/'runtime/payload.bin').write_bytes(b'changed content')
-        with self.assertRaisesRegex(ValueError,'变化'):self.remove(preview)
+        with self.assertRaisesRegex(ValueError,'Files or options changed'):self.remove(preview)
         self.assertFalse((self.root/uninstall.RECORD).exists());self.assertTrue((self.root/'application').exists())
 
     def test_running_process_and_install_lock_prevent_deletion(self):
-        with self.assertRaisesRegex(ValueError,'关闭'):uninstall.plan(self.root,folders=self.folders,probe=lambda root:[{'pid':123}])
+        with self.assertRaisesRegex(ValueError,'Close the Odessy terminal'):uninstall.plan(self.root,folders=self.folders,probe=lambda root:[{'pid':123}])
         preview=self.preview()
         with writer_lock(self.root):
             with self.assertRaises(ValueError):self.remove(preview)
@@ -81,7 +81,7 @@ class RemovalTests(unittest.TestCase):
         record=self.links();marker=self.root/'launcher/odessy-shortcuts.json'
         outside=self.base/'outside.txt';outside.write_text('keep')
         record['link_sha256'][str(outside)]=shortcuts.digest(outside);marker.write_text(json.dumps(record))
-        with self.assertRaisesRegex(ValueError,'当前用户'):self.preview()
+        with self.assertRaisesRegex(ValueError,'Shortcut path is not in a location belonging to'):self.preview()
         self.assertEqual(outside.read_text(),'keep')
 
     def test_junction_or_link_anywhere_aborts_before_any_deletion(self):
@@ -107,7 +107,7 @@ class RemovalTests(unittest.TestCase):
         with patch.object(Path,'unlink',fail):
             with self.assertRaises(PermissionError):self.remove(preview)
         record=json.loads((self.root/uninstall.RECORD).read_text());self.assertEqual(record['status'],'failed')
-        with self.assertRaisesRegex(ValueError,'卸载'):start.inspect_installation(self.root)
+        with self.assertRaisesRegex(ValueError,'This installation is being uninstalled and'):start.inspect_installation(self.root)
         self.assertEqual(self.remove(self.preview())['status'],'completed')
         self.assertEqual((self.root/'models/model.blob').read_bytes(),b'model')
 
@@ -115,23 +115,23 @@ class RemovalTests(unittest.TestCase):
         (self.root/'runtime/odessy-runtime.json').unlink()
         with self.assertRaises(OSError):self.preview()
         (self.root/'.git').mkdir()
-        with self.assertRaisesRegex(ValueError,'源码'):self.preview()
+        with self.assertRaisesRegex(ValueError,'A source checkout cannot be uninstalled'):self.preview()
 
     def test_corrupt_uninstall_record_cannot_bypass_component_ownership_checks(self):
         (self.root/uninstall.RECORD).write_text('{}')
-        with self.assertRaisesRegex(ValueError,'不一致'):self.preview()
+        with self.assertRaisesRegex(ValueError,'The uninstall record does not match the original'):self.preview()
         self.assertTrue((self.root/'application').is_dir())
 
     def test_shortcuts_cannot_revive_an_uninstalled_record(self):
         self.remove(self.preview())
         source=self.base/'setup.exe';source.write_bytes(b'MZ source')
-        with self.assertRaisesRegex(ValueError,'卸载'):
+        with self.assertRaisesRegex(ValueError,'This installation has been uninstalled'):
             shortcuts.create(self.root,source,folders=self.folders)
         self.assertFalse((self.root/'launcher').exists())
 
     def test_installed_executable_cannot_delete_itself(self):
         with patch.object(uninstall.sys,'executable',str(self.root/'launcher/OdessyLauncher.exe')):
-            with self.assertRaisesRegex(ValueError,'外'):self.preview()
+            with self.assertRaisesRegex(ValueError,'Run uninstall from OdessySetup'):self.preview()
 
     def test_cli_never_removes_without_preview_confirmation(self):
         with patch.object(uninstall,'execute') as remove:

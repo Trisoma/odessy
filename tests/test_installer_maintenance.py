@@ -60,7 +60,7 @@ class MaintenanceTests(unittest.TestCase):
         self.assertEqual(read_state(self.root)['plan']['release_sha256'],'new-release')
 
     def test_failed_real_check_keeps_original_state_and_components(self):
-        with self.assertRaisesRegex(ValueError,'检查未通过'):
+        with self.assertRaisesRegex(ValueError,'Live model and tool checks failed for the new'):
             self.apply(verify=lambda *args:dict(inference_verified=False))
         self.assertEqual(read_state(self.root),self.old_state)
         self.assertTrue((self.root/'application/old.txt').exists());self.assertTrue((self.root/'launcher/old.txt').exists())
@@ -89,15 +89,15 @@ class MaintenanceTests(unittest.TestCase):
     def test_manual_rollback_preserves_new_files_and_restores_original(self):
         self.apply();result=maintenance.recover(self.root,probe=lambda root:[])
         self.assertEqual(result['status'],'rolled_back');self.assertTrue((self.root/'application/old.txt').exists())
-        with self.assertRaisesRegex(ValueError,'没有可回退'):maintenance.recover(self.root,probe=lambda root:[])
+        with self.assertRaisesRegex(ValueError,'No maintenance record to roll back'):maintenance.recover(self.root,probe=lambda root:[])
 
     def test_lost_backup_cannot_be_reported_as_successful_rollback(self):
         result=self.apply();folder=self.root/'.installer/updates'/result['id']
         (folder/'backup-application/old.txt').unlink();(folder/'backup-application').rmdir()
-        with self.assertRaisesRegex(ValueError,'备份'):maintenance.recover(self.root,probe=lambda root:[])
+        with self.assertRaisesRegex(ValueError,'Original component or rollback backup changed'):maintenance.recover(self.root,probe=lambda root:[])
         self.assertTrue((self.root/'application/new.txt').exists())
         self.assertEqual(maintenance.journal(self.root)['status'],'recovery_required')
-        with self.assertRaisesRegex(ValueError,'维护'):start.inspect_installation(self.root)
+        with self.assertRaisesRegex(ValueError,'This installation has unfinished maintenance'):start.inspect_installation(self.root)
 
     def test_interrupted_switch_can_be_recovered_from_rename_evidence(self):
         result=self.apply();result['status']='activating';maintenance._save(self.root,result)
@@ -108,25 +108,25 @@ class MaintenanceTests(unittest.TestCase):
         def verify(root,app,state,plan):
             (root/'application/user-note').write_text('user changed during preparation')
             return dict(inference_verified=True,tool_round_trip_verified=True)
-        with self.assertRaisesRegex(ValueError,'原应用文件发生变化'):self.apply(verify=verify)
+        with self.assertRaisesRegex(ValueError,'Original application files changed while'):self.apply(verify=verify)
         self.assertEqual((self.root/'application/user-note').read_text(),'user changed during preparation')
         self.assertTrue((self.root/'application/old.txt').exists())
 
     def test_changed_source_executable_invalidates_preview(self):
         preview=self.planner(self.root,self.bundle,self.exe);self.exe.write_bytes(b'MZ changed')
-        with self.assertRaisesRegex(ValueError,'变化'):
+        with self.assertRaisesRegex(ValueError,'Files or versions changed'):
             maintenance.execute(self.root,self.bundle,self.exe,preview['plan_sha256'],planner=self.planner,probe=lambda root:[])
         self.assertEqual(self.prepared,[]);self.assertFalse((self.root/maintenance.JOURNAL).exists())
 
     def test_corrupt_journal_is_refused(self):
         (self.root/maintenance.JOURNAL).write_text('{}')
-        with self.assertRaisesRegex(ValueError,'记录损坏'):maintenance.require_idle(self.root)
+        with self.assertRaisesRegex(ValueError,'Maintenance record is corrupt'):maintenance.require_idle(self.root)
 
     def test_completed_maintenance_rejects_rollback_after_unrelated_state_change(self):
         self.apply()
         from installer.checkpoint import save_state
         state=read_state(self.root);state['plan']['endpoint']='http://127.0.0.1:12345';state['plan_sha256']=fingerprint(state['plan']);save_state(self.root,state)
-        with self.assertRaisesRegex(ValueError,'记录.*变化'):maintenance.recover(self.root,probe=lambda root:[])
+        with self.assertRaisesRegex(ValueError,'The installation record changed after upgrade'):maintenance.recover(self.root,probe=lambda root:[])
         self.assertTrue((self.root/'application/new.txt').exists())
 
 

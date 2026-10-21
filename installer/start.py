@@ -20,7 +20,7 @@ def inspect_installation(root: Path):
     from installer.maintenance import require_idle
     require_idle(root)
     from installer.uninstall import removal_started
-    if removal_started(root): raise ValueError('此安装已开始卸载，不能启动；请从外部安装器查看卸载结果或重试。')
+    if removal_started(root): raise ValueError('This installation is being uninstalled and cannot be started; check the result in the external installer or retry.')
     model.guard_path(root)
     state = read_state(root)
     if state['status'] != 'completed' or not state['summary']['workflow_complete']:

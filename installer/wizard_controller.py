@@ -29,11 +29,11 @@ def comparable(plan):
 class Backend:
     def preview(self, options: Options):
         if not all(value.strip() for value in (options.install_dir, options.cache_dir, options.tool_bundle)):
-            raise ValueError('请选择安装位置、缓存位置和安装资源目录。')
+            raise ValueError('Select the installation directory, cache directory and installation resource directory.')
         try:
             timeout = int(options.timeout)
         except ValueError as error:
-            raise ValueError('检查超时应填写 15 到 600 之间的整数秒数。') from error
+            raise ValueError('The check timeout must be a whole number of seconds between 15 and 600.') from error
         root = Path(options.install_dir.strip())
         plan = workflow.build_plan(root, Path(options.cache_dir.strip()), Path(options.tool_bundle.strip()),
                                    options.endpoint.strip(), timeout)
@@ -41,13 +41,13 @@ class Backend:
         if state_path(root).exists():
             previous = read_state(root)
             if not options.resume:
-                raise ValueError('此目录已有安装记录。请先读取记录，或为新安装选择另一个空目录。')
+                raise ValueError('This directory already has an installation record. Load the record first, or choose another empty directory for a new installation.')
             if comparable(previous['plan']) != comparable(plan):
-                raise ValueError('安装记录与当前安装器版本、路径或资源不一致。请使用原版本恢复，或选择新目录；原安装将保留。')
+                raise ValueError('The installation record does not match this installer version, path or resources. Resume with the original version or choose a new directory; the existing installation is preserved.')
         elif options.resume:
-            raise ValueError('此目录没有可恢复的安装记录。')
+            raise ValueError('There is no installation record to resume in this directory.')
         elif root.exists() and any(root.iterdir()):
-            raise ValueError('安装位置不是空目录。请选择一个新建或空文件夹；现有文件不会被覆盖。')
+            raise ValueError('The installation directory is not empty. Choose a new or empty folder; existing files will not be overwritten.')
         volumes = workflow.combined_budget(plan)
         return dict(plan=plan, volumes=volumes, sufficient=all(v['sufficient'] for v in volumes),
                     resume=options.resume, options=asdict(options), options_sha256=fingerprint(asdict(options)))
@@ -56,7 +56,7 @@ class Backend:
         root = Path(options.install_dir.strip())
         workflow.model.guard_path(root)
         from installer.uninstall import removal_started
-        if removal_started(root): raise ValueError('此安装已执行卸载，请使用“卸载/清理此目录”查看或继续；新安装请选择新目录。')
+        if removal_started(root): raise ValueError('This installation has been uninstalled. Use "Uninstall / clean this directory…" to review or continue, or choose a new directory for a new installation.')
         state = read_state(root)
         plan = state['plan']
         restored = Options(str(root), plan['cache_dir'], plan['tool_bundle'], plan['endpoint'], str(plan['timeout']), True)
@@ -99,14 +99,14 @@ class QueueLog(io.TextIOBase):
 
 def friendly_error(error: str) -> str:
     if 'exceeded' in error or 'timed out' in error:
-        return '检查超时，安装未完成。可在“更多设置”中延长检查时间后恢复；详情见诊断日志。'
+        return 'The check timed out and installation did not complete. Increase the timeout under Advanced settings and resume; see the diagnostic log for details.'
     if 'Another installation workflow' in error:
-        return '另一个安装流程正在使用此目录。请等待其结束，不要同时安装。'
+        return 'Another installation workflow is using this directory. Wait for it to finish; do not install concurrently.'
     if 'Insufficient' in error or 'Not enough space' in error or 'budget failed' in error:
-        return '可用磁盘空间不足。请检查安装位置和缓存位置。'
+        return 'Insufficient disk space. Check the installation and cache directories.'
     if 'Incomplete or invalid component' in error or 'corrupt' in error.lower():
-        return '已有组件不完整或校验失败，文件已保留。请查看诊断日志，再选择新安装目录或检查原文件。'
-    return error[:1200] or '操作未完成，请查看诊断日志。'
+        return 'Existing components are incomplete or failed validation; files were preserved. See the diagnostic log, then choose a new installation directory or inspect the original files.'
+    return error[:1200] or 'The operation did not complete; see the diagnostic log.'
 
 
 class Controller:
@@ -120,7 +120,7 @@ class Controller:
 
     def start(self, job, payload):
         if self.busy or (self.thread is not None and self.thread.is_alive()):
-            raise ValueError('当前任务尚未结束。')
+            raise ValueError('A task is still running.')
         if job not in {'preview', 'record', 'execute', 'shortcuts'}:
             raise ValueError('Unknown wizard job.')
         self.cancel.clear(); self.busy = True; self.job = job
@@ -159,5 +159,5 @@ class Controller:
                     log.flush()
         finally:
             # No Tk calls from this thread. Standard streams are restored first.
-            self.messages.put(outcome or {'kind': 'error', 'job': job, 'message': '安装线程意外结束。', 'error': 'worker exited'})
+            self.messages.put(outcome or {'kind': 'error', 'job': job, 'message': 'The installer worker ended unexpectedly.', 'error': 'worker exited'})
             self.busy = False

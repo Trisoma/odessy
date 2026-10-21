@@ -94,6 +94,6 @@ if __name__ == '__main__':
     except Exception as error:
         if getattr(sys, 'frozen', False):
             import ctypes
-            ctypes.windll.user32.MessageBoxW(None, str(error)[:1200], 'Odessy 启动失败', 0x10)
+            ctypes.windll.user32.MessageBoxW(None, str(error)[:1200], 'Odessy failed to start', 0x10)
         else: traceback.print_exc()
         raise SystemExit(1)

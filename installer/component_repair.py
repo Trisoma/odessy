@@ -40,7 +40,7 @@ def dependency_integrity(root):
     output=run_step([str(python),'-I','-B','-c',DEPENDENCY_CHECK,json.dumps([a.id for a in manifest.artifacts])],
         cwd=root,env=child_env(root/'runtime'),label='Installed wheel file integrity',timeout=180)
     value=json.loads(output)
-    if value['bad']:raise ValueError('依赖文件缺失或校验失败：'+', '.join(value['bad']))
+    if value['bad']:raise ValueError('Dependency file missing or failed verification: '+', '.join(value['bad']))
     return value
 
 
@@ -49,10 +49,10 @@ def model_targets(root):
     bad=[]
     for artifact in manifest.artifacts:
         path=model.blob_path(root/'models',artifact);model.guard_path(path)
-        if path.exists() and not path.is_file():raise ValueError('模型文件位置存在目录，已保留。')
+        if path.exists() and not path.is_file():raise ValueError('A directory exists where the model file belongs; preserved.')
         if not verified(path,artifact):bad.append(path.relative_to(root).as_posix())
     path=model.manifest_path(root/'models',resources['model']);model.guard_path(path)
-    if path.exists() and not path.is_file():raise ValueError('模型清单位置存在目录，已保留。')
+    if path.exists() and not path.is_file():raise ValueError('A directory exists where the model manifest belongs; preserved.')
     if not path.exists() or path.read_bytes()!=raw:bad.append(path.relative_to(root).as_posix())
     return bad
 
@@ -62,7 +62,7 @@ def _health(root,new):
     validators={step.name:step.validate for step in workflow.steps_for(new)}
     for name in ('runtime','dependencies','ollama_runtime'):
         try:
-            if validators[name]() is None:raise ValueError('组件缺失')
+            if validators[name]() is None:raise ValueError('Component missing')
             if name=='runtime':
                 run_step([str(root/'runtime/python-runtime/python.exe'),'-I','-B','-c','import venv,ensurepip,ssl,importlib.metadata,zipfile'],
                     cwd=root,env=child_env(root/'runtime'),label='Private Python standard library')
@@ -71,9 +71,10 @@ def _health(root,new):
             directory='ollama-runtime' if name=='ollama_runtime' else name
             repairs.append(directory);issues[directory]=str(error)
     if 'runtime' in repairs and 'dependencies' not in repairs:
-        repairs.append('dependencies');issues['dependencies']='重建运行环境时同时重建固定路径虚拟环境。'
+        repairs.append('dependencies')
+        issues['dependencies']=' The pinned-path virtual environment is rebuilt with the runtime.'
     # User configuration is never silently replaced by component repair.
-    if validators['configuration']() is None:raise ValueError('连接配置缺失；本模块不覆盖或重建用户配置。')
+    if validators['configuration']() is None:raise ValueError('Connection configuration is missing; this module does not overwrite or rebuild it.')
     repairs.extend(model_targets(root))
     return repairs,issues
 
@@ -107,7 +108,7 @@ def plan(root,bundle,executable,*,probe=maintenance.running_processes,folders=No
         item['free_bytes']=min(item['free_bytes'],volume.free_bytes);item['required_bytes']+=amount
     for item in groups.values():
         item['required_bytes']+=max(RESERVE_BYTES,item['required_bytes']//10)
-        if item['free_bytes']<item['required_bytes']:raise ValueError('修复空间不足，无法同时保留原组件和准备校验后的资源。')
+        if item['free_bytes']<item['required_bytes']:raise ValueError('Not enough space to repair while keeping the original components and preparing verified resources.')
     value['space_budget']=list(groups.values());value['required_free_bytes']+=2*extra
     value.pop('plan_sha256',None)
     # Available space is checked on every preview, including immediately before
@@ -126,7 +127,7 @@ def repair(root,folder,preview,data,*,download=download_artifact):
         print('Preparing repair download:',artifact.id,flush=True);download(artifact,cache)
     now=[]
     for name in preview['repair_components']:now.extend(maintenance._tree(root,root/name))
-    if now!=preview['base_inventory']:raise ValueError('下载期间待修复组件发生变化，请重新检查。')
+    if now!=preview['base_inventory']:raise ValueError('Components to repair changed during download; check again.')
     if not preview['repair_components']:return
     data['status']='repairing';maintenance._save(root,data)
     reports={}

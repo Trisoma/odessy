@@ -280,7 +280,7 @@ class TkTests(unittest.TestCase):
         self.ui.outcome='completed';self.ui.installed_root=Path(self.options.install_dir);self.ui.show(2)
         self.ui.handle(dict(kind='error',job='shortcuts',message='foreign shortcut',error='foreign shortcut'))
         self.assertEqual(self.ui.outcome,'completed');self.assertEqual(self.ui.page,2)
-        self.assertIn('应用安装保留',self.ui.result_note.get())
+        self.assertIn('foreign shortcut',self.ui.result_note.get())
 
     def test_window_close_waits_for_active_worker(self):
         self.preview(); self.ui.primary_action(); self.assertTrue(self.entered.wait(2))

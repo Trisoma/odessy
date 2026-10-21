@@ -48,7 +48,7 @@ class ComponentTransactions(unittest.TestCase):
         self.assertEqual((self.root/'config/odessy.env').read_text(),'keep config')
 
     def test_failed_verification_restores_all_base_components(self):
-        with self.assertRaisesRegex(ValueError,'检查未通过'):
+        with self.assertRaisesRegex(ValueError,'Live model and tool checks failed for the new'):
             self.apply(repair=self.replace,verify=lambda *args:{})
         self.assert_original()
         current=read_state(self.root);original=copy.deepcopy(self.old_state)
@@ -98,7 +98,7 @@ class ComponentTransactions(unittest.TestCase):
             (self.root/'runtime/user-note').write_text('keep user change')
         from types import SimpleNamespace
         with patch.object(repair,'_artifacts',return_value=[SimpleNamespace(id='fixture')]):
-            with self.assertRaisesRegex(ValueError,'发生变化'):
+            with self.assertRaisesRegex(ValueError,'Components to repair changed'):
                 self.apply(repair=lambda *args:repair.repair(*args,download=changed))
         self.assertEqual((self.root/'runtime/user-note').read_text(),'keep user change')
         self.assert_original()
@@ -181,7 +181,7 @@ class ComponentSelection(unittest.TestCase):
         steps=[SimpleNamespace(name=name,validate=lambda:{}) for name in ('runtime','dependencies','ollama_runtime')]
         steps.append(SimpleNamespace(name='configuration',validate=lambda:None))
         with patch.object(repair.workflow,'steps_for',return_value=steps),patch.object(repair,'dependency_integrity'),patch.object(repair,'run_step'):
-            with self.assertRaisesRegex(ValueError,'配置缺失'):repair._health(Path('D:/fixture'),{})
+            with self.assertRaisesRegex(ValueError,'Connection configuration is missing'):repair._health(Path('D:/fixture'),{})
 
 
 class RepairPlanConfirmation(unittest.TestCase):
@@ -207,7 +207,7 @@ class RepairPlanConfirmation(unittest.TestCase):
 
     def test_insufficient_space_still_stops_a_previously_confirmed_plan(self):
         self.preview();self.free=1
-        with self.assertRaisesRegex(ValueError,'空间不足'):self.preview()
+        with self.assertRaisesRegex(ValueError,'Not enough space to repair while keeping the'):self.preview()
 
     def test_changed_files_still_invalidate_confirmation(self):
         before=self.preview();self.inventory.append(dict(path='application/changed.py',size=7))

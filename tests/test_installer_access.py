@@ -15,9 +15,9 @@ class AccessTests(unittest.TestCase):
     def test_missing_file_and_denied_file_have_distinct_errors(self):
         with tempfile.TemporaryDirectory() as folder:
             runtime=Path(folder)
-            with self.assertRaisesRegex(ValueError,'缺失'): check_runtime_access(runtime)
+            with self.assertRaisesRegex(ValueError,'Runtime file is missing'): check_runtime_access(runtime)
             with patch.object(Path,'stat',side_effect=PermissionError('denied')):
-                with self.assertRaisesRegex(ValueError,'权限|账户'): check_runtime_access(runtime)
+                with self.assertRaisesRegex(ValueError,'The current account cannot read or execute the'): check_runtime_access(runtime)
 
     def test_both_executables_are_readable_before_reporting_success(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -26,7 +26,7 @@ class AccessTests(unittest.TestCase):
                 path=root/child; path.parent.mkdir(); path.write_bytes(b'fixture')
             check_runtime_access(root)
             with patch.object(Path,'open',side_effect=PermissionError('cannot read')):
-                with self.assertRaisesRegex(ValueError,'账户'): check_runtime_access(root)
+                with self.assertRaisesRegex(ValueError,'The current account cannot read or execute the'): check_runtime_access(root)
 
     @unittest.skipUnless(os.name=='nt','Windows ACL inheritance')
     def test_final_runtime_inherits_explicit_user_rule_from_install_parent(self):

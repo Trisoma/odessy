@@ -37,7 +37,7 @@ def running_processes(root):
 
 def _json(path):
     guard_path(path)
-    if path.stat().st_size>4*1024*1024: raise ValueError('安装标记过大，已保留文件。')
+    if path.stat().st_size>4*1024*1024: raise ValueError('Installation marker is too large; files were preserved.')
     return json.loads(path.read_text(encoding='utf-8'),object_pairs_hook=_unique_keys)
 
 
@@ -45,10 +45,10 @@ def _entry(root,path):
     guard_path(path)
     # guard_path already rejects links/reparse points; comparing Path.resolve()
     # with Path would reject every 8.3 short installation path instead.
-    if root not in path.parents or not pathing.link_free(path): raise ValueError('清理路径超出安装目录。')
+    if root not in path.parents or not pathing.link_free(path): raise ValueError('Cleanup path is outside the installation directory.')
     info=path.stat()
     if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
-        raise ValueError('安装目录含非普通文件，已停止预览：'+str(path))
+        raise ValueError('Installation directory contains a non-regular file; preview stopped: '+str(path))
     return dict(path=path.relative_to(root).as_posix(),directory=stat.S_ISDIR(info.st_mode),
                 size=0 if stat.S_ISDIR(info.st_mode) else info.st_size,mtime=info.st_mtime_ns)
 
@@ -69,29 +69,29 @@ def plan(root, *, keep_models=True, keep_config=True, folders=None, probe=runnin
     for name in ('SystemRoot','WINDIR','ProgramFiles','ProgramFiles(x86)'):
         if os.environ.get(name):
             protected=Path(os.environ[name]).resolve()
-            if root==protected or protected in root.parents: raise ValueError('拒绝清理系统目录。')
+            if root==protected or protected in root.parents: raise ValueError('Refusing to clean a system directory.')
     # A source checkout is never an uninstall target, even if a record was copied in.
-    if (root/'.git').exists() or (root/'pyproject.toml').exists(): raise ValueError('源码目录不能作为卸载目标。')
+    if (root/'.git').exists() or (root/'pyproject.toml').exists(): raise ValueError('A source checkout cannot be uninstalled.')
     state=read_state(root)
-    if not pathing.same(state['plan'].get('install_dir',''),root): raise ValueError('安装目录已移动，拒绝清理。')
+    if not pathing.same(state['plan'].get('install_dir',''),root): raise ValueError('The installation directory has moved; refusing to clean.')
     if state['status']!='completed' or not state['summary']['workflow_complete']:
-        raise ValueError('本模块仅支持有完整记录的安装；未完成安装先保留。')
+        raise ValueError('Only installations with a complete record are supported; incomplete installs are preserved.')
     previous=_json(root/RECORD) if removal_started(root) else None
     if previous is not None and (not isinstance(previous,dict) or previous.get('schema_version')!=1 or previous.get('status') not in {'running','failed','completed'} or previous.get('install_dir')!=str(root) or previous.get('state_sha256')!=fingerprint(state)):
-        raise ValueError('卸载记录与原安装不一致，已保留。')
+        raise ValueError('The uninstall record does not match the original installation; preserved.')
     executable=Path(sys.executable).resolve()
     if executable==root or root in executable.parents:
-        raise ValueError('请从安装目录外的 OdessySetup.exe 执行卸载，再关闭已安装的启动面板。')
+        raise ValueError('Run uninstall from OdessySetup.exe outside the installation directory, and close the installed launcher panel first.')
     processes=probe(root)
-    if processes: raise ValueError('请先关闭 Odessy 终端、启动面板及此安装的模型服务，再预览卸载。')
+    if processes: raise ValueError("Close the Odessy terminal, launcher panel and this installation's model service before previewing uninstall.")
     inventory=[];selected=[]
     for name,marker in COMPONENTS.items():
         folder=root/name;guard_path(folder)
         if not folder.exists():continue
-        if not folder.is_dir(): raise ValueError('组件路径不是目录：'+str(folder))
+        if not folder.is_dir(): raise ValueError('Component path is not a directory: '+str(folder))
         if marker and previous is None:
             data=_json(folder/marker)
-            if not isinstance(data,dict) or data.get('schema_version')!=1: raise ValueError('组件缺少有效安装标记：'+name)
+            if not isinstance(data,dict) or data.get('schema_version')!=1: raise ValueError('Component is missing a valid installation marker: '+name)
         selected.append(name);inventory.extend(_tree(root,folder))
     if not keep_models:
         selected.append('models');inventory.extend(_tree(root,root/'models'))
@@ -104,10 +104,10 @@ def plan(root, *, keep_models=True, keep_config=True, folders=None, probe=runnin
         data=shortcut_record;folders=user_folders() if folders is None else folders
         allowed={folder/'Odessy.lnk' for folder in folders.values()}
         if data.get('install_dir')!=str(root) or data.get('executable')!=str(root/'launcher/OdessyLauncher.exe'):
-            raise ValueError('快捷方式记录不属于此安装。')
+            raise ValueError('Shortcut record does not belong to this installation.')
         for name,expected in data.get('link_sha256',{}).items():
             path=Path(name)
-            if path not in allowed: raise ValueError('快捷方式路径不属于当前用户的指定位置。')
+            if path not in allowed: raise ValueError('Shortcut path is not in a location belonging to the current user.')
             guard_path(path)
             if path.exists():
                 if path.is_file() and digest(path)==expected:links.append(dict(path=str(path),sha256=expected))
@@ -134,11 +134,11 @@ def _save(root,value):
 
 def execute(root, expected, *, keep_models=True,keep_config=True,folders=None,probe=running_processes):
     preview=plan(root,keep_models=keep_models,keep_config=keep_config,folders=folders,probe=probe)
-    if preview['plan_sha256']!=expected: raise ValueError('文件或选项已变化，请重新预览后确认。')
+    if preview['plan_sha256']!=expected: raise ValueError('Files or options changed; preview again before confirming.')
     root=Path(preview['install_dir'])
     with writer_lock(root):
         current=plan(root,keep_models=keep_models,keep_config=keep_config,folders=folders,probe=probe)
-        if current['plan_sha256']!=expected: raise ValueError('文件或选项已变化，请重新预览后确认。')
+        if current['plan_sha256']!=expected: raise ValueError('Files or options changed; preview again before confirming.')
         result=dict(schema_version=1,install_dir=str(root),state_sha256=current['state_sha256'],
                     status='running',keep_models=keep_models,keep_config=keep_config,shortcut_record=current['shortcut_record'],
                     removed_files=0,removed_shortcuts=0,error=None)
@@ -147,17 +147,17 @@ def execute(root, expected, *, keep_models=True,keep_config=True,folders=None,pr
         try:
             for link in current['shortcuts']:
                 path=Path(link['path']);guard_path(path)
-                if digest(path)!=link['sha256']: raise ValueError('快捷方式发生变化，请重新预览。')
+                if digest(path)!=link['sha256']: raise ValueError('Shortcuts changed; preview again.')
                 path.unlink();result['removed_shortcuts']+=1
             files=[item for item in current['inventory'] if not item['directory']]
             directories=[item for item in current['inventory'] if item['directory']]
             for item in files:
                 path=root/item['path']
-                if _entry(root,path)!=item: raise ValueError('清理时文件发生变化，已停止：'+str(path))
+                if _entry(root,path)!=item: raise ValueError('A file changed during cleanup; stopped: '+str(path))
                 path.unlink();result['removed_files']+=1
             for item in sorted(directories,key=lambda item:len(Path(item['path']).parts),reverse=True):
                 path=root/item['path'];guard_path(path)
-                if root not in path.parents or not pathing.link_free(path): raise ValueError('目录超出卸载范围。')
+                if root not in path.parents or not pathing.link_free(path): raise ValueError('Directory is outside the uninstall scope.')
                 path.rmdir()  # New/unlisted files cause a stop; never recursively erase them.
             result['status']='completed';_save(root,result)
         except BaseException as error:
@@ -178,12 +178,12 @@ def main(argv=None):
     try:
         options=dict(keep_models=not args.delete_models,keep_config=not args.delete_config)
         if args.remove:
-            if not args.confirm:raise ValueError('请先预览，并用 --confirm 指定该预览的 plan_sha256。')
+            if not args.confirm:raise ValueError('Preview first, then pass the preview plan_sha256 with --confirm.')
             result=execute(args.install_dir,args.confirm,**options)
         else:result=summary(plan(args.install_dir,**options))
         print(json.dumps(result,indent=2,ensure_ascii=False));return 0
     except (OSError,ValueError,KeyError,TypeError,DownloadError) as error:
-        print('卸载未完成：',error);return 1
+        print('Uninstall did not finish: ',error);return 1
 
 
 if __name__=='__main__':raise SystemExit(main())

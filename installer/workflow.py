@@ -198,7 +198,7 @@ def execute(plan: dict, *, resume=False, emit=lambda event: None, cancelled=lamb
     from installer.maintenance import require_idle
     require_idle(Path(plan['install_dir']))
     from installer.uninstall import removal_started
-    if removal_started(Path(plan['install_dir'])): raise ValueError('此安装已执行卸载，请选择新目录安装。')
+    if removal_started(Path(plan['install_dir'])): raise ValueError('This installation has been uninstalled; choose a new directory to install.')
     ollama_runtime.require_windows()
     expected = build_plan(Path(plan['install_dir']), Path(plan['cache_dir']), Path(plan['tool_bundle']), plan['endpoint'], plan['timeout'])
     if expected != plan:

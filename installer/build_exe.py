@@ -26,7 +26,7 @@ def build_inputs(repo: Path, bundle: Path):
     for path in source_files(repo): files[path.relative_to(repo).as_posix()] = path.read_bytes()
     for path in sorted((repo / 'installer').rglob('*')):
         if '__pycache__' in path.parts: continue
-        if path.is_file() and (path.suffix in {'.py', '.json', '.txt', '.manifest', '.ps1'} or path.name == 'README.md'):
+        if path.is_file() and (path.suffix in {'.py', '.json', '.txt', '.manifest', '.ps1', '.ico'} or path.name == 'README.md'):
             _reject_link(path); files[path.relative_to(repo).as_posix()] = path.read_bytes()
     for name in ('tool-server.zip', 'tool-server.resources.json'):
         files['bundled-tools/' + name] = (bundle / name).read_bytes()
@@ -66,7 +66,9 @@ def build(bundle: Path, output: Path, *, repo=REPO_ROOT):
         for name, content in files.items():
             path = data / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(content)
         command = [str(python), '-m', 'PyInstaller', '--noconfirm', '--clean', '--onefile', '--windowed',
-                   '--noupx', '--manifest', str(stage / 'installer/windows.manifest'), '--name', 'OdessySetup', '--paths', str(stage), '--add-data', str(data) + os.pathsep + '.',
+                   '--noupx', '--manifest', str(stage / 'installer/windows.manifest'),
+                   '--icon', str(stage / 'installer/assets/odessy-boat.ico'),
+                   '--name', 'OdessySetup', '--paths', str(stage), '--add-data', str(data) + os.pathsep + '.',
                    '--distpath', str(scratch / 'dist'), '--workpath', str(scratch / 'work'),
                    '--specpath', str(scratch), str(stage / 'installer/exe_entry.py')]
         subprocess.run(command, cwd=scratch, check=True, timeout=600)

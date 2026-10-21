@@ -108,7 +108,7 @@ class ShortcutTests(unittest.TestCase):
 
     def test_foreign_link_is_preserved_before_any_launcher_copy(self):
         link=self.folders['desktop']/shortcuts.NAME;link.write_text('foreign')
-        with self.assertRaisesRegex(ValueError,'同名'):self.create()
+        with self.assertRaisesRegex(ValueError,'A shortcut with the same name already exists'):self.create()
         self.assertEqual(link.read_text(),'foreign');self.assertFalse((self.root/'launcher').exists())
 
     def test_failure_on_second_link_rolls_back_only_this_attempt(self):
@@ -128,24 +128,24 @@ class ShortcutTests(unittest.TestCase):
 
     def test_changed_managed_link_is_preserved_on_retry(self):
         self.create();link=self.folders['desktop']/shortcuts.NAME;link.write_text('user changed')
-        with self.assertRaisesRegex(ValueError,'变化'):self.create()
+        with self.assertRaisesRegex(ValueError,'An existing shortcut changed or belongs to'):self.create()
         self.assertEqual(link.read_text(),'user changed')
 
     def test_selection_and_moved_install_are_rejected(self):
         with self.assertRaises(ValueError):self.create(desktop=False,start_menu=False)
         with patch.object(shortcuts,'read_state',return_value=dict(status='completed',summary=dict(workflow_complete=True),plan=dict(install_dir=str(self.base/'other')))):
-            with self.assertRaisesRegex(ValueError,'原位置'):self.create()
+            with self.assertRaisesRegex(ValueError,'Complete the application installation at the'):self.create()
         self.assertFalse((self.root/'launcher').exists())
 
     def test_different_executable_does_not_replace_managed_launcher(self):
         result=self.create();self.source.write_bytes(b'MZ changed')
-        with self.assertRaisesRegex(ValueError,'版本不同'):self.create()
+        with self.assertRaisesRegex(ValueError,'An existing launcher entry is a different'):self.create()
         self.assertEqual(Path(result['executable']).read_bytes(),b'MZ fixture executable')
 
     def test_low_space_does_not_create_launchers_or_links(self):
         from types import SimpleNamespace
         with patch.object(shortcuts.shutil,'disk_usage',return_value=SimpleNamespace(free=1)):
-            with self.assertRaisesRegex(ValueError,'空间不足'):self.create()
+            with self.assertRaisesRegex(ValueError,'Not enough disk space to save the standalone'):self.create()
         self.assertFalse((self.root/'launcher').exists())
 
     def test_close_during_background_creation_waits_for_result_without_false_cancellation(self):
