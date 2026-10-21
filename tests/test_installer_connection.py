@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -159,8 +160,19 @@ class ConnectionTests(unittest.TestCase):
 
 class SessionProcessTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.cleanup)
         self.root = Path(self.temp.name)
+
+    def cleanup(self):
+        # Windows can briefly keep a terminated process's working directory
+        # busy after exit is reported. Live-child assertions remain mandatory;
+        # only fixture removal retries, and persistent locks still fail.
+        for attempt in range(7):
+            try:
+                self.temp.cleanup();return
+            except OSError as error:
+                if getattr(error,'winerror',None) not in {5,32,33} or attempt==6:raise
+                time.sleep(.05*2**attempt)
 
     def execute(self, code, timeout=3):
         return run_application([sys.executable, '-I', '-c', code], cwd=self.root,
@@ -197,6 +209,19 @@ class SessionProcessTests(unittest.TestCase):
                     self.assertNotEqual(code.value, 259, 'Child process survived its owned job')
                 finally:
                     kernel.CloseHandle(handle)
+
+    @unittest.skipUnless(os.name=='nt','Windows process handle lifetime')
+    def test_timeout_releases_native_handle_even_when_the_exception_is_retained(self):
+        from installer import session_process
+        popen=subprocess.Popen;processes=[]
+        def spawn(*args,**kwargs):
+            process=popen(*args,**kwargs);processes.append(process);return process
+        with patch.object(session_process.subprocess,'Popen',side_effect=spawn):
+            with self.assertRaisesRegex(ValueError,'exceeded') as caught:
+                self.execute('import time; time.sleep(30)',timeout=.2)
+        self.assertIsNotNone(caught.exception.__cause__)
+        self.assertIsNotNone(processes[0].returncode)
+        self.assertTrue(processes[0]._handle.closed)
 
 
 if __name__ == '__main__':

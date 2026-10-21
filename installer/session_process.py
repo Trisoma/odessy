@@ -90,13 +90,22 @@ def run_application(command: list[str], *, cwd: Path, env: dict, label: str, tim
         return stdout
     finally:
         # Closing the job also handles descendants if the parent already exited.
-        tree.close()
-        if process is not None:
-            if os.name != 'nt':
+        try:
+            tree.close()
+        finally:
+            if process is not None:
                 try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            if process.poll() is None:
-                process.kill()
-            process.communicate(timeout=10)
+                    if os.name != 'nt':
+                        try:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    if process.poll() is None:
+                        process.kill()
+                    process.communicate(timeout=10)
+                finally:
+                    # Timeout exceptions can retain this frame/Popen through
+                    # their cause traceback. Release the finished Windows
+                    # process handle now rather than waiting for cyclic GC.
+                    if os.name=='nt' and process.returncode is not None:
+                        process._handle.Close()

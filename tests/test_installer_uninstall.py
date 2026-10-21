@@ -87,7 +87,10 @@ class RemovalTests(unittest.TestCase):
     def test_junction_or_link_anywhere_aborts_before_any_deletion(self):
         link=self.root/'runtime/escape'
         if os.name=='nt':
-            shortcuts.powershell("$p=$env:ODESSY_SHORTCUT_JSON|ConvertFrom-Json; New-Item -ItemType Junction -Path $p.path -Value $p.target | Out-Null",payload=dict(path=str(link),target=str(self.workspace)))
+            # Create a real reparse point without depending on PowerShell's cold
+            # module discovery. This test exercises removal guards, not a shell.
+            import _winapi
+            _winapi.CreateJunction(str(self.workspace),str(link))
         else:link.symlink_to(self.workspace,target_is_directory=True)
         try:
             with self.assertRaises((ValueError,OSError,DownloadError)):self.preview()
