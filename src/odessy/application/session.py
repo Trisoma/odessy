@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import threading
 import time
 import uuid
 from collections import deque
@@ -56,6 +57,12 @@ class SessionController:
         self._active_model = None
         self._events = deque(maxlen=event_limit)
         self._subscribers = set()
+        #: Events raised on a worker thread, waiting for the loop to deliver them.
+        #: The loop is the only thread allowed to touch ``_events`` or a subscriber
+        #: queue, so a cross-thread announcement is queued here first.
+        self._thread_events = deque()
+        self._thread_events_lock = threading.Lock()
+        self._loop = None
         self._subscriber_limit = subscriber_limit
         self.max_subscribers = max_subscribers
         self._sequence = 0
@@ -120,6 +127,40 @@ class SessionController:
             queue.put_nowait(event)
         return event
 
+    def _emit_from_thread(self, event_type, data=None, *, loop=None):
+        """Queue an event raised off the loop thread.
+
+        Model calls, consultations, and coding jobs run in worker threads. They must
+        not call ``emit`` themselves: it mutates the replay deque and feeds
+        ``asyncio.Queue`` objects, and an ``asyncio.Queue`` is not safe to feed from
+        another thread. The event is queued here and delivered by the loop -- at the
+        turn's flush when it was raised during the turn, or by the callback scheduled
+        now when it arrives later.
+
+        ``loop`` is the loop captured when the sink was installed, so an event that
+        arrives after its turn has finished is still delivered rather than stranded in
+        the queue waiting for the next turn.
+        """
+
+        with self._thread_events_lock:
+            self._thread_events.append((event_type, data))
+        loop = loop if loop is not None else self._loop
+        if loop is not None and not loop.is_closed():
+            try:
+                loop.call_soon_threadsafe(self._flush_thread_events)
+            except RuntimeError:  # the loop closed between the check and the call
+                pass
+
+    def _flush_thread_events(self):
+        """Deliver queued off-loop events in the order they were raised. Loop only."""
+
+        while True:
+            with self._thread_events_lock:
+                if not self._thread_events:
+                    return
+                event_type, data = self._thread_events.popleft()
+            self.emit(event_type, data)
+
     async def subscribe(self, after_id=0):
         if len(self._subscribers) >= self.max_subscribers:
             raise RuntimeError('Session subscriber limit reached')
@@ -179,19 +220,19 @@ class SessionController:
         self.active_profile = self.selected_profile
         model = self._model
         self._active_model = model
-        loop = asyncio.get_running_loop()
+        loop = self._loop = asyncio.get_running_loop()
         announce = getattr(model, '_announce', None)
         if announce is not None:
             def report_route(message):
                 announce(message)
-                loop.call_soon_threadsafe(self.emit, 'routing', {'message': message})
+                self._emit_from_thread('routing', {'message': message}, loop=loop)
             model._announce = report_route
         sink = getattr(self.collaboration, 'event_sink', None)
         if self.collaboration is not None:
             def report_consultation(event):
                 if sink is not None:
                     sink(event)
-                loop.call_soon_threadsafe(self.emit, event.get('type', 'consultation'), event)
+                self._emit_from_thread(event.get('type', 'consultation'), event, loop=loop)
             self.collaboration.event_sink = report_consultation
         self.emit('transcript', {'role': 'user', 'text': text})
         self.emit('selection', {'profile': self.active_profile, 'reason': 'Pinned for this turn'})
@@ -235,6 +276,11 @@ class SessionController:
             agent = self.agent_factory(model, confirm=self.confirm)
             with collaboration_scope(self.collaboration):
                 result = await agent.run_turn(text, **kwargs)
+            # Routing notes and peer results were raised on a worker thread, so they
+            # are still queued. Deliver them before the turn's closing events: a
+            # client must see them in the order they happened, and the turn must not
+            # return with its own announcements missing from its events.
+            self._flush_thread_events()
             if not self._stop.is_set():
                 if remember:
                     self.memory.add(self._public(text), self._public(result.final_text))
@@ -262,6 +308,8 @@ class SessionController:
             self.emit('error', {'message': str(exc), 'error_type': type(exc).__name__})
             raise
         finally:
+            self._flush_thread_events()
+            self._loop = None
             if announce is not None:
                 model._announce = announce
             if self.collaboration is not None:
@@ -293,6 +341,10 @@ class SessionController:
         await self.stop()
         self._closed = True
         self.memory.clear()
+        # A worker thread that outlives the session can still raise an event; with the
+        # loop gone it would queue forever, so drop what is left.
+        with self._thread_events_lock:
+            self._thread_events.clear()
         for queue in tuple(self._subscribers):
             if queue.full():
                 queue.get_nowait()

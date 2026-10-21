@@ -177,7 +177,13 @@ def test_router_and_service_announcements_reach_events_from_worker_threads():
         session.agent_factory = Announcing
         await session.run_turn('question')
         assert announced == ['routed capable: conversation_context']
-        assert any(event['type'] == 'routing' and 'capable' in event['data']['message'] for event in session.events)
+        events = session.events
+        assert any(event['type'] == 'routing' and 'capable' in event['data']['message'] for event in events)
+        # Raised during the turn, so it must be delivered before the turn's own result.
+        # Scheduling it with call_soon_threadsafe alone made delivery race the turn's
+        # return: the event could arrive after `result`, or after the assert.
+        order = [event['type'] for event in events]
+        assert order.index('routing') < order.index('result')
     asyncio.run(run())
 
 def test_known_profile_credentials_are_redacted_in_events_and_history(monkeypatch):
