@@ -136,8 +136,8 @@ def header(root, *, title='Odessy', caption='Windows x64  ·  Preview'):
     bar.grid_propagate(False)
     mark = tk.Canvas(bar, width=30, height=30, background=COLORS['surface'], highlightthickness=0)
     for y, row in enumerate(brand.ROWS):
-        for x, (red, green, blue, _alpha) in enumerate(row):
-            if (red, green, blue) == (0, 0, 0):
+        for x, (red, green, blue, alpha) in enumerate(row):
+            if alpha == 0:
                 continue
             mark.create_rectangle(x + 7, y + 7, x + 8, y + 8,
                                   fill='#%02x%02x%02x' % (red, green, blue), outline='')

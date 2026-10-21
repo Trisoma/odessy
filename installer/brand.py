@@ -49,15 +49,19 @@ ROWS = tuple(tuple(_rgba(char) for char in row) for row in PIXELS)
 def window_icon(root, size=16):
     """Attach the pixel boat as the window/taskbar icon.
 
-    Tk has no RGBA PhotoImage, so transparent pixels are blended against the
-    header surface colour. Returns the PhotoImage or None when unsupported.
+    Tk's PhotoImage has no alpha channel, so transparent pixels are composited
+    onto a light surface colour; otherwise Tk renders them opaque black.
+    Returns the PhotoImage or None when unsupported.
     """
     import tkinter as tk
+    background = (255, 255, 255)
     try:
         image = tk.PhotoImage(width=size, height=size)
         for y in range(size):
             for x in range(size):
                 red, green, blue, alpha = ROWS[y][x]
+                if alpha == 0:
+                    red, green, blue = background
                 image.put('#%02x%02x%02x' % (red, green, blue), (x, y))
         root.iconphoto(True, image)
         # Keep a reference: Tk discards images with no Python-side referent.
