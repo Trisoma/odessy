@@ -110,6 +110,8 @@ class ModelTurnDiagnostics:
     routing: dict[str, Any] | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    #: Part of ``prompt_tokens`` served from the provider's prompt cache (cloud only).
+    cached_prompt_tokens: int | None = None
 
 
 @dataclass

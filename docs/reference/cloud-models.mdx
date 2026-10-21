@@ -155,12 +155,71 @@ provider.
 
 Odessy prints a notice on stderr at startup when a cloud backend is active.
 
+## Cost and usage
+
+Every cloud call in a run is recorded in one ledger (`odessy.models.usage`),
+whichever adapter or router made it.
+
+**Prompt caching.** The tool definitions and system prompt are the same on every
+call, and they make up most of each request.
+
+- **Claude:** Odessy marks them cacheable with `cache_control`, so later calls in a
+  turn, and turns within the cache lifetime, read them from the cache.
+- **OpenAI, DeepSeek, Qwen and Kimi:** these providers cache a repeated prefix on
+  their own. Odessy keeps the prefix byte-stable, with no timestamps and a fixed
+  tool order.
+- **Turning it off:** set `ODESSY_CLOUD_PROMPT_CACHE=off`. This affects Claude's
+  markers only.
+- **Minimum size:** a prefix below the model's minimum cacheable length is not
+  cached, and nothing fails.
+
+**Usage.** Each turn that used the cloud prints one line on stderr:
+
+```text
+[odessy] cloud usage: this turn 6,060 in (3,000 cached), 14 out (2 call(s)); run 18,230 in (...)
+```
+
+`in` counts all input tokens. `cached` is the part of `in` that was served from
+the provider's cache. Turn diagnostics and eval attempts record the same
+`cached_prompt_tokens`. A wake-listening session prints a total for the run when it
+ends.
+
+**Estimated cost.** Odessy ships no prices: they change, and they differ by
+provider, region and plan. To get an estimate, set prices per million tokens:
+
+| Setting | Meaning |
+|---|---|
+| `ODESSY_CLOUD_PRICE_INPUT` | Uncached input. Required together with output |
+| `ODESSY_CLOUD_PRICE_CACHED_INPUT` | Cached input. Defaults to the input price |
+| `ODESSY_CLOUD_PRICE_OUTPUT` | Output |
+| `ODESSY_CLOUD_PRICE_CURRENCY` | Label only. Defaults to `USD` |
+
+The estimate is labelled `~` because it can differ from your bill, for example
+through cache-write surcharges, reasoning tokens or discounts.
+
+**Budget.** These settings cap one run (one `python -m odessy` invocation, or one
+voice session):
+
+| Setting | Meaning |
+|---|---|
+| `ODESSY_CLOUD_BUDGET_TOKENS` | All tokens, cached or not |
+| `ODESSY_CLOUD_BUDGET_COST` | In the price currency. Needs prices |
+
+- The budget is checked **before** each request. Once it is reached, no further
+  request is sent: a text turn stops with the reason, and a voice turn reports it.
+- A warning is printed once at 80%.
+- A turn can end mid-task when the budget runs out. Tools that already ran in
+  that turn have run.
+- A malformed price or budget setting stops a cloud run at startup.
+- `python -m odessy doctor` shows the settings in effect.
+
 ## Not covered yet
 
 - No streaming: each request waits for the full reply.
 - No automatic fallback to the local model when the network or provider fails;
   the turn fails with the provider's (redacted) error.
-- No cost tracking beyond the token counts recorded in turn metrics.
+- Costs are estimates from prices you set; Odessy does not read your provider bill.
+- The budget is per run; there is no daily or cross-run limit.
 - The component-performance `benchmark/` harness has no cloud adapter yet.
   Agent-behaviour evaluations in `evals/` do support cloud backends.
 - Tests run against recorded response shapes, not live provider APIs.

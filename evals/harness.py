@@ -118,6 +118,8 @@ class Attempt:
     prompt_tokens: int | None = None
     routing: dict[str, Any] | None = None
     completion_tokens: int | None = None
+    #: Part of prompt_tokens served from the provider's prompt cache (cloud only).
+    cached_prompt_tokens: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -319,4 +321,5 @@ async def run_attempt(
         record.model_calls = diagnostics.model_call_count or len(recording_model.proposals)
         record.prompt_tokens = diagnostics.prompt_tokens
         record.completion_tokens = diagnostics.completion_tokens
+        record.cached_prompt_tokens = diagnostics.cached_prompt_tokens
         return record

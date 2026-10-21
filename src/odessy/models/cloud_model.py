@@ -43,6 +43,7 @@ from odessy.models.ollama_model import (
 )
 from odessy.config.deployment import command_tool_for_laptop, environment_prompt
 from odessy.authority.redaction import redact_for_log, redact_text
+from odessy.models.usage import UsageLedger, process_ledger
 from odessy.tools.tool_contracts import build_openai_tools, validate_tool_arguments
 from odessy.runtime.types import (
     FinalResponse,
@@ -270,6 +271,12 @@ class CloudModel:
     max_result_chars: int = DEFAULT_CLOUD_RESULT_CHARS
     #: How to wait between retries. Replaced in tests.
     _sleep: Any = field(default=time.sleep, repr=False)
+    #: Claude: mark the tool definitions and system prompt cacheable, so every call
+    #: after the first in a turn (and turns within the cache lifetime) reads them from
+    #: the prompt cache. OpenAI-compatible providers cache stable prefixes on their own.
+    prompt_cache: bool = True
+    #: Where usage is recorded and the budget checked; the process ledger by default.
+    usage: UsageLedger | None = field(default=None, repr=False)
 
     conversation_context: tuple = ()
 
@@ -294,6 +301,10 @@ class CloudModel:
     @property
     def last_turn_diagnostics(self) -> ModelTurnDiagnostics:
         return self._diagnostics
+
+    @property
+    def ledger(self) -> UsageLedger:
+        return self.usage if self.usage is not None else process_ledger()
 
     # -- ModelAdapter -------------------------------------------------------
 
@@ -435,6 +446,8 @@ class CloudModel:
     def _exchange(self, timing_field: str) -> _ParsedReply:
         from odessy.models.generation_control import before_generation
         before_generation()
+        # Before the request, so a spent budget sends nothing more.
+        self.ledger.check()
         started = time.perf_counter()
         self._diagnostics.model_call_count += 1
         if self.protocol == "anthropic":
@@ -472,12 +485,21 @@ class CloudModel:
     # -- Claude (anthropic SDK) --------------------------------------------
 
     def _exchange_anthropic(self) -> _ParsedReply:
+        tools = cloud_tools_anthropic()
+        system: Any = system_prompt()
+        if self.prompt_cache and tools:
+            # Render order is tools, then system, then messages. A breakpoint on the
+            # last tool and one on the system prompt cache that whole stable prefix;
+            # the messages after it change every call. A prefix below the model's
+            # minimum cacheable length is simply not cached.
+            tools = [*tools[:-1], {**tools[-1], "cache_control": {"type": "ephemeral"}}]
+            system = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
         params: dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
-            "system": system_prompt(),
+            "system": system,
             "messages": self._messages,
-            "tools": cloud_tools_anthropic(),
+            "tools": tools,
             "tool_choice": {"type": "auto", "disable_parallel_tool_use": False},
         }
         if self.effort:
@@ -489,8 +511,12 @@ class CloudModel:
         # Append the full content (thinking and fallback blocks included), unchanged.
         self._messages.append({"role": "assistant", "content": response.content})
         usage = getattr(response, "usage", None)
-        _add_tokens(self._diagnostics, "prompt_tokens", getattr(usage, "input_tokens", None))
-        _add_tokens(self._diagnostics, "completion_tokens", getattr(usage, "output_tokens", None))
+        # input_tokens counts only uncached input; cache writes and reads are separate.
+        uncached = _int(getattr(usage, "input_tokens", None))
+        written = _int(getattr(usage, "cache_creation_input_tokens", None))
+        read = _int(getattr(usage, "cache_read_input_tokens", None))
+        prompt = None if uncached is None and written is None and read is None else (uncached or 0) + (written or 0) + (read or 0)
+        self._record_usage(prompt, read, _int(getattr(usage, "output_tokens", None)))
         calls: list[_ParsedCall] = []
         texts: list[str] = []
         for block in response.content:
@@ -562,14 +588,20 @@ class CloudModel:
             assistant["tool_calls"] = message["tool_calls"]
         self._messages.append(assistant)
         usage = data.get("usage") or {}
-        _add_tokens(self._diagnostics, "prompt_tokens", usage.get("prompt_tokens"))
-        _add_tokens(self._diagnostics, "completion_tokens", usage.get("completion_tokens"))
+        self._record_usage(_int(usage.get("prompt_tokens")), _openai_cached_tokens(usage), _int(usage.get("completion_tokens")))
         calls = tuple(_parse_openai_call(raw) for raw in message.get("tool_calls") or [])
         return _ParsedReply(
             calls=calls,
             text=(message.get("content") or "").strip(),
             refused=bool(message.get("refusal")) and not calls,
         )
+
+    def _record_usage(self, prompt: int | None, cached: int | None, completion: int | None) -> None:
+        _add_tokens(self._diagnostics, "prompt_tokens", prompt)
+        _add_tokens(self._diagnostics, "cached_prompt_tokens", cached)
+        _add_tokens(self._diagnostics, "completion_tokens", completion)
+        if prompt is not None or completion is not None:
+            self.ledger.record(prompt=prompt, cached=cached, completion=completion)
 
     def _post_chat(self, payload: dict[str, Any]) -> dict[str, Any]:
         """One ``/chat/completions`` call, retried on transient failures.
@@ -656,6 +688,7 @@ def build_cloud_model(provider: str, env: dict[str, str] | None = None) -> Cloud
         not in {"0", "off", "false", "no"},
         retries=_non_negative_int(env.get("ODESSY_CLOUD_RETRIES"), DEFAULT_CLOUD_RETRIES),
         max_result_chars=_positive_int(env.get("ODESSY_CLOUD_MAX_RESULT_CHARS"), DEFAULT_CLOUD_RESULT_CHARS),
+        prompt_cache=(env.get("ODESSY_CLOUD_PROMPT_CACHE") or "on").strip().lower() not in {"0", "off", "false", "no"},
     )
 
 
@@ -710,6 +743,27 @@ def _non_negative_int(raw: str | None, default: int) -> int:
     except ValueError:
         return default
     return value if value >= 0 else default
+
+
+def _int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _openai_cached_tokens(usage: dict[str, Any]) -> int | None:
+    """Cached prompt tokens, as each OpenAI-compatible provider reports them.
+
+    OpenAI and Qwen: ``prompt_tokens_details.cached_tokens``; DeepSeek:
+    ``prompt_cache_hit_tokens``; Kimi: ``cached_tokens``. All are part of
+    ``prompt_tokens``.
+    """
+
+    details = usage.get("prompt_tokens_details")
+    if isinstance(details, dict) and _int(details.get("cached_tokens")) is not None:
+        return details["cached_tokens"]
+    for key in ("prompt_cache_hit_tokens", "cached_tokens"):
+        if _int(usage.get(key)) is not None:
+            return usage[key]
+    return None
 
 
 def _add_tokens(diagnostics: ModelTurnDiagnostics, field_name: str, value: Any) -> None:
