@@ -23,6 +23,7 @@ is a ceiling on volume, not on the bill.
 
 from __future__ import annotations
 
+import math
 import os
 import sys
 import threading
@@ -85,6 +86,8 @@ def _number(source: Mapping[str, str], name: str) -> float | None:
         value = float(raw)
     except ValueError:
         raise CloudUsageConfigError(f"{name} must be a number (got {raw!r})") from None
+    if not math.isfinite(value):
+        raise CloudUsageConfigError(f"{name} must be finite (got {raw!r})")
     if value < 0:
         raise CloudUsageConfigError(f"{name} must not be negative (got {raw!r})")
     return value

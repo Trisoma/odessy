@@ -62,6 +62,17 @@ def test_bad_settings_are_refused_with_the_reason(env: dict[str, str], problem: 
         UsageLedger.from_env(env)
 
 
+@pytest.mark.parametrize("setting", [
+    "ODESSY_CLOUD_PRICE_INPUT", "ODESSY_CLOUD_PRICE_CACHED_INPUT",
+    "ODESSY_CLOUD_PRICE_OUTPUT", "ODESSY_CLOUD_BUDGET_TOKENS", "ODESSY_CLOUD_BUDGET_COST",
+])
+@pytest.mark.parametrize("value", ["NaN", "inf", "-inf"])
+def test_nonfinite_prices_and_budgets_are_rejected(setting: str, value: str) -> None:
+    env = {"ODESSY_CLOUD_PRICE_INPUT": "1", "ODESSY_CLOUD_PRICE_OUTPUT": "1", setting: value}
+    with pytest.raises(CloudUsageConfigError, match="finite"):
+        UsageLedger.from_env(env)
+
+
 def test_the_ledger_keeps_a_turn_and_a_run_total() -> None:
     ledger = UsageLedger(pricing=Pricing(input=1, cached_input=0.1, output=2))
     ledger.record(prompt=2000, cached=1500, completion=100)
