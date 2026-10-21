@@ -36,6 +36,12 @@ The model proposes actions. Python Odessy validates and authorizes them. MCP tra
 
 ## v0.4.0 development additions (unreleased)
 
+Configurable collaboration adds named cloud/local/coding-agent participants,
+attributed consultations, confirmed jobs, and shared CLI/voice sessions. It is
+off until configured. An optional loopback bearer API and diagnostic client run
+with `python -m odessy serve` (`pip install -e '.[ui]'`). See
+[model collaboration](docs/reference/model-collaboration.mdx) for setup and limits.
+
 Third-party MCP servers are an extra feature beyond the original v0.4.0 roadmap,
 merged through PR #11. Configure HTTP or stdio servers in `servers.toml` to offer
 their namespaced tools under Odessy's validation and authorization path. See

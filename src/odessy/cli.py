@@ -65,6 +65,7 @@ from odessy.models.routed_model import RoutedModel, RoutingConfig, model_uses_cl
 from odessy.models.usage import CloudBudgetExceeded, CloudUsageConfigError, process_ledger
 from odessy.voice.vad import SileroSpeechDetector
 from odessy.voice.wake import OpenWakeWordDetector, WakeGate
+from odessy.application.bootstrap import ControllerAgent, controller_runtime
 
 DEFAULT_LFM_ENDPOINT = "http://127.0.0.1:11434"
 DEFAULT_LFM_MODEL = "lfm2.5-thinking:1.2b-q8_0"
@@ -218,10 +219,11 @@ async def _text_async(user_text: str, use_fake_model: bool, backend: str | None 
     workspace_root = Path.cwd()
     model = _build_model(use_fake_model, backend=backend)
     _announce_model(model)
-    async with _tool_servers(workspace_root, cloud=model_uses_cloud(model)) as servers:
-        agent = _build_agent(workspace_root, model, servers)
+    async with controller_runtime(workspace=workspace_root, model=model, interactive=True,
+                                  use_fake_model=use_fake_model) as controller:
+        agent = ControllerAgent(controller)
         try:
-            with _usage_report():
+            with _usage_report(reset=False):
                 result = await agent.run_turn(user_text)
         except (PermissionError, EscalationDeniedError) as error:
             # A denial, a declined confirmation or a refused escalation is an outcome,
@@ -237,9 +239,10 @@ async def _voice_async(use_fake_model: bool, backend: str | None = None) -> None
     workspace_root = Path.cwd()
     model = _build_model(use_fake_model, backend=backend, model_name=config.ollama_model)
     _announce_model(model)
-    async with _tool_servers(workspace_root, cloud=model_uses_cloud(model)) as servers:
-        agent = _build_agent(workspace_root, model, servers)
-        with _usage_report():
+    async with controller_runtime(workspace=workspace_root, model=model, interactive=True,
+                                  use_fake_model=use_fake_model) as controller:
+        agent = ControllerAgent(controller)
+        with _usage_report(reset=False):
             await _run_voice_turn(agent, config)
 
 
@@ -366,12 +369,13 @@ async def _listen_async(
             generation = player.generation
             await asyncio.to_thread(player.play, cue_path, generation=generation)
 
-        async with _tool_servers(workspace_root, cloud=isinstance(model, CloudModel)) as servers:
-            agent = _build_agent(workspace_root, model, servers)
+        async with controller_runtime(workspace=workspace_root, model=model, interactive=True,
+                                      use_fake_model=use_fake_model) as controller:
+            agent = ControllerAgent(controller)
 
             async def run_turn(text: str, stop: asyncio.Event, context: Any) -> str:
-                with _usage_report():
-                    result = await agent.run_turn(text, stop_event=stop, context=context)
+                with _usage_report(reset=False):
+                    result = await agent.run_turn(text, stop_event=stop, context=context, remember=False)
                 return result.final_text
 
             session = VoiceSession(
@@ -443,7 +447,7 @@ def _announce_model(model: object) -> None:
 
 
 @contextlib.contextmanager
-def _usage_report():
+def _usage_report(*, reset: bool = True):
     """Print the cloud tokens (and estimated cost) one turn used, if it used any."""
 
     try:
@@ -452,7 +456,8 @@ def _usage_report():
         # Reported at startup for cloud models; a local run has nothing to report.
         yield
         return
-    ledger.start_turn()
+    if reset:
+        ledger.start_turn()
     try:
         yield
     finally:
@@ -605,6 +610,33 @@ def main(argv: list[str] | None = None) -> None:
     load_config_env()
     _quiet_transport_logs()
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["coding-agent-server"]:
+        parser = argparse.ArgumentParser(
+            description="Serve configured coding agents over trusted operator stdio MCP. "
+                        "Launching this command grants its operator approval authority for execution jobs.")
+        parser.parse_args(argv[1:])
+        from odessy.collaboration.worker import run_worker
+        import inspect
+        result = run_worker(trusted_stdio_operator=True)
+        if inspect.isawaitable(result):
+            asyncio.run(result)
+        return
+    if argv[:1] == ["serve"]:
+        parser = argparse.ArgumentParser(description="Serve the authenticated Odessy API on loopback.")
+        parser.add_argument("--host", default="127.0.0.1")
+        parser.add_argument("--port", type=int, default=8765)
+        parser.add_argument("--fake-model", action="store_true",
+                            help="Use the deterministic fake model without API calls.")
+        _model_backend_argument(parser)
+        args = parser.parse_args(argv[1:])
+        from odessy.application.serve import run_server, validate_binding
+        try:
+            validate_binding(args.host, args.port)
+            asyncio.run(run_server(host=args.host, port=args.port, use_fake_model=args.fake_model,
+                                   backend=args.model_backend))
+        except (ValueError, RuntimeError) as error:
+            raise SystemExit(str(error)) from error
+        return
     if argv[:1] == ["doctor"]:
         parser = argparse.ArgumentParser(
             prog="python -m odessy doctor",

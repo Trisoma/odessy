@@ -1,0 +1,87 @@
+import asyncio
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+
+import pytest
+from odessy import cli
+from odessy.runtime.types import AgentTurnResult
+
+
+def test_text_uses_shared_controller_and_preserves_interactive_confirmation(monkeypatch, capsys):
+    seen = []
+    class Controller:
+        profiles = {'current': {}}
+        config = SimpleNamespace(participants={})
+        async def run_turn(self, text, **kwargs):
+            seen.append(text)
+            return AgentTurnResult('shared answer', [])
+    @asynccontextmanager
+    async def runtime(**kwargs):
+        seen.append(kwargs)
+        yield Controller()
+        seen.append('closed')
+    monkeypatch.setattr(cli, 'controller_runtime', runtime, raising=False)
+    monkeypatch.setattr(cli, '_build_model', lambda *a, **kw: object())
+    @asynccontextmanager
+    async def old_servers(*args, **kwargs):
+        raise AssertionError('CLI bypassed shared session')
+        yield ()
+    monkeypatch.setattr(cli, '_tool_servers', old_servers)
+    asyncio.run(cli._text_async('question', True))
+    assert seen[0]['interactive'] is True
+    assert seen[1:] == ['question', 'closed']
+    assert 'shared answer' in capsys.readouterr().out
+
+
+def test_single_voice_uses_controller_agent(monkeypatch):
+    seen = []
+    @asynccontextmanager
+    async def runtime(**kwargs):
+        seen.append(kwargs)
+        yield object()
+    async def voice_turn(agent, config):
+        from odessy.application.bootstrap import ControllerAgent
+        assert isinstance(agent, ControllerAgent)
+        seen.append('voice')
+    monkeypatch.setattr(cli, 'controller_runtime', runtime, raising=False)
+    monkeypatch.setattr(cli, '_run_voice_turn', voice_turn)
+    monkeypatch.setattr(cli, '_build_model', lambda *a, **kw: object())
+    monkeypatch.setattr(cli.VoiceConfig, 'from_env', lambda: SimpleNamespace(ollama_model='fake'))
+    @asynccontextmanager
+    async def old_servers(*args, **kwargs):
+        raise AssertionError('Voice bypassed shared session')
+        yield ()
+    monkeypatch.setattr(cli, '_tool_servers', old_servers)
+    asyncio.run(cli._voice_async(True))
+    assert seen[0]['interactive'] is True
+    assert seen[1] == 'voice'
+
+def test_serve_rejects_network_binding_before_startup():
+    from odessy.application.serve import validate_binding
+    assert validate_binding('127.0.0.1', 8765) == ('127.0.0.1', 8765)
+    assert validate_binding('::1', 8765) == ('::1', 8765)
+    with pytest.raises(ValueError, match='loopback'):
+        validate_binding('0.0.0.0', 8765)
+    with pytest.raises(ValueError, match='port'):
+        validate_binding('localhost', 0)
+
+
+def test_serve_cli_routes_explicit_options_without_loading_model(monkeypatch):
+    from odessy.application import serve
+    seen = []
+    async def server(**kwargs):
+        seen.append(kwargs)
+    monkeypatch.setattr(serve, 'run_server', server)
+    cli.main(['serve', '--host', '127.0.0.1', '--port', '8899', '--fake-model'])
+    assert seen[0]['port'] == 8899
+    assert seen[0]['use_fake_model'] is True
+
+
+def test_coding_agent_server_cli_is_explicit_trusted_stdio_operator(monkeypatch):
+    import sys
+    seen = []
+    async def worker(**kwargs):
+        seen.append(kwargs)
+    monkeypatch.setitem(sys.modules, 'odessy.collaboration.worker', SimpleNamespace(run_worker=worker))
+    cli.main(['coding-agent-server'])
+    assert seen == [{'trusted_stdio_operator': True}]

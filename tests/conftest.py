@@ -48,6 +48,7 @@ def _isolate_config_environment(
         "ODESSY_COMMANDS_FILE",
         str(tmp_path_factory.mktemp("commands") / "missing.toml"),
     )
+    monkeypatch.setenv("ODESSY_COLLABORATION_FILE", str(tmp_path_factory.mktemp("collaboration") / "missing.toml"))
     # Most of the suite describes the two-machine deployment (laptop routing, the full
     # tool list). Pin it, so a test never depends on whether the developer's shell has
     # a tool server URL set; single-machine tests set "single" themselves.

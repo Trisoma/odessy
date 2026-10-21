@@ -27,6 +27,7 @@ import math
 import os
 import sys
 import threading
+import copy
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
@@ -124,14 +125,43 @@ class UsageLedger:
     turn: Totals = field(default_factory=Totals)
     _warned: bool = field(default=False, init=False, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _profiles: dict = field(default_factory=dict, init=False, repr=False)
+    _legacy_total: Totals = field(default_factory=Totals, init=False, repr=False)
+    _legacy_turn: Totals = field(default_factory=Totals, init=False, repr=False)
+
+    def for_profile(self, name, provider, model, pricing=None):
+        """Bind API accounting to a configured identity; no inherited model prices."""
+        if isinstance(pricing, Mapping):
+            pricing = Pricing(**pricing)
+        key = (name, provider, model)
+        with self._lock:
+            currencies = {p['pricing'].currency for p in self._profiles.values() if p['pricing']}
+            if self.pricing:
+                currencies.add(self.pricing.currency)
+            if pricing and currencies and pricing.currency not in currencies:
+                raise CloudUsageConfigError('profile pricing currencies must match')
+            if key in self._profiles and self._profiles[key]['pricing'] != pricing:
+                raise CloudUsageConfigError('profile prices cannot change during a run')
+            self._profiles.setdefault(key, dict(total=Totals(), turn=Totals(), pricing=pricing))
+        return ProfileUsage(self, key)
+
+    @property
+    def profiles(self):
+        with self._lock:
+            result = copy.deepcopy(self._profiles)
+            for entry in result.values():
+                p, t = entry['pricing'], entry['total']
+                entry['cost'] = None if p is None else p.cost(prompt=t.prompt, cached=t.cached, completion=t.completion)
+                entry['price_status'] = 'unknown' if p is None else 'configured'
+            return result
 
     @classmethod
-    def from_env(cls, environ: Mapping[str, str] | None = None) -> UsageLedger:
+    def from_env(cls, environ: Mapping[str, str] | None = None, *, allow_profile_prices: bool = False) -> UsageLedger:
         source = os.environ if environ is None else environ
         pricing = pricing_from_env(source)
         tokens = _number(source, BUDGET_TOKENS_ENV)
         cost = _number(source, BUDGET_COST_ENV)
-        if cost is not None and pricing is None:
+        if cost is not None and pricing is None and not allow_profile_prices:
             raise CloudUsageConfigError(f"{BUDGET_COST_ENV} needs prices: set {PRICE_ENVS[0]} and {PRICE_ENVS[2]}")
         return cls(pricing=pricing, budget_tokens=None if tokens is None else int(tokens), budget_cost=cost)
 
@@ -142,6 +172,8 @@ class UsageLedger:
             values = dict(prompt=prompt or 0, cached=cached or 0, completion=completion or 0)
             self.total.add(**values)
             self.turn.add(**values)
+            self._legacy_total.add(**values)
+            self._legacy_turn.add(**values)
             message = self._warning()
         if message:
             self.warn(message)
@@ -149,8 +181,25 @@ class UsageLedger:
     def start_turn(self) -> None:
         with self._lock:
             self.turn = Totals()
+            self._legacy_turn = Totals()
+            for entry in self._profiles.values():
+                entry['turn'] = Totals()
 
     def cost(self, totals: Totals | None = None) -> float | None:
+        if self._profiles and (totals is None or totals is self.total or totals is self.turn):
+            scope = 'turn' if totals is self.turn else 'total'
+            legacy = self._legacy_turn if scope == 'turn' else self._legacy_total
+            if (legacy.calls and self.pricing is None) or any(e[scope].calls and e['pricing'] is None for e in self._profiles.values()):
+                return None
+            priced = self.pricing is not None or any(e['pricing'] for e in self._profiles.values())
+            if not priced:
+                return None
+            cost = 0.0 if self.pricing is None else self.pricing.cost(prompt=legacy.prompt, cached=legacy.cached, completion=legacy.completion)
+            for entry in self._profiles.values():
+                p, t = entry['pricing'], entry[scope]
+                if p:
+                    cost += p.cost(prompt=t.prompt, cached=t.cached, completion=t.completion)
+            return cost
         if self.pricing is None:
             return None
         totals = totals or self.total
@@ -181,7 +230,16 @@ class UsageLedger:
     def check(self) -> None:
         """Raise ``CloudBudgetExceeded`` when the budget is spent. Called before each request."""
 
+        if self.budget_cost is not None and self.pricing is None:
+            raise CloudUsageConfigError('cost budget requires global prices for requests without a profile')
+        self._check_budget()
+
+    def _check_budget(self) -> None:
+        """Check shared ceilings after the caller's own prices are admitted."""
+
         with self._lock:
+            if self.budget_cost is not None and self.cost() is None:
+                raise CloudUsageConfigError('cost budget cannot account for usage with unknown prices')
             if not self._exhausted():
                 return
             line = self.budget_line()
@@ -198,16 +256,20 @@ class UsageLedger:
             text += f" ({totals.cached:,} cached)"
         text += f", {totals.completion:,} out"
         cost = self.cost(totals)
-        if cost is not None and self.pricing is not None:
-            text += f", ~{cost:.4f} {self.pricing.currency}"
+        currency = self.pricing.currency if self.pricing else next((e['pricing'].currency for e in self._profiles.values() if e['pricing']), None)
+        if cost is not None and currency:
+            text += f", ~{cost:.4f} {currency}"
+        elif self._profiles:
+            text += ', cost unknown'
         return text
 
     def budget_line(self) -> str:
         parts = []
         if self.budget_tokens is not None:
             parts.append(f"{self.total.tokens:,} of {self.budget_tokens:,} tokens")
-        if self.budget_cost is not None and self.pricing is not None:
-            parts.append(f"~{self.cost() or 0.0:.4f} of {self.budget_cost:g} {self.pricing.currency}")
+        currency = self.pricing.currency if self.pricing else next((e['pricing'].currency for e in self._profiles.values() if e['pricing']), None)
+        if self.budget_cost is not None and currency:
+            parts.append(f"~{self.cost() or 0.0:.4f} of {self.budget_cost:g} {currency}")
         return "; ".join(parts) or "no budget set"
 
     def turn_line(self) -> str | None:
@@ -230,17 +292,43 @@ class UsageLedger:
             return f"[odessy] cloud usage this run: {self._format(self.total)} ({self.total.calls} call(s))"
 
 
+class ProfileUsage:
+    """A cloud-adapter compatible view sharing the run's ceilings."""
+
+    def __init__(self, ledger, key):
+        self.ledger, self.key = ledger, key
+
+    def check(self):
+        if self.ledger.budget_cost is not None and self.ledger._profiles[self.key]['pricing'] is None:
+            raise CloudUsageConfigError('cost budget requires explicit profile prices before requests')
+        self.ledger._check_budget()
+
+    def record(self, *, prompt, cached, completion):
+        ledger = self.ledger
+        with ledger._lock:
+            values = dict(prompt=prompt or 0, cached=cached or 0, completion=completion or 0)
+            entry = ledger._profiles[self.key]
+            for total in (ledger.total, ledger.turn, entry['total'], entry['turn']):
+                total.add(**values)
+            message = ledger._warning()
+        if message:
+            ledger.warn(message)
+
+    def cost(self):
+        return self.ledger.profiles[self.key]['cost']
+
+
 _process_ledger: UsageLedger | None = None
 _process_lock = threading.Lock()
 
 
-def process_ledger() -> UsageLedger:
+def process_ledger(*, allow_profile_prices: bool = False) -> UsageLedger:
     """The ledger shared by every cloud adapter in this process, read from the environment once."""
 
     global _process_ledger
     with _process_lock:
         if _process_ledger is None:
-            _process_ledger = UsageLedger.from_env()
+            _process_ledger = UsageLedger.from_env(allow_profile_prices=allow_profile_prices)
         return _process_ledger
 
 
