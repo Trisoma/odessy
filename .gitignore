@@ -62,5 +62,8 @@ token.json
 # Evaluation run output
 evals/results/
 
+# Local test/run logs (benchmark baselines under benchmark/base stay tracked)
+/*.log
+
 # Locally built standalone installer
 /OdessySetup.exe
