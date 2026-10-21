@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "scope": "python-runtime-dependencies-only",
+  "python_version": "3.12",
+  "platform": "windows-x64",
+  "download_manifest": "python-wheels-windows-x64.json",
+  "download_manifest_sha256": "2fd2487196f27269b9ee8c19601eddf171f49bbaca05e83991cd7407c0f583b3",
+  "lock_file": "requirements-windows-x64-py312.txt",
+  "lock_sha256": "c0222f3d5c6d8bbb3c1f63a6ef35980a2493a59388ea329eb5796bd29f26e762",
+  "source_sha256": {
+    "pyproject.toml": "5fa42f8e1fec7a33bca6591baa22ddb7e2479b1d1e4c983c68b189c649368a8a"
+  },
+  "layout": {
+    "annotated-types": {
+      "destination": "app",
+      "unpacked_bytes": 36347
+    },
+    "anyio": {
+      "destination": "app",
+      "unpacked_bytes": 539217
+    },
+    "attrs": {
+      "destination": "app",
+      "unpacked_bytes": 233691
+    },
+    "cffi": {
+      "destination": "app",
+      "unpacked_bytes": 567535
+    },
+    "click": {
+      "destination": "app",
+      "unpacked_bytes": 447719
+    },
+    "cryptography": {
+      "destination": "app",
+      "unpacked_bytes": 10462548
+    },
+    "h11": {
+      "destination": "app",
+      "unpacked_bytes": 103935
+    },
+    "httpcore2": {
+      "destination": "app",
+      "unpacked_bytes": 306918
+    },
+    "httpx2": {
+      "destination": "app",
+      "unpacked_bytes": 408941
+    },
+    "idna": {
+      "destination": "app",
+      "unpacked_bytes": 342091
+    },
+    "jsonschema": {
+      "destination": "app",
+      "unpacked_bytes": 476081
+    },
+    "jsonschema-specifications": {
+      "destination": "app",
+      "unpacked_bytes": 47261
+    },
+    "mcp": {
+      "destination": "app",
+      "unpacked_bytes": 1210630
+    },
+    "mcp-types": {
+      "destination": "app",
+      "unpacked_bytes": 356212
+    },
+    "opentelemetry-api": {
+      "destination": "app",
+      "unpacked_bytes": 196393
+    },
+    "pycparser": {
+      "destination": "app",
+      "unpacked_bytes": 213873
+    },
+    "pydantic": {
+      "destination": "app",
+      "unpacked_bytes": 1964433
+    },
+    "pydantic-core": {
+      "destination": "app",
+      "unpacked_bytes": 5909972
+    },
+    "pyjwt": {
+      "destination": "app",
+      "unpacked_bytes": 122170
+    },
+    "python-multipart": {
+      "destination": "app",
+      "unpacked_bytes": 104225
+    },
+    "pywin32": {
+      "destination": "app",
+      "unpacked_bytes": 15122441
+    },
+    "referencing": {
+      "destination": "app",
+      "unpacked_bytes": 115368
+    },
+    "rpds-py": {
+      "destination": "app",
+      "unpacked_bytes": 588558
+    },
+    "sse-starlette": {
+      "destination": "app",
+      "unpacked_bytes": 44752
+    },
+    "starlette": {
+      "destination": "app",
+      "unpacked_bytes": 275708
+    },
+    "truststore": {
+      "destination": "app",
+      "unpacked_bytes": 63033
+    },
+    "typing-extensions": {
+      "destination": "app",
+      "unpacked_bytes": 182767
+    },
+    "typing-inspection": {
+      "destination": "app",
+      "unpacked_bytes": 54538
+    },
+    "uvicorn": {
+      "destination": "app",
+      "unpacked_bytes": 294179
+    }
+  },
+  "pending_components": [
+    "python-runtime",
+    "node-runtime",
+    "tool-server",
+    "ollama-runtime",
+    "local-model",
+    "application"
+  ]
+}

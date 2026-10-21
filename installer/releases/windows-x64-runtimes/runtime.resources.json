@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "platform": "windows-x64",
+  "download_manifest": "runtime-downloads.json",
+  "download_manifest_sha256": "86608351e8499c99f940aa6a8c2bd19bcefa8fa7b98ea967d425714f663dc382",
+  "runtimes": {
+    "python-runtime": {
+      "format": "tar.gz",
+      "prefix": "python",
+      "unpacked_bytes": 63210532
+    },
+    "node-runtime": {
+      "format": "zip",
+      "prefix": "node-v22.23.0-win-x64",
+      "unpacked_bytes": 99502603
+    }
+  },
+  "sources": {
+    "python-runtime": "https://raw.githubusercontent.com/astral-sh/uv/0.11.28/crates/uv-python/download-metadata.json",
+    "node-runtime": "https://nodejs.org/dist/v22.23.0/SHASUMS256.txt"
+  }
+}

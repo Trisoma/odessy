@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "release": "download-demo-only",
+  "platform": "windows-x64",
+  "artifacts": [
+    {
+      "id": "node-license-demo",
+      "version": "22.14.0",
+      "url": "https://raw.githubusercontent.com/nodejs/node/v22.14.0/LICENSE",
+      "size_bytes": 140396,
+      "sha256": "1474fea5eff88dc92763acca3ca1f54b51fa153be1529eae74ace35957aea9ce"
+    }
+  ]
+}

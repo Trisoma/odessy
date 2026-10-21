@@ -61,3 +61,6 @@ token.json
 
 # Evaluation run output
 evals/results/
+
+# Locally built standalone installer
+/OdessySetup.exe
