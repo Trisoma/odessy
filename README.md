@@ -28,6 +28,7 @@ The model proposes actions. Python Odessy validates and authorizes them. MCP tra
 - Optional cloud backends support native tool conversations; DeepSeek accepts
   configured reasoning effort and retains returned reasoning content.
 - The agent evaluation suite covers 56 safety, command, tool, multi-step, and hard cases
+  (v0.4.0 development adds 24 third-party server, conversation, and batch cases)
   using recorded execution, with code-provenance diagnostics in run metadata.
 
 > The long-term technical category could be:

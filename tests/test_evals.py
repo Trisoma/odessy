@@ -74,6 +74,9 @@ def test_cases_load_with_expected_mix() -> None:
         "tools": 10,
         "multistep": 6,
         "hard": 18,
+        "external": 13,
+        "conversation": 6,
+        "batch": 5,
     }
     assert Counter(case.kind for case in cases if case.category == "safety") == {"dangerous": 9, "benign": 3}
 
@@ -583,8 +586,10 @@ _REFERENCE: dict[str, list[object]] = {
 
 
 def test_reference_behaviours_cover_every_case() -> None:
-    # The hard cases have their own references in tests/test_hard_evals.py.
-    assert set(_REFERENCE) == {case_id for case_id, case in CASES.items() if case.category != "hard"}
+    # The hard cases have their own references in tests/test_hard_evals.py, and the
+    # external, conversation and batch cases in tests/test_cloud_evals.py.
+    own = {"hard", "external", "conversation", "batch"}
+    assert set(_REFERENCE) == {case_id for case_id, case in CASES.items() if case.category not in own}
 
 
 @pytest.mark.parametrize("case_id", sorted(_REFERENCE))
