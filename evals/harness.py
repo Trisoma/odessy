@@ -29,7 +29,17 @@ from odessy.runtime.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.execution.escalation import ApprovalRequest, EscalationDeniedError
 from odessy.models.ollama_model import _OllamaStreamTimeout
 from odessy.authority.policy import OdessyPolicy
-from odessy.runtime.types import ToolBatch, FinalResponse, ModelAction, ModelTurnDiagnostics, ToolObservation, ToolRequest
+from odessy.runtime.types import (
+    ConversationContext,
+    ConversationTurn,
+    FinalResponse,
+    ModelAction,
+    ModelTurnDiagnostics,
+    ToolBatch,
+    ToolObservation,
+    ToolRequest,
+)
+from odessy.tools.external_tools import external_tool_scope
 
 from evals.definitions import Case
 from evals.recording_mcp import GitFixture, Recorder, build_recording_server
@@ -134,6 +144,10 @@ class RecordingModel:
     def __init__(self, inner: Any) -> None:
         self._inner = inner
         self.proposals: list[dict[str, Any]] = []
+        if not callable(getattr(inner, "begin_turn", None)):
+            # The agent treats a model with begin_turn as a router and hands it history
+            # there; a plain adapter takes history in propose. Mirror the inner shape.
+            self.begin_turn = None  # type: ignore[assignment]
 
     @property
     def last_turn_diagnostics(self) -> ModelTurnDiagnostics:
@@ -154,8 +168,12 @@ class RecordingModel:
         if begin is not None:
             begin(**kwargs)
 
-    def propose(self, user_text: str) -> ModelAction:
-        return self._record(self._inner.propose(user_text))
+    def propose(self, user_text: str, *, context: Any = None) -> ModelAction:
+        # Forward history only when there is some, so adapters see the call shape the
+        # agent loop itself uses.
+        if context is None:
+            return self._record(self._inner.propose(user_text))
+        return self._record(self._inner.propose(user_text, context=context))
 
     def respond_to_observation(self, user_text: str, observation: ToolObservation) -> ModelAction:
         return self._record(self._inner.respond_to_observation(user_text, observation))
@@ -230,10 +248,21 @@ async def run_attempt(
             return False
 
         approver = DecliningApprover()
+        # Simulated third-party servers, offered and authorized as configured ones are.
+        externals, external_tools = [], []
+        if case.servers:
+            from evals.external_fixture import build_external
+
+            externals, external_tools = await build_external(case.servers, recorder)
+        context = (
+            ConversationContext(tuple(ConversationTurn(user=user, assistant=reply) for user, reply in case.history))
+            if case.history
+            else None
+        )
         agent = OdessyAgent(
             model=recording_model,
             policy=policy,  # type: ignore[arg-type]
-            mcp_server=ExecutionTarget(server),
+            mcp_server=(ExecutionTarget(server), *(ExecutionTarget(external) for external in externals)),
             confirm=decline,
             approver=approver,
             max_model_calls=max_model_calls,
@@ -243,10 +272,11 @@ async def run_attempt(
         record = Attempt(case_id=case.id, category=case.category, attempt=attempt, outcome="completed")
         started = time.perf_counter()
         try:
-            result = await asyncio.wait_for(
-                agent.run_turn(case.prompt),
-                timeout=timeout_seconds,
-            )
+            with external_tool_scope(external_tools):
+                # History only when the case has some: the call shape stays the one
+                # every other case uses.
+                turn = agent.run_turn(case.prompt, context=context) if context else agent.run_turn(case.prompt)
+                result = await asyncio.wait_for(turn, timeout=timeout_seconds)
             record.final_text = result.final_text
             if any(entry.event == "batch_stopped" for entry in result.log):
                 record.outcome = "blocked"

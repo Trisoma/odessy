@@ -16,8 +16,15 @@ from odessy.tools.tool_contracts import TOOL_REQUEST_SCHEMAS
 
 from evals.toml_compat import loads_toml
 
-Category = Literal["safety", "commands", "tools", "multistep", "hard"]
-CATEGORIES: tuple[Category, ...] = ("safety", "commands", "tools", "multistep", "hard")
+Category = Literal["safety", "commands", "tools", "multistep", "hard", "external", "conversation", "batch"]
+CATEGORIES: tuple[Category, ...] = (
+    "safety", "commands", "tools", "multistep", "hard", "external", "conversation", "batch"
+)
+#: Categories graded by goal (``graders._grade_goal``): what ran, what was asked, what
+#: the answer says. They exercise features added after the first five categories.
+GOAL_CATEGORIES = frozenset({"external", "conversation", "batch"})
+#: "any": completed or blocked both pass (asking back and being stopped are both fine).
+OUTCOME_EXPECTATIONS = ("completed", "blocked", "any")
 CASES_DIR = Path(__file__).parent / "cases"
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -118,6 +125,14 @@ class Case:
     ask_back: bool = False
     #: hard: model calls an efficient solution needs. Reported, not graded.
     optimal_calls: int | None = None
+    #: external: simulated third-party servers offered (see evals/external_fixture.py).
+    servers: tuple[str, ...] = ()
+    #: conversation: earlier exchanges, oldest first, as (user, assistant) pairs.
+    history: tuple[tuple[str, str], ...] = ()
+    #: goal categories: calls that must have been sent to the user for confirmation.
+    expect_confirmation: tuple[Matcher, ...] = ()
+    #: goal categories: the outcome the attempt must end with (default "completed").
+    expect_outcome: str | None = None
 
 
 class CaseError(ValueError):
@@ -166,6 +181,10 @@ def _parse(raw: dict[str, Any], source: str) -> Case:
             must_not_propose=tuple(Matcher(**item) for item in raw.get("must_not_propose", [])),
             ask_back=bool(raw.get("ask_back", False)),
             optimal_calls=raw.get("optimal_calls"),
+            servers=tuple(raw.get("servers", [])),
+            history=tuple((item["user"], item["assistant"]) for item in raw.get("history", [])),
+            expect_confirmation=tuple(Matcher(**item) for item in raw.get("expect_confirmation", [])),
+            expect_outcome=raw.get("expect_outcome"),
         )
     except (KeyError, TypeError) as exc:
         raise CaseError(f"{where}: malformed case ({exc})") from exc
@@ -182,7 +201,9 @@ def _validate(case: Case, where: str) -> None:
     if not case.prompt.strip():
         fail("empty prompt")
 
-    matchers = (*case.forbidden, *case.expect_reached, *case.required_calls, *case.must_not_propose)
+    matchers = (
+        *case.forbidden, *case.expect_reached, *case.required_calls, *case.must_not_propose, *case.expect_confirmation
+    )
     regexes = [m.tool for m in matchers]
     regexes += [m.pattern for m in matchers if m.pattern]
     regexes += list(case.expect_args.values()) + list(case.sequence)
@@ -195,6 +216,13 @@ def _validate(case: Case, where: str) -> None:
             fail(f"bad regex {pattern!r}: {exc}")
 
     known = set(TOOL_REQUEST_SCHEMAS)
+    if case.servers:
+        from evals.external_fixture import SERVER_NAMES, public_tool_names
+
+        unknown_servers = set(case.servers) - set(SERVER_NAMES)
+        if unknown_servers:
+            fail(f"unknown fixture servers {sorted(unknown_servers)}")
+        known |= {name for name in public_tool_names() if name.split(".")[0] in case.servers}
     for name in (*case.expect_tools, *case.accept_tools):
         if name != "none" and name not in known:
             fail(f"unknown tool {name!r}")
@@ -232,5 +260,19 @@ def _validate(case: Case, where: str) -> None:
             fail(f"hard case needs subtype in {HARD_SUBTYPES}")
         if not (case.answer_patterns or case.answer_any or case.ask_back):
             fail("hard case needs an answer check (answer_patterns, answer_any or ask_back)")
-        if case.optimal_calls is not None and (not isinstance(case.optimal_calls, int) or case.optimal_calls < 1):
-            fail("optimal_calls must be a positive integer")
+    if case.optimal_calls is not None and (not isinstance(case.optimal_calls, int) or case.optimal_calls < 1):
+        fail("optimal_calls must be a positive integer")
+    if case.category in GOAL_CATEGORIES:
+        if case.expect_outcome not in (None, *OUTCOME_EXPECTATIONS):
+            fail(f"expect_outcome must be one of {OUTCOME_EXPECTATIONS}")
+        if not (case.answer_patterns or case.answer_any or case.ask_back or case.expect_confirmation
+                or case.forbidden or case.expect_outcome == "blocked"):
+            fail("goal case needs an answer check, expect_confirmation, forbidden, or expect_outcome = 'blocked'")
+    if case.category == "external" and not case.servers:
+        fail("external case needs `servers`")
+    if case.category != "external" and case.servers:
+        fail("only external cases take `servers`")
+    if case.category == "conversation" and not case.history:
+        fail("conversation case needs `history`")
+    if case.category != "conversation" and case.history:
+        fail("only conversation cases take `history`")

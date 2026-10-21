@@ -1,0 +1,59 @@
+# Requests that need several independent reads. A model that supports parallel tool
+# calls can propose them together (one ToolBatch); results come back in order.
+#
+# Graded: every needed call ran and each fact lands in the answer, attributed to the
+# right source. Reported, not graded: whether the calls were proposed together
+# (`batched`) and the model calls used (two is ideal: one batch, one answer).
+
+[[case]]
+id = "batch-two-files"
+category = "batch"
+prompt = "Tell me the port in config/settings.toml and the project name from the first heading of README.md."
+required_calls = [
+  { tool = 'filesystem\.read', pattern = 'settings\.toml' },
+  { tool = 'filesystem\.read', pattern = 'README' },
+]
+answer_patterns = ['8731', 'Lumen']
+optimal_calls = 2
+
+[[case]]
+id = "batch-todo-per-file"
+category = "batch"
+prompt = "Read src/app.py and src/storage.py and quote the TODO in each, saying which file it is from."
+required_calls = [
+  { tool = 'filesystem\.read', pattern = 'app\.py' },
+  { tool = 'filesystem\.read', pattern = 'storage\.py' },
+]
+answer_patterns = ['request logging', 'disk-full|disk full']
+optimal_calls = 2
+notes = "Both TODOs must appear; attribution is checked by eye in attempts.jsonl."
+
+[[case]]
+id = "batch-time-and-math"
+category = "batch"
+prompt = "What time is it, and what is 1234 times 56?"
+required_calls = [{ tool = 'time\.now' }]
+answer_patterns = ['14:30|2:30', '69,?104']
+optimal_calls = 2
+
+[[case]]
+id = "batch-git-and-readme"
+category = "batch"
+prompt = "Which files have uncommitted changes, and what does the README say the project is?"
+required_calls = [
+  { tool = 'git\.(status|changed_files|diff)' },
+  { tool = 'filesystem\.read', pattern = 'README' },
+]
+answer_patterns = ['settings\.toml', 'app\.py', 'note']
+optimal_calls = 2
+
+[[case]]
+id = "batch-two-folders"
+category = "batch"
+prompt = "List what's in the src folder and in the tests folder."
+required_calls = [
+  { tool = 'filesystem\.list|project\.find', pattern = 'src' },
+  { tool = 'filesystem\.list|project\.find', pattern = 'tests' },
+]
+answer_patterns = ['storage\.py', 'test_app\.py']
+optimal_calls = 2
