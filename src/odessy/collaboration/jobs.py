@@ -280,6 +280,10 @@ class JobManager:
     async def _submit(self, participant, task, mode, workspace, approved, consultation=False):
         identity = self._preflight_submission(participant, task, mode, workspace,
             'consult' if consultation else 'delegate')
+        # The approval binds the target that was admitted. Keep it, so a queued job
+        # cannot run against a different target if the mapping changes while it waits.
+        binding = {'remote_identity': identity['remote_identity'],
+                   'adapter_identity': identity['adapter_identity']}
         profile = self.profiles[participant]
         if mode != 'advice' and approved is not True:
             raise ValueError('explicit controller approval is required')
@@ -313,6 +317,7 @@ class JobManager:
                    validation={'status': 'unknown', 'report': None}, result=None, error=None,
                    progress=[], log='', usage=_cli_usage())
         job['remote_state_unknown'] = False
+        job['binding'] = binding
         job['permissions'] = {
             'source': 'remote_coding_cli' if remote else 'coding_cli', 'adapter': profile.adapter,
             'mode': mode, 'enforcement': 'child_cli_not_verified',
@@ -380,6 +385,12 @@ class JobManager:
             self._emit(job)
             if remote:
                 target = self.remote_targets[profile.host]
+                if str(id(target)) != job['binding']['remote_identity']:
+                    raise ValueError('execution target changed after approval; a new authorization decision is required')
+                custom = self.adapters.get(profile.adapter)
+                current_adapter = str(id(custom)) if custom is not None else None
+                if current_adapter != job['binding']['adapter_identity']:
+                    raise ValueError('agent adapter changed after approval; a new authorization decision is required')
                 payload = {k: job[k] for k in ('job_id', 'participant', 'task', 'mode', 'workspace')}
                 self._remote_inflight.add(job['job_id'])
                 result = await asyncio.wait_for(self._remote_call(target, 'start', payload),

@@ -66,3 +66,33 @@ def test_jobs_api_rejects_unavailable_target_before_creating_approval(tmp_path):
             assert not controller.pending_approvals
         await controller.close()
     asyncio.run(run())
+
+
+def test_queued_remote_job_refuses_a_target_swapped_after_approval(tmp_path):
+    """The grant names one execution target; a queued job must not run on another."""
+
+    async def run():
+        profile = ParticipantProfile('coder', 'codex', capabilities=('delegate',),
+                                     host='laptop', workspace='C:/work')
+        calls = []
+
+        def approved_target(*args):
+            calls.append('approved')
+
+        jobs = JobManager({'coder': profile}, remote_targets={'laptop': approved_target})
+        job = {
+            'job_id': 'j1', 'participant': 'coder', 'mode': 'advice', 'task': 'review',
+            'state': 'queued', 'workspace': 'C:/work', 'worktree': None, 'diff': '',
+            'changed_files': [], 'validation': {'status': 'unknown', 'report': None},
+            'result': None, 'error': None, 'progress': [], 'log': '', 'usage': {},
+            'remote_state_unknown': False, 'permissions': {},
+            'binding': {'remote_identity': str(id(approved_target)), 'adapter_identity': None},
+        }
+        jobs._jobs['j1'] = job
+        jobs.remote_targets['laptop'] = lambda *args: calls.append('swapped')  # another object
+        await jobs._execute(job, profile, 'C:/work', None, ('laptop', 'C:/work'), True)
+        assert job['state'] == 'failed'
+        assert 'changed after approval' in str(job['error'])
+        assert calls == [], 'neither target may be used once the grant no longer matches'
+
+    asyncio.run(run())

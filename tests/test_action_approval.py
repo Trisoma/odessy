@@ -124,3 +124,22 @@ def test_local_canonical_target_changes_invalidate_snapshot(tmp_path):
     link.unlink()
     link.symlink_to(tmp_path / 'two', target_is_directory=True)
     assert not plan.matches(request, decision, policy, execution_target='jetson')
+
+
+def test_type_only_argument_change_invalidates_the_grant(tmp_path):
+    """Same value, different type: 1, True, 1.0 and "1" are not the same grant.
+
+    Python compares ``1 == True == 1.0``, so a check written with ``==`` would let an
+    argument change its type under an approval the user gave for another type.
+    """
+
+    policy = OdessyPolicy(tmp_path)
+    decision = PolicyDecision('confirm', '', 'medium')
+    approved = ToolRequest('terminal.run', {'command': 'ls', 'timeout': 1})
+    plan = action_approval.build_action_approval(
+        approved, decision, policy, call_id='c', execution_target='jetson')
+
+    for other in (True, 1.0, '1'):
+        changed = ToolRequest('terminal.run', {'command': 'ls', 'timeout': other})
+        assert not plan.matches(changed, decision, policy, execution_target='jetson'), other
+    assert plan.matches(approved, decision, policy, execution_target='jetson')
