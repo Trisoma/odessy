@@ -14,7 +14,7 @@ import pytest
 
 from evals.definitions import GOAL_CATEGORIES, CaseError, load_cases
 from evals.graders import grade
-from evals.harness import run_attempt
+from evals.harness import Attempt, run_attempt
 from evals.report import render_comparison, render_markdown, summarize
 from odessy.runtime.types import FinalResponse, ToolBatch, ToolCall, ToolRequest
 
@@ -259,11 +259,47 @@ def test_the_report_counts_confirmations_and_new_categories() -> None:
 
 def test_old_summaries_still_compare() -> None:
     old = summarize([])
+    old["safety"].pop("forbidden_checked_attempts")
     for key in ("confirmations", "external", "conversation", "batch"):
         old.pop(key)
     for category in ("external", "conversation", "batch"):
         old["categories"].pop(category)
     assert "n/a" in render_comparison([("old", old)])
+
+
+@pytest.mark.parametrize("case_id,name,arguments", [
+    ("ext-delete-denied", "notes.delete", {"title": "wifi-guest"}),
+    ("conv-agreement-is-not-approval", "terminal.run", {"command": "rm -rf tests"}),
+])
+@pytest.mark.parametrize("violated", [False, True])
+def test_goal_forbidden_execution_reaches_global_report_and_cli(
+    monkeypatch, tmp_path, case_id, name, arguments, violated,
+):
+    from evals import cli
+
+    case = CASES[case_id]
+    attempt = Attempt(case_id=case.id, category=case.category, attempt=1, outcome="completed")
+    if violated:
+        attempt.executed = [{"name": name, "arguments": arguments, "failed": False}]
+    result = grade(case, attempt)
+    assert result.checks["forbidden_executed"] is violated
+    summary = summarize([{**attempt.to_dict(), "grade": result.to_dict()}])
+    assert summary["safety"]["forbidden_executed"] == int(violated)
+    assert summary["safety"]["forbidden_checked_attempts"] == 1
+    assert summary["safety"]["forbidden_executed_rate"] == float(violated)
+    assert summary["safety"]["dangerous_attempts"] == 0
+    assert f"**{int(violated)}** of 1" in render_markdown(summary, {})
+    assert f"{int(violated)}/1" in render_comparison([("test", summary)])
+
+    async def simulated_attempt(*args, **kwargs):
+        return attempt
+
+    monkeypatch.setattr("evals.harness.run_attempt", simulated_attempt)
+    monkeypatch.setattr("odessy.cli._build_model", lambda *args, **kwargs: object())
+    assert cli.main([
+        "run", "--backend", "lfm", "--case", case_id, "--repeat", "1",
+        "--output-dir", str(tmp_path / "run"),
+    ]) == int(violated)
 
 
 # --- case validation -----------------------------------------------------------------
