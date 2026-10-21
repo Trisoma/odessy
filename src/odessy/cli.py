@@ -62,6 +62,7 @@ from odessy.voice.session import (
 from odessy.voice.stt import WhisperCppSTT, blank_transcript_reason
 from odessy.voice.tts import KokoroTTS
 from odessy.models.routed_model import RoutedModel, RoutingConfig, model_uses_cloud
+from odessy.models.usage import CloudBudgetExceeded, CloudUsageConfigError, process_ledger
 from odessy.voice.vad import SileroSpeechDetector
 from odessy.voice.wake import OpenWakeWordDetector, WakeGate
 
@@ -220,11 +221,14 @@ async def _text_async(user_text: str, use_fake_model: bool, backend: str | None 
     async with _tool_servers(workspace_root, cloud=model_uses_cloud(model)) as servers:
         agent = _build_agent(workspace_root, model, servers)
         try:
-            result = await agent.run_turn(user_text)
+            with _usage_report():
+                result = await agent.run_turn(user_text)
         except (PermissionError, EscalationDeniedError) as error:
             # A denial, a declined confirmation or a refused escalation is an outcome,
             # not a crash: say what was not run instead of printing a traceback.
             raise SystemExit(f"Odessy did not run it: {error}") from error
+        except CloudBudgetExceeded as error:
+            raise SystemExit(str(error)) from error
     print(result.final_text)
 
 
@@ -235,7 +239,8 @@ async def _voice_async(use_fake_model: bool, backend: str | None = None) -> None
     _announce_model(model)
     async with _tool_servers(workspace_root, cloud=model_uses_cloud(model)) as servers:
         agent = _build_agent(workspace_root, model, servers)
-        await _run_voice_turn(agent, config)
+        with _usage_report():
+            await _run_voice_turn(agent, config)
 
 
 async def _run_voice_turn(agent: OdessyAgent, config: VoiceConfig) -> None:
@@ -365,7 +370,8 @@ async def _listen_async(
             agent = _build_agent(workspace_root, model, servers)
 
             async def run_turn(text: str, stop: asyncio.Event, context: Any) -> str:
-                result = await agent.run_turn(text, stop_event=stop, context=context)
+                with _usage_report():
+                    result = await agent.run_turn(text, stop_event=stop, context=context)
                 return result.final_text
 
             session = VoiceSession(
@@ -395,6 +401,11 @@ async def _listen_async(
                 await session.run()
             except KeyboardInterrupt:
                 pass
+            finally:
+                if model_uses_cloud(model):
+                    line = process_ledger().session_line()
+                    if line:
+                        print(line, file=sys.stderr, flush=True)
             if session.error is not None:
                 raise SystemExit(f"Voice session stopped: {session.error}")
     finally:
@@ -421,6 +432,33 @@ def _announce_model(model: object) -> None:
         name = getattr(model, "model", type(model).__name__)
         print(f"[odessy] model: {name} (backend={backend})", file=sys.stderr, flush=True)
     _announce_cloud(model)
+    if model_uses_cloud(model):
+        # Read prices and budget now, so a typo stops the run before anything is sent.
+        try:
+            ledger = process_ledger()
+        except CloudUsageConfigError as error:
+            raise SystemExit(str(error)) from error
+        if ledger.budget_tokens is not None or ledger.budget_cost is not None:
+            print(f"[odessy] cloud budget for this run: {ledger.budget_line()}", file=sys.stderr, flush=True)
+
+
+@contextlib.contextmanager
+def _usage_report():
+    """Print the cloud tokens (and estimated cost) one turn used, if it used any."""
+
+    try:
+        ledger = process_ledger()
+    except CloudUsageConfigError:
+        # Reported at startup for cloud models; a local run has nothing to report.
+        yield
+        return
+    ledger.start_turn()
+    try:
+        yield
+    finally:
+        line = ledger.turn_line()
+        if line:
+            print(line, file=sys.stderr, flush=True)
 
 
 def _announce_cloud(model: object) -> None:

@@ -21,6 +21,14 @@ def _isolate_config_environment(
     """
 
     saved = dict(os.environ)
+    from odessy.models.usage import reset_process_ledger
+
+    # The cloud usage ledger is per process; each test starts with an empty one, and
+    # without the developer's budget or price settings.
+    for name in list(os.environ):
+        if name.startswith(("ODESSY_CLOUD_BUDGET_", "ODESSY_CLOUD_PRICE_")):
+            monkeypatch.delenv(name, raising=False)
+    reset_process_ledger()
     monkeypatch.setenv(
         "ODESSY_CONFIG_FILE",
         str(tmp_path_factory.mktemp("config") / "missing.env"),
@@ -47,5 +55,6 @@ def _isolate_config_environment(
     for name in ("ODESSY_LOCAL_OS", "ODESSY_LAPTOP_OS", "ODESSY_TOOL_SERVER_URL", "ODESSY_MCP_SERVER_URLS"):
         monkeypatch.delenv(name, raising=False)
     yield
+    reset_process_ledger()
     os.environ.clear()
     os.environ.update(saved)

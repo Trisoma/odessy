@@ -202,13 +202,14 @@ def _model_checks(backend: str, env: Mapping[str, str], probes: Probes) -> list[
             return [Check("Model", "fail", f"cloud backend {backend}: {error}", "See docs/reference/cloud-models.mdx.")]
         except ImportError as error:
             return [Check("Model", "fail", f"cloud backend {backend}: {error}", 'pip install -e ".[cloud]"')]
-        return [
+        checks = [
             Check(
                 "Model",
                 "ok",
                 f"cloud backend {backend}, model {model.model} (API key found; not contacted)",
             )
         ]
+        return [*checks, _cloud_usage_check(env)]
     if backend in {"lfm", "llama_cpp"}:
         endpoint = env.get("ODESSY_MODEL_ENDPOINT") or DEFAULT_OLLAMA_ENDPOINT
         name = env.get("ODESSY_MODEL_NAME") or DEFAULT_LFM_MODEL
@@ -240,6 +241,23 @@ def _model_checks(backend: str, env: Mapping[str, str], probes: Probes) -> list[
     else:
         checks.append(Check("Model", "fail", f"model {name} is not pulled in Ollama", f"ollama pull {name}"))
     return checks
+
+
+def _cloud_usage_check(env: Mapping[str, str]) -> Check:
+    from odessy.models.usage import CloudUsageConfigError, UsageLedger
+
+    try:
+        ledger = UsageLedger.from_env(env)
+    except CloudUsageConfigError as error:
+        return Check("Model", "fail", f"cloud usage settings: {error}", "See docs/reference/cloud-models.mdx#cost-and-usage.")
+    prices = (
+        f"prices per million tokens {ledger.pricing.input:g} / {ledger.pricing.cached_input:g} cached / "
+        f"{ledger.pricing.output:g} out {ledger.pricing.currency}"
+        if ledger.pricing
+        else "no prices set (tokens only)"
+    )
+    budget = ledger.budget_line() if (ledger.budget_tokens is not None or ledger.budget_cost is not None) else "no budget"
+    return Check("Model", "ok", f"cloud usage: {prices}; {budget.replace('0 of ', 'limit ')}")
 
 
 def _model_pulled(name: str, pulled: set[str]) -> bool:

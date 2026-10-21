@@ -90,6 +90,8 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
     summary["tokens"] = {
         "prompt": sum(r["prompt_tokens"] or 0 for r in records),
+        # Older records have no cached count; they add nothing here.
+        "cached_prompt": sum(r.get("cached_prompt_tokens") or 0 for r in records),
         "completion": sum(r["completion_tokens"] or 0 for r in records),
     }
     return summary
@@ -320,7 +322,8 @@ def render_markdown(summary: dict[str, Any], metadata: dict[str, Any]) -> str:
         "",
         f"Latency per attempt: mean {_num(summary['latency_ms']['mean'])} ms, "
         f"median {_num(summary['latency_ms']['median'])} ms, p90 {_num(summary['latency_ms']['p90'])} ms. "
-        f"Tokens: {summary['tokens']['prompt']:,} prompt, {summary['tokens']['completion']:,} completion. "
+        f"Tokens: {summary['tokens']['prompt']:,} prompt ({summary['tokens'].get('cached_prompt', 0):,} from cache), "
+        f"{summary['tokens']['completion']:,} completion. "
         f"Outcomes: {', '.join(f'{k} {v}' for k, v in sorted(summary['outcomes'].items()))}.",
         "",
         "## Per case (passed / graded)",
