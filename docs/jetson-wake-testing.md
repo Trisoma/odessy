@@ -120,20 +120,20 @@ check its downloader API before using this command.
 The checked `b86aea9` source calls `self._vad.predict(frame)` even though Odessy
 supplies 512-sample frames. The installed openWakeWord VAD defaults to 480 samples;
 the user's direct test reproduced `Conv_73` / `If_25` invalid input shape `{224}`
-with `frame_size=480`, while `frame_size=512` succeeded. For this snapshot, apply
-the following one-line correction on Jetson before running wake tests:
+with `frame_size=480`, while `frame_size=512` succeeded. The repository adapter
+now explicitly passes `frame_size=512`, with a hardware-free regression test.
+After syncing this fix to Jetson, no manual source substitution is needed.
+Check the installed adapter without opening the microphone:
 
 ```bash
-sed -i 's/self\._vad\.predict(frame)/self._vad.predict(frame, frame_size=512)/' src/odessy/voice/vad.py
-
 python -c 'from odessy.voice.vad import SileroSpeechDetector; print("Silence detected as speech:", SileroSpeechDetector().is_speech(bytes(1024)))'
 ```
 
 The reported result was `Silence detected as speech: False`, without the
-convolution error. This command edits the Jetson checkout; review `git diff`
-before a later update. Skip the substitution when the source already passes the
-correct frame size. This guide records the workaround; it does not apply a source
-fix to the repository.
+convolution error. This command only checks the installed adapter. If the earlier
+manual patch is still present in the Jetson checkout, review `git diff` before
+syncing; it may already be identical to this repository correction. The new test
+checks the adapter contract with dependency stubs, not a real ONNX execution.
 
 Check actual model loading without opening the microphone:
 

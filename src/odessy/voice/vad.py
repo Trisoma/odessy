@@ -75,7 +75,9 @@ class SileroSpeechDetector:
 
     def is_speech(self, pcm: bytes) -> bool:
         frame = self._numpy.frombuffer(pcm, dtype=self._numpy.int16)
-        return float(self._vad.predict(frame)) >= self._threshold
+        # openWakeWord defaults to 480, splitting our 512 samples into 480 + 32;
+        # the deployed Silero model requires 512-sample inference chunks.
+        return float(self._vad.predict(frame, frame_size=512)) >= self._threshold
 
     def reset(self) -> None:
         reset = getattr(self._vad, "reset", None)

@@ -119,7 +119,9 @@ Design detail (internal record, outside this docs set):
 
 October 20 manual smoke tests reached transcription, model execution, and
 speaking in fake-model and auto wake sessions. These used a board-local Silero
-VAD frame-size correction; the checked repository adapter still needs that fix.
+VAD frame-size correction; the repository adapter now includes the explicit
+512-sample setting and a hardware-free regression test. A fresh Jetson test of
+the synced repository fix remains pending.
 The Q8 test profile (15 GPU layers, batch 64, context 1024) also experienced
 intermittent CUDA allocation failures. Spoken `Hi` followed by visible LFM
 residency remains unexplained without transcript/history/escalation evidence;

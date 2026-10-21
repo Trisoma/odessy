@@ -74,7 +74,7 @@ The board's current test profile is **Q8**, `odessy-lfm-q8:jetson`, derived from
 Set `ODESSY_AUTO_CAPABLE_MODEL` to that profile for this test setup; it does not
 change the application default. Intermittent GPU allocation failures mean this
 is not a qualified memory or performance configuration. See the
-[Jetson guide](../jetson-wake-testing.md) for the full commands and VAD workaround.
+[Jetson guide](../jetson-wake-testing.md) for the full commands and VAD correction.
 
 | Variable | Default |
 |---|---|
@@ -114,6 +114,24 @@ keeps no session store; the wake controller owns bounded session memory. See
 [Jetson wake testing](../jetson-wake-testing.md) for setup and hardware checks.
 
 ## Diagnostics and evaluation
+
+### Reproduce the voice routing boundary locally
+
+No Jetson, microphone, Ollama server, or downloaded model is needed for:
+
+```bash
+python -m pytest tests/test_wake_auto_routing.py -v -s
+```
+
+The test feeds synthetic wake/speech frames and a scripted `Hi` transcript through
+the real `VoiceSession`, `OdessyAgent`, and `RoutedModel`. Three cases assert the
+actual adapters called, the history forwarded, spoken response, and model-status
+lines: fresh `Hi` selects Gemma; `Hi` with seeded conversation history selects
+LFM; a simulated Gemma failure selects Gemma then falls back visibly to LFM.
+The adapters are mocks, so this verifies routing integration rather than Whisper
+accuracy, real model output, or the cause of the reported Jetson observation.
+
+### Turn diagnostics
 
 Turn metrics expose additive `routing` diagnostics: policy version, reason,
 selected role, cancellation flag, and ordered stages with backend/model, calls,

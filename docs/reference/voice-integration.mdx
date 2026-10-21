@@ -129,8 +129,9 @@ the Jetson microphone, detector, or playback latency.
 
 October 20 user-reported Jetson runs reached transcription, model execution,
 and speaking with fake-model and auto listening. The installed Silero VAD needed
-a board-local `frame_size=512` correction, recorded in the guide; this is not a
-committed adapter fix. A later apparent wake failure was traced by the user to
+a board-local `frame_size=512` correction. The repository adapter now includes
+that correction and a hardware-free regression test; sync it before retesting.
+A later apparent wake failure was traced by the user to
 the microphone being off. Auto voice using LFM after spoken `Hi` remains an
 unresolved routing observation; see the
 [routing boundary](model-selection.mdx#routing-boundary-and-october-20-jetson-observations).

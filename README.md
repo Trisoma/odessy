@@ -55,7 +55,7 @@ October 20 Jetson smoke tests reached transcription, model execution, and speaki
 full hardware acceptance remains pending. Auto using LFM after spoken `Hi` is an
 unresolved routing observation. Follow
 [Jetson wake testing](docs/jetson-wake-testing.md), including the auxiliary
-openWakeWord model downloads, the board-local VAD correction, and the Q8 profile.
+openWakeWord model downloads, the integrated VAD correction, and the Q8 profile.
 
 ## Python source layout
 

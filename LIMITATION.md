@@ -13,8 +13,9 @@ assets needed by openWakeWord.
 
 October 20 user-reported Jetson smoke tests now reached transcription, model
 execution, and speaking with fake-model and auto wake listening, after a local
-Silero VAD `frame_size=512` correction. The repository adapter has not been fixed
-by this documentation change. Q8 with 15 GPU layers remains a test baseline with
+Silero VAD `frame_size=512` correction. The repository adapter now includes that
+fix and a hardware-free regression test; synced Jetson verification is pending.
+Q8 with 15 GPU layers remains a test baseline with
 intermittent allocation failures. Auto voice using LFM after spoken `Hi` needs
 transcript, history, and escalation evidence before calling it a routing bug;
 see [model selection](docs/reference/model-selection.mdx). Hardware qualification
