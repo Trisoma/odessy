@@ -68,6 +68,34 @@ def test_lazy_and_fast_escalation():
     assert [entry["role"] for entry in model.last_turn_diagnostics.routing["stages"]] == ["fast", "capable"]
 
 
+@pytest.mark.parametrize("history,fail_fast,expected", [
+    ((), False, [("gemma-test", "fast", "greeting")]),
+    ((), True, [("gemma-test", "fast", "greeting"), ("lfm-test", "capable", "fast_failed")]),
+    (({"role": "user", "content": "earlier"},), False,
+     [("lfm-test", "capable", "conversation_context")]),
+])
+def test_model_selection_announced_before_generation(history, fail_fast, expected):
+    messages = []
+
+    class Observed(Scripted):
+        def propose(self, text):
+            assert messages and self.model in messages[-1]
+            return super().propose(text)
+
+    fast = Observed(ValueError("invalid output") if fail_fast else FinalResponse("Hi"))
+    fast.model = "gemma-test"
+    capable = Observed(FinalResponse("Hello"))
+    capable.model = "lfm-test"
+    model = make_router(fast, capable, announce=messages.append)
+    model.begin_turn(conversation_context=history)
+    model.propose("Hi")
+    assert len(messages) == len(expected)
+    for message, (name, role, reason) in zip(messages, expected):
+        assert name in message
+        assert f"role={role}" in message
+        assert f"reason={reason}" in message
+
+
 def test_cloud_only_on_initial_model_failure_and_never_on_tool_error():
     capable = Scripted(ValueError("repair exhausted"))
     cloud = Scripted(ToolRequest("time.now"), RuntimeError("followup failed"))

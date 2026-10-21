@@ -216,7 +216,7 @@ def _confirm_tool_call(decision: PolicyDecision, request: ToolRequest) -> bool:
 async def _text_async(user_text: str, use_fake_model: bool, backend: str | None = None) -> None:
     workspace_root = Path.cwd()
     model = _build_model(use_fake_model, backend=backend)
-    _announce_cloud(model)
+    _announce_model(model)
     async with _tool_servers(workspace_root, cloud=model_uses_cloud(model)) as servers:
         agent = _build_agent(workspace_root, model, servers)
         try:
@@ -232,7 +232,7 @@ async def _voice_async(use_fake_model: bool, backend: str | None = None) -> None
     config = VoiceConfig.from_env()
     workspace_root = Path.cwd()
     model = _build_model(use_fake_model, backend=backend, model_name=config.ollama_model)
-    _announce_cloud(model)
+    _announce_model(model)
     async with _tool_servers(workspace_root, cloud=model_uses_cloud(model)) as servers:
         agent = _build_agent(workspace_root, model, servers)
         await _run_voice_turn(agent, config)
@@ -304,7 +304,7 @@ async def _listen_async(
     config = VoiceConfig.from_env()
     workspace_root = Path.cwd()
     model = _build_model(use_fake_model, backend=backend, model_name=config.ollama_model)
-    _announce_cloud(model)
+    _announce_model(model)
 
     stt = WhisperCppSTT(whisper_bin=config.whisper_bin, model_path=config.whisper_model)
     tts = KokoroTTS(
@@ -406,6 +406,21 @@ async def _listen_async(
                 player.stop()
             finally:
                 stream.close()
+
+
+def _announce_model(model: object) -> None:
+    """Show explicit models at startup; auto announces each actual selection."""
+    if not isinstance(model, RoutedModel):
+        backend = (
+            model.provider if isinstance(model, CloudModel)
+            else "lfm" if isinstance(model, LlamaCppLFMModel)
+            else "ollama" if isinstance(model, OllamaModel)
+            else "fake" if isinstance(model, FakeModel)
+            else type(model).__name__
+        )
+        name = getattr(model, "model", type(model).__name__)
+        print(f"[odessy] model: {name} (backend={backend})", file=sys.stderr, flush=True)
+    _announce_cloud(model)
 
 
 def _announce_cloud(model: object) -> None:

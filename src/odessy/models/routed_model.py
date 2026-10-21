@@ -77,7 +77,7 @@ class RoutedModel:
         self._factories = {"fast": fast_factory, "capable": capable_factory, "cloud": cloud_factory}
         self._children: dict[str, Any] = {}
         self._lock = threading.RLock()
-        self._announce = announce or (lambda message: print(message, file=sys.stderr))
+        self._announce = announce or (lambda message: print(message, file=sys.stderr, flush=True))
         self._context = ()
         self._stop = None
         self._deadline = None
@@ -177,6 +177,10 @@ class RoutedModel:
             stage = {"role": role, "backend": self.config.cloud_backend if role == "cloud" else ("ollama" if role == "fast" else self.config.capable_backend),
                      "model": getattr(child, "model", type(child).__name__), "calls": 0}
             self._stages.append(stage)
+            self._announce(
+                f"[odessy] model: {stage['model']} "
+                f"(backend={stage['backend']}, role={role}, reason={self._reason})"
+            )
         else:
             stage = self._stages[-1]
         started = time.perf_counter()

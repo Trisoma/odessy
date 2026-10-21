@@ -262,8 +262,10 @@ python -m odessy voice --listen --model-backend auto
 Expected initial routes for the three text requests are Gemma, Gemma, and Q8 LFM;
 a fast-model failure may escalate to capable. For a voice greeting, use the first
 request in a fresh session: requests carrying conversation history use capable.
-Record what Whisper actually submitted and the routing diagnostics; the current
-voice status messages and `ollama ps` cannot distinguish initial selection from
+The model status lines now show the actual model, backend, role, and reason before
+generation, including fallback (`reason=fast_failed`). Keep those lines when
+reporting a routing issue, along with what Whisper actually submitted and whether
+history existed. `ollama ps` alone cannot distinguish initial selection from
 fallback. A model shown as `Stopping...` is consistent with auto's unload policy.
 Default model names are not an automatic weight download. Auto uses
 `keep_alive=0`, so reloading can increase latency; no Jetson speedup is established.
