@@ -7,6 +7,7 @@ from typing import Any
 
 from odessy.execution.contract import (
     ESCALATION_TARGETS,
+    WIDER_MODES,
     ExecutionPolicy,
     IsolationRequirement,
     Mode,
@@ -80,6 +81,7 @@ class OdessyPolicy:
             return self._evaluate_external(external, request)
         allowed_tools = self.allowed_tools or {
             "time.now",
+            "user.ask",
             "terminal.run",
             "laptop.terminal.run",
             "calculator.eval",
@@ -101,6 +103,13 @@ class OdessyPolicy:
                 reason=f"Tool is not allowed: {request.name}",
                 risk="high",
             )
+        if request.name == "user.ask":
+            from odessy.interaction.context import current_interactions
+            if _ESCALATION_ARGUMENT_NAMES & set(request.arguments):
+                return PolicyDecision("deny", "Clarification cannot request sandbox permissions", "high")
+            if current_interactions() is None:
+                return PolicyDecision("deny", "No clarification interaction is available", "low")
+            return PolicyDecision("allow", "Ask for information; answers grant no authority", "low")
         if request.name in {"model.consult", "agent.delegate", "agent.job_status", "agent.cancel"}:
             if _ESCALATION_ARGUMENT_NAMES & set(request.arguments):
                 return PolicyDecision("deny", "Collaboration tools do not accept sandbox escalation arguments", "high")
@@ -370,6 +379,35 @@ class OdessyPolicy:
             isolation=self.isolation,
         )
 
+    def preflight_execution_mode(
+        self, request: ToolRequest, decision: PolicyDecision
+    ) -> Mode | None:
+        """Validate the final candidate mode without contacting an approval channel."""
+        effective = self._effective_mode(request, decision)
+        target = request.arguments.get("sandbox_permissions")
+        justification = request.arguments.get("justification")
+        if target is not None and not isinstance(target, str):
+            raise EscalationArgumentError("invalid escalation: sandbox_permissions must be a mode string")
+        if justification is not None and not isinstance(justification, str):
+            raise EscalationArgumentError("invalid escalation: justification must be a sentence")
+        validate_escalation_args(target, justification)
+        if target is None:
+            return effective
+        if effective is None:
+            raise EscalationDeniedError("This action has no execution mode to escalate")
+        if target not in ESCALATION_TARGETS:
+            raise EscalationArgumentError(f"unknown sandbox_permissions target: {target}")
+        if target == "danger-full-access" and self.isolation == "required":
+            raise EscalationDeniedError(
+                f'sandbox escalation to "{target}" is refused because isolation is '
+                "required and this mode provides no confinement"
+            )
+        if target not in WIDER_MODES.get(effective, ()):
+            raise EscalationDeniedError(
+                f'sandbox escalation to "{target}" is not strictly wider than this call\'s current "{effective}" mode'
+            )
+        return target
+
     async def resolve_execution_mode(
         self,
         request: ToolRequest,
@@ -386,6 +424,7 @@ class OdessyPolicy:
         escalation is a new call under a wider policy, never a mutated one.
         """
 
+        candidate = self.preflight_execution_mode(request, decision)
         effective = self._effective_mode(request, decision)
         if effective is None:
             raise ValueError(
@@ -394,22 +433,9 @@ class OdessyPolicy:
 
         target = request.arguments.get("sandbox_permissions")
         if target is None:
-            return effective
+            return candidate
 
         justification = request.arguments.get("justification")
-        validate_escalation_args(target, justification)
-
-        # The invariant this phase exists for. `required` means an absolute boundary
-        # was demanded, and `danger-full-access` provides none -- so granting it here
-        # would let the escalation path hand out exactly what the requirement exists
-        # to refuse. The registry refuses the same combination, and these two layers
-        # must not disagree about it.
-        if target == "danger-full-access" and self.isolation == "required":
-            raise EscalationDeniedError(
-                f'sandbox escalation to "{target}" is refused because isolation is '
-                "required and this mode provides no confinement"
-            )
-
         return await approve_escalation(
             EscalationRequest(
                 requested_mode=target,

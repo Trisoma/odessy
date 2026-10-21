@@ -14,6 +14,56 @@ Development voice sessions share the controller with CLI and HTTP. `switch model
 Odessy v0.2.0 added voice as an interface around the existing runtime; it is unchanged in v0.3.0.
 Voice does not replace the policy, MCP, workspace authority, process authority, or confirmation path.
 
+## Development: approval and clarification
+
+The `feat/voice-user-interaction` worktree extends the shared session controller.
+Both wake sessions and one-shot voice support human clarification and one-use
+approval. This is unreleased work; real microphone and Jetson qualification remain
+separate opt-in checks.
+
+| Policy decision | Accepted approval channels |
+| --- | --- |
+| Allowed low-risk action | Existing policy; no new prompt |
+| Medium-risk confirmation | Exact spoken phrase, keyboard, authenticated UI |
+| High-risk action or any sandbox expansion | Keyboard or authenticated UI only |
+| Denied action | None; confirmation cannot override denial |
+
+For eligible approval, say **approve this action** after the cue. Bare yes,
+spoken session grants and spoken approve-all are unsupported. The phrase is
+shown on screen but never spoken in a pending prompt. Voice indicates intent;
+it does not authenticate a speaker or resist recording replay. See the
+[authority boundary](authority-boundary.mdx) for the grant checks.
+
+Authorization begins “Odessy requests permission…” and displays the validated
+operation, execution host, exact command/arguments, scopes and accepted channels.
+Clarification begins “I need one detail…”; its answer provides information only.
+A stronger-channel request remains pending for keyboard/UI confirmation.
+
+There is one microphone reader in wake mode. Prompt playback and queued pre-cue
+audio cannot supply a response. Capture opens after settling and the cue. A fresh
+wake supersedes the pending interaction and starts replacement capture. Stop,
+cancel and shutdown invalidate outstanding replies; completed tools remain done.
+
+Defaults are three clarification requests per turn, two STT reprompts, a 30-second
+response window, and 120 seconds for keyboard/UI-only approval. Reprompts do not
+extend expiry or consume clarification requests. A missing answer ends the turn
+explicitly. Human waiting is excluded from the optional generation deadline;
+independent operation timeouts keep their original bounds.
+
+| Environment setting | Default | Accepted values |
+| --- | --- | --- |
+| `ODESSY_INTERACTION_MAX_QUESTIONS` | 3 | integer 1–20 |
+| `ODESSY_INTERACTION_RESPONSE_TIMEOUT` | 30 seconds | greater than 0, at most 300 |
+| `ODESSY_INTERACTION_STRONG_RESPONSE_TIMEOUT` | 120 seconds | greater than 0, at most 600 |
+| `ODESSY_INTERACTION_PROMPT_TIMEOUT` | 30 seconds | greater than 0, at most 120 |
+| `ODESSY_VOICE_SETTLING_MS` | 300 ms | integer 0–10000 |
+
+The initial prompt timeout bounds cue preparation; the response window starts
+once capture is ready. Text CLI uses cancellation-safe terminal input and one-use confirmations through the shared controller. Redirected
+or unavailable interactive input fails explicitly; the HTTP service supports
+an authenticated UI instead. Background jobs, status, events and API responses
+remain responsive while a foreground turn waits.
+
 ## Architecture
 
 The staged voice turn is:

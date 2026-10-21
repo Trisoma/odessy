@@ -128,7 +128,7 @@ Only loopback binding is accepted. The service prints a bearer token; set
 the diagnostic client. The public static shell contains no credentials. Every
 `/v1` request, including events, requires `Authorization: Bearer <token>`.
 The client provides session creation, model selection, explicit consultation,
-events/peer answers, approvals, and Stop. It is a UI integration diagnostic.
+events/peer answers, approvals, clarification questions, and Stop. It is a UI integration diagnostic.
 
 ```sh
 export TOKEN='the-token-printed-by-serve'
@@ -147,6 +147,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 Other endpoints: `GET/PUT /v1/settings`,
 `PUT /v1/sessions/{id}/model` with `{"profile":"auto"}`,
 `POST /v1/sessions/{id}/approvals/{approval_id}` with `{"approved":true}`,
+`POST /v1/sessions/{id}/questions/{question_id}` with `{"answer":"Odessy"}`,
 and session job submission/status/cancellation. Settings are validated and saved
 atomically. New sessions load edits; existing sessions keep captured settings.
 Events have ordered IDs and bounded replay (`Last-Event-ID` or `after_id`). They
@@ -184,3 +185,37 @@ caching, installed coding CLI compatibility, remote permissions, Jetson memory,
 and wake microphones require separate opt-in checks.
 The October 21 audit of merged `85e7c10` passed **1,387 tests, with 3 skipped**,
 including **137 focused collaboration, session/API, job, and usage tests**.
+
+
+## Development: clarification API
+
+The native `user.ask` tool accepts `question`, optional string-array `choices`,
+and `allow_free_text` (default true). With free text disabled, choices are required
+and only an exact listed choice is valid. The controller generates IDs, ownership,
+timestamps and expiry; the model cannot choose these fields.
+
+Session snapshots contain `pending_questions` as well as `pending_approvals`.
+Entries include `id`, `turn_id`, `kind`, `question`/`prompt`, `choices`,
+`allow_free_text`, `allowed_channels`, `ready`, `created_at`, and `expires_at`.
+Approval entries also contain validated action details and scopes. Lifecycle
+stream events include `question_required`, `interaction_ready`, `question_answered`,
+`question_expired`, corresponding approval events, and `interaction_unavailable`.
+Resolution events identify channel and outcome. The diagnostic client presents
+questions and retains the existing approval controls.
+
+```sh
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"answer":"Odessy"}' \
+  "http://127.0.0.1:8765/v1/sessions/$SID/questions/$QUESTION_ID"
+```
+
+The server assigns `authenticated_ui`; a request cannot choose a channel.
+Invalid answers return 400; already-resolved requests return 409;
+expired/superseded requests return 410; unknown IDs return 404. First valid
+voice, keyboard or API response wins atomically. One pending foreground
+interaction suspends only its owning continuation. Background jobs/status and
+cancellation remain available. Stop invalidates outstanding interactions.
+
+No usable clarification answer means the turn ends explicitly, without guessing
+or dispatching dependent tools. Defaults and voice behavior are documented in
+[voice integration](voice-integration.mdx).

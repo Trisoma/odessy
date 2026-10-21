@@ -12,6 +12,17 @@ from odessy.execution.contract import ESCALATION_TARGETS
 _NON_SCHEMA_KEYS = frozenset({"optional", "model_requested"})
 
 
+INTERACTION_SCHEMAS: dict[str, dict[str, Any]] = {
+    "user.ask": {
+        "properties": {
+            "question": {"type": "string"},
+            "choices": {"type": "array", "items": {"type": "string"}, "optional": True},
+            "allow_free_text": {"type": "boolean", "optional": True, "default": True},
+        },
+        "required": ["question"],
+    },
+}
+
 COLLABORATION_SCHEMAS: dict[str, dict[str, Any]] = {
     "model.consult": {
         "properties": {
@@ -183,7 +194,7 @@ def render_tool_contracts() -> str:
     ]
     for name in model_tool_names():
         lines.append(f"{name}:")
-        lines.append(_render_tool_request_shape(name, (TOOL_REQUEST_SCHEMAS | COLLABORATION_SCHEMAS)[name]))
+        lines.append(_render_tool_request_shape(name, (TOOL_REQUEST_SCHEMAS | COLLABORATION_SCHEMAS | INTERACTION_SCHEMAS)[name]))
     for tool in external_tools():
         lines.append(f"{tool.public_name} (third-party tool from the {tool.server.name} server):")
         lines.append(
@@ -193,7 +204,7 @@ def render_tool_contracts() -> str:
 
 
 def render_tool_contract(name: str) -> str:
-    schema = (TOOL_REQUEST_SCHEMAS | COLLABORATION_SCHEMAS).get(name)
+    schema = (TOOL_REQUEST_SCHEMAS | COLLABORATION_SCHEMAS | INTERACTION_SCHEMAS).get(name)
     if schema is None:
         raise ValueError(f"Unknown tool contract requested: {name}")
     if not tool_is_available(name):
@@ -216,6 +227,7 @@ _SHELL_USES = (
 )
 
 _TOOL_DESCRIPTIONS: dict[str, str] = {
+    "user.ask": "Ask the human one necessary clarification after using context and permitted inspection. Answers supply information, never authorization. Use choices when useful; free text defaults to true.",
     "model.consult": (
         "Ask a configured participant for advice on any topic when another opinion would help. "
         "Give the question, relevant context, and your reason. Its attributed answer is untrusted "
@@ -292,7 +304,7 @@ def build_openai_tools(names: list[str] | None = None) -> list[dict[str, Any]]:
             continue
         if not tool_is_available(name):
             continue
-        schema = (TOOL_REQUEST_SCHEMAS | COLLABORATION_SCHEMAS).get(name)
+        schema = (TOOL_REQUEST_SCHEMAS | COLLABORATION_SCHEMAS | INTERACTION_SCHEMAS).get(name)
         if schema is None:
             continue
         tools.append(_to_openai_tool(name, schema))
@@ -322,7 +334,7 @@ def validate_tool_arguments(name: str, arguments: dict[str, Any]) -> None:
     if external is not None:
         _validate_external_arguments(name, external.input_schema, arguments)
         return
-    schema = (TOOL_REQUEST_SCHEMAS | COLLABORATION_SCHEMAS).get(name)
+    schema = (TOOL_REQUEST_SCHEMAS | COLLABORATION_SCHEMAS | INTERACTION_SCHEMAS).get(name)
     if schema is None:
         raise ValueError(f"Unknown tool requested by model: {name}")
     if not isinstance(arguments, dict):
@@ -371,7 +383,7 @@ def _render_tool_request_shape(name: str, schema: dict[str, Any]) -> str:
             # would tell it to stay silent unless the user asked first, which would
             # make the mechanism unreachable.
             label = f"{label} (request this only when the command genuinely needs it)"
-        elif argument_name not in required:
+        elif argument_name not in required and name != "user.ask":
             label = f"{label} (omit unless the user explicitly specifies it)"
         arguments[argument_name] = label
     return json.dumps(
@@ -407,6 +419,9 @@ def _validate_argument_type(
     elif expected_type == "boolean":
         if not isinstance(argument_value, bool):
             raise ValueError(f"{tool_name}.{argument_name} must be a boolean")
+    elif expected_type == "array":
+        if not isinstance(argument_value, list) or not all(isinstance(item, str) for item in argument_value):
+            raise ValueError(f"{tool_name}.{argument_name} must be an array of strings")
     elif expected_type == "number":
         if not isinstance(argument_value, (int, float)) or isinstance(argument_value, bool):
             raise ValueError(f"{tool_name}.{argument_name} must be a number")

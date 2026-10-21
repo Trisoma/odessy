@@ -144,7 +144,7 @@ class NamespacedServer:
             result = await asyncio.wait_for(client.list_tools(), timeout=self.config.timeout)
         return list(getattr(result, "tools", result))
 
-    async def call_tool(self, remote_name: str, arguments: dict[str, Any]) -> Any:
+    async def call_tool(self, remote_name: str, arguments: dict[str, Any], *, before_dispatch=None) -> Any:
         """Call the server's own ``remote_name``, bounded by the server's timeout.
 
         A failed call is never retried: the server may have acted before the failure,
@@ -159,8 +159,20 @@ class NamespacedServer:
         started = time.perf_counter()
         outcome, error_type = "failed", None
         try:
+            admission_error = None
             async with self.session() as client:
-                result = await asyncio.wait_for(client.call_tool(remote_name, arguments), timeout=self.config.timeout)
+                async def dispatch():
+                    nonlocal admission_error
+                    if before_dispatch is not None:
+                        try:
+                            before_dispatch()
+                        except PermissionError as exc:
+                            admission_error = exc
+                            return None
+                    return await client.call_tool(remote_name, arguments)
+                result = await asyncio.wait_for(dispatch(), timeout=self.config.timeout)
+            if admission_error is not None:
+                raise admission_error
             outcome = "error" if _is_error_result(result) else "ok"
             return result
         except asyncio.TimeoutError:

@@ -598,7 +598,8 @@ def _environment_line() -> str:
 
     line = environment_prompt()
     from odessy.collaboration.context import coordinator_instructions
-    return (f"{line}\n" if line else "") + coordinator_instructions()
+    from odessy.interaction.context import interaction_instructions
+    return (f"{line}\n" if line else "") + coordinator_instructions() + interaction_instructions()
 
 
 def _read_error_body(error: urllib.error.HTTPError) -> str:

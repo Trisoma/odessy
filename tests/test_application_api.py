@@ -93,7 +93,7 @@ def test_http_approval_wait_keeps_event_loop_responsive_and_stop_declines():
             assert (await client.post(route + '/stop')).status_code == 200
             state = (await client.get(route)).json()
             assert not state['running'] and not state['pending_approvals']
-            assert (await client.post(route + '/approvals/' + aid, json={'approved': True})).status_code == 404
+            assert (await client.post(route + '/approvals/' + aid, json={'approved': True})).status_code == 410
             assert not state['history']
             assert (await client.post(route + '/turns', content='oops')).status_code == 400
             assert (await client.get('/missing', headers={'Authorization':'Bearer wrong'})).status_code == 401
@@ -221,3 +221,104 @@ def test_profile_factory_is_lazy_and_authoritative():
             values['new'] = {}
             assert 'new' in (await client.get('/v1/profiles')).json()['profiles']
     asyncio.run(run())
+
+
+def test_question_api_validates_answers_and_keeps_status_live():
+    class Jobs:
+        async def refresh(self, job_id):
+            return {'id': job_id, 'status': 'running'}
+    async def run():
+        app = create_app(lambda: SessionController(model_factory=lambda _: object(),
+            agent_factory=Agent, profiles={'local': {}}), token='secret')
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test',
+                headers={'Authorization': 'Bearer secret'}) as client:
+            sid = (await client.post('/v1/sessions')).json()['id']
+            route = '/v1/sessions/' + sid
+            controller = app.state.sessions[sid]
+            task = asyncio.create_task(controller.interactions.ask('Choose', ['one', 'two'], False))
+            await asyncio.sleep(0)
+            state = (await client.get(route)).json()
+            controller.jobs = Jobs()
+            assert (await client.get(route + '/jobs/background')).json()['status'] == 'running'
+            qid = state['pending_questions'][0]['id']
+            endpoint = route + '/questions/' + qid
+            assert (await client.post(endpoint, json={'answer': 'one', 'channel': 'voice'})).status_code == 400
+            assert (await client.post(endpoint, json={'answer': 'other'})).status_code == 400
+            assert (await client.post(endpoint, json={'answer': 'two'})).status_code == 200
+            assert (await task)['answer'] == 'two'
+            assert (await client.post(endpoint, json={'answer': 'one'})).status_code == 409
+            assert (await client.post(route + '/questions/missing', json={'answer': 'one'})).status_code == 404
+            task = asyncio.create_task(controller.interactions.ask('More?'))
+            await asyncio.sleep(0)
+            qid = controller.pending_questions[0]['id']
+            await controller.stop()
+            assert (await task)['status'] == 'cancelled'
+            assert (await client.post(route + '/questions/' + qid, json={'answer': 'one'})).status_code == 410
+            await controller.close()
+    asyncio.run(run())
+
+
+def test_accepted_turn_id_owns_foreground_question():
+    from odessy.interaction.context import current_interactions
+    async def run():
+        class AskingAgent(Agent):
+            async def run_turn(self, text, **kwargs):
+                answer = await current_interactions().ask('Destination?')
+                return AgentTurnResult(answer['answer'], [])
+        app = create_app(lambda: SessionController(model_factory=lambda _: object(),
+            agent_factory=AskingAgent, profiles={'local': {}}), token='secret')
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test',
+                headers={'Authorization': 'Bearer secret'}) as client:
+            sid = (await client.post('/v1/sessions')).json()['id']
+            route = '/v1/sessions/' + sid
+            accepted = (await client.post(route + '/turns', json={'text': 'Go'})).json()
+            state = (await client.get(route)).json()
+            question = state['pending_questions'][0]
+            assert question['turn_id'] == accepted['turn_id']
+            await client.post(route + '/questions/' + question['id'], json={'answer': 'home'})
+            task = app.state.turn_tasks.get(sid)
+            if task is not None:
+                await task
+            await client.delete(route)
+    asyncio.run(run())
+
+
+def test_diagnostic_snapshot_restores_pending_controls_and_ignores_stale_replay():
+    import re
+    import shutil
+    import subprocess
+    from odessy.application.api import _DIAGNOSTIC
+    node = shutil.which('node')
+    if node is None:
+        pytest.skip('Node is needed for diagnostic client behavior verification')
+    script = re.search(r'<script>(.*?)</script>', _DIAGNOSTIC, re.S)[1]
+    harness = r'''
+const assert=require('node:assert/strict');
+const nodes=new Map();
+function element(){return {children:[],value:'',textContent:'',append(...items){this.children.push(...items);},replaceChildren(){for(const child of this.children)child.remove();this.children=[];},remove(){nodes.delete(this.id);},setAttribute(){},cloneNode(){return element();},set id(value){this._id=value;nodes.set(value,this);},get id(){return this._id;}};}
+const document={getElementById(id){return nodes.get(id)||null;},createElement:element};
+for(const id of ['status','out','conversation','approvals','questions','connect','select','send','stop']){const item=element();item.id=id;}
+const window={addEventListener(){}};
+'''
+    assertions = r'''
+const q={id:'q',question:'Choose',choices:['one'],allow_free_text:true,allowed_channels:['voice','terminal','authenticated_ui']};
+restorePending({events:[{id:50}],pending_questions:[q],pending_approvals:[{id:'a'}]});
+assert.ok(nodes.has('question-q'));assert.ok(nodes.has('approval-a'));
+eventReceived({id:1,type:'question_required',data:{...q,id:'stale'}});
+assert.ok(!nodes.has('question-stale'));
+eventReceived({id:51,type:'question_answered',data:{id:'q'}});
+assert.ok(!nodes.has('question-q'));
+eventReceived({id:52,type:'question_required',data:{...q,id:'new'}});
+assert.ok(nodes.has('question-new'));
+restorePending({events:[{id:60}],pending_questions:[],pending_approvals:[]});
+assert.ok(!nodes.has('question-new'));assert.ok(!nodes.has('approval-a'));
+void (async()=>{
+sid='session';const signal={aborted:false};const requested=[];
+global.fetch=async path=>{requested.push(path);if(!path.endsWith('/events'))return {ok:true,status:200,json:async()=>({events:[{id:100}],pending_questions:[q],pending_approvals:[]})};return {ok:true,body:{getReader:()=>({read:async()=>{signal.aborted=true;return {done:true};}})}};};
+await stream(sid,signal);
+assert.deepEqual(requested,['/v1/sessions/session','/v1/sessions/session/events']);
+assert.ok(nodes.has('question-q'));
+})().catch(error=>{console.error(error);process.exitCode=1;});
+'''
+    result = subprocess.run([node, '-e', harness + script + assertions], text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr

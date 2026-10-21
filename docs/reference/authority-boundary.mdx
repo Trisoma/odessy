@@ -114,3 +114,35 @@ current count.
 For current security and product limits, see `docs/reference/current-limitations.mdx`.
 
 This reference should be updated whenever Odessy changes the authority model or adds new tool capabilities.
+
+
+## Development: human interaction grants
+
+Voice approval is an intent signal, not identity authentication. A known spoken
+phrase is not a replay-resistant authenticator; no speaker-recognition or NIST
+assurance claim is made. See [NIST replay resistance](https://pages.nist.gov/800-63-4/sp800-63b.html#replay).
+High-risk actions and all sandbox expansion require keyboard or authenticated UI.
+Policy denials remain absolute. The model supplies neither risk nor channel identity.
+
+The authoritative approval description comes from the validated operation, host,
+canonical local targets, exact shell command and permission scopes. A model's
+justification is separately attributed. This avoids using a generated explanation
+as the authoritative operation description; see [OWASP HITL dialog forging](https://github.com/OWASP/www-community/blob/master/pages/attacks/lies-in-the-loop.md).
+
+One-use grants bind the controller's request/turn, stable call identity, canonical
+arguments, target identity, scopes and relevant policy/configuration state.
+Exact command bytes are bound; display escapes controls and redacts secrets.
+Local paths use existing workspace authority and are resolved again before
+dispatch; foreign-host paths retain that host's existing validation rules.
+Changed arguments, target, scopes, policy or local symlink target require a new
+authorization decision. Grants are checked again after opening the transport.
+
+Ordinary confirmation and sandbox expansion share a combined request, with the
+strongest required channel. Both authority and sandbox validation still run and
+retain their audit/log records. A grant covers only its listed scopes and one
+dispatch. It cannot weaken child-agent permissions or host authorization.
+
+`user.ask` answers are attributed human information. They never authorize tools,
+change policy or become a higher-priority instruction. Trusted voice, terminal
+and authenticated HTTP adapters assign resolving channels. Model text, synthesized
+speech and tool output are never accepted as authorization.

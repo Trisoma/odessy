@@ -221,7 +221,7 @@ async def _text_async(user_text: str, use_fake_model: bool, backend: str | None 
     _announce_model(model)
     async with controller_runtime(workspace=workspace_root, model=model, interactive=True,
                                   use_fake_model=use_fake_model) as controller:
-        agent = ControllerAgent(controller)
+        agent = ControllerAgent(controller, isolate_turn=True)
         try:
             with _usage_report(reset=False):
                 result = await agent.run_turn(user_text)
@@ -241,12 +241,14 @@ async def _voice_async(use_fake_model: bool, backend: str | None = None) -> None
     _announce_model(model)
     async with controller_runtime(workspace=workspace_root, model=model, interactive=True,
                                   use_fake_model=use_fake_model) as controller:
-        agent = ControllerAgent(controller)
+        agent = ControllerAgent(controller, isolate_turn=True)
         with _usage_report(reset=False):
             await _run_voice_turn(agent, config)
 
 
 async def _run_voice_turn(agent: OdessyAgent, config: VoiceConfig) -> None:
+    controller = getattr(agent, 'controller', None)
+    broker = controller.interactions if controller is not None else None
     loop = VoiceLoop(
         agent=agent,
         audio_io=CommandAudioIO(
@@ -268,7 +270,21 @@ async def _run_voice_turn(agent: OdessyAgent, config: VoiceConfig) -> None:
         tmp_dir=config.tmp_dir,
         seconds=config.voice_seconds,
         status_callback=print,
+        interactions=broker,
+        stop_turn=controller.stop if controller is not None else None,
+        settling_ms=config.settling_ms,
     )
+    if broker is not None:
+        from odessy.voice.session import write_cue_wav
+        config.tmp_dir.mkdir(parents=True, exist_ok=True)
+        cue_path = config.tmp_dir / "odessy-interaction-cue.wav"
+        write_cue_wav(cue_path)
+        async def interaction_cue():
+            await loop._blocking(loop.audio_io.play, cue_path)
+        object.__setattr__(loop, 'cue', interaction_cue)
+        from odessy.interaction.terminal import TerminalInteractionHandler, race_handlers
+        broker.handler = race_handlers(loop.handle_interaction,
+            TerminalInteractionHandler(broker, stop_turn=controller.stop, mark_ready=False))
     result = await loop.run_once()
     attempts = 1 + config.blank_retries
     attempt = 1
@@ -371,7 +387,7 @@ async def _listen_async(
 
         async with controller_runtime(workspace=workspace_root, model=model, interactive=True,
                                       use_fake_model=use_fake_model) as controller:
-            agent = ControllerAgent(controller)
+            agent = ControllerAgent(controller, isolate_turn=True)
 
             async def run_turn(text: str, stop: asyncio.Event, context: Any) -> str:
                 with _usage_report(reset=False):
@@ -387,6 +403,7 @@ async def _listen_async(
                 transcribe=transcribe,
                 speak=speak,
                 stop_speaking=player.stop,
+                stop_turn=controller.stop,
                 run_turn=run_turn,
                 classify_blank=blank_transcript_reason,
                 segmenter=UtteranceSegmenter(
@@ -394,6 +411,7 @@ async def _listen_async(
                 ),
                 options=SessionOptions(
                     interaction=cast(Any, interaction or config.interaction),
+                    settling_ms=config.settling_ms,
                     blank_retries=config.blank_retries,
                     followup_ms=config.followup_seconds * 1000,
                 ),
@@ -401,6 +419,9 @@ async def _listen_async(
                 status=print,
                 cue=cue,
             )
+            from odessy.interaction.terminal import TerminalInteractionHandler, race_handlers
+            controller.interactions.handler = race_handlers(session.interaction_handler(controller.interactions),
+                TerminalInteractionHandler(controller.interactions, stop_turn=controller.stop, mark_ready=False))
             try:
                 await session.run()
             except KeyboardInterrupt:

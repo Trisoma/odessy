@@ -15,6 +15,8 @@ from odessy.authority.redaction import redact_text, looks_like_secret_name
 from odessy.runtime.types import ToolObservation, ToolRequest
 from odessy.voice.memory import ConversationMemory
 from odessy.collaboration.context import collaboration_scope
+from odessy.interaction.broker import InteractionBroker
+from odessy.interaction.context import interaction_scope
 
 
 def public(value):
@@ -66,7 +68,8 @@ class SessionController:
         self._subscriber_limit = subscriber_limit
         self.max_subscribers = max_subscribers
         self._sequence = 0
-        self._pending = {}
+        self.interactions = InteractionBroker(self.emit, self._public)
+        self._pending = self.interactions._pending
         self._task = None
         self._stop = asyncio.Event()
         self._closed = False
@@ -87,7 +90,11 @@ class SessionController:
 
     @property
     def pending_approvals(self):
-        return [entry[0] for entry in self._pending.values()]
+        return self.interactions.pending_approvals
+
+    @property
+    def pending_questions(self):
+        return self.interactions.pending_questions
 
     def _public(self, value):
         value = public(value)
@@ -189,32 +196,57 @@ class SessionController:
         self.emit('selection', {'profile': profile, 'reason': 'User selection; applies to next turn'})
         return profile
 
-    async def confirm(self, decision, request):
+    async def confirm_action(self, details):
         if self._stop.is_set() or self._closed:
             return False
-        approval_id = uuid.uuid4().hex
-        future = asyncio.get_running_loop().create_future()
-        entry = self._public({'id': approval_id, 'decision': decision, 'request': request})
-        self._pending[approval_id] = (entry, future)
-        self.emit('approval_required', entry)
-        try:
-            return await future
-        finally:
-            self._pending.pop(approval_id, None)
+        return await self.interactions.request_approval(details)
 
-    def answer_approval(self, approval_id, approved):
-        if not isinstance(approved, bool):
-            raise ValueError('approved must be a boolean')
-        entry = self._pending.get(approval_id)
-        if entry is None or entry[1].done():
-            raise KeyError(approval_id)
-        entry[1].set_result(approved)
-        self.emit('approval_answered', {'id': approval_id, 'approved': approved})
+    async def confirm(self, decision, request):
+        # Direct job/API callers do not have runtime's canonical approval plan.
+        # Describe their actual request rather than accepting a generated summary.
+        decision_value = decision if isinstance(decision, dict) else vars(decision)
+        request_value = request if isinstance(request, dict) else asdict(request)
+        name = request_value.get('name', 'unknown action')
+        arguments = request_value.get('arguments', {})
+        risk = decision_value.get('risk', 'high')
+        if name == 'agent.delegate' and hasattr(self.jobs, 'preflight_submission'):
+            from pathlib import Path
+            from odessy.authority.action_approval import build_action_approval
+            from odessy.authority.policy import OdessyPolicy
+            from odessy.runtime.types import PolicyDecision
+            def target():
+                return self.jobs.preflight_submission(arguments.get('participant'), arguments.get('task'),
+                    mode=arguments.get('mode', 'advice'), workspace=arguments.get('workspace'))
+            identity = target()
+            policy = OdessyPolicy(Path.cwd())
+            bound_decision = PolicyDecision('confirm', 'Delegate using configured child-agent permissions', risk)
+            bound_request = ToolRequest(name, arguments)
+            plan = build_action_approval(bound_request, bound_decision, policy,
+                call_id=uuid.uuid4().hex, execution_target=identity)
+            if not await self.confirm_action(plan.public_dict()):
+                return False
+            if not plan.matches(bound_request, bound_decision, policy, execution_target=target()):
+                raise PermissionError('Delegation action, profile or execution target changed; new approval required')
+            return True
+        scopes = ['authorization']
+        if arguments.get('execution_mode') == 'escalated' or arguments.get('mode') == 'escalated':
+            scopes.append('escalation')
+        import json
+        prompt = 'Approve ' + str(name) + ' with arguments ' + json.dumps(self._public(arguments), sort_keys=True, ensure_ascii=False) + '?'
+        return await self.confirm_action({'decision': decision, 'request': request,
+            'risk': risk, 'scopes': scopes, 'prompt': prompt})
+
+    def answer_approval(self, approval_id, approved, *, channel='authenticated_ui'):
+        return self.interactions.resolve_approval(approval_id, approved, channel=channel)
+
+    def answer_question(self, question_id, answer, *, channel='authenticated_ui'):
+        return self.interactions.resolve_question(question_id, answer, channel=channel)
 
     async def run_turn(self, text, participant=None, *, context=None, stop_event=None,
-                       status_callback=None, remember=True):
+                       status_callback=None, remember=True, turn_id=None):
         if self._closed or self.running:
             raise RuntimeError('Session is closed or a turn is already running')
+        self.interactions.start_turn(turn_id)
         self._task = asyncio.current_task()
         self._stop = stop_event if stop_event is not None else asyncio.Event()
         self.active_profile = self.selected_profile
@@ -274,7 +306,7 @@ class SessionController:
             if reset:
                 reset()
             agent = self.agent_factory(model, confirm=self.confirm)
-            with collaboration_scope(self.collaboration):
+            with collaboration_scope(self.collaboration), interaction_scope(self.interactions):
                 result = await agent.run_turn(text, **kwargs)
             # Routing notes and peer results were raised on a worker thread, so they
             # are still queued. Deliver them before the turn's closing events: a
@@ -314,20 +346,14 @@ class SessionController:
                 model._announce = announce
             if self.collaboration is not None:
                 self.collaboration.event_sink = sink
-            for _, future in tuple(self._pending.values()):
-                if not future.done():
-                    future.set_result(False)
-            self._pending.clear()
+            self.interactions.end_turn()
             self.active_profile = None
             self._active_model = None
             self._task = None
 
     async def stop(self):
         self._stop.set()
-        for _, future in tuple(self._pending.values()):
-            if not future.done():
-                future.set_result(False)
-        self._pending.clear()
+        self.interactions.cancel_pending('stopped')
         if self._task is not None and self._task is not asyncio.current_task():
             self._task.cancel()
             try:
@@ -340,6 +366,7 @@ class SessionController:
     async def close(self):
         await self.stop()
         self._closed = True
+        self.interactions.close()
         self.memory.clear()
         # A worker thread that outlives the session can still raise an event; with the
         # loop gone it would queue forever, so drop what is left.
@@ -349,5 +376,3 @@ class SessionController:
             if queue.full():
                 queue.get_nowait()
             queue.put_nowait(None)
-
-

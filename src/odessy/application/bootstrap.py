@@ -18,7 +18,7 @@ from odessy.collaboration.participants import CollaborationService
 from odessy.collaboration.tools import authorized_remote_targets, build_collaboration_server
 from odessy.config.deployment import model_tool_scope
 from odessy.runtime.agent_loop import ExecutionTarget
-from odessy.runtime.types import AgentTurnResult, ToolRequest
+from odessy.runtime.types import AgentTurnResult
 from odessy.tools.external_tools import NamespacedServer
 
 
@@ -82,7 +82,6 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
         for name in config.participants:
             service.register_adapter(name, lambda profile, question, context:
                 f"[Fake participant {profile.name}] Offline advice for: {question}")
-    confirmer = cli.TerminalConfirmer(workspace) if interactive else None
     model = model if model is not None else cli._build_model(use_fake_model, backend=backend)
     profiles = {"current": {"name": "current", "model": getattr(model, "model", type(model).__name__)},
                 "auto": {"name": "auto", "adapter": "auto"},
@@ -139,6 +138,8 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
             service.register_adapter(adapter, coding_advice)
         if config.settings.enabled:
             servers = (*servers, ExecutionTarget(build_collaboration_server(service, jobs)))
+        from odessy.interaction.tools import build_interaction_server
+        servers = (*servers, ExecutionTarget(build_interaction_server(lambda: controller.interactions)))
         names = []
         for target in servers:
             server = target.server if isinstance(target, ExecutionTarget) else target
@@ -150,26 +151,28 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
 
         def agent_factory(chosen, confirm=None):
             agent = cli._build_agent(workspace, chosen, servers)
-            if interactive:
-                agent._confirm = confirmer
-                agent._confirm_batch = confirmer.batch
-            else:
-                agent._confirm = confirm
-                agent._confirm_batch = None
-
-                class UIApprover:
-                    async def ask(self, request):
-                        from types import SimpleNamespace
-                        allowed = await confirm(SimpleNamespace(reason=request.reason, risk="high"),
-                                                ToolRequest(request.tool_name, {"justification": request.reason}))
-                        return "allowed-once" if allowed else "rejected"
-
-                agent._approver = UIApprover()
+            agent._confirm_action = controller.confirm_action
+            agent._delegation_jobs = jobs
+            # Composed sessions authorize only through the shared broker. Legacy
+            # direct OdessyAgent users retain their existing confirmation seam.
+            agent._confirm = False
+            agent._confirm_batch = None
+            agent._approver = None
             return ScopedAgent(agent, service, names, externals, audit)
 
         controller = ManagedController(resources=resources, turn_lock=turn_lock, model_factory=model_factory,
             agent_factory=agent_factory, profiles=profiles, selected_profile=selected_profile or "current",
             collaboration=service, jobs=jobs, config=config)
+        if interactive:
+            from odessy.interaction.terminal import TerminalInteractionHandler, TerminalUnavailable
+            keyboard = TerminalInteractionHandler(controller.interactions, stop_turn=controller.stop)
+            async def terminal_interaction(entry):
+                try:
+                    await keyboard(entry)
+                except TerminalUnavailable as exc:
+                    print(f'[odessy] {exc}', file=sys.stderr, flush=True)
+                    raise
+            controller.interactions.handler = terminal_interaction
         jobs.event_sink = lambda event: controller.emit("job", event)
         return controller
     except BaseException:
@@ -202,10 +205,26 @@ async def controller_runtime(**kwargs):
 
 class ControllerAgent:
     """The existing voice loops retain their microphone and utterance lifecycle."""
-    def __init__(self, controller):
+    def __init__(self, controller, *, isolate_turn=False):
         self.controller = controller
+        self.isolate_turn = isolate_turn
 
     async def run_turn(self, text, *, participant=None, **kwargs):
+        if not self.isolate_turn:
+            return await self._run_turn(text, participant=participant, **kwargs)
+        # The microphone worker outlives individual controller turns. Stop cancels
+        # the child turn without taking that persistent worker down with it.
+        turn = asyncio.create_task(self._run_turn(text, participant=participant, **kwargs))
+        try:
+            return await asyncio.shield(turn)
+        except asyncio.CancelledError:
+            if turn.cancelled():
+                return AgentTurnResult(log=[], final_text='Stopped. No further tools were dispatched.')
+            turn.cancel()
+            await asyncio.gather(turn, return_exceptions=True)
+            raise
+
+    async def _run_turn(self, text, *, participant=None, **kwargs):
         command = parse_session_command(text, {**self.controller.profiles, **self.controller.config.participants})
         if command is None and text.strip().lower().startswith('consult ') and ':' in text:
             # An explicit unknown profile must not fall through to normal inference.
