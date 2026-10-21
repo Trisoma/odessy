@@ -60,6 +60,24 @@ class ConnectionTests(unittest.TestCase):
             self.assertNotEqual(kwargs['cwd'], self.app)
         self.assertTrue(all(not path.exists() for path in self.workspaces))
 
+    def test_cancel_after_first_model_call_does_not_start_second_call(self):
+        stopped = False
+        def run(*args, **kwargs):
+            nonlocal stopped
+            result = self.runner(*args, **kwargs)
+            stopped = True
+            return result
+        with self.assertRaises(KeyboardInterrupt):
+            self.verify(run=run, cancelled=lambda: stopped)
+        self.assertEqual(len(self.calls), 1)
+        self.assertTrue(all(not path.exists() for path in self.workspaces))
+
+    def test_cancel_before_verification_does_not_probe_files_or_service(self):
+        with patch.object(connection, 'inspect_application') as inspect:
+            with self.assertRaises(KeyboardInterrupt):
+                self.verify(cancelled=lambda: True, inspect=inspect)
+        inspect.assert_not_called()
+
     def test_smoke_environment_preserves_parent_but_not_user_routing(self):
         with patch.dict(os.environ, {'ODESSY_MODEL_BACKEND': 'openai', 'ODESSY_TOOL_SERVER_URL': 'https://example.com',
                                     'HTTP_PROXY': 'http://example.com', 'NODE_OPTIONS': '--require bad'}):

@@ -99,6 +99,114 @@ class WorkflowTests(unittest.TestCase):
             with self.assertRaises(ValueError): workflow.steps_for(plan)[6].prepare()
         self.assertEqual(events, ['stopped'])
 
+    def test_connection_retry_preserves_abandoned_locks_and_uses_fresh_session(self):
+        plan = self.plan(); paths = workflow.paths_for(self.root)
+        paths['service_state'].mkdir(parents=True)
+        legacy = paths['service_state'] / 'serve.lock'; legacy.write_text('old installer')
+        sessions = []
+
+        @contextlib.contextmanager
+        def service(runtime, models, state, *args):
+            sessions.append(state)
+            state.mkdir(parents=True, exist_ok=True)
+            lock = state / 'serve.lock'
+            if lock.exists(): raise ValueError('State session lock already exists')
+            lock.write_text('owned session')
+            # Simulate abrupt interruption: the first service lock survives.
+            try: yield {'reused': False}
+            finally:
+                if len(sessions) > 1: lock.unlink()
+
+        with patch.object(workflow.ollama_runtime, 'managed_service', service), \
+             patch.object(workflow.connection, 'verify_connection', side_effect=[
+                 ValueError('interrupted verification'), {'inference_verified': True}]):
+            step = workflow.steps_for(plan)[6]
+            with self.assertRaisesRegex(ValueError, 'interrupted verification'): step.prepare()
+            report = step.prepare()
+        self.assertTrue(report['owned_service_stopped'])
+        self.assertNotEqual(sessions[0], sessions[1])
+        self.assertTrue(all(paths['service_state'] in path.parents for path in sessions))
+        self.assertEqual(legacy.read_text(), 'old installer')
+        self.assertEqual((sessions[0] / 'serve.lock').read_text(), 'owned session')
+
+    def test_cancel_before_connection_never_starts_a_service(self):
+        plan = self.plan()
+        with patch.object(workflow.ollama_runtime, 'managed_service') as service:
+            with self.assertRaises(KeyboardInterrupt):
+                workflow.steps_for(plan, cancelled=lambda: True)[6].prepare()
+        service.assert_not_called()
+
+    def test_interrupted_checkpoint_resumes_to_complete_without_reinstalling_components(self):
+        from installer import checkpoint
+        plan = self.plan(); state_dirs = []; prepared = []
+        component = self.root / 'component.complete'
+        def prepare():
+            prepared.append('component'); component.write_text('verified component')
+            return {'verified': True}
+        def validate():
+            return {'verified': True} if component.exists() else None
+
+        @contextlib.contextmanager
+        def service(runtime, models, state, *args):
+            state.mkdir(parents=True, exist_ok=True)
+            lock = state / 'serve.lock'
+            with lock.open('x') as stream: stream.write('owned session')
+            state_dirs.append(state)
+            try: yield {'reused': False}
+            finally:
+                if len(state_dirs) > 1: lock.unlink()
+
+        with patch.object(workflow.ollama_runtime, 'managed_service', service), \
+             patch.object(workflow.connection, 'verify_connection', side_effect=[
+                 ValueError('interrupted verification'), {'inference_verified': True}]):
+            steps = [checkpoint.Step('component', prepare, validate), *workflow.steps_for(plan)[6:]]
+            with self.assertRaisesRegex(ValueError, 'interrupted verification'):
+                checkpoint.run_steps(self.root, plan, steps)
+            state = checkpoint.read_state(self.root)
+            # Model the on-disk state left by a hard exit before failure is saved.
+            state['status'] = state['steps'][1]['status'] = 'running'
+            checkpoint.save_state(self.root, state)
+            result = checkpoint.run_steps(self.root, plan, steps, resume=True)
+        self.assertTrue(result['summary']['workflow_complete'])
+        self.assertEqual(prepared, ['component'])
+        self.assertEqual(result['steps'][0]['action'], 'reused')
+        self.assertEqual(result['steps'][1]['attempts'], 2)
+        self.assertTrue((state_dirs[0] / 'serve.lock').is_file())
+        self.assertNotEqual(state_dirs[0], state_dirs[1])
+        self.assertTrue((self.root / 'config/odessy.env').is_file())
+
+    def test_cancel_during_service_startup_closes_it_without_model_checks(self):
+        plan = self.plan(); stopped = False; events = []
+        @contextlib.contextmanager
+        def service(*args):
+            nonlocal stopped
+            stopped = True
+            try: yield {'reused': False}
+            finally: events.append('owned service stopped')
+        with patch.object(workflow.ollama_runtime, 'managed_service', service), \
+             patch.object(workflow.connection, 'verify_connection') as verify:
+            with self.assertRaises(KeyboardInterrupt):
+                workflow.steps_for(plan, cancelled=lambda: stopped)[6].prepare()
+        verify.assert_not_called()
+        self.assertEqual(events, ['owned service stopped'])
+
+    def test_cancelled_verification_does_not_save_success_or_write_configuration(self):
+        from installer import checkpoint
+        plan = self.plan(); events = []
+        @contextlib.contextmanager
+        def service(*args):
+            try: yield {'reused': False}
+            finally: events.append('owned service stopped')
+        with patch.object(workflow.ollama_runtime, 'managed_service', service), \
+             patch.object(workflow.connection, 'verify_connection', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                checkpoint.run_steps(self.root, plan, workflow.steps_for(plan)[6:])
+        state = checkpoint.read_state(self.root)
+        self.assertEqual(state['status'], 'cancelled')
+        self.assertFalse(state['summary']['workflow_complete'])
+        self.assertFalse((self.root / 'config/odessy.env').exists())
+        self.assertEqual(events, ['owned service stopped'])
+
     def test_incomplete_component_marker_is_preserved(self):
         target = self.root / 'runtime'; target.mkdir(parents=True)
         marker = target / '.odessy-preparing'; marker.write_text('old interrupted owner')

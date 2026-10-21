@@ -68,13 +68,18 @@ def smoke_environment(settings: dict, endpoint: str, model: str, config: Path, *
 
 def verify_connection(app: Path, models: Path, endpoint: str, *, timeout: int = 180,
                       inspect=inspect_application, verify_files=verify_model, check_service=verify_service,
-                      run=run_application) -> dict:
+                      run=run_application, cancelled=lambda: False) -> dict:
+    def check_cancelled():
+        if cancelled(): raise KeyboardInterrupt()
+
+    check_cancelled()
     if type(timeout) is not int or not 15 <= timeout <= 600:
         raise ValueError('Per-stage timeout must be an integer from 15 to 600 seconds.')
     endpoint = local_endpoint(endpoint)
     print('[CHECK] Installed application and pinned model files...', flush=True)
     settings = inspect(app)
     model = verify_files(models)
+    check_cancelled()
     check_service(endpoint, model)
     report = dict(schema_version=1, app_dir=str(app), endpoint=endpoint, model=model['model'],
                   manifest_sha256=model['manifest_sha256'], model_files_verified=True, service_digest_verified=True,
@@ -91,9 +96,11 @@ def verify_connection(app: Path, models: Path, endpoint: str, *, timeout: int = 
         original = fixture.read_bytes()
         env = smoke_environment(settings, endpoint, model['model'], config, timeout=timeout)
         command = [settings['python'], '-I', '-B', str(app / 'launch.py'), '--workspace', str(workspace), '--', '--model-backend', 'lfm']
+        check_cancelled()
         print('[RUN] Real-model text response through the installed application...', flush=True)
         text = run(command + [f'Reply with exactly {answer}. Do not call tools.'], cwd=workspace, env=env,
                    label='Real-model text response', timeout=timeout)
+        check_cancelled()
         # The marker must appear in a parsed final response, not an echoed input error.
         if not re.search(r'parsed final response:\s*' + re.escape(answer) + r'(?:\s|$)', text):
             raise ValueError('Real-model text response did not return the requested final response marker.')
@@ -103,13 +110,16 @@ def verify_connection(app: Path, models: Path, endpoint: str, *, timeout: int = 
                    'Then report the file names exactly. Do not create, modify or delete files. Do not use shell commands.')
         output = run(command + [request], cwd=workspace, env=env,
                      label='Real-model directory tool round trip', timeout=timeout)
+        check_cancelled()
         if '"name": "filesystem.list"' not in output or filename not in output:
             raise ValueError('Tool round trip did not show filesystem.list and the undisclosed fixture filename.')
         if not fixture.is_file() or fixture.read_bytes() != original or set(workspace.iterdir()) != {fixture}:
             raise ValueError('Isolated tool-check workspace changed unexpectedly.')
         report['tool_round_trip_verified'] = True
     # Refuse a success record if the endpoint's tag changed during the check.
+    check_cancelled()
     check_service(endpoint, model)
+    check_cancelled()
     report['inference_verified'] = True
     return report
 

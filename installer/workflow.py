@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import subprocess
+import uuid
 from pathlib import Path
 
 from installer import application, connection, dependencies, model, ollama_runtime, runtime
@@ -144,10 +145,23 @@ def steps_for(plan: dict, *, emit_progress=print, cancelled=lambda: False) -> li
             return None  # Verified orphan blobs from an interrupted download can be reused.
         return model.verify_model(paths['models'])
     def connection_check():
-        with ollama_runtime.managed_service(paths['ollama'], paths['models'], paths['service_state'],
+        if cancelled(): raise KeyboardInterrupt()
+        # A killed installer cannot run managed_service's lock cleanup. Keep each
+        # verification attempt separate, just like installed launch sessions, so
+        # abandoned locks/logs are preserved without blocking a verified retry.
+        sessions = paths['service_state'] / 'verification-sessions'
+        model.guard_path(sessions)
+        sessions.mkdir(parents=True, exist_ok=True)
+        session_state = sessions / uuid.uuid4().hex
+        with ollama_runtime.managed_service(paths['ollama'], paths['models'], session_state,
                 plan['endpoint'], plan['model']) as session:
-            report = connection.verify_connection(paths['application'], paths['models'], plan['endpoint'], timeout=plan['timeout'])
+            if cancelled(): raise KeyboardInterrupt()
+            if not session['reused']:
+                emit_progress(f'[CHECK] Service log: {session_state / "server.log"}')
+            report = connection.verify_connection(paths['application'], paths['models'], plan['endpoint'],
+                timeout=plan['timeout'], cancelled=cancelled)
             report['service_reused'] = session['reused']
+            report['service_state_dir'] = None if session['reused'] else str(session_state)
         report['owned_service_stopped'] = not session['reused']
         return report
     config_report = {'service_status': 'available', 'endpoint': plan['endpoint'], 'model': plan['model']}
