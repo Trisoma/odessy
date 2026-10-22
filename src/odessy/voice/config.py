@@ -33,6 +33,7 @@ class VoiceConfig:
     #: Extra recordings attempted when a turn hears no usable speech. Total
     #: recordings per turn is this plus one.
     blank_retries: int = 2
+    settling_ms: int = 300
     tmp_dir: Path = Path(tempfile.gettempdir()) / "odessy-voice"
     #: ``wake`` requires the phrase before every request; ``conversation`` keeps a
     #: short follow-up window open after each reply.
@@ -44,6 +45,8 @@ class VoiceConfig:
     max_utterance_seconds: int = DEFAULT_MAX_UTTERANCE_SECONDS
 
     def __post_init__(self) -> None:
+        if not 0 <= self.settling_ms <= 10000:
+            raise ValueError("ODESSY_VOICE_SETTLING_MS must be from 0 to 10000")
         if self.interaction not in INTERACTIONS:
             raise ValueError(
                 f"ODESSY_VOICE_INTERACTION must be one of: {', '.join(INTERACTIONS)} "
@@ -71,6 +74,7 @@ class VoiceConfig:
             audio_input_device=os.environ.get("ODESSY_AUDIO_INPUT_DEVICE") or None,
             audio_output_device=os.environ.get("ODESSY_AUDIO_OUTPUT_DEVICE") or None,
             voice_seconds=_env_int("ODESSY_VOICE_SECONDS", 5),
+            settling_ms=_env_retries("ODESSY_VOICE_SETTLING_MS", 300),
             blank_retries=_env_retries("ODESSY_VOICE_BLANK_RETRIES", 2),
             tmp_dir=Path(os.environ.get("ODESSY_VOICE_TMPDIR", str(Path(tempfile.gettempdir()) / "odessy-voice"))),
             interaction=os.environ.get("ODESSY_VOICE_INTERACTION", "wake").strip().lower() or "wake",

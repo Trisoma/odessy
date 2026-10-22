@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import sys
+import asyncio
+import contextlib
+import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +50,77 @@ class VoiceLoop:
     tmp_dir: Path
     seconds: int = 5
     status_callback: Callable[[str], None] | None = None
+    interactions: object | None = None
+    stop_turn: Callable[[], None] | None = None
+    cue: Callable | None = None
+    settling_ms: int = 300
+
+    async def _blocking(self, function, *args):
+        # A cancelled to_thread does not stop the device. Drain its owned call
+        # before releasing transport ownership or deleting its temporary file.
+        cancelled = threading.Event()
+        owned_audio = getattr(function, '__self__', None) is self.audio_io
+        runner = getattr(self.audio_io, 'run_cancellable', None) if owned_audio else None
+        task = asyncio.create_task(asyncio.to_thread(runner, function, args, cancelled)
+                                   if runner is not None else asyncio.to_thread(function, *args))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled.set()
+            if owned_audio:
+                stop = getattr(self.audio_io, 'stop', None)
+                if stop is not None:
+                    with contextlib.suppress(Exception):
+                        await asyncio.to_thread(stop)
+            with contextlib.suppress(Exception):
+                await task
+            raise
+
+    async def handle_interaction(self, entry: dict) -> None:
+        from odessy.voice.interaction import interaction_prompt, resolve_spoken_answer, normalize_answer, voice_allowed
+
+        broker = self.interactions
+        if broker is None:
+            raise RuntimeError('VoiceLoop interaction broker is not configured')
+        self.tmp_dir.mkdir(parents=True, exist_ok=True)
+        token = uuid.uuid4().hex
+        prompt_audio = self.tmp_dir / f'odessy-prompt-{token}.wav'
+        reply_audio = self.tmp_dir / f'odessy-answer-{token}.wav'
+        try:
+            for attempt in range(3):
+                prompt = interaction_prompt(entry) if not attempt else 'I could not use that response. Please answer the pending prompt after the cue.'
+                self._status(prompt)
+                if entry['kind'] == 'approval':
+                    self._status('Approval phrase: approve this action')
+                result = await self._blocking(self.tts.synthesize, prompt, prompt_audio)
+                if result.status != 'ok':
+                    raise RuntimeError(result.error or 'Interaction speech output failed')
+                await self._blocking(self.audio_io.play, prompt_audio)
+                await asyncio.sleep(self.settling_ms / 1000)
+                if self.cue is not None:
+                    await self.cue()
+                broker.mark_ready(entry['id'])
+                if not voice_allowed(entry):
+                    self._status('This action requires keyboard or authenticated UI confirmation.')
+                    await asyncio.Future()
+                if not broker.is_pending(entry['id']):
+                    return
+                await self._blocking(self.audio_io.record, reply_audio, self.seconds)
+                result = await self._blocking(self.stt.transcribe, reply_audio)
+                if result.status not in ('ok', 'empty'):
+                    continue
+                if normalize_answer(result.text) in ('stop', 'cancel', 'never mind', 'nevermind'):
+                    broker.cancel_pending('stopped by voice')
+                    from odessy.voice.interaction import schedule_stop
+                    schedule_stop(self.stop_turn)
+                    return
+                if resolve_spoken_answer(entry, broker, result.text):
+                    return
+            self._status('Pending: no usable voice response; use the terminal or interaction API.')
+            await asyncio.Future()
+        finally:
+            _unlink_if_exists(prompt_audio)
+            _unlink_if_exists(reply_audio)
 
     async def run_once(self) -> VoiceLoopResult:
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -60,10 +134,10 @@ class VoiceLoop:
 
         try:
             self._status("Recording started")
-            self.audio_io.record(input_audio, self.seconds)
+            await self._blocking(self.audio_io.record, input_audio, self.seconds)
             self._status("Recording stopped")
             self._status("Transcribing speech")
-            stt_result = self.stt.transcribe(input_audio)
+            stt_result = await self._blocking(self.stt.transcribe, input_audio)
             transcript = stt_result.text
             if stt_result.status != "ok" and not (
                 stt_result.status == "empty" and not transcript.strip()
@@ -96,7 +170,7 @@ class VoiceLoop:
             turn = await self.agent.run_turn(transcript, status_callback=self._status)
             final_text = turn.final_text
             self._status("Synthesizing speech")
-            tts_result = self.tts.synthesize(final_text, output_audio)
+            tts_result = await self._blocking(self.tts.synthesize, final_text, output_audio)
             if tts_result.status != "ok":
                 return VoiceLoopResult(
                     status="tts_failed",
@@ -107,7 +181,7 @@ class VoiceLoop:
                     error=tts_result.error,
                 )
             self._status("Playing response")
-            self.audio_io.play(output_audio)
+            await self._blocking(self.audio_io.play, output_audio)
         except Exception as exc:
             status = "failed"
             error = str(exc)

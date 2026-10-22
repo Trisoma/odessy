@@ -26,7 +26,7 @@ def _isolate_config_environment(
     # The cloud usage ledger is per process; each test starts with an empty one, and
     # without the developer's budget or price settings.
     for name in list(os.environ):
-        if name.startswith(("ODESSY_CLOUD_BUDGET_", "ODESSY_CLOUD_PRICE_")):
+        if name.startswith(("ODESSY_CLOUD_BUDGET_", "ODESSY_CLOUD_PRICE_", "ODESSY_INTERACTION_")):
             monkeypatch.delenv(name, raising=False)
     reset_process_ledger()
     monkeypatch.setenv(
@@ -53,7 +53,7 @@ def _isolate_config_environment(
     # tool list). Pin it, so a test never depends on whether the developer's shell has
     # a tool server URL set; single-machine tests set "single" themselves.
     monkeypatch.setenv("ODESSY_DEPLOYMENT", "split")
-    for name in ("ODESSY_LOCAL_OS", "ODESSY_LAPTOP_OS", "ODESSY_TOOL_SERVER_URL", "ODESSY_MCP_SERVER_URLS"):
+    for name in ("ODESSY_LOCAL_OS", "ODESSY_LAPTOP_OS", "ODESSY_TOOL_SERVER_URL", "ODESSY_MCP_SERVER_URLS", "ODESSY_VOICE_SETTLING_MS"):
         monkeypatch.delenv(name, raising=False)
     yield
     reset_process_ledger()

@@ -52,6 +52,10 @@ def model_tool_scope(names: Iterable[str]) -> Iterator[None]:
 
 
 def tool_is_available(name: str) -> bool:
+    if name == "user.ask":
+        from odessy.interaction.context import current_interactions
+        if current_interactions() is None:
+            return False
     if name in {"model.consult", "agent.delegate", "agent.job_status", "agent.cancel"}:
         from odessy.collaboration.context import collaboration_available
         if not collaboration_available():
@@ -111,12 +115,12 @@ def model_tool_names(mode: Deployment | None = None) -> list[str]:
     """The tools the model is offered in this deployment, in contract order."""
 
     # Imported here: tool_contracts imports this module for the same reason.
-    from odessy.tools.tool_contracts import TOOL_REQUEST_SCHEMAS, COLLABORATION_SCHEMAS
+    from odessy.tools.tool_contracts import TOOL_REQUEST_SCHEMAS, COLLABORATION_SCHEMAS, INTERACTION_SCHEMAS
 
     resolved = mode or deployment_mode()
     return [
         name
-        for name in (TOOL_REQUEST_SCHEMAS | COLLABORATION_SCHEMAS)
+        for name in (TOOL_REQUEST_SCHEMAS | COLLABORATION_SCHEMAS | INTERACTION_SCHEMAS)
         if (resolved == "split" or name not in SPLIT_ONLY_TOOLS) and tool_is_available(name)
     ]
 

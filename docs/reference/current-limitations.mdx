@@ -10,6 +10,13 @@ content:
 
 Development-only collaboration adds an authenticated loopback session API and coding jobs. It does not provide durable jobs, verified child-CLI confinement, mid-task model takeover, or hardware qualification. Coding-agent bills are outside the API budget. See [model collaboration](model-collaboration.mdx).
 
+Risk-aware voice approval and mid-task clarification are **complete offline and
+independently reviewed as of October 22, 2026** on `feat/voice-user-interaction`
+through `3412025`; the feature is not yet merged or released. Real microphone echo
+behaviour, Jetson operation and packaged-device acceptance remain unqualified.
+Spoken approval signals intent and does not authenticate identity. See
+[voice integration](voice-integration.mdx).
+
 Odessy v0.3.0 has a real local command-line authority boundary, and an isolation layer whose coverage depends on the host.
 It was released privately as a prerelease on October 19, 2026. Future feature work is
 tracked in the [v0.4.0 roadmap](../releases/v0.4.0.md); those items remain unavailable
@@ -267,10 +274,13 @@ work:
    checks remains a policy-design question; write tools now exist.
 5. How confirmation is represented so the model cannot approve itself -- the model
    requests, an `EscalationApprover` decides, and a denied `danger-full-access` request
-   cannot fall back to a wider mode. The text CLI composes a terminal approver that asks
-   y/N for the one call (until the October 18 fixes it composed none, so every
-   escalation request failed the turn). Voice mode uses the same terminal prompt, like
-   its confirmations; there is no spoken approval yet.
+   cannot fall back to a wider mode. In `feat/voice-user-interaction` development,
+   the shared controller combines ordinary confirmation with sandbox expansion.
+   Medium-risk confirmation supports the exact spoken phrase; high-risk actions
+   and all sandbox expansion require keyboard or authenticated UI. No spoken
+   identity or replay-resistance assurance is claimed. Bounded clarification and
+   pending-question API controls have offline coverage; real microphone/Jetson
+   qualification remains separate. See [voice integration](voice-integration.mdx).
 
 These limitations should be updated whenever Odessy adds Gemma, voice, write tools, public MCP exposure, or further OS-level containment. v0.3.0 added the isolation layer, and the **Isolation Layer** section above is where its coverage is recorded per host.
 

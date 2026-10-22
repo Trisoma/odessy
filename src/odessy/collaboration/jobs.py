@@ -18,6 +18,7 @@ import signal
 import subprocess
 import threading
 import uuid
+from dataclasses import asdict, is_dataclass
 
 
 TERMINAL = {'completed', 'failed', 'cancelled', 'needs_attention'}
@@ -238,17 +239,52 @@ class JobManager:
     async def _submit_consult(self, participant, task):
         return await self._submit(participant, task, 'advice', None, False, consultation=True)
 
-    async def _submit(self, participant, task, mode, workspace, approved, consultation=False):
+    def preflight_submission(self, participant, task, mode='advice', workspace=None):
+        """Validate configured delegation feasibility without starting any work."""
+        return self._preflight_submission(participant, task, mode, workspace, 'delegate')
+
+    def _preflight_submission(self, participant, task, mode, workspace, capability):
         if self._closed:
             raise ValueError('job manager is closed')
-        if participant not in self.profiles:
+        profile = self.profiles.get(participant)
+        if profile is None:
             raise ValueError('unknown participant')
-        profile = self.profiles[participant]
-        capability = 'consult' if consultation else 'delegate'
         if capability not in getattr(profile, 'capabilities', ()):
             raise ValueError(f'participant does not allow {capability} capability')
         if mode not in getattr(profile, 'allowed_modes', ('advice',)):
             raise ValueError('mode is not allowed by participant configuration')
+        if not isinstance(task, str) or not task.strip():
+            raise ValueError('task must be nonempty text')
+        host = getattr(profile, 'host', None) or 'local'
+        configured_workspace = getattr(profile, 'workspace', '') or ''
+        remote_identity = None
+        if host != 'local':
+            target = self.remote_targets.get(host)
+            if target is None:
+                raise ValueError('configured execution target is unavailable')
+            cwd = str(workspace) if workspace is not None else configured_workspace
+            remote_identity = str(id(target))
+        else:
+            root = Path(configured_workspace or Path.cwd()).resolve()
+            cwd = Path(workspace or root).resolve()
+            if not cwd.is_relative_to(root) or not cwd.is_dir():
+                raise ValueError('workspace must be an existing directory under the configured workspace')
+            configured_workspace = str(root)
+        profile_data = asdict(profile) if is_dataclass(profile) else copy.deepcopy(vars(profile))
+        custom = self.adapters.get(profile.adapter)
+        return {'host': host, 'participant': participant, 'profile': profile_data,
+                'workspace': str(cwd), 'configured_workspace': configured_workspace,
+                'remote_identity': remote_identity,
+                'adapter_identity': str(id(custom)) if custom is not None else None}
+
+    async def _submit(self, participant, task, mode, workspace, approved, consultation=False):
+        identity = self._preflight_submission(participant, task, mode, workspace,
+            'consult' if consultation else 'delegate')
+        # The approval binds the target that was admitted. Keep it, so a queued job
+        # cannot run against a different target if the mapping changes while it waits.
+        binding = {'remote_identity': identity['remote_identity'],
+                   'adapter_identity': identity['adapter_identity']}
+        profile = self.profiles[participant]
         if mode != 'advice' and approved is not True:
             raise ValueError('explicit controller approval is required')
         host = getattr(profile, 'host', None)
@@ -263,10 +299,7 @@ class JobManager:
             repo = None
             key = (host, configured_workspace or str(cwd) or participant)
         else:
-            root = Path(getattr(profile, 'workspace', None) or Path.cwd()).resolve()
-            cwd = Path(workspace or root).resolve()
-            if not cwd.is_relative_to(root) or not cwd.is_dir():
-                raise ValueError('workspace must be an existing directory under the configured workspace')
+            cwd = Path(identity['workspace'])
             repo = Path(await self._git(cwd, 'rev-parse', '--show-toplevel', check=False) or cwd).resolve()
             common = await self._git(cwd, 'rev-parse', '--git-common-dir', check=False)
             identity = (cwd / common).resolve() if common else repo
@@ -284,6 +317,7 @@ class JobManager:
                    validation={'status': 'unknown', 'report': None}, result=None, error=None,
                    progress=[], log='', usage=_cli_usage())
         job['remote_state_unknown'] = False
+        job['binding'] = binding
         job['permissions'] = {
             'source': 'remote_coding_cli' if remote else 'coding_cli', 'adapter': profile.adapter,
             'mode': mode, 'enforcement': 'child_cli_not_verified',
@@ -304,6 +338,17 @@ class JobManager:
         self._tasks[job_id] = asyncio.create_task(self._execute(job, profile, cwd, repo, key, remote))
         self._emit(job)
         return self.get(job_id)
+
+    def _require_approved_adapter(self, job, profile):
+        """The grant names one adapter; a swap or removal voids it.
+
+        Call this immediately before any adapter lookup, and again after awaited
+        setup, because `_command()` resolves the adapter from `self.adapters`.
+        """
+        custom = self.adapters.get(profile.adapter)
+        current_adapter = str(id(custom)) if custom is not None else None
+        if current_adapter != job['binding']['adapter_identity']:
+            raise ValueError('agent adapter changed after approval; a new authorization decision is required')
 
     def _command(self, profile, task, mode, cwd):
         adapter = profile.adapter
@@ -351,6 +396,9 @@ class JobManager:
             self._emit(job)
             if remote:
                 target = self.remote_targets[profile.host]
+                if str(id(target)) != job['binding']['remote_identity']:
+                    raise ValueError('execution target changed after approval; a new authorization decision is required')
+                self._require_approved_adapter(job, profile)
                 payload = {k: job[k] for k in ('job_id', 'participant', 'task', 'mode', 'workspace')}
                 self._remote_inflight.add(job['job_id'])
                 result = await asyncio.wait_for(self._remote_call(target, 'start', payload),
@@ -374,11 +422,18 @@ class JobManager:
                 if isinstance(result.get('permissions'), dict):
                     job['permissions']['remote_report'] = self._safe_remote_value(job['job_id'], result['permissions'])
             else:
+                # Local jobs dispatch through the same adapter lookup, so a
+                # registered adapter swapped or removed while the job was queued
+                # would silently run different code under the old approval.
+                self._require_approved_adapter(job, profile)
                 if job['mode'] == 'patch':
                     worktree = repo.parent / (repo.name + '-odessy-' + job['job_id'][:12])
                     await self._git(repo, 'worktree', 'add', '--detach', str(worktree), 'HEAD')
                     job['worktree'] = str(worktree)
                     cwd = worktree / cwd.relative_to(repo)
+                # Worktree setup awaits, so check again: `_command()` resolves the
+                # adapter from this mapping when it builds argv.
+                self._require_approved_adapter(job, profile)
                 command = self._command(profile, job['task'], job['mode'], cwd)
                 result = await asyncio.wait_for(self.runner(command, cwd=cwd, env=self._environment(profile),
                     on_output=lambda output: self._emit(job, output)), getattr(profile, 'timeout', 120))

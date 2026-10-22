@@ -44,6 +44,7 @@ async def schedule_calls(
     watcher = asyncio.create_task(stop.wait()) if stop is not None else None
 
     async def collect(*, one: bool = False) -> None:
+        nonlocal reason
         if not running:
             return
         waiting = set(running)
@@ -54,6 +55,9 @@ async def schedule_calls(
             index = running.pop(task)
             try:
                 results[index] = task.result()
+            except PermissionError as exc:
+                results[index] = {'status': 'denied', 'reason': str(exc)}
+                reason = str(exc)
             except Exception as exc:
                 results[index] = {'status': 'error', 'error': str(exc)}
         if not one and running and not (stop is not None and stop.is_set()):
@@ -77,6 +81,8 @@ async def schedule_calls(
 
     try:
         while next_index < len(batch.calls):
+            if reason is not None:
+                break
             if stop is not None and stop.is_set():
                 reason = 'stopped by user'
                 break
@@ -92,6 +98,8 @@ async def schedule_calls(
             if stop is not None and stop.is_set():
                 reason = 'stopped by user'
                 break
+            if reason is not None:
+                break
             # Admission may have changed while a pool slot was awaited.
             try:
                 still_parallel = safe(call) is True
@@ -100,6 +108,8 @@ async def schedule_calls(
             if parallel and not still_parallel:
                 await collect()
                 parallel = False
+            if reason is not None:
+                break
             if stop is not None and stop.is_set():
                 reason = 'stopped by user'
                 break

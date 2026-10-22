@@ -11,10 +11,11 @@ import secrets
 from contextlib import asynccontextmanager
 
 from .session import public
+from odessy.interaction.broker import InteractionError
 
 _DIAGNOSTIC = r'''<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Odessy diagnostics</title>
-<style>body{font:16px system-ui;max-width:960px;margin:2rem auto;padding:0 1rem;background:#10151d;color:#e2e8f0}input,select,textarea,button{font:inherit;margin:.3rem;padding:.5rem;background:#1f2937;color:inherit;border:1px solid #64748b;border-radius:4px}textarea{display:block;width:90%;min-height:5rem}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#18212e;padding:1rem;max-height:30rem;overflow:auto}button{cursor:pointer}label{display:inline-block}#approvals>div{padding:1rem;border:1px solid #eab308;margin:1rem 0}</style>
+<style>body{font:16px system-ui;max-width:960px;margin:2rem auto;padding:0 1rem;background:#10151d;color:#e2e8f0}input,select,textarea,button{font:inherit;margin:.3rem;padding:.5rem;background:#1f2937;color:inherit;border:1px solid #64748b;border-radius:4px}textarea{display:block;width:90%;min-height:5rem}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#18212e;padding:1rem;max-height:30rem;overflow:auto}button{cursor:pointer}label{display:inline-block}#approvals>div,#questions>div{padding:1rem;border:1px solid #eab308;margin:1rem 0}</style>
 <h1>Odessy diagnostics</h1>
 <p>Enter the bearer token printed by the local server. It stays in this page's memory.</p>
 <label>Bearer token <input id="token" type="password" autocomplete="off"></label>
@@ -23,21 +24,23 @@ _DIAGNOSTIC = r'''<!doctype html><html lang="en"><meta charset="utf-8">
 <button id="select">Select for next turn</button><button id="stop">Stop</button>
 <label>Consult first <select id="participant"><option value="">No explicit consultation</option></select></label>
 <textarea id="text" placeholder="Message or consultation question" aria-label="Message"></textarea><button id="send">Send</button>
-<div id="approvals" aria-live="polite"></div><h2>Conversation</h2><pre id="conversation"></pre>
+<div id="approvals" aria-live="polite"></div><div id="questions" aria-live="polite"></div><h2>Conversation</h2><pre id="conversation"></pre>
 <h2>Events, usage, and jobs</h2><pre id="out"></pre></section>
 <script>
-const $=id=>document.getElementById(id);let sid='',headers={},streamAbort=null,lastEvent=0,lines=[];
+const $=id=>document.getElementById(id);let sid='',headers={},streamAbort=null,lastEvent=0,pendingSnapshotId=0,lines=[];
 function status(message){$('status').textContent=message;}
 async function api(path,method='GET',data){const response=await fetch(path,{method,headers:{...headers,...(data===undefined?{}:{'Content-Type':'application/json'})},body:data===undefined?undefined:JSON.stringify(data)});if(!response.ok){let detail;try{detail=(await response.json()).detail;}catch{detail=response.statusText;}throw Error(response.status+': '+detail);}return response.status===204?null:response.json();}
 function route(suffix=''){return '/v1/sessions/'+encodeURIComponent(sid)+suffix;}
 function log(event){lines.push(JSON.stringify(event));if(lines.length>200)lines.shift();$('out').textContent=lines.join('\n');$('out').scrollTop=$('out').scrollHeight;}
 function approval(entry){if(document.getElementById('approval-'+entry.id))return;const box=document.createElement('div');box.id='approval-'+entry.id;const text=document.createElement('pre');text.textContent=JSON.stringify(entry,null,2);box.append(text);for(const [label,approved]of [['Approve',true],['Decline',false]]){const button=document.createElement('button');button.textContent=label;button.onclick=async()=>{try{await api(route('/approvals/'+encodeURIComponent(entry.id)),'POST',{approved});box.remove();}catch(error){status(error.message);}};box.append(button);}$('approvals').append(box);}
-function eventReceived(event){lastEvent=event.id;log(event);if(event.type==='transcript'){$('conversation').textContent+=(event.data.role+': '+event.data.text+'\n\n');}if(event.type==='approval_required')approval(event.data);if(event.type==='approval_answered')document.getElementById('approval-'+event.data.id)?.remove();if(['result','error','stopped'].includes(event.type))status(event.type);}
-async function stream(session,signal){while(!signal.aborted&&sid===session){try{const response=await fetch('/v1/sessions/'+encodeURIComponent(session)+'/events',{headers:{...headers,'Last-Event-ID':String(lastEvent)},signal});if(!response.ok)throw Error('Event stream: '+response.status);const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';while(true){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true}).replace(/\r\n/g,'\n');let boundary;while((boundary=buffer.indexOf('\n\n'))>=0){const block=buffer.slice(0,boundary);buffer=buffer.slice(boundary+2);const data=block.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n');if(data)eventReceived(JSON.parse(data));}}}catch(error){if(signal.aborted)return;status(error.message);}if(!signal.aborted)await new Promise(resolve=>setTimeout(resolve,1000));}}
-$('connect').onclick=async()=>{try{streamAbort?.abort();if(sid){await api(route(),'DELETE').catch(()=>{});sid='';}headers={Authorization:'Bearer '+$('token').value};const profiles=(await api('/v1/profiles')).profiles;const session=await api('/v1/sessions','POST');sid=session.id;lastEvent=0;lines=[];$('conversation').textContent='';$('approvals').replaceChildren();$('model').replaceChildren();$('participant').innerHTML='<option value="">No explicit consultation</option>';for(const [name,profile]of Object.entries(profiles)){const option=document.createElement('option');option.value=option.textContent=name;$('participant').append(option.cloneNode(true));if(!['codex','claude_code','custom_agent'].includes(profile.adapter))$('model').append(option);}if(!Array.from($('model').options).some(option=>option.value===session.selected_profile)){$('model').add(new Option(session.selected_profile,session.selected_profile));}$('model').value=session.selected_profile;$('controls').hidden=false;status('Connected: '+sid);streamAbort=new AbortController();void stream(sid,streamAbort.signal);}catch(error){status(error.message);}};
+function question(entry){if(document.getElementById('question-'+entry.id))return;const box=document.createElement('div');box.id='question-'+entry.id;const prompt=document.createElement('p');prompt.textContent=entry.question+' (answer channels: '+entry.allowed_channels.join(', ')+')';box.append(prompt);const send=async answer=>{try{await api(route('/questions/'+encodeURIComponent(entry.id)),'POST',{answer});box.remove();status('Answer sent; running');}catch(error){status(error.message);}};for(const choice of entry.choices||[]){const button=document.createElement('button');button.textContent=choice;button.onclick=()=>send(choice);box.append(button);}if(entry.allow_free_text){const input=document.createElement('input');input.setAttribute('aria-label','Your answer');const button=document.createElement('button');button.textContent='Answer';button.onclick=()=>send(input.value);box.append(input,button);}$('questions').append(box);status('Waiting for your answer');}
+function restorePending(snapshot){pendingSnapshotId=Math.max(lastEvent,...(snapshot.events||[]).map(event=>event.id));$('approvals').replaceChildren();$('questions').replaceChildren();for(const entry of snapshot.pending_approvals||[])approval(entry);for(const entry of snapshot.pending_questions||[])question(entry);}
+function eventReceived(event){lastEvent=Math.max(lastEvent,event.id);log(event);if(event.id<=pendingSnapshotId&&['approval_required','approval_answered','approval_expired','question_required','question_answered','question_expired'].includes(event.type))return;if(event.type==='transcript'){$('conversation').textContent+=(event.data.role+': '+event.data.text+'\n\n');}if(event.type==='approval_required')approval(event.data);if(event.type==='question_required')question(event.data);if(['question_answered','question_expired'].includes(event.type))document.getElementById('question-'+event.data.id)?.remove();if(event.type==='approval_expired')document.getElementById('approval-'+event.data.id)?.remove();if(event.type==='approval_answered')document.getElementById('approval-'+event.data.id)?.remove();if(['result','error','stopped'].includes(event.type))status(event.type);}
+async function stream(session,signal){while(!signal.aborted&&sid===session){try{const snapshot=await api('/v1/sessions/'+encodeURIComponent(session));if(signal.aborted||sid!==session)return;restorePending(snapshot);const response=await fetch('/v1/sessions/'+encodeURIComponent(session)+'/events',{headers:{...headers,'Last-Event-ID':String(lastEvent)},signal});if(!response.ok)throw Error('Event stream: '+response.status);const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';while(true){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true}).replace(/\r\n/g,'\n');let boundary;while((boundary=buffer.indexOf('\n\n'))>=0){const block=buffer.slice(0,boundary);buffer=buffer.slice(boundary+2);const data=block.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n');if(data)eventReceived(JSON.parse(data));}}}catch(error){if(signal.aborted)return;status(error.message);}if(!signal.aborted)await new Promise(resolve=>setTimeout(resolve,1000));}}
+$('connect').onclick=async()=>{try{streamAbort?.abort();if(sid){await api(route(),'DELETE').catch(()=>{});sid='';}headers={Authorization:'Bearer '+$('token').value};const profiles=(await api('/v1/profiles')).profiles;const session=await api('/v1/sessions','POST');sid=session.id;lastEvent=0;pendingSnapshotId=0;lines=[];$('conversation').textContent='';$('approvals').replaceChildren();$('questions').replaceChildren();$('model').replaceChildren();$('participant').innerHTML='<option value="">No explicit consultation</option>';for(const [name,profile]of Object.entries(profiles)){const option=document.createElement('option');option.value=option.textContent=name;$('participant').append(option.cloneNode(true));if(!['codex','claude_code','custom_agent'].includes(profile.adapter))$('model').append(option);}if(!Array.from($('model').options).some(option=>option.value===session.selected_profile)){$('model').add(new Option(session.selected_profile,session.selected_profile));}$('model').value=session.selected_profile;$('controls').hidden=false;status('Connected: '+sid);streamAbort=new AbortController();void stream(sid,streamAbort.signal);}catch(error){status(error.message);}};
 $('select').onclick=async()=>{try{await api(route('/model'),'PUT',{profile:$('model').value});status('Coordinator selected for next turn');}catch(error){status(error.message);}};
 $('send').onclick=async()=>{const text=$('text').value.trim();if(!text)return;try{const data={text};if($('participant').value)data.participant=$('participant').value;await api(route('/turns'),'POST',data);$('text').value='';status('Running');}catch(error){status(error.message);}};
-$('stop').onclick=async()=>{try{await api(route('/stop'),'POST');$('approvals').replaceChildren();status('Stopped');}catch(error){status(error.message);}};
+$('stop').onclick=async()=>{try{await api(route('/stop'),'POST');$('approvals').replaceChildren();$('questions').replaceChildren();status('Stopped');}catch(error){status(error.message);}};
 window.addEventListener('pagehide',()=>streamAbort?.abort());
 </script></html>'''
 
@@ -102,6 +105,7 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                 'active_profile': controller.active_profile, 'running': controller.running,
                 'history': public(controller.memory.turns),
                 'pending_approvals': controller.pending_approvals,
+                'pending_questions': controller.pending_questions,
                 'events': controller.events}
 
     async def make_controller():
@@ -190,7 +194,7 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         turn_id = secrets.token_hex(16)
         async def run():
             try:
-                await controller.run_turn(data['text'], participant=data.get('participant'))
+                await controller.run_turn(data['text'], participant=data.get('participant'), turn_id=turn_id)
             except (Exception, asyncio.CancelledError):
                 # Controller emits the public failure; retrieve the task exception.
                 pass
@@ -212,13 +216,28 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     @app.post('/v1/sessions/{sid}/approvals/{approval_id}')
     async def answer(sid: str, approval_id: str, request: Request):
         data = await body(request)
+        if set(data) - {'approved'}:
+            raise HTTPException(400, 'Unknown approval fields')
         if not isinstance(data.get('approved'), bool):
             raise HTTPException(400, 'approved must be a boolean')
         try:
-            find(sid).answer_approval(approval_id, data['approved'])
+            find(sid).answer_approval(approval_id, data['approved'], channel='authenticated_ui')
+        except InteractionError as exc:
+            raise HTTPException(exc.status_code, str(exc))
         except KeyError:
             raise HTTPException(404, 'Approval not found or already answered')
         return {'id': approval_id, 'approved': data['approved']}
+
+    @app.post('/v1/sessions/{sid}/questions/{question_id}')
+    async def answer_question(sid: str, question_id: str, request: Request):
+        data = await body(request)
+        if set(data) != {'answer'} or not isinstance(data.get('answer'), str):
+            raise HTTPException(400, 'Only a string answer is accepted')
+        try:
+            find(sid).answer_question(question_id, data['answer'], channel='authenticated_ui')
+        except InteractionError as exc:
+            raise HTTPException(exc.status_code, str(exc))
+        return {'id': question_id, 'status': 'answered'}
 
     @app.get('/v1/sessions/{sid}/events')
     async def events(sid: str, request: Request):
@@ -293,9 +312,12 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         if sid is None:
             raise HTTPException(400, 'A session is required for controller approval')
         controller = find(sid)
-        approved = await controller.confirm(
-            {'reason': 'Delegate a coding task in ' + mode + ' mode', 'risk': 'high'},
-            ToolRequest('agent.delegate', values))
+        try:
+            approved = await controller.confirm(
+                {'reason': 'Delegate a coding task in ' + mode + ' mode', 'risk': 'high'},
+                ToolRequest('agent.delegate', values))
+        except (ValueError, TypeError, PermissionError) as exc:
+            raise HTTPException(400, str(exc))
         if not approved:
             raise HTTPException(403, 'Job submission declined')
         try:
@@ -347,4 +369,3 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         return await cancel(job_id, sid)
 
     return app
-

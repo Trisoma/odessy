@@ -56,6 +56,22 @@ def test_single_voice_uses_controller_agent(monkeypatch):
     assert seen[0]['interactive'] is True
     assert seen[1] == 'voice'
 
+
+def test_text_turn_stop_exits_with_a_result_without_cancellation_traceback(monkeypatch, capsys):
+    class Controller:
+        profiles = {'current': {}}
+        config = SimpleNamespace(participants={})
+        async def run_turn(self, text, **kwargs):
+            asyncio.current_task().cancel()
+            await asyncio.sleep(0)
+    @asynccontextmanager
+    async def runtime(**kwargs):
+        yield Controller()
+    monkeypatch.setattr(cli, 'controller_runtime', runtime)
+    monkeypatch.setattr(cli, '_build_model', lambda *args, **kwargs: object())
+    asyncio.run(cli._text_async('Help', True))
+    assert 'Stopped.' in capsys.readouterr().out
+
 def test_serve_rejects_network_binding_before_startup():
     from odessy.application.serve import validate_binding
     assert validate_binding('127.0.0.1', 8765) == ('127.0.0.1', 8765)
