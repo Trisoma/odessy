@@ -84,9 +84,13 @@ async def test_composed_controller_question_continues_and_excludes_human_wait(mo
     try:
         started = time.monotonic()
         turn = asyncio.create_task(controller.run_turn('Review my code'))
-        async with asyncio.timeout(3):
+
+        async def wait_for_question():
             while not controller.pending_questions:
                 await asyncio.sleep(.001)
+
+        # asyncio.timeout is 3.11+; the project supports 3.10.
+        await asyncio.wait_for(wait_for_question(), 3)
         question = controller.pending_questions[0]
         assert question['turn_id']
         await asyncio.sleep(.05)
