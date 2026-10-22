@@ -118,6 +118,10 @@ This reference should be updated whenever Odessy changes the authority model or 
 
 ## Development: human interaction grants
 
+Offline implementation and independent review completed October 22, 2026 on
+`feat/voice-user-interaction` through `3412025`; the feature is not yet merged or
+released. Real microphone, Jetson and packaged-device qualification remain pending.
+
 Voice approval is an intent signal, not identity authentication. A known spoken
 phrase is not a replay-resistant authenticator; no speaker-recognition or NIST
 assurance claim is made. See [NIST replay resistance](https://pages.nist.gov/800-63-4/sp800-63b.html#replay).
@@ -136,6 +140,9 @@ Local paths use existing workspace authority and are resolved again before
 dispatch; foreign-host paths retain that host's existing validation rules.
 Changed arguments, target, scopes, policy or local symlink target require a new
 authorization decision. Grants are checked again after opening the transport.
+Pre-dispatch argument comparison preserves JSON value types, including nested
+values such as `1` versus `true`. Coding-job adapter identity is checked again
+after awaited patch-worktree creation, immediately before command construction.
 
 Ordinary confirmation and sandbox expansion share a combined request, with the
 strongest required channel. Both authority and sandbox validation still run and

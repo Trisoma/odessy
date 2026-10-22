@@ -10,6 +10,13 @@ content:
 
 Development-only collaboration adds an authenticated loopback session API and coding jobs. It does not provide durable jobs, verified child-CLI confinement, mid-task model takeover, or hardware qualification. Coding-agent bills are outside the API budget. See [model collaboration](model-collaboration.mdx).
 
+Risk-aware voice approval and mid-task clarification are **complete offline and
+independently reviewed as of October 22, 2026** on `feat/voice-user-interaction`
+through `3412025`; the feature is not yet merged or released. Real microphone echo
+behaviour, Jetson operation and packaged-device acceptance remain unqualified.
+Spoken approval signals intent and does not authenticate identity. See
+[voice integration](voice-integration.mdx).
+
 Odessy v0.3.0 has a real local command-line authority boundary, and an isolation layer whose coverage depends on the host.
 It was released privately as a prerelease on October 19, 2026. Future feature work is
 tracked in the [v0.4.0 roadmap](../releases/v0.4.0.md); those items remain unavailable

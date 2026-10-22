@@ -18,8 +18,12 @@ Voice does not replace the policy, MCP, workspace authority, process authority, 
 
 The `feat/voice-user-interaction` worktree extends the shared session controller.
 Both wake sessions and one-shot voice support human clarification and one-use
-approval. This is unreleased work; real microphone and Jetson qualification remain
-separate opt-in checks.
+approval. **Offline implementation and independent review are complete as of
+October 22, 2026**, through `3412025` on the feature branch; the feature is not yet
+merged or released. Independent review reran **72 relevant tests, all passed**.
+DeepSeek reported **1,449 passed, 5 skipped** for the full suite; that full count
+was not independently repeated. Real microphone, Jetson and packaged-device
+qualification remain pending, separate opt-in checks.
 
 | Policy decision | Accepted approval channels |
 | --- | --- |
@@ -250,10 +254,11 @@ the source, and startup failures release the recorder. Actual Whisper `empty`
 results use the same bounded blank retries. These are software behaviors covered
 by regression tests, not measured real-device guarantees.
 
-Authorization is untouched. The session decides when the microphone is open and what
-text to submit; every proposed action still passes validation, policy, confirmation,
-and the execution-target gate, and a wake transcript or a spoken word can never supply
-an approval.
+The session decides when the microphone is open and what text to submit; every
+proposed action still passes validation, policy, confirmation and the
+execution-target gate. Ordinary wake-command transcripts do not authorize actions.
+Only a valid response to a pending, voice-eligible request can provide spoken
+approval through the shared interaction broker described above.
 
 Conversation mode keeps at most six completed exchanges and 8,000 characters in RAM,
 redacted with the same best-effort, name-based filter as the rest of the runtime before
@@ -285,9 +290,9 @@ tool-call identifier. Interrupted turns are not recorded.
 
 The v0.3.0 private prerelease retains these limits. Blank-audio handling is
 implemented; wake-up activation is implemented in software and awaiting hardware
-qualification; spoken escalation approval and further voice/local-model optimization
-belong to the [v0.4.0 roadmap](../releases/v0.4.0.md), with their prerequisites still
-open.
+qualification. Risk-aware voice approval and clarification are complete offline
+on the v0.4.0 feature branch; hardware acceptance remains pending. Further
+voice/local-model optimization belongs to the [v0.4.0 roadmap](../releases/v0.4.0.md).
 
 Voice mode is staged and turn-based unless `--listen` is used.
 It is not streaming TTS and not a real-time voice assistant: a reply is synthesised in
