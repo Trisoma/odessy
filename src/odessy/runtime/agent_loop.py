@@ -1003,16 +1003,18 @@ class OdessyAgent:
 
         registry: dict[str, tuple[Any, Any]] = {}
         for server in self._mcp_servers:
-            namespaced = isinstance(server, NamespacedServer)
             # A paired host may carry its own namespace (the peer's Node server names
-            # its tools), so the prefix decides, not the class.
-            prefix = getattr(server, 'prefix', '') if not namespaced else server.prefix
-            if namespaced:
-                available_tools = await server.list_tools()
+            # its tools), and it lists tools through the same shape as a configured
+            # server. Anything that can list its own tools is asked directly; only a
+            # bare transport is wrapped in a client.
+            lister = getattr(server, 'list_tools', None)
+            prefix = getattr(server, 'prefix', '') or ''
+            if callable(lister):
+                available_tools = await lister()
             else:
                 async with Client(server) as client:
-                    tools = await client.list_tools()
-                available_tools = getattr(tools, "tools", tools)
+                    available_tools = await client.list_tools()
+            available_tools = getattr(available_tools, "tools", available_tools)
             for tool in available_tools:
                 # A configured third-party server's tools are offered as
                 # "<server>.<tool>": they cannot shadow a built-in or each other, and the
@@ -1036,6 +1038,12 @@ class OdessyAgent:
         if entry is None:
             raise ValueError(f"Unknown MCP tool requested: {name}")
         tool, server = entry
+        # Immediately before dispatch, re-read the coordinator's own view of the peer's
+        # identity and permission revision. A transport object that can do this fails
+        # closed; one that cannot is a local server with nothing to re-read.
+        preflight = getattr(server, 'preflight', None)
+        if callable(preflight):
+            preflight()
         try:
             # Any server object that can dispatch a call by name: a configured server or
             # a paired host, which speaks the same protocol over its own transport.

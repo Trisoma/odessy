@@ -10,12 +10,24 @@ use crate::framing::RequestId;
 use rusqlite::{params, Connection};
 use std::sync::Mutex;
 
-/// Sessions kept before the oldest rows are dropped. Bounded so the journal cannot
-/// grow without limit on a long-lived host.
+/// Sessions kept before rows for *finished* sessions are dropped. Bounded so the
+/// journal cannot grow without limit on a long-lived host.
 pub const RETAINED_SESSIONS: usize = 200;
-/// Rows kept for a single session. A long-lived session would otherwise grow without
-/// limit; past this window the oldest ids are forgotten and may be reused by the peer.
-pub const ROWS_PER_SESSION: usize = 4096;
+/// Ids a single session may use. Reaching it does not evict anything: the session is
+/// exhausted and the peer must start a fresh one, because forgetting a used id would
+/// let the same call run twice.
+pub const MAX_ITEMS_PER_SESSION: usize = 4096;
+
+/// What recording a request id did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdmitOutcome {
+    /// The id had not been used in this session and direction.
+    Fresh,
+    /// The id was already used. Forwarding it again would be a duplicate execution.
+    Duplicate,
+    /// The session has used all the ids it is allowed. A fresh session is required.
+    Exhausted,
+}
 
 pub struct Journal {
     connection: Mutex<Connection>,
@@ -45,6 +57,7 @@ impl Journal {
         }
         let connection =
             Connection::open(path).map_err(|error| format!("cannot open journal: {error}"))?;
+        crate::store::restrict_file(path)?;
         connection
             .execute_batch(
                 "PRAGMA journal_mode=WAL; PRAGMA secure_delete=ON;
@@ -60,6 +73,11 @@ impl Journal {
                  );",
             )
             .map_err(|error| format!("cannot configure journal: {error}"))?;
+        for sidecar in ["-wal", "-shm"] {
+            let mut name = path.as_os_str().to_owned();
+            name.push(sidecar);
+            crate::store::restrict_file(std::path::Path::new(&name))?;
+        }
         Ok(Self {
             connection: Mutex::new(connection),
         })
@@ -78,28 +96,75 @@ impl Journal {
             .unwrap_or(0)
     }
 
-    /// Record a request id. Returns `false` when this id was already used in this
-    /// session and direction, including in an earlier process.
-    pub fn admit(&self, session: &str, direction: &str, id: &RequestId) -> Result<bool, String> {
+    /// Record a request id.
+    ///
+    /// Nothing is ever evicted to make room: an id stays used, and an outstanding
+    /// operation stays unresolved, for as long as the session exists. When the session
+    /// has used its allowance the caller must start a fresh session.
+    /// Record a request id using the default session allowance. Tests use this; the
+    /// relay passes the host's configured allowance explicitly.
+    #[cfg(test)]
+    pub fn admit(
+        &self,
+        session: &str,
+        direction: &str,
+        id: &RequestId,
+    ) -> Result<AdmitOutcome, String> {
+        self.admit_with_limit(session, direction, id, MAX_ITEMS_PER_SESSION)
+    }
+
+    /// The same rule with an explicit allowance, so the limit can be exercised without
+    /// inserting thousands of rows.
+    pub fn admit_with_limit(
+        &self,
+        session: &str,
+        direction: &str,
+        id: &RequestId,
+        limit: usize,
+    ) -> Result<AdmitOutcome, String> {
         let (kind, value) = id_columns(id);
-        let connection = self.lock()?;
-        let inserted = connection
+        let mut connection = self.lock()?;
+        let transaction = connection
+            .transaction()
+            .map_err(|error| format!("cannot start journal transaction: {error}"))?;
+        let existing: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM journal
+                 WHERE session=?1 AND direction=?2 AND id_kind=?3 AND id_value=?4",
+                params![session, direction, kind, value],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("cannot read journal: {error}"))?;
+        if existing > 0 {
+            transaction
+                .commit()
+                .map_err(|error| format!("cannot close journal transaction: {error}"))?;
+            return Ok(AdmitOutcome::Duplicate);
+        }
+        let used: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM journal WHERE session=?1",
+                params![session],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("cannot read journal: {error}"))?;
+        if used as usize >= limit {
+            transaction
+                .commit()
+                .map_err(|error| format!("cannot close journal transaction: {error}"))?;
+            return Ok(AdmitOutcome::Exhausted);
+        }
+        transaction
             .execute(
-                "INSERT OR IGNORE INTO journal(session, direction, id_kind, id_value, state, admitted_at)
+                "INSERT INTO journal(session, direction, id_kind, id_value, state, admitted_at)
                  VALUES(?1, ?2, ?3, ?4, 'admitted', ?5)",
                 params![session, direction, kind, value, Self::now()],
             )
             .map_err(|error| format!("cannot record request: {error}"))?;
-        // Bound one session's history independently of the session count.
-        connection
-            .execute(
-                "DELETE FROM journal WHERE rowid IN (
-                     SELECT rowid FROM journal WHERE session=?1 ORDER BY rowid DESC LIMIT -1 OFFSET ?2
-                 )",
-                params![session, ROWS_PER_SESSION as i64],
-            )
-            .map_err(|error| format!("cannot bound session rows: {error}"))?;
-        Ok(inserted == 1)
+        transaction
+            .commit()
+            .map_err(|error| format!("cannot close journal transaction: {error}"))?;
+        Ok(AdmitOutcome::Fresh)
     }
 
     /// Mark a request as having received its answer.
@@ -162,16 +227,20 @@ impl Journal {
             .map_err(|error| format!("cannot read journal: {error}"))
     }
 
-    /// Drop rows for sessions other than the newest `keep`.
+    /// Drop rows for fully settled sessions other than the newest `keep`.
     ///
-    /// Newest is decided by `rowid`, not by a timestamp: two sessions opened in the
-    /// same second must still order deterministically.
+    /// A session with an `admitted` or `unresolved` row is never pruned: its used ids
+    /// may still be needed to reject a duplicate, and an unresolved outcome must stay
+    /// reportable rather than being forgotten.
     pub fn prune(&self, keep: usize) -> Result<usize, String> {
         let removed = self
             .lock()?
             .execute(
-                "DELETE FROM journal WHERE session NOT IN (
-                     SELECT session FROM journal GROUP BY session ORDER BY MAX(rowid) DESC LIMIT ?1
+                "DELETE FROM journal WHERE session IN (
+                     SELECT session FROM journal
+                     GROUP BY session
+                     HAVING SUM(CASE WHEN state='settled' THEN 1 ELSE 0 END) = COUNT(*)
+                     ORDER BY MAX(rowid) DESC LIMIT -1 OFFSET ?1
                  )",
                 params![keep.max(1) as i64],
             )
@@ -213,42 +282,121 @@ mod tests {
     #[test]
     fn a_used_id_is_refused_across_a_reopen() {
         let fixture = TempJournal::new("reopen");
-        assert!(fixture
-            .journal
-            .admit("session-1", "peer-to-node", &RequestId::Number(1))
-            .expect("admit"));
-        // Dropping this handle closes the connection; the row is on disk, not in it.
-        let reopened = Journal::open(&fixture.directory.join("journal.sqlite3")).expect("reopen");
-        assert!(
-            !reopened
+        assert_eq!(
+            fixture
+                .journal
                 .admit("session-1", "peer-to-node", &RequestId::Number(1))
                 .expect("admit"),
+            AdmitOutcome::Fresh
+        );
+        let reopened = Journal::open(&fixture.directory.join("journal.sqlite3")).expect("reopen");
+        assert_eq!(
+            reopened
+                .admit("session-1", "peer-to-node", &RequestId::Number(1))
+                .expect("admit"),
+            AdmitOutcome::Duplicate,
             "the same id may not be reused after a restart"
         );
-        // A different session starts clean; a different direction is independent.
-        assert!(reopened
-            .admit("session-2", "peer-to-node", &RequestId::Number(1))
-            .expect("admit"));
-        assert!(reopened
-            .admit("session-1", "node-to-peer", &RequestId::Number(1))
-            .expect("admit"));
+        // A different session starts clean.
+        assert_eq!(
+            reopened
+                .admit("session-2", "peer-to-node", &RequestId::Number(1))
+                .expect("admit"),
+            AdmitOutcome::Fresh
+        );
     }
 
     #[test]
     fn numeric_and_string_ids_are_stored_separately() {
         let fixture = TempJournal::new("ids");
-        assert!(fixture
+        assert_eq!(
+            fixture
+                .journal
+                .admit("s", "d", &RequestId::Number(1))
+                .expect("numeric"),
+            AdmitOutcome::Fresh
+        );
+        assert_eq!(
+            fixture
+                .journal
+                .admit("s", "d", &RequestId::Text("1".into()))
+                .expect("string"),
+            AdmitOutcome::Fresh
+        );
+        assert_eq!(
+            fixture
+                .journal
+                .admit("s", "d", &RequestId::Number(1))
+                .expect("repeat"),
+            AdmitOutcome::Duplicate
+        );
+    }
+
+    #[test]
+    fn equal_ids_in_opposite_directions_are_independent() {
+        let fixture = TempJournal::new("directions");
+        let id = RequestId::Number(7);
+        assert_eq!(
+            fixture.journal.admit("s", "peer-to-node", &id).expect("inbound"),
+            AdmitOutcome::Fresh
+        );
+        assert_eq!(
+            fixture.journal.admit("s", "node-to-peer", &id).expect("outbound"),
+            AdmitOutcome::Fresh
+        );
+        fixture
             .journal
-            .admit("s", "d", &RequestId::Number(1))
-            .expect("numeric"));
-        assert!(fixture
-            .journal
-            .admit("s", "d", &RequestId::Text("1".into()))
-            .expect("string"));
-        assert!(!fixture
-            .journal
-            .admit("s", "d", &RequestId::Number(1))
-            .expect("repeat"));
+            .settle("s", "peer-to-node", &id)
+            .expect("settle inbound");
+        let connection = fixture.journal.lock().expect("lock");
+        let states: Vec<String> = connection
+            .prepare("SELECT direction || ':' || state FROM journal WHERE session='s'")
+            .expect("prepare")
+            .query_map([], |row| row.get(0))
+            .expect("query")
+            .map(|value| value.expect("row"))
+            .collect();
+        // The inbound request is answered; the outbound request with the same id is not.
+        assert!(states.contains(&"peer-to-node:settled".to_string()));
+        assert!(states.contains(&"node-to-peer:admitted".to_string()));
+    }
+
+    #[test]
+    fn a_full_session_is_exhausted_rather_than_forgetting_used_ids() {
+        let fixture = TempJournal::new("exhausted");
+        for offset in 0..3 {
+            assert_eq!(
+                fixture
+                    .journal
+                    .admit_with_limit("s", "peer-to-node", &RequestId::Number(offset), 3)
+                    .expect("admit"),
+                AdmitOutcome::Fresh
+            );
+        }
+        assert_eq!(
+            fixture
+                .journal
+                .admit_with_limit("s", "peer-to-node", &RequestId::Number(99), 3)
+                .expect("admit"),
+            AdmitOutcome::Exhausted,
+            "a full session must be refused, not silently forget an id"
+        );
+        // The first id is still known, so it can never be executed twice.
+        assert_eq!(
+            fixture
+                .journal
+                .admit_with_limit("s", "peer-to-node", &RequestId::Number(0), 3)
+                .expect("admit"),
+            AdmitOutcome::Duplicate
+        );
+        // A fresh session starts over.
+        assert_eq!(
+            fixture
+                .journal
+                .admit_with_limit("s2", "peer-to-node", &RequestId::Number(0), 3)
+                .expect("admit"),
+            AdmitOutcome::Fresh
+        );
     }
 
     #[test]
@@ -270,24 +418,42 @@ mod tests {
         let unresolved = fixture.journal.unresolved("s").expect("read");
         assert_eq!(unresolved.len(), 1);
         assert_eq!(unresolved[0].id, RequestId::Number(1));
-        // Settling again is harmless and does not resurrect the entry.
-        assert!(fixture.journal.unresolved("s").expect("read").len() == 1);
     }
 
     #[test]
-    fn pruning_keeps_the_newest_sessions_only() {
+    fn pruning_never_drops_a_session_with_outstanding_work() {
         let fixture = TempJournal::new("prune");
-        for session in ["a", "b", "c"] {
+        // A live session: one request admitted and never answered.
+        fixture
+            .journal
+            .admit("live", "peer-to-node", &RequestId::Number(1))
+            .expect("live");
+        for finished in ["old", "new"] {
             fixture
                 .journal
-                .admit(session, "peer-to-node", &RequestId::Number(1))
+                .admit(finished, "peer-to-node", &RequestId::Number(1))
                 .expect("admit");
+            fixture
+                .journal
+                .settle(finished, "peer-to-node", &RequestId::Number(1))
+                .expect("settle");
         }
-        let removed = fixture.journal.prune(1).expect("prune");
-        assert!(removed >= 1, "older sessions are dropped");
-        assert!(fixture.journal.unresolved("c").is_ok());
-        assert!(fixture.journal.admit("a", "peer-to-node", &RequestId::Number(1)).expect("admit"),
-            "a pruned session may admit again");
+        fixture.journal.close_session("live").expect("close live");
+        // The live session is now unresolved, which is still not prunable: its outcome
+        // must remain reportable instead of being replayed.
+        fixture.journal.prune(0).expect("prune");
+        assert!(
+            !fixture.journal.unresolved("live").expect("read").is_empty(),
+            "an unresolved session keeps its rows"
+        );
+        assert_eq!(
+            fixture
+                .journal
+                .admit("live", "peer-to-node", &RequestId::Number(1))
+                .expect("admit"),
+            AdmitOutcome::Duplicate,
+            "a pruned candidate must never free a used id"
+        );
     }
 
     #[test]

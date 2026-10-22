@@ -339,4 +339,86 @@ mod tests {
         let _ = server_task.await;
         let _ = (directory_a, directory_c);
     }
+
+    /// A sibling leaf under the *enrolled* CA passes ordinary chain validation but is
+    /// not the enrolled certificate. The real admission decision must refuse it.
+    #[tokio::test]
+    async fn a_sibling_leaf_under_the_enrolled_ca_is_refused_by_admission() {
+        let (directory_a, registry_a) = registry("sibling-a");
+        let (directory_b, registry_b) = registry("sibling-b");
+        let (enrolled, sibling) = Identity::with_sibling("hosta0000005").expect("siblings");
+        assert_ne!(
+            enrolled.fingerprint(),
+            sibling.fingerprint(),
+            "the sibling must be a different certificate"
+        );
+        assert_eq!(enrolled.ca_der, sibling.ca_der, "same enrolling authority");
+
+        registry_a
+            .add_peer(
+                "hostb",
+                &serde_json::to_string(&enrolled.bundle()).unwrap(),
+                &enrolled.fingerprint(),
+                None,
+            )
+            .expect("a enrols the leaf it was given");
+        registry_b
+            .add_peer(
+                "hosta",
+                &serde_json::to_string(&enrolled.bundle()).unwrap(),
+                &enrolled.fingerprint(),
+                None,
+            )
+            .expect("b enrols a");
+        let workspace = std::env::temp_dir();
+        registry_a
+            .grant("hostb", "mcp", &workspace.to_string_lossy())
+            .expect("grant");
+
+        let server = std::sync::Arc::new(
+            server_config(&enrolled, registry_a.enrolled_authorities().expect("authorities"))
+                .expect("server config"),
+        );
+        let peer_a = registry_b.peer("hosta").expect("read").expect("peer");
+        // Same CA, same SAN, different certificate: everything but the exact match.
+        let attacker = std::sync::Arc::new(client_config(&sibling, &peer_a).expect("client config"));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("addr");
+        let acceptor = tokio_rustls::TlsAcceptor::from(server);
+        let trust_path = directory_a.join("trust.sqlite3");
+        let served = workspace.clone();
+        let server_task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let stream = acceptor
+                .accept(stream)
+                .await
+                .map_err(|error| format!("handshake failed: {error}"))?;
+            // TLS accepted the chain; the exact-match admission step must refuse it.
+            let fingerprint = presented_fingerprint(stream.get_ref().1.peer_certificates())?;
+            crate::commands::admit_peer(&trust_path, &fingerprint, &served)
+                .map(|peer| peer.alias)
+                .map_err(|error| format!("refused: {error}"))
+        });
+        let connector = tokio_rustls::TlsConnector::from(attacker);
+        let stream = tokio::net::TcpStream::connect(address).await.expect("connect");
+        let name = expected_server_name(&peer_a).expect("name");
+        let established = connector.connect(name, stream).await;
+        assert!(
+            established.is_ok(),
+            "the point of this test is that ordinary verification passes"
+        );
+        let verdict = server_task.await.expect("join");
+        let error = verdict.expect_err("a sibling leaf is not an enrolled peer");
+        assert!(error.contains("not an enrolled peer"), "{error}");
+
+        // The genuinely enrolled leaf is admitted, so the refusal is about the match.
+        let admitted = crate::commands::admit_peer(
+            &directory_a.join("trust.sqlite3"),
+            &enrolled.fingerprint(),
+            &workspace,
+        );
+        assert!(admitted.is_ok(), "{admitted:?}");
+        let _ = (directory_b, registry_b);
+    }
 }

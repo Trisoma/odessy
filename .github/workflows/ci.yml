@@ -76,10 +76,12 @@ jobs:
           npm run build
 
       - name: Install Odessy
-        run: python -m pip install -e ".[test,ui]"
+        run: python -m pip install -e ".[test,ui]" "pytest-xdist>=3.6,<4"
 
       - name: Run tests
-        run: python -m pytest -q --tb=short --durations=10
+        # Two workers overlap subprocess/network waits without multiplying jobs.
+        # Keep each file together for module-scoped fixtures and ordered tests.
+        run: python -m pytest -q -n 2 --dist loadfile --tb=short --durations=10
 
       - name: CLI smoke test
         shell: bash
@@ -119,6 +121,63 @@ jobs:
         run: cargo test --locked
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
+
+  pairing:
+    name: Paired transport (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      ODESSY_CONFIG_FILE: ${{ github.workspace }}/.ci-no-config.env
+      PYTHONUTF8: "1"
+      # Opts the two-process tests in: real `odessy-link serve` against a real
+      # `odessy-link connect`, plus the Python adapter reaching the Node tool server.
+      ODESSY_LINK_E2E: "1"
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/odessy-link
+
+      - name: Build odessy-link
+        working-directory: native/odessy-link
+        run: cargo build --locked
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/package-lock.json
+
+      - name: Build Node tool server
+        working-directory: tools
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Install Odessy
+        run: python -m pip install -e ".[test]"
+
+      # Relay accounting, duplicate ids, workspace grants, live revocation, process
+      # tree cleanup, the agent's approval path, and Python → Rust → Node.
+      - name: Paired transport and agent tests
+        run: >-
+          python -m pytest -q
+          tests/test_paired_transport.py
+          tests/test_paired_integration.py
+          tests/test_paired_agent.py
+          tests/test_paired_host.py
 
   tool-server:
     name: Tool server, Node ${{ matrix.node }} (${{ matrix.os }})

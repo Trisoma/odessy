@@ -106,6 +106,72 @@ impl Identity {
         Self::build(installation_id, start, CA_VALIDITY_DAYS, 300)
     }
 
+    /// Two identities that share one CA: the enrolled host and a sibling leaf that
+    /// chains to the same authority. This is the valid-chain/wrong-leaf case, which
+    /// only an exact certificate match can refuse.
+    #[cfg(test)]
+    pub fn with_sibling(installation_id: &str) -> Result<(Self, Self), String> {
+        validate_installation_id(installation_id)?;
+        let now = OffsetDateTime::now_utc();
+        let ca_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
+            .map_err(|error| format!("cannot generate CA key: {error}"))?;
+        let mut ca_params = CertificateParams::default();
+        ca_params.distinguished_name =
+            distinguished_name("Odessy installation CA", installation_id);
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        ca_params.key_usages = vec![
+            KeyUsagePurpose::KeyCertSign,
+            KeyUsagePurpose::CrlSign,
+            KeyUsagePurpose::DigitalSignature,
+        ];
+        ca_params.not_before = now;
+        ca_params.not_after = now + Duration::days(CA_VALIDITY_DAYS);
+        let ca_cert = ca_params
+            .self_signed(&ca_key)
+            .map_err(|error| format!("cannot sign CA certificate: {error}"))?;
+        let enrolment = Self::issue_leaf(&ca_cert, &ca_key, installation_id, now)?;
+        // Same CA, same SAN, different key and therefore a different certificate.
+        let sibling = Self::issue_leaf(&ca_cert, &ca_key, installation_id, now)?;
+        Ok((enrolment, sibling))
+    }
+
+    #[cfg(test)]
+    fn issue_leaf(
+        ca_cert: &rcgen::Certificate,
+        ca_key: &KeyPair,
+        installation_id: &str,
+        now: OffsetDateTime,
+    ) -> Result<Self, String> {
+        let leaf_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
+            .map_err(|error| format!("cannot generate connection key: {error}"))?;
+        let mut leaf_params = CertificateParams::new(vec![dns_name(installation_id)])
+            .map_err(|error| format!("cannot build connection certificate: {error}"))?;
+        leaf_params.distinguished_name =
+            distinguished_name("Odessy connection certificate", installation_id);
+        leaf_params.is_ca = IsCa::NoCa;
+        leaf_params.extended_key_usages = vec![
+            ExtendedKeyUsagePurpose::ClientAuth,
+            ExtendedKeyUsagePurpose::ServerAuth,
+        ];
+        leaf_params.key_usages = vec![
+            KeyUsagePurpose::DigitalSignature,
+            KeyUsagePurpose::KeyEncipherment,
+        ];
+        leaf_params.not_before = now;
+        leaf_params.not_after = now + Duration::days(LEAF_VALIDITY_DAYS);
+        let leaf_cert = leaf_params
+            .signed_by(&leaf_key, ca_cert, ca_key)
+            .map_err(|error| format!("cannot sign connection certificate: {error}"))?;
+        Ok(Self {
+            installation_id: installation_id.to_string(),
+            ca_pem: ca_cert.pem(),
+            ca_der: ca_cert.der().to_vec(),
+            certificate_pem: leaf_cert.pem(),
+            certificate_der: leaf_cert.der().to_vec(),
+            key_pem: leaf_key.serialize_pem(),
+        })
+    }
+
     fn build(
         installation_id: &str,
         now: OffsetDateTime,

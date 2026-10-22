@@ -6,7 +6,7 @@
 //! outstanding request closes the connection rather than being forwarded.
 
 use crate::framing::{FrameCodec, FrameError, RequestId, UsedIds};
-use crate::journal::Journal;
+use crate::journal::{AdmitOutcome, Journal, MAX_ITEMS_PER_SESSION};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -29,6 +29,9 @@ pub enum RelayError {
     /// The host's own authority check failed for this request: a revoked peer, a
     /// removed grant, or a registry that cannot be read.
     Refused(String),
+    /// This session has used all the request ids it may use. Nothing is forgotten to
+    /// make room, so the peer must open a fresh session.
+    SessionExhausted,
 }
 
 impl From<FrameError> for RelayError {
@@ -79,6 +82,8 @@ pub struct DirectionState {
     answers: Option<Arc<Pending>>,
     /// Durable, content-free record of used ids for this session and direction.
     journal: Option<(Arc<Journal>, String)>,
+    /// Ids this session may use before it must be replaced.
+    journal_limit: usize,
     direction: &'static str,
     /// Direction whose journal rows a response in this stream settles.
     request_direction: &'static str,
@@ -92,6 +97,7 @@ impl DirectionState {
             own: Arc::new(Pending::default()),
             answers: None,
             journal: None,
+            journal_limit: MAX_ITEMS_PER_SESSION,
             direction: "unknown",
             request_direction: "unknown",
             recheck: None,
@@ -104,6 +110,13 @@ impl DirectionState {
         self.journal = Some((journal, session));
         self.direction = direction;
         self.request_direction = direction;
+        self
+    }
+
+    /// Override how many ids this session may use. The host sets it from local
+    /// configuration; reaching it requires a fresh session rather than forgetting ids.
+    pub fn with_journal_limit(mut self, limit: usize) -> Self {
+        self.journal_limit = limit.max(1);
         self
     }
 
@@ -136,9 +149,14 @@ impl DirectionState {
                     recheck().map_err(RelayError::Refused)?;
                 }
                 let fresh = match &self.journal {
-                    Some((journal, session)) => journal
-                        .admit(session, self.direction, &id)
-                        .map_err(RelayError::Refused)?,
+                    Some((journal, session)) => match journal
+                        .admit_with_limit(session, self.direction, &id, self.journal_limit)
+                        .map_err(RelayError::Refused)?
+                    {
+                        AdmitOutcome::Fresh => true,
+                        AdmitOutcome::Duplicate => false,
+                        AdmitOutcome::Exhausted => return Err(RelayError::SessionExhausted),
+                    },
                     None => self
                         .used
                         .get_or_insert_with(|| UsedIds::new(USED_ID_CAPACITY))

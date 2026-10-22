@@ -11,26 +11,25 @@ and confinement checks.
 | ECDSA P-256 installation CA + connection certificate, DNS SAN, 5y/1y validity | Implemented (`src/identity.rs`) |
 | Enrollment bundle export with no private keys, full SHA-256 fingerprint | Implemented (`identity export`) |
 | Operator-confirmed fingerprint enrollment (`pair add --expect-sha256`) | Implemented (`src/trust.rs`) |
-| Per-user SQLite trust registry, capabilities, revocation | Implemented (`src/trust.rs`) |
+| Per-user SQLite trust registry, capabilities, revocation, monotonic grant revision | Implemented (`src/trust.rs`) |
 | Enrollment grants no execution access until `peers grant` | Implemented + tested |
-| Newline-delimited framing, 8 MiB frame limit, 16 MiB buffered limit, partial frames, EOF discard, duplicate-id table keeping numeric/string ids distinct | Implemented (`src/framing.rs`) |
-| Mutual-TLS `serve`/`connect`, enrolled CA roots only, expected-SAN client verification, mandatory client certificates, exact leaf-fingerprint match before forwarding, resumption disabled, 10 s handshake timeout | Implemented (`src/tls.rs`, `src/commands.rs`); verified by a loopback handshake test and a two-process relay run |
-| 32 outstanding requests per direction, duplicate detection, cancel notifications pass through | Implemented (`src/relay.rs`) |
-| One owned Node subprocess per authenticated connection, fixed executable/env/workspace, killed on session end | Implemented (`src/node.rs`) |
-| 16 MiB per-direction buffer enforced while reading, stalled consumer stops the read | Implemented via `FrameCodec` in `src/relay.rs` |
-| Content-free journal (session, direction, request id, state, timestamps; bounded retention) | **Implemented** (`src/journal.rs`), sqlite-backed, 4096 rows per session and 200 sessions |
-| Revocation before admission; per-request recheck; live-session termination | **Implemented**: admission and every request re-check the registry and the granted workspace; a 1 s watcher ends a revoked session |
-| Workspace grants enforced (canonical path equality, not just “some grant exists”) | **Implemented** (`workspace_matches`) |
-| Grant revision and enrolled fingerprint available to the coordinator | **Implemented**: `peers list --json`, bound into Python approval metadata |
-| mDNS discovery | **Not implemented** |
-| Python paired-host adapter (`ODESSY_PAIRED_HOST`), `doctor` reporting, approval-binding integration | **Implemented** in `src/odessy/tools/paired.py`, `cli.py`, `config/doctor.py`; see `docs/reference/host-pairing.mdx` |
-| Real Python → Rust → Node integration test | **Implemented** as opt-in `tests/test_paired_integration.py` (`ODESSY_LINK_E2E=1`), passing against the repository's own Node tool server |
-| Windows DPAPI + restrictive ACL for identity keys | **Not implemented**; Unix uses `0600` |
+| Newline-delimited framing, 8 MiB frame limit, 16 MiB buffered limit, partial frames, EOF discard, duplicate ids keeping numeric/string distinct | Implemented (`src/framing.rs`) |
+| Mutual-TLS `serve`/`connect`, enrolled CA roots only, expected-SAN verification, mandatory client certificates, exact leaf-fingerprint match before forwarding, resumption disabled, 10 s handshake timeout | Implemented (`src/tls.rs`, `src/commands.rs`) |
+| Requests answered in either direction release the requesting slot; 32 outstanding per direction, 33rd refused | Implemented (`src/relay.rs`), proven over the real two-process transport |
+| Workspace grant enforced as canonical path equality at admission, per request, and in the revocation watcher | Implemented (`workspace_matches`) |
+| Content-free journal with a hard per-session id allowance; no eviction of used or unresolved ids | Implemented (`src/journal.rs`); exhaustion requires a fresh session |
+| Live-session termination on revocation | Implemented (1 s watcher) |
+| Owned process **tree** termination (taskkill /T on Windows, process group on Unix) with explicit failure reporting | Implemented (`src/node.rs`) |
+| DPAPI-protected identity + explicit ACL on Windows; `0600` creation on Unix; plaintext migration | Implemented (`src/store.rs`) |
+| mDNS discovery as an address aid (`discover --seconds`, `serve --advertise`, `connect --discover`) | Implemented (`src/discover.rs`); never enrols or grants |
+| Python paired-host adapter, fail-closed startup, per-dispatch trust recheck, approval metadata | Implemented in `src/odessy/tools/paired.py`, `runtime/agent_loop.py`, `config/doctor.py` |
+| Real Python → Rust → Node call and two-process transport tests | Implemented as opt-in tests (`ODESSY_LINK_E2E=1`), run by the `pairing` CI job |
+| Windows–Jetson, real-network and Linux/ARM64 qualification | **Not performed**; only Windows x64 → Windows x64 has been exercised |
 
-Anything not implemented either fails loudly or is absent; none of it pretends to work.
+Nothing on the plan is unimplemented in code. What remains is qualification on real
+hardware and networks, which no unit test can stand in for.
 
-Anything not implemented returns exit code 1 with an explicit message and makes no
-trust decision.
+A refusal is always explicit: exit code 1 with the reason, and no trust decision.
 
 ## Usage
 
@@ -38,12 +37,16 @@ trust decision.
 odessy-link init
 odessy-link identity export --out <bundle>
 odessy-link pair add --alias <name> --certificate <bundle> --expect-sha256 <fingerprint> [--address <host:port>]
-odessy-link peers list
+odessy-link peers list [--json]
 odessy-link peers grant <peer> --capability mcp --workspace <path>
 odessy-link peers revoke <peer>
-odessy-link serve --listen <address> --workspace <path> --node-server <entry>
-odessy-link connect --peer <alias> [--address <host:port>]
+odessy-link discover [--seconds <n>]
+odessy-link serve --listen <address> --workspace <path> --node-server <entry> [--advertise]
+odessy-link connect --peer <alias> [--address <host:port>] [--discover]
 ```
+
+`ODESSY_LINK_MAX_SESSION_ITEMS` caps how many request ids one session may use
+(default 4096). Reaching it ends the session; ids are never evicted to make room.
 
 `serve` listens with mutual TLS and admits only certificates whose exact leaf
 fingerprint is enrolled **and** whose alias holds the `mcp` capability, then starts
@@ -63,14 +66,28 @@ so a swapped certificate never inherits execution access.
 
 ```powershell
 cargo test
+cargo clippy --all-targets -- -D warnings
 ```
 
-32 tests. Beyond the identity, trust and framing cases, they include two real
-loopback TLS handshakes: enrolled hosts complete mutual TLS and each side reports
-the fingerprinted leaf it was enrolled with, and an unenrolled identity is refused
-by client-certificate verification with no application byte exchanged. The relay is
-covered against in-memory duplex streams for split reads, duplicate ids, the 33rd
-outstanding request, and an incomplete frame at EOF.
+57 tests on Windows. Beyond the identity, trust, storage, framing, journal and relay
+cases, they include real loopback TLS handshakes: enrolled hosts complete mutual TLS
+and each side reports the fingerprinted leaf it was enrolled with, an unenrolled
+identity is refused with no application byte exchanged, an expired certificate and a
+wrong-SAN certificate are refused, and a **sibling leaf under the same enrolled CA**
+validates against the chain and is still refused by `admit_peer`.
+
+The two-process transport itself is proven from Python rather than from Rust, because
+the point is that two operating-system processes, a real socket and a real child Node
+server are involved:
+
+```powershell
+ODESSY_LINK_E2E=1 python -m pytest tests/test_paired_transport.py tests/test_paired_integration.py -q
+```
+
+That suite sends 96 sequential requests through the relay and counts what the child
+executed, sends 33 requests at once and shows the 33rd is refused and never executes,
+replays a duplicate id, exhausts a session's id allowance, refuses a grant for another
+directory, revokes a live session, and checks the child's descendant process is gone.
 
 Manual two-process check performed on Windows:
 

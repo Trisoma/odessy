@@ -108,15 +108,15 @@ Reads, network, and process visibility are **not** restricted on Windows.
 
 ### Not isolated at all
 
-- **Host pairing exists on one branch and is not qualified.** `native/odessy-link`
-  implements enrolment, mutual TLS with exact leaf-fingerprint matching, and the MCP
-  relay limits, and `ODESSY_PAIRED_HOST` selects it instead of a raw remote URL. It
-  has **not** been run between Windows and the Jetson, has no mDNS discovery, no
-  durable request journal, no revocation-triggered session termination, and no
-  DPAPI/ACL key protection on Windows. See [host pairing](host-pairing.mdx). Until
-  that qualification happens, split mode still supports configured remote MCP URLs
-  without authenticated pairing. A server must be explicitly marked an
-  `ExecutionTarget` before anything will execute on it.
+- **Host pairing is implemented but hardware-unqualified.** `native/odessy-link`
+  implements enrolment, mutual TLS with exact leaf-fingerprint matching, the MCP relay
+  limits, a durable content-free journal, revocation-triggered session termination,
+  mDNS discovery as an address aid, and DPAPI/ACL key protection on Windows;
+  `ODESSY_PAIRED_HOST` selects it instead of a raw remote URL. It has **not** been run
+  between Windows and the Jetson, on a real network, or on Linux/ARM64, so treat those
+  as unqualified. See [host pairing](host-pairing.mdx). Split mode still supports
+  configured remote MCP URLs without authenticated pairing. A server must be explicitly
+  marked an `ExecutionTarget` before anything will execute on it.
 - **No device backend exists.** ESP32 / STM32 / RP2040 are declared and unbacked.
 - **No hard real-time guarantee anywhere.** The Linux host is upper-tier compute and
   control planning; a device that needs a deadline owns it in firmware.

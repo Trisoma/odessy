@@ -23,6 +23,9 @@ const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10
 const SESSION_DRAIN: std::time::Duration = std::time::Duration::from_secs(5);
 /// How often a live session rechecks its grant so a revocation can end it.
 const REVOCATION_POLL: std::time::Duration = std::time::Duration::from_secs(1);
+/// How long a host spends saying goodbye to a peer it is refusing or ending. Bounded
+/// so a silent peer cannot delay the accept loop.
+const CLOSE_NOTIFY: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Node server errors terminate the whole relay, so a dead execution backend can
 /// never look like a stalled peer.
@@ -32,6 +35,8 @@ fn relay_error_text(context: &str, error: relay::RelayError) -> String {
 
 pub fn serve(arguments: &[String]) -> Result<(), Failure> {
     let options = crate::parse(arguments, &["--listen", "--workspace", "--node-server"])?;
+    // `--advertise` is a bare switch: opt-in address discovery, never trust.
+    let advertise = arguments.iter().any(|argument| argument == "--advertise");
     let listen = crate::required(&options, "--listen")?.to_string();
     let workspace = PathBuf::from(crate::required(&options, "--workspace")?);
     let node_server = PathBuf::from(crate::required(&options, "--node-server")?);
@@ -70,6 +75,27 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
             .local_addr()
             .map_err(|error| Failure::Runtime(format!("cannot read listen address: {error}")))?;
         eprintln!("listening on {local} (mTLS, enrolled peers only)");
+        if advertise {
+            let ip = local.ip();
+            match crate::discover::advertise(
+                &identity.installation_id,
+                &identity.fingerprint(),
+                "odessy-link.local.",
+                ip,
+                local.port(),
+            ) {
+                Ok((daemon, _info)) => {
+                    // Held for the lifetime of the listener so the advertisement
+                    // disappears when this process stops.
+                    let _daemon = daemon;
+                    eprintln!(
+                        "advertising {} as an address aid only",
+                        crate::discover::SERVICE_TYPE
+                    );
+                }
+                Err(error) => eprintln!("mDNS advertisement unavailable: {error}"),
+            }
+        }
         let acceptor = TlsAcceptor::from(Arc::new(config));
         loop {
             let (stream, address) = match listener.accept().await {
@@ -100,46 +126,31 @@ async fn handle_connection(
     workspace: PathBuf,
     node_server: PathBuf,
 ) -> Result<(), String> {
-    let stream = tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(stream))
+    let mut stream = tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(stream))
         .await
         .map_err(|_| "handshake timed out".to_string())?
         .map_err(|error| format!("handshake failed: {error}"))?;
     // Exact leaf identity, checked before any Node process exists.
     let fingerprint = tls::presented_fingerprint(stream.get_ref().1.peer_certificates())?;
-    let registry = Registry::open(&state_dir()?.join("trust.sqlite3"))
-        .map_err(|error| format!("trust registry unavailable: {error}"))?;
-    let enrolled = registry
-        .peer_by_fingerprint(&fingerprint)?
-        .ok_or_else(|| {
-            format!(
-                "presented certificate {} is not an enrolled peer",
-                display_fingerprint(&fingerprint)
-            )
-        })?;
-    if !enrolled.has_execution_grant() {
-        return Err(format!(
-            "{} is enrolled but has no mcp capability for a workspace",
-            enrolled.alias
-        ));
-    }
-    // The grant names a workspace. Serving a different directory is the host
-    // escalating its own authority, so the paths must agree.
-    match enrolled.workspace.as_deref() {
-        Some(granted) if workspace_matches(granted, &workspace) => {}
-        Some(granted) => {
-            return Err(format!(
-                "{} holds a grant for {}, which is not the served workspace {}",
-                enrolled.alias,
-                granted,
-                workspace.display()
-            ))
+    let admitted = admit_peer(&state_dir()?.join("trust.sqlite3"), &fingerprint, &workspace)
+        .and_then(|enrolled| {
+            // The host's own workspace configuration wins over anything the peer says.
+            if workspace.is_dir() {
+                Ok(enrolled)
+            } else {
+                Err("configured workspace disappeared".to_string())
+            }
+        });
+    let enrolled = match admitted {
+        Ok(enrolled) => enrolled,
+        Err(error) => {
+            // Say goodbye properly. Dropping a completed TLS session without
+            // close_notify makes the peer report an unexplained transport failure and
+            // leaves it waiting for answers that are never coming.
+            let _ = tokio::time::timeout(CLOSE_NOTIFY, stream.shutdown()).await;
+            return Err(error);
         }
-        None => return Err(format!("{} has no granted workspace", enrolled.alias)),
-    }
-    // The host's own workspace configuration wins over anything the peer says.
-    if !workspace.is_dir() {
-        return Err("configured workspace disappeared".into());
-    }
+    };
     eprintln!(
         "admitted {} from {address} (fingerprint {})",
         enrolled.alias,
@@ -160,6 +171,13 @@ async fn handle_connection(
             .map(|duration| duration.as_nanos())
             .unwrap_or(0)
     );
+    let session_limit = session_id_limit();
+    // Closing the journal in a guard, not at the end of the happy path: a cancelled
+    // session must still record that its outstanding requests are unknown.
+    let _journal_guard = SessionJournalGuard {
+        journal: journal.clone(),
+        session: session.clone(),
+    };
     // Per-request admission: a grant revoked during the session stops the next request,
     // even though this connection authenticated when it was admitted.
     let trust_path = state_dir()?.join("trust.sqlite3");
@@ -191,6 +209,7 @@ async fn handle_connection(
         .with_journal(journal.clone(), session.clone(), "node-to-peer");
     let inbound = relay::DirectionState::new()
         .with_journal(journal.clone(), session.clone(), "peer-to-node")
+        .with_journal_limit(session_limit)
         .with_recheck(recheck);
     // Linked: an answer on the outbound stream settles the inbound request and frees
     // its slot, so a long session is not capped at 32 answered requests.
@@ -210,20 +229,37 @@ async fn handle_connection(
         drop(stdin);
         result.map_err(|error| relay_error_text("peer to node", error))
     };
+    let mut revoked = false;
     let outcome: Result<(), String> = tokio::select! {
         result = forward => result,
         _ = watch_grant(watch_path, watch_fingerprint, watch_workspace) => {
             // The plan requires revocation to end an affected session, not only to
             // block its next request.
+            revoked = true;
             Err("grant revoked or moved; session terminated".to_string())
         }
     };
-    // A revoked session must stop forwarding immediately, in both directions.
-    back.abort();
+    if revoked {
+        // A revoked session must stop forwarding immediately, in both directions.
+        back.abort();
+    }
+    // On a normal peer EOF the writer task is left to finish so the TLS stream closes
+    // with close_notify; aborting it here would make the peer see an unexpected EOF.
     // A child that keeps running after the peer finished is reported, then killed. It
-    // is not a transport failure: the peer's own half already completed.
+    // is not a transport failure: the peer's own half already completed. An aborted
+    // task is reported as such, because cancelling forwarding does not prove the child
+    // stopped or that an in-flight call was not executed.
     let received = match tokio::time::timeout(SESSION_DRAIN, back).await {
-        Ok(joined) => joined.map_err(|error| format!("relay task failed: {error}"))?,
+        Ok(joined) => match joined {
+            Ok(result) => result,
+            Err(error) if error.is_cancelled() => {
+                eprintln!(
+                    "session {session}: forwarding aborted; any in-flight request outcome is unknown"
+                );
+                Ok(())
+            }
+            Err(error) => Err(format!("relay task failed: {error}")),
+        },
         Err(_) => {
             eprintln!(
                 "session {session}: node server still running {}s after the peer finished; terminating it",
@@ -233,14 +269,7 @@ async fn handle_connection(
         }
     };
     let cleanup = session_child.shutdown().await;
-    // Unresolved requests stay unknown; nothing is replayed and no effect is claimed.
-    match journal.close_session(&session) {
-        Ok(0) => {}
-        Ok(count) => eprintln!(
-            "session {session} ended with {count} unresolved request(s); their outcome is unknown"
-        ),
-        Err(error) => eprintln!("cannot close journal session {session}: {error}"),
-    }
+    // The journal has already been closed by its guard, which reports unresolved work.
     match (outcome.and(received), cleanup) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(error), _) => Err(error),
@@ -250,6 +279,8 @@ async fn handle_connection(
 
 pub fn connect(arguments: &[String]) -> Result<(), Failure> {
     let options = crate::parse(arguments, &["--peer", "--address"])?;
+    // `--discover` is a bare switch: use discovery only when no address is saved.
+    let discover = arguments.iter().any(|argument| argument == "--discover");
     let alias = crate::required(&options, "--peer")?;
     let registry = open_registry()?;
     let peer = registry
@@ -259,15 +290,22 @@ pub fn connect(arguments: &[String]) -> Result<(), Failure> {
         // The host decides admission; this is the coordinator's own view only.
         eprintln!("note: no local mcp grant recorded for {alias}");
     }
-    let address = options
-        .get("--address")
-        .cloned()
-        .or_else(|| peer.address.clone())
-        .ok_or_else(|| {
-            Failure::Runtime(format!(
-                "no address for {alias}: enroll with --address or pass --address"
-            ))
-        })?;
+    let address = match options.get("--address").cloned().or_else(|| peer.address.clone()) {
+        Some(address) => address,
+        None if discover => {
+            // Discovery only fills in a missing address. If several peers answer, the
+            // one advertising the enrolled fingerprint is chosen; TLS still proves it.
+            let candidates = crate::discover::browse(crate::discover::BROWSE_WINDOW)
+                .map_err(|error| Failure::Runtime(format!("discovery unavailable: {error}")))?;
+            crate::discover::select_address(&candidates, &peer.fingerprint_sha256)
+                .map_err(Failure::Runtime)?
+        }
+        None => {
+            return Err(Failure::Runtime(format!(
+                "no address for {alias}: enroll with --address, pass --address, or use --discover"
+            )))
+        }
+    };
     let identity = load_identity()?;
     let config = tls::client_config(&identity, &peer)?;
     let server_name = tls::expected_server_name(&peer)?;
@@ -278,7 +316,7 @@ pub fn connect(arguments: &[String]) -> Result<(), Failure> {
         .enable_all()
         .build()
         .map_err(|error| Failure::Runtime(format!("cannot start runtime: {error}")))?;
-    runtime.block_on(async move {
+    let outcome = runtime.block_on(async move {
         let stream = tokio::time::timeout(HANDSHAKE_TIMEOUT, TcpStream::connect(&address))
             .await
             .map_err(|_| Failure::Runtime(format!("connect to {address} timed out")))?
@@ -303,29 +341,119 @@ pub fn connect(arguments: &[String]) -> Result<(), Failure> {
         );
 
         let (mut tls_reader, mut tls_writer) = tokio::io::split(stream);
+        // Both directions share accounting: a reply on the inbound stream frees the slot
+        // of the request it answers in the outbound stream.
+        let outbound = relay::DirectionState::new();
+        let inbound = relay::DirectionState::new().answering(&outbound);
         // Stdin EOF half-closes the connection, then remaining replies are still
         // drained. A `select!` here would drop the last response whenever the local
         // caller finished writing before the peer finished answering.
         let send = async {
-            let result = relay::pump(
-                tokio::io::stdin(),
-                &mut tls_writer,
-                relay::DirectionState::new(),
-            )
-            .await;
+            let result = relay::pump(tokio::io::stdin(), &mut tls_writer, outbound).await;
             let _ = tls_writer.shutdown().await;
             result.map_err(|error| relay_error_text("local to peer", error))
         };
-        let receive = relay::pump(
-            &mut tls_reader,
-            tokio::io::stdout(),
-            relay::DirectionState::new(),
-        );
-        let (sent, received) = tokio::join!(send, receive);
+        let receive = relay::pump(&mut tls_reader, tokio::io::stdout(), inbound);
+        tokio::pin!(send, receive);
+        // Whichever half ends first decides: local EOF still drains the answers in
+        // flight, but a host that closes the session first ends this process. Waiting
+        // for stdin there would hang the coordinator in a refused or revoked session,
+        // because nothing is going to answer it any more.
+        let sent = tokio::select! {
+            result = &mut send => result,
+            result = &mut receive => {
+                result.map_err(|error| relay_error_text("peer to local", error))?;
+                eprintln!("the host closed the session; no further replies will arrive");
+                return Ok(());
+            }
+        };
+        // The send half ended first, but the answers already in flight still belong to
+        // this caller: drain them before reporting the send result, or a refused request
+        // would swallow its neighbours' replies.
+        let received = receive
+            .await
+            .map_err(|error| relay_error_text("peer to local", error));
+        received?;
         sent?;
-        received.map_err(|error| relay_error_text("peer to local", error))?;
         Ok(())
-    })
+    });
+    // A `tokio::io::stdin` read parked in the blocking pool would otherwise hold the
+    // runtime open for as long as the caller keeps its pipe, so a refused or finished
+    // session could never end the process. Bounded shutdown, then leave.
+    runtime.shutdown_timeout(std::time::Duration::from_millis(100));
+    outcome
+}
+
+/// Ids one session may use. Host configuration, so an operator can trade session
+/// length against journal size; reaching it requires a fresh session.
+const SESSION_ITEMS_ENV: &str = "ODESSY_LINK_MAX_SESSION_ITEMS";
+
+fn session_id_limit() -> usize {
+    std::env::var(SESSION_ITEMS_ENV)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .filter(|limit| *limit > 0)
+        .unwrap_or(journal::MAX_ITEMS_PER_SESSION)
+}
+
+/// Decide whether the certificate a peer just presented may execute here.
+///
+/// The exact leaf fingerprint must be enrolled, must hold the mcp capability, and its
+/// granted workspace must be the one being served. A valid chain alone is insufficient:
+/// a sibling certificate under the same enrolled CA reaches this function and is
+/// refused for not being the enrolled leaf.
+pub(crate) fn admit_peer(
+    trust_path: &std::path::Path,
+    fingerprint: &str,
+    served_workspace: &std::path::Path,
+) -> Result<crate::trust::Peer, String> {
+    let registry = Registry::open(trust_path)
+        .map_err(|error| format!("trust registry unavailable: {error}"))?;
+    let enrolled = registry.peer_by_fingerprint(fingerprint)?.ok_or_else(|| {
+        format!(
+            "presented certificate {} is not an enrolled peer",
+            display_fingerprint(fingerprint)
+        )
+    })?;
+    if !enrolled.has_execution_grant() {
+        return Err(format!(
+            "{} is enrolled but has no mcp capability for a workspace",
+            enrolled.alias
+        ));
+    }
+    match enrolled.workspace.as_deref() {
+        Some(granted) if workspace_matches(granted, served_workspace) => Ok(enrolled),
+        Some(granted) => Err(format!(
+            "{} holds a grant for {}, which is not the served workspace {}",
+            enrolled.alias,
+            granted,
+            served_workspace.display()
+        )),
+        None => Err(format!("{} has no granted workspace", enrolled.alias)),
+    }
+}
+
+/// Closes the journal for its session however the connection ends, including when the
+/// task is dropped: an unresolved request must never be silently forgotten.
+struct SessionJournalGuard {
+    journal: Arc<journal::Journal>,
+    session: String,
+}
+
+impl Drop for SessionJournalGuard {
+    fn drop(&mut self) {
+        match self.journal.close_session(&self.session) {
+            Ok(0) => {}
+            Ok(count) => eprintln!(
+                "session {} ended with {count} unresolved request(s); their outcome is unknown",
+                self.session
+            ),
+            Err(error) => eprintln!(
+                "cannot close journal session {}: {error}",
+                self.session
+            ),
+        }
+    }
 }
 
 /// Poll the local registry and complete when the peer's grant no longer admits this

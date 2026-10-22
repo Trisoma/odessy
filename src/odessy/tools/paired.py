@@ -36,6 +36,11 @@ class PairedConfigError(ValueError):
     """The paired-host configuration is incomplete or contradicts another setting."""
 
 
+class PairedTrustError(PermissionError):
+    """This machine's own enrolment or permission state no longer matches what an
+    approval was bound to. Dispatch is refused until the operator approves again."""
+
+
 @dataclass(frozen=True)
 class PairedHost:
     """A configured peer. ``alias`` is the enrolled identity in the Rust registry.
@@ -78,7 +83,7 @@ class PairedHost:
         )
 
     def server(self, sessions=None) -> "PairedServer":
-        return PairedServer(self.server_config(), sessions)
+        return PairedServer(host=self, config=self.server_config(), sessions=sessions)
 
 
 @dataclass(frozen=True)
@@ -91,12 +96,47 @@ class PairedServer:
     tools pass through unchanged and are checked against the same contracts.
     """
 
+    host: "PairedHost"
     config: ServerConfig
     sessions: object = None
+    prober: object = None
 
     @property
     def prefix(self) -> str:
         return ""
+
+    def preflight(self) -> None:
+        """Re-read this machine's enrolment and permission revision.
+
+        Called immediately before dispatch, so a revocation, re-enrolment or permission
+        change that happened after the approval invalidates it. Fails closed: if the
+        trust state cannot be read, nothing is dispatched.
+        """
+
+        details = (self.prober or probe)(self.host)
+        if not details.get("ok"):
+            raise PairedTrustError(
+                f"cannot read local trust for {self.host.alias}: {details.get('detail')}"
+            )
+        if not details.get("configured_alias_present"):
+            raise PairedTrustError(
+                f"{self.host.alias} is no longer enrolled on this machine"
+            )
+        if not details.get("capability_mcp"):
+            raise PairedTrustError(
+                f"{self.host.alias} no longer holds the mcp capability on this machine"
+            )
+        fingerprint = details.get("fingerprint_sha256")
+        if not isinstance(fingerprint, str) or fingerprint != self.host.enrolled_fingerprint:
+            raise PairedTrustError(
+                f"{self.host.alias} was re-enrolled (certificate changed); a new approval is required"
+            )
+        revision = details.get("grant_revision")
+        if not isinstance(revision, int) or revision != self.host.grant_revision:
+            raise PairedTrustError(
+                f"local permission revision changed ({self.host.grant_revision} -> {revision}); "
+                "a new approval is required"
+            )
 
     def _inner(self):
         # Imported here so a test can substitute the session-backed server.
@@ -124,10 +164,9 @@ def configured_alias(env: Mapping[str, str] | None = None) -> str:
 def paired_host(env: Mapping[str, str] | None = None, *, prober=None) -> PairedHost | None:
     """The configured paired host, or ``None`` when none is configured.
 
-    Raises `PairedConfigError` when the configuration cannot be honoured, so a
-    half-set environment fails loudly instead of silently using another transport.
-    A failing probe is not fatal here: `connect` reports the real error, and the
-    metadata simply carries no fingerprint until enrolment is readable.
+    Fails closed: if the local trust state cannot be read, or the alias is not enrolled
+    with a capability, startup is refused rather than continuing without the identity
+    and revision an approval must bind to.
     """
 
     validate_configuration(env)
@@ -136,18 +175,27 @@ def paired_host(env: Mapping[str, str] | None = None, *, prober=None) -> PairedH
         return None
     binary = link_binary(env)
     host = PairedHost(alias=alias, binary=binary)
-    details: dict[str, object] = {}
-    try:
-        details = (prober or probe)(host)
-    except Exception:  # noqa: BLE001 - the transport reports the real failure
-        details = {}
+    details = (prober or probe)(host)
+    if not details.get("ok"):
+        raise PairedConfigError(
+            f"cannot read local trust for {alias}: {details.get('detail')}"
+        )
+    if not details.get("configured_alias_present"):
+        raise PairedConfigError(
+            f"{alias} is not enrolled on this machine; run `odessy-link pair add` first"
+        )
     fingerprint = details.get("fingerprint_sha256")
     revision = details.get("grant_revision")
+    if not isinstance(fingerprint, str) or not isinstance(revision, int):
+        raise PairedConfigError(
+            "the trust registry did not report a certificate fingerprint and revision; "
+            "approvals cannot be bound, so paired mode will not start"
+        )
     return PairedHost(
         alias=alias,
         binary=binary,
-        enrolled_fingerprint=fingerprint if isinstance(fingerprint, str) else None,
-        grant_revision=revision if isinstance(revision, int) else None,
+        enrolled_fingerprint=fingerprint,
+        grant_revision=revision,
     )
 
 

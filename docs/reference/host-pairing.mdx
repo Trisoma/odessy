@@ -8,7 +8,8 @@ content:
   type: "reference"
 ---
 
-Host pairing is **optional and incomplete**. It replaces the raw remote MCP URL of
+Host pairing is **optional**, and qualified on Windows x64 to Windows x64 only so far
+(see the qualification note at the end). It replaces the raw remote MCP URL of
 `split` deployments with a mutually authenticated connection to `odessy-link`, and
 keeps the existing division of authority:
 
@@ -70,13 +71,23 @@ exactly-once.
 
 A response releases the requesting direction's slot, whichever stream carried it, so a
 session is not capped at 32 requests overall. The content-free journal records
-peer/session identity, request id, state and timestamps (no payloads, no credentials),
-bounded to 4096 rows per session and 200 sessions. Requests still admitted when a
-session ends are marked `unresolved` and reported.
+peer/session identity, request id, state and timestamps (no payloads, no credentials).
+It never evicts a used id while a session is live and never evicts unresolved work, so
+its size is bounded by refusing further ids rather than by forgetting them: a session
+may use `ODESSY_LINK_MAX_SESSION_ITEMS` ids (default 4096) and then needs a fresh
+session. Only fully settled sessions are pruned, keeping the 200 most recent.
 
 Revocation is enforced three ways: admission is refused once the grant is gone, every
 request re-checks the local registry and the granted workspace, and a one-second watcher
-terminates a **live** session whose grant disappears.
+terminates a **live** session whose grant disappears. When a session ends or is revoked,
+the host sends TLS `close_notify` first, so the peer sees an end of session rather than
+an unexplained transport failure, and the peer stops waiting for answers that will not
+come.
+
+Process ownership: the host spawns the Node server with a minimal environment allowlist
+and terminates the whole process **tree** (not just the direct child) when the session
+ends, with a bounded wait for the child to answer first. Anything it could not confirm
+is reported instead of being described as clean.
 
 ## Configuring Odessy
 
@@ -100,6 +111,26 @@ metadata, and with it the enrolled certificate fingerprint and the local grant
 revision taken from `odessy-link peers list --json`, so an approval names the
 certificate that will be trusted rather than a bare string.
 
+## Discovery
+
+mDNS is an **address aid only**. It never enrols a peer, never grants a capability and
+never replaces the enrolled identity:
+
+```powershell
+odessy-link discover --seconds 3        # what is advertised on this network
+odessy-link serve --listen 0.0.0.0:7443 --advertise
+odessy-link connect --peer jetson --discover
+```
+
+`--discover` fills in an address **only** when the peer has none recorded; an
+advertisement whose fingerprint differs from the enrolled one is ignored, and among
+several advertisements the enrolled fingerprint wins. TLS still proves the peer, so a
+spoofed advertisement cannot redirect the session. If discovery is unavailable or finds
+nothing, the explicit `--address` path is unchanged. Reconnecting after a certificate
+change means re-enrolling: the running `serve` keeps using the admission records it
+reads per connection, and a peer whose grant or certificate changed is refused on its
+next connection.
+
 ## Diagnosing
 
 ```powershell
@@ -112,19 +143,20 @@ python -m odessy doctor
 enrolled, the grant revision, and whether the alias is enrolled and holds `mcp`. It
 reads the local registry only and prints no key material.
 
-## Not implemented in this version
+## Qualification and limits
 
-Do not describe these as available:
+Identity material is protected by the platform: Windows stores it through DPAPI
+(user-bound ciphertext) and sets a non-inherited ACL granting only the current user;
+Unix creates the directory `0700` and files `0600` from the first write. SQLite
+registry and journal files get the same owner-only treatment. An existing plaintext
+Windows identity is migrated on first use, verified by a round trip, and the plaintext
+copy is removed; `odessy-link` reports that it happened.
 
-- mDNS discovery (`odessy-link discover` fails with an explanation); addresses are
-  manual.
-- A durable, cross-restart **revision** check on the coordinator before each
-  dispatch; the revision is recorded in the approval binding, but the coordinator
-  does not re-poll it mid-turn.
-- Windows DPAPI and restrictive ACLs for identity keys. Unix creates the key with
-  `0600` before writing; Windows inherits the profile directory's permissions.
-- Remote coding-agent hosting, MCU pairing, internet traversal and fleet management.
+Windows–Jetson pairing, real-network acceptance and Linux/ARM64 packaging have **not**
+been performed, so treat those as unqualified until they are. Remote coding-agent
+hosting, MCU pairing, internet traversal and fleet management are out of scope.
 
-Local automated checks live in `native/odessy-link` (`cargo test`) and
-`tests/test_paired_host.py`. Windows–Jetson testing and Linux/ARM64 packaging have
-**not** been performed.
+Automated checks: `cargo test` and `cargo clippy --all-targets -- -D warnings` in
+`native/odessy-link`; `tests/test_paired_host.py` and `tests/test_paired_agent.py` run
+always; `tests/test_paired_transport.py` and `tests/test_paired_integration.py` run with
+`ODESSY_LINK_E2E=1` and a built crate (the `pairing` CI job).

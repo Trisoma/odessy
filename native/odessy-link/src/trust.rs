@@ -42,6 +42,9 @@ impl Registry {
         }
         let connection =
             Connection::open(path).map_err(|error| format!("cannot open registry: {error}"))?;
+        // Authority state, so owner-only like the identity itself: WAL sidecars are
+        // created lazily, hence the second call after the pragma below.
+        crate::store::restrict_file(path)?;
         // WAL keeps a reader (peers list) from blocking a grant update, and
         // `secure_delete` clears revoked bytes rather than leaving them in pages.
         connection
@@ -49,6 +52,11 @@ impl Registry {
                 "PRAGMA journal_mode=WAL; PRAGMA secure_delete=ON; PRAGMA foreign_keys=ON;",
             )
             .map_err(|error| format!("cannot configure registry: {error}"))?;
+        for sidecar in ["-wal", "-shm"] {
+            let mut name = path.as_os_str().to_owned();
+            name.push(sidecar);
+            crate::store::restrict_file(std::path::Path::new(&name))?;
+        }
         let registry = Self { connection };
         registry.init_schema()?;
         Ok(registry)
@@ -92,8 +100,10 @@ impl Registry {
             .map_err(|error| format!("revision is not a number: {error}"))
     }
 
-    fn bump_revision(&self) -> Result<(), String> {
-        self.connection
+    /// Bump the revision inside the caller's transaction, so a permission change and
+    /// the revision that describes it commit together or not at all.
+    fn bump_revision(&self, transaction: &rusqlite::Transaction<'_>) -> Result<(), String> {
+        transaction
             .execute(
                 "UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='grant_revision'",
                 [],
@@ -129,7 +139,14 @@ impl Registry {
         if fingerprint_sha256(&der) != expected {
             return Err("bundle fingerprint does not match its certificate".into());
         }
-        self.connection
+        // One transaction: the peer row, its dropped grant, and the revision commit
+        // together. A revision that describes a state the peers table never had would
+        // make a coordinator's approval binding meaningless.
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(|error| format!("cannot start trust transaction: {error}"))?;
+        transaction
             .execute(
                 "INSERT INTO peers(alias, installation_id, fingerprint_sha256, certificate_pem, ca_pem, address)
                  VALUES(?1, ?2, ?3, ?4, ?5, ?6)
@@ -153,7 +170,10 @@ impl Registry {
             .map_err(|error| format!("cannot save peer: {error}"))?;
         // Re-enrolling the same alias always drops existing grants: a replaced
         // certificate must not inherit the old peer's execution access.
-        self.bump_revision()?;
+        self.bump_revision(&transaction)?;
+        transaction
+            .commit()
+            .map_err(|error| format!("cannot commit trust transaction: {error}"))?;
         self.peer(alias)?
             .ok_or_else(|| "peer disappeared while saving".to_string())
     }
@@ -228,8 +248,11 @@ impl Registry {
         if workspace.trim().is_empty() {
             return Err("workspace must be a non-empty path".into());
         }
-        let changed = self
+        let transaction = self
             .connection
+            .unchecked_transaction()
+            .map_err(|error| format!("cannot start trust transaction: {error}"))?;
+        let changed = transaction
             .execute(
                 "UPDATE peers SET capability_mcp=1, workspace=?2 WHERE alias=?1",
                 params![alias, workspace],
@@ -238,7 +261,10 @@ impl Registry {
         if changed == 0 {
             return Err(format!("unknown peer: {alias}"));
         }
-        self.bump_revision()?;
+        self.bump_revision(&transaction)?;
+        transaction
+            .commit()
+            .map_err(|error| format!("cannot commit trust transaction: {error}"))?;
         self.peer(alias)?
             .ok_or_else(|| "peer disappeared while granting".to_string())
     }
@@ -246,16 +272,22 @@ impl Registry {
     /// Revoke every capability for a peer. Returns whether the peer existed, so a
     /// caller can distinguish "already gone" from "revoked now".
     pub fn revoke(&self, alias: &str) -> Result<bool, String> {
-        let changed = self
+        let transaction = self
             .connection
+            .unchecked_transaction()
+            .map_err(|error| format!("cannot start trust transaction: {error}"))?;
+        let changed = transaction
             .execute(
                 "UPDATE peers SET capability_mcp=0, workspace=NULL WHERE alias=?1",
                 params![alias],
             )
             .map_err(|error| format!("cannot revoke peer: {error}"))?;
         if changed > 0 {
-            self.bump_revision()?;
+            self.bump_revision(&transaction)?;
         }
+        transaction
+            .commit()
+            .map_err(|error| format!("cannot commit trust transaction: {error}"))?;
         Ok(changed > 0)
     }
 }
@@ -494,6 +526,31 @@ mod tests {
         // Revoking nothing changes no permission, so it must not move the revision.
         fixture.registry.revoke("missing").expect("noop");
         assert_eq!(fixture.registry.revision().expect("revision"), 3);
+    }
+
+    #[test]
+    fn a_refused_change_does_not_move_the_revision() {
+        let fixture = TempRegistry::new("atomic");
+        let peer = Identity::generate("peer00000021").expect("identity");
+        // Refused enrolment: fingerprint mismatch.
+        let error = fixture
+            .registry
+            .add_peer("jetson", &bundle_json(&peer), &"0".repeat(64), None)
+            .expect_err("mismatch must be refused");
+        assert!(error.contains("mismatch"));
+        assert_eq!(fixture.registry.revision().expect("revision"), 0);
+        // Refused grant: unknown peer.
+        assert!(fixture
+            .registry
+            .grant("missing", CAPABILITY_MCP, r"C:\work")
+            .is_err());
+        assert_eq!(fixture.registry.revision().expect("revision"), 0);
+        // A successful enrolment moves it exactly once.
+        fixture
+            .registry
+            .add_peer("jetson", &bundle_json(&peer), &peer.fingerprint(), None)
+            .expect("enrol");
+        assert_eq!(fixture.registry.revision().expect("revision"), 1);
     }
 
     #[test]

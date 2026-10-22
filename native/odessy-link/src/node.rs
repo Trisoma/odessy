@@ -44,15 +44,60 @@ impl NodeSession {
         self.stdout.take().ok_or_else(|| "node stdout was already taken".to_string())
     }
 
-    /// Terminate the child and reap it. Reported separately so an incomplete
-    /// cleanup is visible rather than assumed.
+    /// Terminate the child **and its descendants** where the platform supports it, then
+    /// reap it. Cleanup that cannot be confirmed is reported instead of assumed.
     pub async fn shutdown(mut self) -> Result<(), String> {
+        let pid = self.child.id();
+        let tree = match pid {
+            Some(pid) => kill_tree(pid),
+            None => Ok(()),
+        };
         let _ = self.child.start_kill();
-        match tokio::time::timeout(std::time::Duration::from_secs(5), self.child.wait()).await {
+        let reaped = match tokio::time::timeout(std::time::Duration::from_secs(5), self.child.wait()).await {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(error)) => Err(format!("node server could not be reaped: {error}")),
             Err(_) => Err("node server did not exit within 5s of termination".into()),
+        };
+        // A tree that could not be terminated is the more serious failure, so it wins.
+        tree?;
+        reaped
+    }
+}
+
+/// Best-effort whole-tree termination. Windows uses `taskkill /T`, which also reports
+/// descendants it could not reach; Unix signals the process group created at spawn.
+fn kill_tree(pid: u32) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let output = std::process::Command::new("taskkill")
+            .arg("/T")
+            .arg("/F")
+            .arg("/PID")
+            .arg(pid.to_string())
+            .output()
+            .map_err(|error| format!("cannot run taskkill for {pid}: {error}"))?;
+        if output.status.success() {
+            return Ok(());
         }
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        // "not found" means the tree is already gone, which is the desired end state.
+        if message.to_lowercase().contains("not found") || message.contains("没有找到") {
+            return Ok(());
+        }
+        Err(format!("taskkill could not confirm termination of {pid}: {message}"))
+    }
+    #[cfg(unix)]
+    {
+        // The group id is the child's pid because spawn set `process_group(0)`.
+        let status = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+        if status == 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            return Ok(());
+        }
+        return Err(format!("cannot signal process group {pid}: {error}"));
     }
 }
 
@@ -90,6 +135,12 @@ pub fn spawn(node_script: &Path, workspace: &Path) -> Result<NodeSession, String
     // tool `laptop.terminal.run`, which is the name Odessy's split-mode contracts and
     // policy already know. A remote peer cannot change this.
     command.env("ODESSY_DEPLOYMENT", "split");
+    #[cfg(unix)]
+    {
+        // A new process group, so termination can reach grandchildren too.
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     let mut child = command
         .spawn()
         .map_err(|error| format!("cannot start node server: {error}"))?;

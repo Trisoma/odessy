@@ -6,11 +6,13 @@
 //! pretending to work.
 
 mod commands;
+mod discover;
 mod framing;
 mod identity;
 mod journal;
 mod node;
 mod relay;
+mod store;
 mod tls;
 mod trust;
 
@@ -74,17 +76,18 @@ fn run(arguments: Vec<String>) -> Result<(), Failure> {
             no_extra(&arguments[1..])?;
             let state = state_dir()?;
             let directory = state.join("identity");
-            std::fs::create_dir_all(&directory)?;
-            let path = directory.join("identity.json");
-            if path.exists() {
+            store::ensure_state_dir(&directory)?;
+            let existing = directory.join("identity.json");
+            let protected = directory.join("identity.dpapi");
+            if existing.exists() || protected.exists() {
                 return Err(Failure::Runtime(format!(
-                    "identity already exists at {}; rotation requires explicit re-enrollment",
-                    path.display()
+                    "identity already exists in {}; rotation requires explicit re-enrollment",
+                    directory.display()
                 )));
             }
             let installation_id = random_installation_id()?;
             let identity = Identity::generate(&installation_id)?;
-            save_identity(&path, &identity)?;
+            let path = save_identity(&directory, &identity)?;
             println!("installation id: {installation_id}");
             println!("fingerprint: {}", display_fingerprint(&identity.fingerprint()));
             println!("identity: {}", path.display());
@@ -112,11 +115,7 @@ fn run(arguments: Vec<String>) -> Result<(), Failure> {
         },
         "serve" => commands::serve(&arguments[1..]),
         "connect" => commands::connect(&arguments[1..]),
-        "discover" => Err(Failure::Runtime(
-            "`discover` is not implemented in this build: mDNS is an address aid only and lands after \
-             the authenticated relay is qualified. Use `pair add --address` with a known address."
-                .into(),
-        )),
+        "discover" => discover_peers(&arguments[1..]),
         "--help" | "-h" | "help" => {
             print!("{USAGE}");
             Ok(())
@@ -220,8 +219,36 @@ fn peers_list(arguments: &[String]) -> Result<(), Failure> {
     Ok(())
 }
 
-fn peers_grant(arguments: &[String]) -> Result<(), Failure> {
-    let Some(alias) = arguments.first() else {
+fn discover_peers(arguments: &[String]) -> Result<(), Failure> {
+    let options = parse(arguments, &["--seconds"])?;
+    let seconds = options
+        .get("--seconds")
+        .map(|raw| raw.parse::<u64>())
+        .transpose()
+        .map_err(|_| Failure::Usage("--seconds must be a whole number".into()))?
+        .unwrap_or(discover::BROWSE_WINDOW.as_secs());
+    println!(
+        "discovering {SERVICE} for {seconds}s (bindings are not affected: advertisements \
+         are only an address aid and never enroll a peer)",
+        SERVICE = discover::SERVICE_TYPE
+    );
+    let found = discover::browse(std::time::Duration::from_secs(seconds.max(1)))?;
+    if found.is_empty() {
+        println!("no advertisements found; use the address saved by `pair add --address`");
+        return Ok(());
+    }
+    for advertisement in found {
+        println!(
+            "{}  {}  advertised fingerprint: {} (unverified; compare with `peers list`)",
+            advertisement.alias,
+            advertisement.address(),
+            advertisement.fingerprint.as_deref().unwrap_or("none")
+        );
+    }
+    Ok(())
+}
+
+fn peers_grant(arguments: &[String]) -> Result<(), Failure> {    let Some(alias) = arguments.first() else {
         return Err(Failure::Usage("peers grant requires a peer".into()));
     };
     let options = parse(&arguments[1..], &["--capability", "--workspace"])?;
@@ -313,13 +340,9 @@ pub(crate) fn state_dir() -> Result<PathBuf, String> {
 }
 
 pub(crate) fn load_identity() -> Result<Identity, String> {
-    let path = state_dir()?.join("identity").join("identity.json");
-    let text = std::fs::read_to_string(&path).map_err(|error| {
-        format!(
-            "cannot read identity at {}: {error}; run `odessy-link init` first",
-            path.display()
-        )
-    })?;
+    let identity_dir = state_dir()?.join("identity");
+    let text = String::from_utf8(store::load_identity(&identity_dir)?)
+        .map_err(|error| format!("identity is not valid UTF-8: {error}"))?;
     let stored: StoredIdentity = serde_json::from_str(&text)
         .map_err(|error| format!("identity is unreadable: {error}"))?;
     let bundle = EnrollmentBundle {
@@ -344,7 +367,7 @@ pub(crate) fn load_identity() -> Result<Identity, String> {
     })
 }
 
-fn save_identity(path: &Path, identity: &Identity) -> Result<(), String> {
+fn save_identity(identity_dir: &Path, identity: &Identity) -> Result<PathBuf, String> {
     let stored = StoredIdentity {
         installation_id: identity.installation_id.clone(),
         ca_pem: identity.ca_pem.clone(),
@@ -354,7 +377,7 @@ fn save_identity(path: &Path, identity: &Identity) -> Result<(), String> {
     };
     let json = serde_json::to_string_pretty(&stored)
         .map_err(|error| format!("cannot encode identity: {error}"))?;
-    write_private(path, format!("{json}\n").as_bytes())
+    store::save_identity(identity_dir, format!("{json}\n").as_bytes())
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -373,33 +396,8 @@ impl StoredIdentity {
     }
 }
 
-/// Identity keys are owner-only on Unix. Windows DPAPI plus an explicit
-/// non-inherited ACL is still pending; until then the file inherits the profile
-/// directory's permissions, which the plan does not consider sufficient.
-fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    if path.exists() {
-        std::fs::remove_file(path)
-            .map_err(|error| format!("cannot replace {}: {error}", path.display()))?;
-    }
-    // Create with the final mode, then write: a world-readable window between
-    // creation and chmod would leak the private key.
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options
-        .open(path)
-        .map_err(|error| format!("cannot create {}: {error}", path.display()))?;
-    use std::io::Write;
-    file.write_all(bytes)
-        .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
-    Ok(())
-}
-
 pub(crate) fn open_registry() -> Result<Registry, String> {
     let path = state_dir()?.join("trust.sqlite3");
+    store::ensure_state_dir(&state_dir()?)?;
     Registry::open(&path)
 }
