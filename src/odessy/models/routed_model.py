@@ -140,8 +140,8 @@ class RoutedModel:
             if factory is not None:
                 child = factory()
             elif role == "cloud":
-                from odessy.models.cloud_model import build_cloud_model
-                child = build_cloud_model(self.config.cloud_backend)
+                from odessy.models.failover import build_cloud_model_with_failover
+                child = build_cloud_model_with_failover(self.config.cloud_backend)
             else:
                 from odessy.models.ollama_model import OllamaModel
                 from odessy.models.lfm_model import LlamaCppLFMModel, DEFAULT_LFM_ENDPOINT

@@ -22,6 +22,11 @@ Differences from the local adapters, all deliberate:
   passed through ``redact_text`` before they leave the machine. MCP tool results
   such as ``filesystem.read`` are otherwise unredacted, and this is the boundary
   where data stops being local. Redaction is best effort (see ``redaction.py``).
+* **A record of every request.** Each request is written to the egress log
+  (``authority/egress.py``): provider, model, sizes, and tokens, never content.
+* **Streamed replies for speech.** When a voice session sets a ``SpeechStream``,
+  the reply is streamed and its text is spoken sentence by sentence while the
+  rest arrives. The parsed reply is the same either way.
 
 Tool names contain dots (``laptop.terminal.run``), which neither API accepts in a
 function name, so names are encoded on the way out and decoded on the way back.
@@ -29,20 +34,25 @@ function name, so names are encoded on the way out and decoded on the way back.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from odessy.models.ollama_model import (
     _fallback_observation_response,
     _looks_like_generic_final_response,
 )
 from odessy.config.deployment import command_tool_for_laptop, environment_prompt
+from odessy.authority.egress import egress_log
 from odessy.authority.redaction import redact_for_log, redact_text
+from odessy.runtime.speech import SpeechStream, current_speech
 from odessy.models.usage import UsageLedger, process_ledger
 from odessy.tools.tool_contracts import build_openai_tools, validate_tool_arguments
 from odessy.runtime.types import (
@@ -163,6 +173,15 @@ _EXTRA_CALL_MESSAGE = "Not executed: Odessy runs one tool call per step. Propose
 
 class CloudModelConfigError(RuntimeError):
     """Raised when a cloud backend is selected but cannot be configured."""
+
+
+class CloudUnavailableError(RuntimeError):
+    """The provider could not answer: rate limited, overloaded, down, or unreachable.
+
+    Raised after the adapter's own retries are spent. Failover (``failover.py``) moves
+    the turn to another backend on this error only: a rejected key, a bad request, a
+    refusal, or a spent budget fails the same way anywhere and is reported as is.
+    """
 
 
 #: HTTP statuses that mean "try again shortly": rate limit, server errors, overload.
@@ -289,6 +308,8 @@ class CloudModel:
         default_factory=ModelTurnDiagnostics, init=False, repr=False
     )
     _client: Any = field(default=None, init=False, repr=False)
+    _history_turns: int = field(default=0, init=False, repr=False)
+    _last_usage: dict[str, int | None] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.provider not in CLOUD_PROVIDERS:
@@ -319,10 +340,9 @@ class CloudModel:
         # History first, then the request: role-separated, and redacted before it was
         # stored, so a secret spoken once is not re-sent on every later turn. A session
         # passes its turns, a router stores dicts; one helper reads both.
-        self._messages = [
-            *_context_messages(context if context is not None else self.conversation_context),
-            {"role": "user", "content": redact_text(user_text)},
-        ]
+        history = _context_messages(context if context is not None else self.conversation_context)
+        self._history_turns = sum(1 for message in history if message.get("role") == "user")
+        self._messages = [*history, {"role": "user", "content": redact_text(user_text)}]
         reply = self._exchange("proposal_generation_ms")
         try:
             return self._to_action(reply, user_text)
@@ -450,17 +470,67 @@ class CloudModel:
         before_generation()
         # Before the request, so a spent budget sends nothing more.
         self.ledger.check()
+        speech = current_speech()
+        sent = self._sent_summary()
+        self._last_usage = {}
         started = time.perf_counter()
         self._diagnostics.model_call_count += 1
-        if self.protocol == "anthropic":
-            reply = self._exchange_anthropic()
-        else:
-            reply = self._exchange_openai()
+        error_type: str | None = None
+        try:
+            if speech is not None:
+                speech.begin()
+            if self.protocol == "anthropic":
+                reply = self._exchange_anthropic(speech)
+            else:
+                reply = self._exchange_openai(speech)
+            if speech is not None:
+                speech.end()
+        except BaseException as error:
+            error_type = type(error).__name__
+            raise
+        finally:
+            self._log_egress(sent, started, speech is not None, error_type)
         elapsed = (time.perf_counter() - started) * 1000.0
         current = getattr(self._diagnostics, timing_field)
         setattr(self._diagnostics, timing_field, elapsed if current is None else current + elapsed)
         self._diagnostics.response_chars += len(reply.text)
         return reply
+
+    def _sent_summary(self) -> dict[str, int]:
+        """What kinds of data this request carries, by count and size (never content)."""
+
+        if self.protocol == "anthropic":
+            tool_results = sum(
+                1
+                for message in self._messages
+                if isinstance(message, dict) and isinstance(message.get("content"), list)
+                for block in message["content"]
+                if isinstance(block, dict) and block.get("type") == "tool_result"
+            )
+        else:
+            tool_results = sum(1 for message in self._messages if isinstance(message, dict) and message.get("role") == "tool")
+        return {
+            "messages": len(self._messages),
+            "history_turns": self._history_turns,
+            "tool_results": tool_results,
+            "chars": len(json.dumps(self._messages, ensure_ascii=False, default=str)),
+        }
+
+    def _log_egress(self, sent: dict[str, int], started: float, streamed: bool, error_type: str | None) -> None:
+        log = egress_log()
+        if log is None:
+            return
+        log.model_request(
+            provider=self.provider,
+            model=self.model,
+            host=urlparse(self.base_url).hostname or self.base_url,
+            sent=sent,
+            outcome="ok" if error_type is None else "error",
+            duration_ms=(time.perf_counter() - started) * 1000.0,
+            streamed=streamed,
+            tokens=self._last_usage,
+            error_type=error_type,
+        )
 
     def _append_result(self, call_id: str, content: str, *, is_error: bool) -> None:
         if self.protocol == "anthropic":
@@ -486,7 +556,7 @@ class CloudModel:
 
     # -- Claude (anthropic SDK) --------------------------------------------
 
-    def _exchange_anthropic(self) -> _ParsedReply:
+    def _exchange_anthropic(self, speech: SpeechStream | None = None) -> _ParsedReply:
         tools = cloud_tools_anthropic()
         system: Any = system_prompt()
         if self.prompt_cache and tools:
@@ -509,7 +579,7 @@ class CloudModel:
         if self.refusal_fallbacks and self.model in _CLAUDE_FALLBACK_MODELS:
             params["betas"] = [_CLAUDE_FALLBACK_BETA]
             params["fallbacks"] = "default"
-        response = self._create_message(params)
+        response = self._create_message(params) if speech is None else self._stream_message(params, speech)
         # Append the full content (thinking and fallback blocks included), unchanged.
         self._messages.append({"role": "assistant", "content": response.content})
         usage = getattr(response, "usage", None)
@@ -541,10 +611,8 @@ class CloudModel:
             refused=getattr(response, "stop_reason", None) == "refusal",
         )
 
-    def _create_message(self, params: dict[str, Any]) -> Any:
-        """One Messages API call. Overridden in tests."""
+    def _anthropic_client(self, anthropic: Any) -> Any:
         from odessy.models.generation_control import generation_guard
-        anthropic = _import_anthropic()
         if self._client is None:
             self._client = anthropic.Anthropic(
                 api_key=self.api_key,
@@ -552,20 +620,43 @@ class CloudModel:
                 timeout=float(self.timeout),
                 max_retries=0 if generation_guard.get() is not None else self.retries,
             )
+        return self._client
+
+    def _create_message(self, params: dict[str, Any]) -> Any:
+        """One Messages API call. Overridden in tests."""
+        anthropic = _import_anthropic()
+        client = self._anthropic_client(anthropic)
         try:
             if "betas" in params:
-                return self._client.beta.messages.create(**params)
-            return self._client.messages.create(**params)
-        except anthropic.APIStatusError as error:
-            raise RuntimeError(
-                f"Claude API call failed ({error.status_code}): {redact_for_log(str(error.message))}"
-            ) from error
-        except anthropic.APIConnectionError as error:
-            raise RuntimeError(f"Claude API connection failed: {error}") from error
+                return client.beta.messages.create(**params)
+            return client.messages.create(**params)
+        except (anthropic.APIStatusError, anthropic.APIConnectionError) as error:
+            raise _claude_error(anthropic, error) from error
+
+    def _stream_message(self, params: dict[str, Any], speech: SpeechStream) -> Any:
+        """One streamed Messages API call; returns the same message as ``_create_message``.
+
+        Text is fed to ``speech`` as it arrives. Claude sends a reply's text blocks
+        before its tool calls, so a tool call starting holds the rest. Overridden in tests.
+        """
+        anthropic = _import_anthropic()
+        client = self._anthropic_client(anthropic)
+        try:
+            manager = client.beta.messages.stream(**params) if "betas" in params else client.messages.stream(**params)
+            with manager as stream:
+                for event in stream:
+                    kind = getattr(event, "type", None)
+                    if kind == "content_block_start" and getattr(event.content_block, "type", None) == "tool_use":
+                        speech.hold()
+                    elif kind == "text":
+                        speech.feed(event.text)
+                return stream.get_final_message()
+        except (anthropic.APIStatusError, anthropic.APIConnectionError) as error:
+            raise _claude_error(anthropic, error) from error
 
     # -- OpenAI-compatible (GPT, DeepSeek, Qwen, Kimi, custom) --------------
 
-    def _exchange_openai(self) -> _ParsedReply:
+    def _exchange_openai(self, speech: SpeechStream | None = None) -> _ParsedReply:
         payload = {
             "model": self.model,
             "messages": [{"role": "system", "content": system_prompt()}, *self._messages],
@@ -578,7 +669,8 @@ class CloudModel:
         }
         if self.provider == "deepseek" and self.effort:
             payload["reasoning_effort"] = self.effort
-        data = self._post_chat(payload)
+        # The plain call shape when not streaming, which tests and wrappers replace.
+        data = self._post_chat(payload) if speech is None else self._post_chat(payload, speech)
         choices = data.get("choices") or []
         if not choices:
             raise RuntimeError(f"{self.provider} returned no choices")
@@ -599,18 +691,22 @@ class CloudModel:
         )
 
     def _record_usage(self, prompt: int | None, cached: int | None, completion: int | None) -> None:
+        self._last_usage = {"prompt": prompt, "cached": cached, "completion": completion}
         _add_tokens(self._diagnostics, "prompt_tokens", prompt)
         _add_tokens(self._diagnostics, "cached_prompt_tokens", cached)
         _add_tokens(self._diagnostics, "completion_tokens", completion)
         if prompt is not None or completion is not None:
             self.ledger.record(prompt=prompt, cached=cached, completion=completion)
 
-    def _post_chat(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _post_chat(self, payload: dict[str, Any], speech: SpeechStream | None = None) -> dict[str, Any]:
         """One ``/chat/completions`` call, retried on transient failures.
 
         The Anthropic SDK retries rate limits and overloads by itself; plain HTTP does
         not, so without this a single 429 or 503 from DeepSeek or Qwen ended the turn.
         Retries are bounded (``ODESSY_CLOUD_RETRIES``) and honour ``Retry-After``.
+
+        With ``speech``, the reply is streamed. A stream that fails after a sentence
+        was spoken is not retried: the retry would say it again.
         """
 
         attempt = 0
@@ -620,16 +716,29 @@ class CloudModel:
                 if generation_guard.get() is not None:
                     before_generation()
                     self._diagnostics.model_call_count += 1
+            spoken = speech.emitted if speech is not None else 0
             try:
-                return self._post_chat_once(payload)
+                if speech is None:
+                    return self._post_chat_once(payload)
+                speech.begin()
+                return self._post_chat_stream_once(
+                    {**payload, "stream": True, "stream_options": {"include_usage": True}}, speech
+                )
             except _TransientCloudError as error:
-                if attempt >= self.retries:
-                    raise RuntimeError(str(error)) from error
+                if attempt >= self.retries or (speech is not None and speech.emitted != spoken):
+                    raise CloudUnavailableError(str(error)) from error
                 attempt += 1
                 self._sleep(error.retry_after or min(_RETRY_BASE_SECONDS * 2 ** (attempt - 1), _RETRY_MAX_SECONDS))
 
     def _post_chat_once(self, payload: dict[str, Any]) -> dict[str, Any]:
         """One HTTP request. Overridden in tests."""
+        return self._send_chat(payload, lambda response: json.loads(response.read().decode("utf-8")))
+
+    def _post_chat_stream_once(self, payload: dict[str, Any], speech: SpeechStream) -> dict[str, Any]:
+        """One streamed HTTP request, assembled into the non-streamed shape. Overridden in tests."""
+        return self._send_chat(payload, lambda response: read_chat_stream(response, speech, provider=self.provider))
+
+    def _send_chat(self, payload: dict[str, Any], read: Any) -> dict[str, Any]:
         request = urllib.request.Request(
             f"{self.base_url.rstrip('/')}/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
@@ -641,7 +750,7 @@ class CloudModel:
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
+                return read(response)
         except urllib.error.HTTPError as error:
             message = f"{self.provider} API call failed ({error.code}): {_read_error_body(error)}"
             if error.code in _TRANSIENT_STATUS:
@@ -651,8 +760,86 @@ class CloudModel:
             # Refused or reset connections are worth another try; a bad host is not,
             # but it fails the same way again quickly, so the retry costs little.
             raise _TransientCloudError(f"{self.provider} API connection failed: {error.reason}") from error
-        except (TimeoutError, ConnectionError) as error:
+        except (TimeoutError, ConnectionError, http.client.HTTPException) as error:
             raise _TransientCloudError(f"{self.provider} API call failed: {error!r}") from error
+
+
+def _claude_error(anthropic: Any, error: Exception) -> RuntimeError:
+    if isinstance(error, anthropic.APIConnectionError):
+        # Includes timeouts (APITimeoutError is a connection error).
+        return CloudUnavailableError(f"Claude API connection failed: {error}")
+    status = getattr(error, "status_code", None)
+    message = f"Claude API call failed ({status}): {redact_for_log(str(getattr(error, 'message', error)))}"
+    return CloudUnavailableError(message) if status in _TRANSIENT_STATUS else RuntimeError(message)
+
+
+def read_chat_stream(lines: Iterable[bytes], speech: SpeechStream, *, provider: str = "provider") -> dict[str, Any]:
+    """Assemble an OpenAI-compatible SSE stream into a ``/chat/completions`` response.
+
+    Content deltas are fed to ``speech`` as they arrive; the first tool-call delta
+    holds the rest. Tool-call fragments are joined by their ``index``. Usage comes
+    from the final chunk (``stream_options.include_usage``) when the provider sends it.
+    """
+
+    content: list[str] = []
+    reasoning: list[str] = []
+    refusal: list[str] = []
+    calls: dict[int, dict[str, Any]] = {}
+    usage: dict[str, Any] = {}
+    saw_choice = False
+    completed = False
+    for raw in lines:
+        line = raw.decode("utf-8", "replace").strip() if isinstance(raw, bytes) else str(raw).strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if data == "[DONE]":
+            completed = True
+            break
+        try:
+            chunk = json.loads(data)
+        except json.JSONDecodeError as error:
+            raise RuntimeError(f"{provider} sent a malformed stream chunk: {error}") from error
+        if not isinstance(chunk, dict):
+            continue
+        if chunk.get("error"):
+            raise RuntimeError(f"{provider} stream failed: {redact_for_log(json.dumps(chunk['error'], ensure_ascii=False))}")
+        if isinstance(chunk.get("usage"), dict):
+            usage = chunk["usage"]
+        for choice in chunk.get("choices") or []:
+            saw_choice = True
+            if choice.get('finish_reason') is not None:
+                completed = True
+            delta = choice.get("delta") or {}
+            if delta.get("tool_calls"):
+                speech.hold()
+                for fragment in delta["tool_calls"]:
+                    index = fragment.get("index", len(calls))
+                    slot = calls.setdefault(index, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                    if fragment.get("id"):
+                        slot["id"] = fragment["id"]
+                    function = fragment.get("function") or {}
+                    slot["function"]["name"] += function.get("name") or ""
+                    slot["function"]["arguments"] += function.get("arguments") or ""
+            if delta.get("content"):
+                content.append(delta["content"])
+                speech.feed(delta["content"])
+            if delta.get("reasoning_content"):
+                reasoning.append(delta["reasoning_content"])
+            if delta.get("refusal"):
+                refusal.append(delta["refusal"])
+    if not completed:
+        raise _TransientCloudError(f'{provider} returned an incomplete stream before completion')
+    if not saw_choice:
+        return {"choices": [], "usage": usage}
+    message: dict[str, Any] = {"role": "assistant", "content": "".join(content)}
+    if reasoning:
+        message["reasoning_content"] = "".join(reasoning)
+    if calls:
+        message["tool_calls"] = [calls[index] for index in sorted(calls)]
+    if refusal:
+        message["refusal"] = "".join(refusal)
+    return {"choices": [{"message": message}], "usage": usage}
 
 
 def build_cloud_model(provider: str, env: dict[str, str] | None = None) -> CloudModel:

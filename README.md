@@ -300,7 +300,10 @@ python -m odessy --model-backend deepseek "on my laptop, run pwd"
 This explicitly selects `deepseek-flash` with low reasoning effort. Without these
 overrides the DeepSeek preset remains `deepseek-chat` with provider-default effort.
 Providers, PowerShell equivalents, and data-flow details are in
-[Cloud Model Backends](docs/reference/cloud-models.mdx).
+[Cloud Model Backends](docs/reference/cloud-models.mdx). There you can also set
+fallback providers for outages (`ODESSY_CLOUD_FAILOVER`). Every cloud request is
+recorded without content in an egress log (`python -m odessy egress`). Voice
+sessions speak a cloud answer sentence by sentence as it arrives.
 
 ## Demo
 
