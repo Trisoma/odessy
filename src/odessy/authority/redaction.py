@@ -22,6 +22,8 @@ file; by then it is too late to recall.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
+from typing import Any
 
 #: Placeholder written in place of a redacted value. Keeps the name so the model
 #: can still reason about *which* credential was involved, which is the same
@@ -132,3 +134,29 @@ def redact_for_log(text: str) -> str:
     """
 
     return redact_text(text)
+
+
+def redact_value(value: Any) -> Any:
+    """Redact every string inside a JSON-shaped value, keeping its shape.
+
+    A tool result reaches the model as nested data: a file's ``content``, a grep
+    match's ``text``, a third-party server's own fields. Redacting only a top-level
+    string would leave the same credential in a nested one, so the walk is
+    recursive. Containers are rebuilt rather than mutated: the caller may still
+    hold the original object (a cached MCP result, a test fixture), and a redaction
+    boundary must not quietly rewrite data someone else owns.
+
+    Objects that are not JSON-shaped are returned unchanged: MCP results are
+    dictionaries, lists and scalars by contract, and guessing at arbitrary objects
+    would be a worse boundary than saying so.
+    """
+
+    if isinstance(value, str):
+        return redact_text(value)
+    if isinstance(value, Mapping):
+        return {key: redact_value(item) for key, item in value.items()}
+    if isinstance(value, tuple) and hasattr(value, "_fields"):
+        return type(value)(*(redact_value(item) for item in value))
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return type(value)(redact_value(item) for item in value)
+    return value

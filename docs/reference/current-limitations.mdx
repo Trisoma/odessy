@@ -58,7 +58,7 @@ This page records the limits future agents must keep visible when changing the r
 | Timeout cleanup | Windows uses process-tree termination; POSIX uses process-group termination where practical | Cleanup is best effort. Intentionally detached descendants may evade request-scoped cleanup without stronger OS primitives. |
 | Environment isolation | `terminal.run` receives a sanitized allowlisted environment | Some legitimate tools may require additional non-secret environment variables later. Additions must be explicit and reviewed. |
 | Output bounds | stdout/stderr are bounded with head-and-tail retention; the full text is spilled to `.odessy/spill/` and replaced inline with a preview, an exact omitted-byte count, and a locator | Truncation is no longer lossy, but bounded is not the same as sanitized. See the credential handling row below for what is and is not redacted. |
-| Credential handling | Policy is **defined but not enforced**; name-based redaction now covers **both** terminal executors (Python, and Node since v0.3.0) | There is no credential store, vault, or reference resolver. Redaction still does not cover MCP tool results in general — `filesystem.read`, `project.grep`, and the Git tools return unredacted — nor the `command` metadata field, which is preserved byte-for-byte by design. Detection is name-based and misses unrecognised secret shapes. See `docs/security/credential-handling.mdx`. |
+| Credential handling | Policy is **defined but not enforced**; name-based redaction covers **both** terminal executors (Python, and Node since v0.3.0) and, since v0.4.0 development, every MCP tool result at the observation boundary, including file reads, search matches and Git text | There is no credential store, vault, or reference resolver. Detection is name-based and misses unrecognised secret shapes, and a credential written by a tool's own side effects is outside the returned-result boundary. See `docs/security/credential-handling.mdx`. |
 | Data egress | Local inference avoids model-provider requests. Configured external HTTP servers receive their tool-call arguments; stdio server programs may perform their own I/O. Cloud backends send the user's text and redacted tool observations to their provider. | A local model does not guarantee local-only data flow when external tools are configured. Cloud redaction is best effort, and there is no comprehensive egress policy for external servers. See `docs/reference/cloud-models.mdx` and `docs/reference/external-servers.mdx`. |
 | MCP server exposure | Node HTTP transport is intended for local/controlled use | There is no production authentication layer for a LAN-exposed MCP endpoint yet. Prefer loopback or SSH tunneling for Jetson/laptop development. In the `single` deployment the server binds loopback on a random free port for the length of one run, but it is still unauthenticated: another process on the same computer could call it during that run. |
 | Single-machine degraded mode | Without Node dependencies, `single` mode mounts and advertises only time, calculator, and the Python `terminal.run` | That `terminal.run` has no confinement backend (Odessy passes it none), so commands run unconfined and each result reports `enforcement: "none"`. Installing the Node tool server restores its backends. |
@@ -127,9 +127,9 @@ Design detail (internal record, outside this docs set):
 |---|---|---|
 | `terminal.run` | Workspace-cwd-bound, policy-gated, sanitized env, timeout, output caps | It still invokes a shell, so policy cannot perfectly infer all command behavior from text. |
 | Read-only Node tools | `filesystem.read`, `filesystem.list`, `project.find`, `project.grep`, Git read-only tools | They are useful for project understanding, but they are not a broad file manager or search platform. |
-| Git tools | Fixed-argv read-only commands | Git output is captured and bounded, and the full output is recoverable from a spill locator, but it is not redacted: these tools return over MCP, which is outside the redaction boundary. |
+| Git tools | Fixed-argv read-only commands | Git output is redacted, captured and bounded, and the full output is recoverable from a spill locator. Redaction is best effort: an unrecognised secret shape is not caught. |
 | Schema validation | Basic MCP schema validation in the Python loop | Validation is intentionally small and type-focused. It does not yet implement full JSON Schema semantics. |
-| Observations | Structured tool result objects | Output from **both** terminal executors (`terminal.run` in Python; Node uses `terminal.run` in single mode and `laptop.terminal.run` in split mode, since v0.3.0) is redacted before exposure and before spill. Observations carrying results from other MCP tools are not redacted. Large outputs are bounded and recoverable rather than truncated away. |
+| Observations | Structured tool result objects | Every observation is redacted before exposure and before logging, since v0.4.0 development. Output from both terminal executors (`terminal.run` in Python; Node uses `terminal.run` in single mode and `laptop.terminal.run` in split mode, since v0.3.0) is redacted before retention and before spill; file content and Git text use the same pipeline. Large outputs are bounded and recoverable rather than truncated away. |
 
 ## Jetson Voice Benchmark Limits
 
@@ -282,8 +282,8 @@ work:
 2. Which writes, if any, can be automatically allowed -- only those matching the low-risk
    allow rules.
 3. How output redaction should work for reads, grep results, Git diffs, and terminal
-   output -- both terminal executors are redacted (Node since v0.3.0); reads, grep, and
-   Git results are still not redacted, so this remains genuinely open.
+   output -- both terminal executors are redacted (Node since v0.3.0), and v0.4.0
+   development redacts every tool observation, including reads, grep, and Git results.
 4. Whether write paths need further restrictions beyond current tool and workspace
    checks remains a policy-design question; write tools now exist.
 5. How confirmation is represented so the model cannot approve itself -- the model

@@ -310,7 +310,8 @@ Cloud backend selected    The user's text and that turn's tool observations are 
 ```
 
 The redaction on that path is the same best-effort, name-based filter described above.
-It does widen coverage, because MCP tool results are otherwise unredacted — but it is
+Since v0.4.0 development every tool observation is redacted before it is logged or
+sent, so a cloud provider never sees a result the local path would not; but it is
 still a filter, not a policy.
 
 **What this does not establish:** no requirement states what may leave the host.

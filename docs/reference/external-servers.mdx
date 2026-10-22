@@ -82,7 +82,8 @@ and the built-in tools are unaffected.
 - **Limit:** at most 64 third-party tools for a cloud model and 16 for a local one,
   in config order.
 - **Results** may be text only; they reach the model as `{"status": "ok", "content": ...}`
-  and, for a cloud model, are redacted and capped like any tool result.
+  and are redacted and capped like any tool result, whatever the backend. Redaction is
+  best effort: see `docs/security/credential-handling.mdx`.
 
 ## How a call is decided
 

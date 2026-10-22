@@ -30,6 +30,7 @@ import {
   readInputSchema,
 } from "./tools/index.js";
 import { createWorkspaceGuard } from "./workspace/path-guard.js";
+import { redactResult } from "./output/prepare.js";
 import { resolveHostConfinement } from "./execution/seam.js";
 import { defaultExecutionProviders } from "./execution/providers/index.js";
 import { withUnconfinedFallback, type ProviderRegistry } from "./execution/registry.js";
@@ -69,7 +70,10 @@ function terminalToolName(env: NodeJS.ProcessEnv = process.env): string {
 type StructuredResult = Record<string, unknown>;
 
 function resultPayload(result: object) {
-  const structuredContent: StructuredResult = { ...result };
+  // The last boundary before the result leaves this process. Each tool already
+  // redacts what it returns; doing it again here is idempotent and makes the
+  // guarantee independent of every future tool remembering to call it.
+  const structuredContent: StructuredResult = redactResult({ ...result });
   return {
     content: [{ type: "text" as const, text: JSON.stringify(structuredContent) }],
     structuredContent,

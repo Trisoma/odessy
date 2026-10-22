@@ -14,6 +14,7 @@ from mcp import Client
 
 from odessy.execution.escalation import EscalationApproval, EscalationApprover, EscalationDeniedError
 from odessy.authority.audit import current_audit
+from odessy.authority.redaction import redact_value
 from odessy.tools.external_tools import NamespacedServer, external_tool, public_name
 from odessy.authority.policy import OdessyPolicy
 from odessy.runtime.repeat_guard import RepeatGuard, build_guard
@@ -445,11 +446,11 @@ class OdessyAgent:
                             started = time.perf_counter()
                             try:
                                 result = await self._call_tool(call.request.name, args, tool_registry)
-                                structured = {"status": "error", "error": _error_text(result)} if _is_error_result(result) else self._extract_structured_result(result)
+                                structured = {"status": "error", "error": redact_value(_error_text(result))} if _is_error_result(result) else self._extract_structured_result(result)
                             except PermissionError:
                                 raise
                             except Exception as exc:
-                                structured = {"status": "error", "error": str(exc)}
+                                structured = {"status": "error", "error": redact_value(str(exc))}
                             return {**structured, "_dispatch_timing": {"started": started, "completed": time.perf_counter()}}
                         batch_observations, stopped = await schedule_calls(action, limit=self._tool_concurrency, safe=safe, prepare=prepare, dispatch=dispatch, stop=stop_event)
                 for index, observation in enumerate(batch_observations):
@@ -615,7 +616,7 @@ class OdessyAgent:
                 # ceiling still bounds the retries.
                 structured_result = {
                     "status": "error",
-                    "error": _error_text(result),
+                    "error": redact_value(_error_text(result)),
                     "instruction": _TOOL_ERROR_INSTRUCTION,
                 }
                 log.append(LogEntry("tool_error", {"name": action.name, "error": structured_result["error"]}))
@@ -1091,10 +1092,15 @@ class OdessyAgent:
             "structured_content",
             getattr(result, "structuredContent", None),
         )
+        # Every tool result passes through here before it becomes an observation, so
+        # this is the one place redaction has to cover: built-in tools, the Node tool
+        # server, and configured third-party servers alike. `terminal.run` already
+        # redacted at its own boundary (redact -> retain -> spill); redaction is
+        # idempotent, so applying it again here cannot undo that.
         if isinstance(structured, dict):
-            return structured
+            return redact_value(structured)
         if structured is not None:
-            return {"status": "ok", "result": structured}
+            return {"status": "ok", "result": redact_value(structured)}
         # Most third-party tools return text content only. Odessy's own servers always
         # return structured content, so this path serves configured external servers.
         texts = [
@@ -1103,7 +1109,7 @@ class OdessyAgent:
             if isinstance(getattr(item, "text", None), str)
         ]
         if texts:
-            return {"status": "ok", "content": "\n".join(texts)}
+            return {"status": "ok", "content": redact_value("\n".join(texts))}
         raise TypeError("MCP tool result included neither structured nor text content")
 
 

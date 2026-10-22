@@ -119,7 +119,7 @@ def run_checks(
 ) -> list[Check]:
     source = os.environ if env is None else env
     probes = probes or Probes()
-    checks = [_python_check(), *_config_checks()]
+    checks = [_python_check(), *_config_checks(), *_settings_checks(source)]
     try:
         mode = deployment_mode(source)
     except DeploymentConfigError as error:
@@ -166,6 +166,29 @@ def _config_checks() -> list[Check]:
     if not found:
         return [Check("Config", "ok", "no config file found; using built-in defaults")]
     return [Check("Config", "ok", "loaded " + ", ".join(found))]
+
+
+def _settings_checks(env: Mapping[str, str]) -> list[Check]:
+    """Declared settings: the shape of each value, and names Odessy does not read.
+
+    The same pass the CLI runs at startup, reported as checks so ``doctor`` can
+    explain a configuration it would otherwise refuse.
+    """
+
+    from odessy.config.schema import validate_config
+
+    report = validate_config(env)
+    if not report.issues:
+        return [Check("Configuration", "ok", "every ODESSY_* setting is declared and well formed")]
+    return [
+        Check(
+            "Configuration",
+            "fail" if issue.level == "error" else "warn",
+            f"{issue.setting}: {issue.message}",
+            issue.fix,
+        )
+        for issue in report.issues
+    ]
 
 
 def _deployment_check(mode: str, env: Mapping[str, str]) -> Check:
