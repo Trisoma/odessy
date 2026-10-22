@@ -112,6 +112,9 @@ class ModelTurnDiagnostics:
     completion_tokens: int | None = None
     #: Part of ``prompt_tokens`` served from the provider's prompt cache (cloud only).
     cached_prompt_tokens: int | None = None
+    #: Earlier tool results cut to keep the turn's context small (cloud only).
+    compacted_results: int = 0
+    compacted_chars: int = 0
 
 
 @dataclass
@@ -141,6 +144,10 @@ class AgentTurnMetrics:
     routing: dict[str, Any] | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    compacted_results: int = 0
+    compacted_chars: int = 0
+    #: The turn's last allowed model call was sent without tools, asking for an answer.
+    final_call: bool = False
 
 
 @dataclass(frozen=True)

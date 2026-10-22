@@ -69,7 +69,9 @@ class ManagedController(SessionController):
 
 
 async def create_controller(*, workspace=None, model=None, backend=None, use_fake_model=False,
-                            selected_profile=None, interactive=False, turn_lock=None):
+                            selected_profile=None, interactive=False, turn_lock=None, mode="text"):
+    """``mode`` sets the per-turn model-call default: ``voice`` for spoken turns,
+    ``text`` (the default) for typed turns and the session API."""
     from odessy import cli
     workspace = Path(workspace or Path.cwd()).resolve()
     config = load_config()
@@ -154,7 +156,7 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
             names.extend(tool.name for tool in getattr(tools, "tools", tools))
 
         def agent_factory(chosen, confirm=None):
-            agent = cli._build_agent(workspace, chosen, servers)
+            agent = cli._build_agent(workspace, chosen, servers, mode=mode)
             agent._confirm_action = controller.confirm_action
             agent._delegation_jobs = jobs
             # Composed sessions authorize only through the shared broker. Legacy

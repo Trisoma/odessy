@@ -1,0 +1,6 @@
+[sync]
+max_skew_ms = 250
+interval_s = 60
+
+[logging]
+level = "info"

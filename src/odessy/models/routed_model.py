@@ -158,6 +158,12 @@ class RoutedModel:
     def request_stop(self):
         self._local_stop.set()
 
+    def prepare_final_call(self):
+        child = self._children.get(self._role) if self._role else None
+        prepare = getattr(child, "prepare_final_call", None)
+        if callable(prepare):
+            prepare()
+
     def _check(self):
         if self._local_stop.is_set() or (self._stop is not None and self._stop.is_set()):
             self._cancelled = True

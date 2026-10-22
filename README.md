@@ -29,7 +29,7 @@ The model proposes actions. Python Odessy validates and authorizes them. MCP tra
 - Optional cloud backends support native tool conversations; DeepSeek accepts
   configured reasoning effort and retains returned reasoning content.
 - The agent evaluation suite covers 56 safety, command, tool, multi-step, and hard cases
-  (v0.4.0 development adds 24 third-party server, conversation, and batch cases)
+  (v0.4.0 development adds 24 third-party server, conversation, and batch cases, and 2 long-context hard cases)
   using recorded execution, with code-provenance diagnostics in run metadata.
 
 > The long-term technical category could be:
@@ -166,8 +166,10 @@ allow them under the documented rules. Each call is recorded in an audit log, an
 `python -m odessy doctor` checks the servers. See `docs/reference/external-servers.mdx`.
 
 `ODESSY_MAX_MODEL_CALLS` caps the model calls in one turn, counting corrections and
-follow-up steps: 8 by default for a cloud backend (about 2 s a call), 4 for a local
-one (about 30 s a call on the Jetson).
+follow-up steps. With a cloud backend (about 2 s a call) the default is 8 for a spoken
+turn and 20 for a typed turn or the session API; with a local one (about 30 s a call
+on the Jetson) it is 4. A cloud model's last allowed call has no tools, so it answers
+with what was done and what is left instead of stopping mid-task.
 
 ## Voice
 

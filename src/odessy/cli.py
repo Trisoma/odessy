@@ -122,6 +122,8 @@ def _build_agent(
     workspace_root: Path,
     model: Model,
     mcp_servers: tuple[object, ...] | None = None,
+    *,
+    mode: str = "voice",
 ) -> OdessyAgent:
     from odessy.runtime.scheduler import concurrency_from_env
     try:
@@ -145,7 +147,7 @@ def _build_agent(
         confirm=confirmer,
         confirm_batch=confirmer.batch,
         approver=TerminalEscalationApprover(),
-        max_model_calls=_max_model_calls_from_env(cloud=model_uses_cloud(model)),
+        max_model_calls=_max_model_calls_from_env(cloud=model_uses_cloud(model), mode=mode),
     )
 
 
@@ -153,25 +155,37 @@ def _build_agent(
 MAX_MODEL_CALLS_ENV = "ODESSY_MAX_MODEL_CALLS"
 DEFAULT_MAX_MODEL_CALLS = 4
 DEFAULT_CLOUD_MAX_MODEL_CALLS = 8
+DEFAULT_CLOUD_TEXT_MAX_MODEL_CALLS = 20
+#: ``voice``: someone is waiting to hear the answer. ``text``: typed turns and the
+#: session API, where a longer multi-step task is expected.
+TURN_MODES = ("voice", "text")
 
 
-def default_max_model_calls(*, cloud: bool) -> int:
-    """8 for a cloud model, 4 for a local one.
+def default_max_model_calls(*, cloud: bool, mode: str = "voice") -> int:
+    """8 for a spoken cloud turn, 20 for a typed one, 4 for a local model.
 
     A cloud call takes about 2 s and a capable model explores before it answers: two
-    DeepSeek multi-step attempts in the evaluation stopped one call short at 4. A local
-    call takes about 30 s, so the local ceiling stays where it was.
+    DeepSeek multi-step attempts in the evaluation stopped one call short at 4. A
+    spoken turn stays at 8 because someone is listening for the answer; a typed task
+    (find, change, test, fix) often needs 10 to 20 steps, and the cloud budget and
+    context compaction bound what the longer turn costs. A local call takes about
+    30 s, so the local ceiling stays where it was. The evaluation suite uses the
+    spoken default, so its results stay comparable.
     """
 
-    return DEFAULT_CLOUD_MAX_MODEL_CALLS if cloud else DEFAULT_MAX_MODEL_CALLS
+    if mode not in TURN_MODES:
+        raise ValueError(f"Unknown turn mode {mode!r}; expected one of: {', '.join(TURN_MODES)}")
+    if not cloud:
+        return DEFAULT_MAX_MODEL_CALLS
+    return DEFAULT_CLOUD_TEXT_MAX_MODEL_CALLS if mode == "text" else DEFAULT_CLOUD_MAX_MODEL_CALLS
 
 
-def _max_model_calls_from_env(*, cloud: bool = False) -> int:
+def _max_model_calls_from_env(*, cloud: bool = False, mode: str = "voice") -> int:
     """The per-turn ceiling on model calls: ``ODESSY_MAX_MODEL_CALLS``, else the default."""
 
     raw = os.environ.get(MAX_MODEL_CALLS_ENV, "").strip()
     if not raw:
-        return default_max_model_calls(cloud=cloud)
+        return default_max_model_calls(cloud=cloud, mode=mode)
     try:
         value = int(raw)
     except ValueError:
@@ -227,7 +241,7 @@ async def _text_async(user_text: str, use_fake_model: bool, backend: str | None 
     model = _build_model(use_fake_model, backend=backend)
     _announce_model(model)
     async with controller_runtime(workspace=workspace_root, model=model, interactive=True,
-                                  use_fake_model=use_fake_model) as controller:
+                                  use_fake_model=use_fake_model, mode="text") as controller:
         agent = ControllerAgent(controller, isolate_turn=True)
         try:
             with _usage_report(reset=False):
@@ -247,7 +261,7 @@ async def _voice_async(use_fake_model: bool, backend: str | None = None) -> None
     model = _build_model(use_fake_model, backend=backend, model_name=config.ollama_model)
     _announce_model(model)
     async with controller_runtime(workspace=workspace_root, model=model, interactive=True,
-                                  use_fake_model=use_fake_model) as controller:
+                                  use_fake_model=use_fake_model, mode="voice") as controller:
         agent = ControllerAgent(controller, isolate_turn=True)
         with _usage_report(reset=False):
             await _run_voice_turn(agent, config)
@@ -393,7 +407,7 @@ async def _listen_async(
             await asyncio.to_thread(player.play, cue_path, generation=generation)
 
         async with controller_runtime(workspace=workspace_root, model=model, interactive=True,
-                                      use_fake_model=use_fake_model) as controller:
+                                      use_fake_model=use_fake_model, mode="voice") as controller:
             agent = ControllerAgent(controller, isolate_turn=True)
 
             async def run_turn(text: str, stop: asyncio.Event, context: Any) -> str:

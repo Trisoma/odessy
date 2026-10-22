@@ -72,7 +72,9 @@ Or select the backend persistently with `ODESSY_MODEL_BACKEND=claude`.
 | `ODESSY_CLOUD_<NAME>_MODEL` | failover | Model for fallback provider `<NAME>` (for example `ODESSY_CLOUD_QWEN_MODEL`); default is its preset |
 | `ODESSY_EGRESS_FILE` | all | Where the [egress log](#egress-log) is written; an empty value turns it off |
 | `ODESSY_CLOUD_MAX_RESULT_CHARS` | all | Characters of one tool result sent to the provider, default 16000; longer results are cut with a note saying how much was omitted |
-| `ODESSY_MAX_MODEL_CALLS` | all | Model calls per turn, counting corrections and follow-up steps. Default 8 for cloud backends, 4 for local ones |
+| `ODESSY_MAX_MODEL_CALLS` | all | Model calls per turn, counting corrections and follow-up steps. Cloud default: 8 for a spoken turn, 20 for a typed turn or the session API; local: 4. See [Within one turn](#within-one-turn) |
+| `ODESSY_CLOUD_CONTEXT_CHARS` | all | Characters of tool results one turn re-sends before the oldest are compacted, default 24000; `0` turns compaction off |
+| `ODESSY_CLOUD_KEEP_RECENT_RESULTS` | all | How many of the latest tool results are never compacted, default 2 |
 
 ### DeepSeek with low reasoning effort
 
@@ -235,6 +237,46 @@ policy, and confirmation in the runtime. `python -m odessy doctor` shows the cha
 An OpenAI-compatible stream must provide `[DONE]` or a non-null `finish_reason`.
 EOF without either is transient failure, including when a partial tool call has
 already arrived. Adapter retries still stop once a sentence has been emitted.
+
+## Within one turn
+
+Every request in a turn re-sends the conversation so far, so a turn with many tool
+calls costs more with each step. Three things bound it.
+
+**Compaction.** Once the turn's tool results pass `ODESSY_CLOUD_CONTEXT_CHARS`
+(24000 characters by default), the oldest results are cut to their first 600 and
+last 200 characters, with a note saying how much was left out and that the tool can
+be called again. The latest `ODESSY_CLOUD_KEEP_RECENT_RESULTS` (2) stay whole.
+
+- Only tool-result text changes. The model's own messages, including Claude's
+  thinking and DeepSeek's reasoning content, are sent back unchanged.
+- A result is cut once and then stays the same, so later requests keep the same
+  prefix and the provider's cache keeps working.
+- No model writes a summary: the result is only shortened, so nothing in it is
+  rewritten into something it did not say. A repeated tool call is authorized like
+  any other.
+- Turn diagnostics count the compacted results and characters, and the egress log
+  records `compacted` per request.
+
+**Conversation caching (Claude).** From the second request of a turn on, the last
+message carries a cache breakpoint, so each request reads the previous one's
+conversation from the cache. That makes three breakpoints in all: tools, system
+prompt, and the latest message. OpenAI-compatible providers cache the repeated prefix
+on their own. `ODESSY_CLOUD_PROMPT_CACHE=off` turns this off too.
+
+**The call limit.** `ODESSY_MAX_MODEL_CALLS` caps model calls per turn. The cloud
+default depends on how the turn arrives:
+
+- **8 for a spoken turn:** someone is waiting to hear the answer.
+- **20 for a typed turn or the session API:** finding a problem, changing a file and
+  checking it often takes 10 to 20 steps.
+- The evaluation suite keeps 8, so its results stay comparable.
+
+On the last allowed call, a cloud model gets the tool results without tools and is
+asked to answer: what was done, what is not finished, and what to ask next. A tool
+call proposed on that call could never run anyway. A turn that still ends without an
+answer says which limit it reached and names `ODESSY_MAX_MODEL_CALLS`. Local
+adapters keep the previous ending.
 
 ## Cost and usage
 

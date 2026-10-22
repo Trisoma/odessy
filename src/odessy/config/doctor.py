@@ -218,7 +218,7 @@ def _model_checks(backend: str, env: Mapping[str, str], probes: Probes) -> list[
         else:
             if isinstance(chained, FailoverModel):
                 checks.append(Check("Model", "ok", f"failover: {chained.chain()} (API keys found; not contacted)"))
-        return [*checks, _cloud_usage_check(env), _egress_check(env)]
+        return [*checks, _cloud_usage_check(env), _context_check(env), _egress_check(env)]
     if backend in {"lfm", "llama_cpp"}:
         endpoint = env.get("ODESSY_MODEL_ENDPOINT") or DEFAULT_OLLAMA_ENDPOINT
         name = env.get("ODESSY_MODEL_NAME") or DEFAULT_LFM_MODEL
@@ -255,6 +255,25 @@ def _model_checks(backend: str, env: Mapping[str, str], probes: Probes) -> list[
 class _LocalName:
     def __init__(self, name: str) -> None:
         self.model = f"local {name}"
+
+
+def _context_check(env: Mapping[str, str]) -> Check:
+    from odessy.models.cloud_model import (
+        DEFAULT_CLOUD_CONTEXT_CHARS,
+        DEFAULT_KEEP_RECENT_RESULTS,
+        _non_negative_int,
+    )
+
+    chars = _non_negative_int(env.get("ODESSY_CLOUD_CONTEXT_CHARS"), DEFAULT_CLOUD_CONTEXT_CHARS)
+    keep = _non_negative_int(env.get("ODESSY_CLOUD_KEEP_RECENT_RESULTS"), DEFAULT_KEEP_RECENT_RESULTS)
+    compaction = (
+        f"earlier tool results compacted past {chars:,} characters a turn, latest {keep} kept whole"
+        if chars
+        else "tool-result compaction off"
+    )
+    limit = (env.get("ODESSY_MAX_MODEL_CALLS") or "").strip()
+    calls = f"{limit} model calls a turn" if limit else "8 model calls a spoken turn, 20 a typed one"
+    return Check("Model", "ok", f"context: {compaction}; {calls}")
 
 
 def _egress_check(env: Mapping[str, str]) -> Check:

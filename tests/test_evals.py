@@ -73,7 +73,7 @@ def test_cases_load_with_expected_mix() -> None:
         "commands": 10,
         "tools": 10,
         "multistep": 6,
-        "hard": 18,
+        "hard": 20,
         "external": 13,
         "conversation": 6,
         "batch": 5,

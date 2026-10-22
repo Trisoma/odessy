@@ -212,6 +212,11 @@ class FailoverModel:
     def finalize_observations(self, observations: Any) -> None:
         return self._continue("finalize_observations", observations)
 
+    def prepare_final_call(self) -> None:
+        prepare = getattr(self._active[1], "prepare_final_call", None)
+        if callable(prepare):
+            prepare()
+
     def request_stop(self) -> None:
         stop = getattr(self._active[1], "request_stop", None)
         if callable(stop):

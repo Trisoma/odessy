@@ -1,0 +1,190 @@
+2026-10-20T09:00:00Z INFO  service-a worker heartbeat queue_depth=671
+2026-10-20T09:00:17Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:00:34Z INFO  service-a connection pool stats active=872 idle=8
+2026-10-20T09:00:51Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:01:08Z INFO  service-a scheduled job finished job=rollup duration_ms=751
+2026-10-20T09:01:25Z INFO  service-a scheduled job finished job=rollup duration_ms=153
+2026-10-20T09:01:42Z INFO  service-a worker heartbeat queue_depth=89
+2026-10-20T09:01:59Z INFO  service-a connection pool stats active=291 idle=8
+2026-10-20T09:02:16Z INFO  service-a scheduled job finished job=rollup duration_ms=313
+2026-10-20T09:02:33Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:02:50Z INFO  service-a worker heartbeat queue_depth=38
+2026-10-20T09:03:07Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:03:24Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:03:41Z INFO  service-a connection pool stats active=744 idle=8
+2026-10-20T09:03:58Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:04:15Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:04:32Z INFO  service-a worker heartbeat queue_depth=399
+2026-10-20T09:04:49Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:05:06Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:05:23Z INFO  service-a worker heartbeat queue_depth=356
+2026-10-20T09:05:40Z INFO  service-a connection pool stats active=239 idle=8
+2026-10-20T09:05:57Z INFO  service-a health probe ok latency_ms=608
+2026-10-20T09:06:14Z INFO  service-a scheduled job finished job=rollup duration_ms=190
+2026-10-20T09:06:31Z INFO  service-a connection pool stats active=26 idle=8
+2026-10-20T09:06:48Z INFO  service-a health probe ok latency_ms=401
+2026-10-20T09:07:05Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:07:22Z INFO  service-a scheduled job finished job=rollup duration_ms=638
+2026-10-20T09:07:39Z INFO  service-a worker heartbeat queue_depth=707
+2026-10-20T09:07:56Z INFO  service-a worker heartbeat queue_depth=129
+2026-10-20T09:08:13Z INFO  service-a worker heartbeat queue_depth=722
+2026-10-20T09:08:30Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:08:47Z INFO  service-a scheduled job finished job=rollup duration_ms=885
+2026-10-20T09:09:04Z INFO  service-a connection pool stats active=414 idle=8
+2026-10-20T09:09:21Z INFO  service-a scheduled job finished job=rollup duration_ms=473
+2026-10-20T09:09:38Z INFO  service-a worker heartbeat queue_depth=601
+2026-10-20T09:09:55Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:10:12Z INFO  service-a worker heartbeat queue_depth=803
+2026-10-20T09:10:29Z INFO  service-a scheduled job finished job=rollup duration_ms=119
+2026-10-20T09:10:46Z INFO  service-a scheduled job finished job=rollup duration_ms=639
+2026-10-20T09:11:03Z INFO  service-a worker heartbeat queue_depth=766
+2026-10-20T09:11:20Z INFO  service-a scheduled job finished job=rollup duration_ms=491
+2026-10-20T09:11:37Z INFO  service-a worker heartbeat queue_depth=13
+2026-10-20T09:11:54Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:12:11Z INFO  service-a scheduled job finished job=rollup duration_ms=810
+2026-10-20T09:12:28Z INFO  service-a health probe ok latency_ms=883
+2026-10-20T09:12:45Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:13:02Z INFO  service-a connection pool stats active=66 idle=8
+2026-10-20T09:13:19Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:13:36Z INFO  service-a worker heartbeat queue_depth=27
+2026-10-20T09:13:53Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:14:10Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:14:27Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:14:44Z INFO  service-a worker heartbeat queue_depth=519
+2026-10-20T09:15:01Z INFO  service-a scheduled job finished job=rollup duration_ms=273
+2026-10-20T09:15:18Z INFO  service-a health probe ok latency_ms=332
+2026-10-20T09:15:35Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:15:52Z INFO  service-a health probe ok latency_ms=583
+2026-10-20T09:16:09Z INFO  service-a scheduled job finished job=rollup duration_ms=329
+2026-10-20T09:16:26Z INFO  service-a health probe ok latency_ms=331
+2026-10-20T09:16:43Z INFO  service-a worker heartbeat queue_depth=108
+2026-10-20T09:17:00Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:17:17Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:17:34Z INFO  service-a health probe ok latency_ms=379
+2026-10-20T09:17:51Z INFO  service-a connection pool stats active=162 idle=8
+2026-10-20T09:18:08Z INFO  service-a worker heartbeat queue_depth=742
+2026-10-20T09:18:25Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:18:42Z INFO  service-a connection pool stats active=242 idle=8
+2026-10-20T09:18:59Z INFO  service-a worker heartbeat queue_depth=623
+2026-10-20T09:19:16Z INFO  service-a connection pool stats active=330 idle=8
+2026-10-20T09:19:33Z INFO  service-a connection pool stats active=506 idle=8
+2026-10-20T09:19:50Z INFO  service-a scheduled job finished job=rollup duration_ms=23
+2026-10-20T09:20:07Z INFO  service-a worker heartbeat queue_depth=306
+2026-10-20T09:20:24Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:20:41Z INFO  service-a health probe ok latency_ms=693
+2026-10-20T09:20:58Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:21:15Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:21:32Z INFO  service-a connection pool stats active=173 idle=8
+2026-10-20T09:21:49Z INFO  service-a health probe ok latency_ms=648
+2026-10-20T09:22:06Z INFO  service-a health probe ok latency_ms=641
+2026-10-20T09:22:23Z INFO  service-a worker heartbeat queue_depth=225
+2026-10-20T09:22:40Z INFO  service-a health probe ok latency_ms=702
+2026-10-20T09:22:57Z INFO  service-a worker heartbeat queue_depth=306
+2026-10-20T09:23:14Z INFO  service-a scheduled job finished job=rollup duration_ms=481
+2026-10-20T09:23:31Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:23:48Z INFO  service-a health probe ok latency_ms=897
+2026-10-20T09:24:05Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:24:22Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:24:39Z INFO  service-a scheduled job finished job=rollup duration_ms=420
+2026-10-20T09:24:56Z INFO  service-a health probe ok latency_ms=781
+2026-10-20T09:25:13Z INFO  service-a scheduled job finished job=rollup duration_ms=822
+2026-10-20T09:25:30Z INFO  service-a health probe ok latency_ms=158
+2026-10-20T09:25:47Z INFO  service-a scheduled job finished job=rollup duration_ms=753
+2026-10-20T09:26:04Z INFO  service-a health probe ok latency_ms=22
+2026-10-20T09:26:21Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:26:38Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:26:55Z ERROR service-a ERR-4471 ledger sync rejected: clock skew exceeds tolerance
+2026-10-20T09:27:12Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:27:29Z INFO  service-a connection pool stats active=892 idle=8
+2026-10-20T09:27:46Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:28:03Z INFO  service-a worker heartbeat queue_depth=417
+2026-10-20T09:28:20Z INFO  service-a health probe ok latency_ms=573
+2026-10-20T09:28:37Z INFO  service-a health probe ok latency_ms=616
+2026-10-20T09:28:54Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:29:11Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:29:28Z INFO  service-a scheduled job finished job=rollup duration_ms=760
+2026-10-20T09:29:45Z INFO  service-a worker heartbeat queue_depth=863
+2026-10-20T09:30:02Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:30:19Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:30:36Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:30:53Z INFO  service-a connection pool stats active=504 idle=8
+2026-10-20T09:31:10Z INFO  service-a scheduled job finished job=rollup duration_ms=726
+2026-10-20T09:31:27Z INFO  service-a scheduled job finished job=rollup duration_ms=202
+2026-10-20T09:31:44Z INFO  service-a scheduled job finished job=rollup duration_ms=291
+2026-10-20T09:32:01Z INFO  service-a scheduled job finished job=rollup duration_ms=351
+2026-10-20T09:32:18Z INFO  service-a connection pool stats active=685 idle=8
+2026-10-20T09:32:35Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:32:52Z INFO  service-a scheduled job finished job=rollup duration_ms=742
+2026-10-20T09:33:09Z INFO  service-a connection pool stats active=406 idle=8
+2026-10-20T09:33:26Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:33:43Z INFO  service-a connection pool stats active=770 idle=8
+2026-10-20T09:34:00Z INFO  service-a connection pool stats active=92 idle=8
+2026-10-20T09:34:17Z INFO  service-a health probe ok latency_ms=196
+2026-10-20T09:34:34Z INFO  service-a scheduled job finished job=rollup duration_ms=622
+2026-10-20T09:34:51Z INFO  service-a connection pool stats active=656 idle=8
+2026-10-20T09:35:08Z INFO  service-a connection pool stats active=88 idle=8
+2026-10-20T09:35:25Z INFO  service-a scheduled job finished job=rollup duration_ms=88
+2026-10-20T09:35:42Z INFO  service-a health probe ok latency_ms=562
+2026-10-20T09:35:59Z INFO  service-a scheduled job finished job=rollup duration_ms=798
+2026-10-20T09:36:16Z INFO  service-a connection pool stats active=546 idle=8
+2026-10-20T09:36:33Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:36:50Z INFO  service-a worker heartbeat queue_depth=247
+2026-10-20T09:37:07Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:37:24Z INFO  service-a scheduled job finished job=rollup duration_ms=166
+2026-10-20T09:37:41Z INFO  service-a health probe ok latency_ms=842
+2026-10-20T09:37:58Z INFO  service-a connection pool stats active=869 idle=8
+2026-10-20T09:38:15Z INFO  service-a health probe ok latency_ms=720
+2026-10-20T09:38:32Z INFO  service-a health probe ok latency_ms=850
+2026-10-20T09:38:49Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:39:06Z INFO  service-a health probe ok latency_ms=698
+2026-10-20T09:39:23Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:39:40Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:39:57Z INFO  service-a worker heartbeat queue_depth=264
+2026-10-20T09:40:14Z INFO  service-a connection pool stats active=751 idle=8
+2026-10-20T09:40:31Z INFO  service-a worker heartbeat queue_depth=495
+2026-10-20T09:40:48Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:41:05Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:41:22Z INFO  service-a worker heartbeat queue_depth=600
+2026-10-20T09:41:39Z INFO  service-a scheduled job finished job=rollup duration_ms=111
+2026-10-20T09:41:56Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:42:13Z INFO  service-a worker heartbeat queue_depth=315
+2026-10-20T09:42:30Z INFO  service-a worker heartbeat queue_depth=293
+2026-10-20T09:42:47Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:43:04Z INFO  service-a worker heartbeat queue_depth=360
+2026-10-20T09:43:21Z INFO  service-a worker heartbeat queue_depth=45
+2026-10-20T09:43:38Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:43:55Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:44:12Z INFO  service-a connection pool stats active=765 idle=8
+2026-10-20T09:44:29Z INFO  service-a scheduled job finished job=rollup duration_ms=211
+2026-10-20T09:44:46Z INFO  service-a scheduled job finished job=rollup duration_ms=251
+2026-10-20T09:45:03Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:45:20Z INFO  service-a health probe ok latency_ms=667
+2026-10-20T09:45:37Z INFO  service-a connection pool stats active=368 idle=8
+2026-10-20T09:45:54Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:46:11Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:46:28Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:46:45Z INFO  service-a worker heartbeat queue_depth=96
+2026-10-20T09:47:02Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:47:19Z INFO  service-a worker heartbeat queue_depth=797
+2026-10-20T09:47:36Z INFO  service-a connection pool stats active=609 idle=8
+2026-10-20T09:47:53Z INFO  service-a health probe ok latency_ms=272
+2026-10-20T09:48:10Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:48:27Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:48:44Z INFO  service-a health probe ok latency_ms=220
+2026-10-20T09:49:01Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:49:18Z INFO  service-a scheduled job finished job=rollup duration_ms=667
+2026-10-20T09:49:35Z INFO  service-a connection pool stats active=216 idle=8
+2026-10-20T09:49:52Z INFO  service-a health probe ok latency_ms=257
+2026-10-20T09:50:09Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:50:26Z INFO  service-a scheduled job finished job=rollup duration_ms=132
+2026-10-20T09:50:43Z INFO  service-a health probe ok latency_ms=631
+2026-10-20T09:51:00Z INFO  service-a connection pool stats active=243 idle=8
+2026-10-20T09:51:17Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:51:34Z INFO  service-a cache refresh completed entries=512
+2026-10-20T09:51:51Z INFO  service-a connection pool stats active=369 idle=8
+2026-10-20T09:52:08Z INFO  service-a request served path=/api/items status=200
+2026-10-20T09:52:25Z INFO  service-a health probe ok latency_ms=211
+2026-10-20T09:52:42Z INFO  service-a health probe ok latency_ms=252
+2026-10-20T09:52:59Z INFO  service-a worker heartbeat queue_depth=821
+2026-10-20T09:53:16Z INFO  service-a connection pool stats active=428 idle=8
+2026-10-20T09:53:33Z INFO  service-a connection pool stats active=66 idle=8

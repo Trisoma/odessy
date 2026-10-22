@@ -120,6 +120,8 @@ class Attempt:
     completion_tokens: int | None = None
     #: Part of prompt_tokens served from the provider's prompt cache (cloud only).
     cached_prompt_tokens: int | None = None
+    #: The turn's last allowed model call was sent without tools, asking for an answer.
+    final_call: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -284,6 +286,7 @@ async def run_attempt(
                 record.outcome = "blocked"
             if any(entry.event in EXHAUSTION_EVENTS for entry in result.log):
                 record.outcome = "exhausted"
+            record.final_call = any(entry.event == "final_call" for entry in result.log)
         except asyncio.TimeoutError:
             # The attempt exceeded its budget during awaitable work.
             record.outcome = "timeout"
