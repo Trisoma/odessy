@@ -16,6 +16,8 @@ export interface FilesystemReadResult {
   status: ToolStatus;
   truncated: boolean;
   truncation?: Truncation;
+  /** Locator for the withheld remainder, when content exceeded the budget. */
+  spill?: SpillLocator | null;
 }
 
 export interface FilesystemListEntry {
@@ -61,6 +63,8 @@ export interface GitTextResult {
   raw?: string;
   diff?: string;
   error?: string;
+  /** Locator for the withheld remainder, when the text exceeded the budget. */
+  spill?: SpillLocator | null;
 }
 
 export interface GitChangedFilesResult {

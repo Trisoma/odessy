@@ -18,7 +18,7 @@
  */
 
 import { formatRetentionNotice, TextRetainer } from "./retention.js";
-import { redactText } from "./redaction.js";
+import { looksLikeSecretName, REDACTED, redactText } from "./redaction.js";
 import type { SpillLocator, SpillStore } from "./spill.js";
 
 /**
@@ -68,4 +68,65 @@ export function prepareOutput(text: string, budget: OutputBudget): PreparedOutpu
   });
 
   return { text: `${result.text}\n${notice}\n`, truncated: true, spill: locator };
+}
+
+/**
+ * Redact every string inside a structured tool result, keeping its shape.
+ *
+ * This is step 1 of the pipeline above, applied to the result objects the other
+ * tools return (`filesystem.read`, `project.grep`, `git.*`, …). It is a separate
+ * function because those results are not one captured stream: retention and
+ * spilling need a budget and a field to spill, while redaction applies to every
+ * string at every depth, including a third-party server's own nested payload.
+ *
+ * The walk rebuilds containers instead of mutating them. A tool result is also a
+ * value its caller may still hold, and no redaction boundary should quietly
+ * rewrite the caller's data. Ordering is unchanged for captured output: it goes
+ * through `prepareOutput`, which redacts before retaining and spilling.
+ *
+ * A field whose **name** says it holds a credential is redacted whatever its value
+ * looks like. `redactText` recognises `NAME=value` inside text and a few token
+ * shapes; `{"password": "correct-horse-battery-staple"}` is neither, so a walk
+ * that only inspected values would let an opaque secret through. Here the name is
+ * the evidence, and it decides.
+ *
+ * Only JSON-shaped values are walked. MCP results are dictionaries, arrays and
+ * scalars by contract; anything else is returned as-is rather than guessed at.
+ */
+export function redactResult<T>(value: T): T {
+  if (typeof value === "string") {
+    return redactText(value) as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactResult(item)) as T;
+  }
+  if (value !== null && typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      result[key] = looksLikeSecretName(key) ? redactAllStrings(item) : redactResult(item);
+    }
+    return result as T;
+  }
+  return value;
+}
+
+/** Redact strings and numbers under a credential-named field, keeping structure. */
+function redactAllStrings<T>(value: T): T {
+  if (typeof value === "string") {
+    return (value === "" ? value : REDACTED) as T;
+  }
+  if (typeof value === "number") {
+    return REDACTED as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactAllStrings(item)) as T;
+  }
+  if (value !== null && typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      result[key] = redactAllStrings(item);
+    }
+    return result as T;
+  }
+  return value;
 }

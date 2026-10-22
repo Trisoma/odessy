@@ -159,6 +159,15 @@ Put machine-specific values (model paths, the laptop address) in your own file r
 than editing `config/odessy.env`. `ODESSY_CONFIG_FILE=<path>` loads that one file
 instead of both. `python -m odessy doctor` shows which files it found.
 
+Every `ODESSY_*` setting is declared with the shape its value must have
+(`src/odessy/config/schema.py`), and the values a run will use are checked before it
+starts: a malformed number, an unknown deployment, a bad URL, or a required path that
+does not exist stops the run with the setting named and the fix. A name Odessy does
+not read is reported as a warning with the closest real setting, because a misspelled
+setting that is silently ignored is worse than one that is refused. The voice paths
+are required only by `python -m odessy voice`. `python -m odessy doctor` reports the
+same issues and still starts when the configuration is broken.
+
 Third-party MCP servers are listed in `~/.config/odessy/servers.toml`. Their tools are
 offered as `<server>.<tool>`. Calls require confirmation by default; explicit
 per-tool config may allow or deny them, and trusted read-only annotations may

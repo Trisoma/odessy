@@ -663,10 +663,36 @@ def _quiet_transport_logs() -> None:
         logging.getLogger(name).setLevel(logging.WARNING)
 
 
+def _check_configuration(argv: list[str]) -> None:
+    """Refuse to start on a malformed setting, and warn about names nobody reads.
+
+    ``doctor`` is exempt: it reports the same issues as checks. Refusing to run the
+    one command that explains a broken configuration would leave the user with no
+    way to see what is wrong. Help is exempt for the same reason.
+
+    The voice paths are required only by ``voice``, and the wake model only by
+    ``--listen``: a text-loop run must not demand whisper.cpp on this machine.
+    ``--setup-wake`` downloads the wake assets before anything uses them, so it is
+    exempt as well.
+    """
+
+    if argv[:1] == ["doctor"] or "-h" in argv or "--help" in argv:
+        return
+    contexts: set[str] = set()
+    if argv[:1] == ["voice"] and "--setup-wake" not in argv:
+        contexts.add("voice")
+        if "--listen" in argv:
+            contexts.add("wake")
+    from odessy.config.schema import enforce_config
+
+    enforce_config(contexts=contexts)
+
+
 def main(argv: list[str] | None = None) -> None:
     load_config_env()
-    _quiet_transport_logs()
     argv = list(sys.argv[1:] if argv is None else argv)
+    _check_configuration(argv)
+    _quiet_transport_logs()
     if argv[:1] == ["coding-agent-server"]:
         parser = argparse.ArgumentParser(
             description="Serve configured coding agents over trusted operator stdio MCP. "
