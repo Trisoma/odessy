@@ -1,0 +1,221 @@
+---
+title: Model collaboration and session API
+---
+
+Merged into `develop` in `b4faf2b`, with session event handling updated in
+`85e7c10`; still unreleased. Collaboration is disabled until configured. The coordinator can ask
+another participant about any topic. A consultation returns attributed advice
+for local synthesis; it does not execute the participant's tools or grant permissions.
+
+## User configuration
+
+Create `~/.config/odessy/collaboration.toml`, or set `ODESSY_COLLABORATION_FILE`
+to a user-owned file. Settings API JSON uses the same structure. Credentials
+stay in environment variables; ordinary profile responses contain references only.
+The profile name `current` is reserved for the initial coordinator.
+
+```toml
+[settings]
+enabled = true
+automatic = true
+default_participant = "reviewer"
+max_consultations = 1
+max_rounds = 1
+max_context_chars = 8000
+
+[[settings.rules]]
+pattern = "(?i)private project"
+action = "deny"
+
+[participants.reviewer]
+adapter = "cloud"
+provider = "openai"
+model = "your-model-name"
+endpoint = "https://api.openai.com/v1"
+credential_env = "OPENAI_API_KEY"
+capabilities = ["consult"]
+timeout = 120
+max_tokens = 4096
+
+# Optional prices per million tokens; absent prices mean unknown cost.
+# [participants.reviewer.pricing]
+# input = 1.0
+# cached_input = 0.5
+# output = 2.0
+# currency = "USD"
+
+[participants.coder]
+adapter = "codex"
+workspace = "/absolute/path/to/repository"
+host = "local"
+capabilities = ["consult", "delegate"]
+allowed_modes = ["advice", "patch"]
+timeout = 300
+
+[participants.second_opinion]
+adapter = "ollama"
+endpoint = "http://127.0.0.1:11434"
+model = "your-local-model"
+capabilities = ["consult"]
+```
+
+Other adapters are `lfm`, `claude_code`, `custom_agent`, and `auto`. Cloud profiles
+reuse existing providers and compatible endpoints. Custom agents use configured
+command arrays; commands are operator settings, never model-supplied shell strings.
+
+With `automatic = true`, the tool-capable coordinator sees `model.consult` with
+participant, question, optional context, and reason. With `automatic = false`,
+explicit consultation remains available. Rules are ordered: the first matching
+regular expression wins. `deny` prohibits consultation; `allow` may direct it to
+a participant. Explicit requests never silently redirect to another participant.
+Rules match request, question, and reason and do not change Auto's classifier.
+
+Both finite limits count participant requests. For three calls, set both limits
+to at least three. The coordinator can ask multiple peers or follow-up questions
+within these bounds. Recursive participant calls are blocked. Shared question,
+context, and answers are bounded and redacted on a best-effort basis. Failures
+are returned explicitly; continued synthesis must not imply peer agreement.
+
+## CLI, voice, and model selection
+
+```sh
+python -m odessy --model-backend auto "hello"
+python -m odessy voice --listen --model-backend auto
+```
+
+In a voice/controller session, say `switch model to reviewer` or
+`consult reviewer: How should I organize my garden?`. Explicit consultation
+bypasses Auto's text-only fast path so the capable coordinator can synthesize
+the attributed observation. Missing participants produce an explicit error.
+Existing Auto behavior stays unchanged when collaboration is disabled.
+
+The picker changes the **next** turn. Active work keeps its original model.
+Stop cancels the current turn; completed tools and partial agent changes remain.
+The HTTP process runs one coordinator turn at a time to avoid overlapping edge
+model residency and ambiguous process-ledger turn totals.
+
+## Coding jobs and hosts
+
+`agent.delegate` requires normal Odessy confirmation, including advice jobs.
+Capabilities and modes are checked. Codex and Claude Code use structured,
+noninteractive output. Advice is read-only; patch jobs use isolated Git worktrees
+retained for inspection, including after cancellation. Dirty source repositories
+are rejected for patch jobs. Linked worktrees share a repository job lock.
+Results include job ID, state, progress, logs, changed files, and validation when
+available; unknown validation is not reported as passing.
+
+Child-agent permissions remain separate and are reported in job results.
+Odessy does not claim its executor confinement covers independently running CLIs.
+Additional custom modes require an adapter that implements them; a configured
+capability name alone does not implement it.
+
+For split deployments, `host` names an already authorized execution target.
+The remote host must implement the coding tools and configure its own profiles
+and workspace paths. Launch `python -m odessy coding-agent-server` through the
+existing authorized SSH/stdio MCP mechanism. This worker is stdio-only; the
+launching operator trusts the stdio connection. The submitting Odessy still
+confirms delegation. It does not expose an unauthenticated network listener.
+
+## HTTP service and UI diagnostic client
+
+```sh
+python -m pip install -e '.[ui]'
+python -m odessy serve --fake-model --host 127.0.0.1 --port 8765
+```
+
+Only loopback binding is accepted. The service prints a bearer token; set
+`ODESSY_API_TOKEN` to supply one. Open `http://127.0.0.1:8765/` and enter it into
+the diagnostic client. The public static shell contains no credentials. Every
+`/v1` request, including events, requires `Authorization: Bearer <token>`.
+The client provides session creation, model selection, explicit consultation,
+events/peer answers, approvals, clarification questions, and Stop. It is a UI integration diagnostic.
+
+```sh
+export TOKEN='the-token-printed-by-serve'
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/v1/profiles
+curl -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/v1/sessions
+export SID='the-returned-session-id'
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"text":"How should I organize my garden?","participant":"reviewer"}' \
+  "http://127.0.0.1:8765/v1/sessions/$SID/turns"
+curl -N -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8765/v1/sessions/$SID/events"
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  "http://127.0.0.1:8765/v1/sessions/$SID/stop"
+```
+
+Other endpoints: `GET/PUT /v1/settings`,
+`PUT /v1/sessions/{id}/model` with `{"profile":"auto"}`,
+`POST /v1/sessions/{id}/approvals/{approval_id}` with `{"approved":true}`,
+`POST /v1/sessions/{id}/questions/{question_id}` with `{"answer":"Odessy"}`,
+and session job submission/status/cancellation. Settings are validated and saved
+atomically. New sessions load edits; existing sessions keep captured settings.
+Events have ordered IDs and bounded replay (`Last-Event-ID` or `after_id`). They
+identify coordinator, routing reason, peer results, progress, approvals, usage,
+prices, failure, and synthesis. Session/job records are process-local, not durable.
+
+Jobs use `POST /v1/sessions/{id}/jobs` with participant/task/mode; the request
+waits for an approval answered through the separate approval endpoint. Inspect
+or cancel at `/v1/sessions/{id}/jobs/{job_id}` and its `/cancel` suffix. GET also
+refreshes an uncertain remote state. If a remote host cannot confirm cancellation,
+the job stays `needs_attention` and its repository stays reserved until a status
+refresh confirms termination. This avoids admitting another writer prematurely.
+`--fake-model` fakes coordinators and consultations; directly submitted, approved
+coding jobs still run the configured agent and are not an offline simulation.
+
+## Accounting and qualification
+
+Direct API calls share the existing process token/cost budget. Configured profiles
+record participant/provider/model and their own prices. Different models do not
+share one global rate. Missing prices remain unknown; cost budgets reject
+unpriced profile requests before sending. Budgets are pre-request admission
+checks; a request already sent may exceed the threshold. Cached tokens count.
+Coding CLI usage is separate and unknown unless the integration reports it.
+Odessy's API ledger does **not** cap independently billed CLI agents.
+Codex JSONL and Claude result usage, when present, are recorded as separately
+reported CLI figures, including reported cost where available.
+
+`doctor` currently validates the environment-based cloud pricing settings. It
+does not inspect collaboration profiles or validate their individual prices;
+profile-aware diagnostics remain follow-up work. Runtime profile admission and
+budget checks are enforced independently.
+
+Offline tests use fake providers, models, and child processes. Live provider
+caching, installed coding CLI compatibility, remote permissions, Jetson memory,
+and wake microphones require separate opt-in checks.
+The October 21 audit of merged `85e7c10` passed **1,387 tests, with 3 skipped**,
+including **137 focused collaboration, session/API, job, and usage tests**.
+
+
+## Development: clarification API
+
+The native `user.ask` tool accepts `question`, optional string-array `choices`,
+and `allow_free_text` (default true). With free text disabled, choices are required
+and only an exact listed choice is valid. The controller generates IDs, ownership,
+timestamps and expiry; the model cannot choose these fields.
+
+Session snapshots contain `pending_questions` as well as `pending_approvals`.
+Entries include `id`, `turn_id`, `kind`, `question`/`prompt`, `choices`,
+`allow_free_text`, `allowed_channels`, `ready`, `created_at`, and `expires_at`.
+Approval entries also contain validated action details and scopes. Lifecycle
+stream events include `question_required`, `interaction_ready`, `question_answered`,
+`question_expired`, corresponding approval events, and `interaction_unavailable`.
+Resolution events identify channel and outcome. The diagnostic client presents
+questions and retains the existing approval controls.
+
+```sh
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"answer":"Odessy"}' \
+  "http://127.0.0.1:8765/v1/sessions/$SID/questions/$QUESTION_ID"
+```
+
+The server assigns `authenticated_ui`; a request cannot choose a channel.
+Invalid answers return 400; already-resolved requests return 409;
+expired/superseded requests return 410; unknown IDs return 404. First valid
+voice, keyboard or API response wins atomically. One pending foreground
+interaction suspends only its owning continuation. Background jobs/status and
+cancellation remain available. Stop invalidates outstanding interactions.
+
+No usable clarification answer means the turn ends explicitly, without guessing
+or dispatching dependent tools. Defaults and voice behavior are documented in
+[voice integration](voice-integration.mdx).

@@ -149,10 +149,12 @@ def system_prompt() -> str:
     # The longer name first: encoding it removes the "terminal.run" inside it.
     for name in ("laptop.terminal.run", "terminal.run"):
         environment = environment.replace(name, encode_tool_name(name))
+    from odessy.collaboration.context import coordinator_instructions
+    from odessy.interaction.context import interaction_instructions
     return _SYSTEM_PROMPT_TEMPLATE.format(
         environment=environment,
         laptop_tool=encode_tool_name(command_tool_for_laptop()),
-    )
+    ) + coordinator_instructions() + interaction_instructions()
 
 
 _REPAIR_MESSAGE = "That tool call was invalid: {error}. Propose a corrected tool call or answer directly."

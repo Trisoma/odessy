@@ -8,8 +8,65 @@ content:
   type: "reference"
 ---
 
+Development voice sessions share the controller with CLI and HTTP. `switch model to <profile>` selects the next turn; `consult <participant>: <question>` requests attributed advice. Stop does not undo completed actions. See [model collaboration](model-collaboration.mdx).
+
+
 Odessy v0.2.0 added voice as an interface around the existing runtime; it is unchanged in v0.3.0.
 Voice does not replace the policy, MCP, workspace authority, process authority, or confirmation path.
+
+## Development: approval and clarification
+
+The `feat/voice-user-interaction` worktree extends the shared session controller.
+Both wake sessions and one-shot voice support human clarification and one-use
+approval. **Offline implementation and independent review are complete as of
+October 22, 2026**, through `3412025` on the feature branch; the feature is not yet
+merged or released. Independent review reran **72 relevant tests, all passed**.
+DeepSeek reported **1,449 passed, 5 skipped** for the full suite; that full count
+was not independently repeated. Real microphone, Jetson and packaged-device
+qualification remain pending, separate opt-in checks.
+
+| Policy decision | Accepted approval channels |
+| --- | --- |
+| Allowed low-risk action | Existing policy; no new prompt |
+| Medium-risk confirmation | Exact spoken phrase, keyboard, authenticated UI |
+| High-risk action or any sandbox expansion | Keyboard or authenticated UI only |
+| Denied action | None; confirmation cannot override denial |
+
+For eligible approval, say **approve this action** after the cue. Bare yes,
+spoken session grants and spoken approve-all are unsupported. The phrase is
+shown on screen but never spoken in a pending prompt. Voice indicates intent;
+it does not authenticate a speaker or resist recording replay. See the
+[authority boundary](authority-boundary.mdx) for the grant checks.
+
+Authorization begins “Odessy requests permission…” and displays the validated
+operation, execution host, exact command/arguments, scopes and accepted channels.
+Clarification begins “I need one detail…”; its answer provides information only.
+A stronger-channel request remains pending for keyboard/UI confirmation.
+
+There is one microphone reader in wake mode. Prompt playback and queued pre-cue
+audio cannot supply a response. Capture opens after settling and the cue. A fresh
+wake supersedes the pending interaction and starts replacement capture. Stop,
+cancel and shutdown invalidate outstanding replies; completed tools remain done.
+
+Defaults are three clarification requests per turn, two STT reprompts, a 30-second
+response window, and 120 seconds for keyboard/UI-only approval. Reprompts do not
+extend expiry or consume clarification requests. A missing answer ends the turn
+explicitly. Human waiting is excluded from the optional generation deadline;
+independent operation timeouts keep their original bounds.
+
+| Environment setting | Default | Accepted values |
+| --- | --- | --- |
+| `ODESSY_INTERACTION_MAX_QUESTIONS` | 3 | integer 1–20 |
+| `ODESSY_INTERACTION_RESPONSE_TIMEOUT` | 30 seconds | greater than 0, at most 300 |
+| `ODESSY_INTERACTION_STRONG_RESPONSE_TIMEOUT` | 120 seconds | greater than 0, at most 600 |
+| `ODESSY_INTERACTION_PROMPT_TIMEOUT` | 30 seconds | greater than 0, at most 120 |
+| `ODESSY_VOICE_SETTLING_MS` | 300 ms | integer 0–10000 |
+
+The initial prompt timeout bounds cue preparation; the response window starts
+once capture is ready. Text CLI uses cancellation-safe terminal input and one-use confirmations through the shared controller. Redirected
+or unavailable interactive input fails explicitly; the HTTP service supports
+an authenticated UI instead. Background jobs, status, events and API responses
+remain responsive while a foreground turn waits.
 
 ## Architecture
 
@@ -197,10 +254,11 @@ the source, and startup failures release the recorder. Actual Whisper `empty`
 results use the same bounded blank retries. These are software behaviors covered
 by regression tests, not measured real-device guarantees.
 
-Authorization is untouched. The session decides when the microphone is open and what
-text to submit; every proposed action still passes validation, policy, confirmation,
-and the execution-target gate, and a wake transcript or a spoken word can never supply
-an approval.
+The session decides when the microphone is open and what text to submit; every
+proposed action still passes validation, policy, confirmation and the
+execution-target gate. Ordinary wake-command transcripts do not authorize actions.
+Only a valid response to a pending, voice-eligible request can provide spoken
+approval through the shared interaction broker described above.
 
 Conversation mode keeps at most six completed exchanges and 8,000 characters in RAM,
 redacted with the same best-effort, name-based filter as the rest of the runtime before
@@ -232,9 +290,9 @@ tool-call identifier. Interrupted turns are not recorded.
 
 The v0.3.0 private prerelease retains these limits. Blank-audio handling is
 implemented; wake-up activation is implemented in software and awaiting hardware
-qualification; spoken escalation approval and further voice/local-model optimization
-belong to the [v0.4.0 roadmap](../releases/v0.4.0.md), with their prerequisites still
-open.
+qualification. Risk-aware voice approval and clarification are complete offline
+on the v0.4.0 feature branch; hardware acceptance remains pending. Further
+voice/local-model optimization belongs to the [v0.4.0 roadmap](../releases/v0.4.0.md).
 
 Voice mode is staged and turn-based unless `--listen` is used.
 It is not streaming TTS and not a real-time voice assistant: a reply is synthesised in

@@ -597,7 +597,9 @@ def _environment_line() -> str:
     """The environment sentence for the offered tools, as a line or nothing."""
 
     line = environment_prompt()
-    return f"{line}\n" if line else ""
+    from odessy.collaboration.context import coordinator_instructions
+    from odessy.interaction.context import interaction_instructions
+    return (f"{line}\n" if line else "") + coordinator_instructions() + interaction_instructions()
 
 
 def _read_error_body(error: urllib.error.HTTPError) -> str:

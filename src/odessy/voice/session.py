@@ -53,6 +53,7 @@ SessionState = Literal[
     "FOLLOWUP",
     "STOPPING",
     "ERROR",
+    "INTERACTION_PROMPT",
 ]
 
 Interaction = Literal["wake", "conversation"]
@@ -79,6 +80,7 @@ class SessionOptions:
     blank_retries: int = 2
     followup_ms: int = 10_000
     cue: bool = True
+    settling_ms: int = 300
 
     def __post_init__(self) -> None:
         if self.interaction not in ("wake", "conversation"):
@@ -107,6 +109,7 @@ class VoiceSession:
     cue: Callable[[], Awaitable[None]] | None = None
 
     close_frames: Callable[[], None] | None = None
+    stop_turn: Callable | None = None
 
     state: SessionState = "LISTENING"
     error: str | None = None
@@ -127,6 +130,79 @@ class VoiceSession:
     _frames_ready: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     _transcription: asyncio.Task[None] | None = field(default=None, repr=False)
     _capture_pending: tuple[bytes, int] | None = field(default=None, repr=False)
+    _interaction: dict | None = field(default=None, repr=False)
+    _interaction_broker: object | None = field(default=None, repr=False)
+    _interaction_done: asyncio.Future | None = field(default=None, repr=False)
+    _audio_generation: int = 0
+    _captured_index: int = -1
+    _admit_after_index: int = -1
+    _interaction_attempts: int = 0
+    _interaction_retry_task: asyncio.Task | None = field(default=None, repr=False)
+
+    def interaction_handler(self, broker):
+        async def handle(entry):
+            await self.handle_interaction(entry, broker)
+        return handle
+
+    async def handle_interaction(self, entry: dict, broker) -> None:
+        from odessy.voice.interaction import interaction_prompt, voice_allowed
+
+        self._interaction = entry
+        self._interaction_broker = broker
+        self._interaction_done = asyncio.get_running_loop().create_future()
+        self._interaction_attempts = 0
+        turn_id = self._turn_id
+        try:
+            await self._interaction_cue(interaction_prompt(entry))
+            if self._closing or turn_id != self._turn_id:
+                return
+            broker.mark_ready(entry['id'])
+            if not voice_allowed(entry):
+                self.status('This action requires keyboard or authenticated UI confirmation.')
+                self.state = 'THINKING'
+            await self._interaction_done
+        finally:
+            if self._interaction is entry:
+                if self._interaction_retry_task is not None:
+                    self._interaction_retry_task.cancel()
+                    await asyncio.gather(self._interaction_retry_task, return_exceptions=True)
+                    self._interaction_retry_task = None
+                if self.state == 'INTERACTION_PROMPT':
+                    with contextlib.suppress(Exception):
+                        self.stop_speaking()
+                self._interaction = None
+                self._interaction_broker = None
+                self._interaction_done = None
+                self._audio_generation += 1
+                self._admit_after_index = self._captured_index
+                self._capture_pending = None
+                if not self._closing and turn_id == self._turn_id:
+                    self.state = 'THINKING'
+
+    async def _interaction_cue(self, prompt: str) -> None:
+        self._audio_generation += 1
+        self._capture_pending = None
+        self.state = 'INTERACTION_PROMPT'
+        self.status(prompt)
+        if self._interaction and self._interaction['kind'] == 'approval':
+            from odessy.voice.interaction import interaction_details
+            self.status(interaction_details(self._interaction))
+            self.status('Approval phrase: approve this action')
+        await self.speak(prompt)
+        await asyncio.sleep(self.options.settling_ms / 1000)
+        if self.options.cue and self.cue is not None:
+            await self.cue()
+        self._admit_after_index = self._captured_index
+        self.vad.reset()
+        self._vad_frames.reset()
+        self.segmenter.begin()
+        self.state = 'RECORDING'
+
+    def _cancel_interaction(self, reason: str) -> None:
+        if self._interaction_broker is not None:
+            self._interaction_broker.cancel_pending(reason)
+        if self._interaction_done is not None and not self._interaction_done.done():
+            self._interaction_done.set_result(None)
 
     def __post_init__(self) -> None:
         self._vad_frames = FrameBuffer(self.vad.frame_bytes)
@@ -158,6 +234,7 @@ class VoiceSession:
 
     async def aclose(self) -> None:
         self._closing = True
+        self._cancel_interaction('voice session closed')
         self._pending = None
         self._capture_pending = None
         self._stop.set()
@@ -186,6 +263,7 @@ class VoiceSession:
                     if not frame:
                         raise RuntimeError("microphone capture ended")
                     queue.push(AudioFrame(pcm=frame, index=index))
+                    self._captured_index = index
                     index += 1
                     if queue.overflowed:
                         self._fail("microphone capture queue overflow")
@@ -205,6 +283,8 @@ class VoiceSession:
                 for frame in queue.pop_all():
                     if self._closing:
                         return
+                    if frame.index <= self._admit_after_index:
+                        continue
                     activation = self._turn_id
                     try:
                         await self._handle_frame(frame.pcm)
@@ -223,6 +303,13 @@ class VoiceSession:
             self._reader = None
 
     async def _handle_frame(self, frame: bytes) -> None:
+        if self.state == 'INTERACTION_PROMPT':
+            return
+        if self._interaction is not None and self.state == 'RECORDING':
+            score = self.wake.score(frame)
+            if self.gate.accepts(score, frames_since_activation=self._frames_since_wake):
+                await self._activate()
+                return
         if self.state == "RECORDING":
             await self._feed_segmenter(frame)
             return
@@ -247,6 +334,8 @@ class VoiceSession:
         """Wake phrase heard: interrupt, cue, then open one command window."""
 
         self._turn_id += 1
+        self._audio_generation += 1
+        self._cancel_interaction('interrupted by wake phrase')
         self._pending = None
         self._pending_ready.clear()
         self._capture_pending = None
@@ -282,6 +371,11 @@ class VoiceSession:
                 return
             if outcome == "no_speech":
                 self.status("No speech detected")
+                if self._interaction is not None:
+                    # Prompt playback must never hold up the sole frame consumer.
+                    self.state = 'INTERACTION_PROMPT'
+                    self._interaction_retry_task = asyncio.create_task(self._interaction_retry())
+                    return
                 self._enter_listening()
                 return
 
@@ -296,13 +390,21 @@ class VoiceSession:
         # Serialize STT, retaining at most one replacement recording.
         while self._capture_pending is not None and not self._closing:
             audio, turn_id = self._capture_pending
+            generation = self._audio_generation
             self._capture_pending = None
             try:
                 transcript = await self.transcribe(audio)
             except Exception as error:
+                if generation != self._audio_generation:
+                    continue
                 if turn_id == self._turn_id and not self._closing:
                     self.status(f"Transcription failed: {error}")
+                    if self._interaction is not None and generation == self._audio_generation:
+                        await self._interaction_retry()
+                        continue
                     self._enter_listening()
+                continue
+            if generation != self._audio_generation:
                 continue
             await self._submit(transcript, turn_id)
 
@@ -313,6 +415,9 @@ class VoiceSession:
             return
         text = " ".join(transcript.split())
         if _is_cancel(text):
+            self._cancel_interaction('stopped by voice')
+            from odessy.voice.interaction import schedule_stop
+            schedule_stop(self.stop_turn)
             self._pending = None
             self._pending_ready.clear()
             self._stop.set()
@@ -320,6 +425,16 @@ class VoiceSession:
             # that needs a tool-call decision.
             self.status(STOPPED_TEXT)
             self._enter_listening()
+            return
+
+        if self._interaction is not None:
+            from odessy.voice.interaction import resolve_spoken_answer
+            if resolve_spoken_answer(self._interaction, self._interaction_broker, text):
+                if self._interaction_done is not None and not self._interaction_done.done():
+                    self._interaction_done.set_result(None)
+                self.state = 'THINKING'
+            else:
+                await self._interaction_retry()
             return
 
         blank = self.classify_blank(text)
@@ -347,6 +462,21 @@ class VoiceSession:
         self.state = "THINKING"
 
     # -- the worker: one turn at a time -----------------------------------------
+
+    async def _interaction_retry(self) -> None:
+        from odessy.voice.interaction import voice_allowed
+        if self._interaction is None:
+            return
+        if not voice_allowed(self._interaction):
+            self.status('This action requires keyboard or authenticated UI confirmation.')
+            self.state = 'THINKING'
+            return
+        self._interaction_attempts += 1
+        if self._interaction_attempts <= 2:
+            await self._interaction_cue('I could not use that response. Please answer the pending prompt after the cue.')
+        else:
+            self.status('Pending: no usable voice response; use the terminal or interaction API.')
+            self.state = 'THINKING'
 
     async def _serve(self) -> None:
         while True:
@@ -441,6 +571,7 @@ class VoiceSession:
         self.state = "LISTENING"
 
     def _fail(self, message: str) -> None:
+        self._cancel_interaction(message)
         self._stop.set()
         self._pending = None
         self._capture_pending = None

@@ -8,6 +8,9 @@ content:
   type: "reference"
 ---
 
+Development collaboration profiles reuse these adapters with participant/provider/model identities and per-profile prices. API budgets remain shared; coding CLI bills are separate. See [model collaboration](model-collaboration.mdx).
+
+
 Odessy can use a cloud model in place of the local LFM or Gemma model. This is
 opt-in and off by default. A cloud model is a stronger **proposer**, not a stronger
 authority: every tool call it proposes still passes tool-contract validation,
@@ -211,7 +214,9 @@ voice session):
 - A turn can end mid-task when the budget runs out. Tools that already ran in
   that turn have run.
 - A malformed price or budget setting stops a cloud run at startup.
-- `python -m odessy doctor` shows the settings in effect.
+- `python -m odessy doctor` shows the environment-based settings. Collaboration
+  profile pricing is enforced by the runtime but is not yet inspected by doctor;
+  see [model collaboration](model-collaboration.mdx#accounting-and-qualification).
 
 ## Not covered yet
 
