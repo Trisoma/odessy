@@ -147,11 +147,14 @@ def model_tool_names(mode: Deployment | None = None) -> list[str]:
 
 
 def command_tool_for_laptop(mode: Deployment | None = None) -> str:
-    """The tool a request addressed to "my laptop" must use."""
+    """The tool a request addressed to "my laptop" must use.
 
-    alias = _paired_alias(os.environ)
-    if alias:
-        return f"{alias}.terminal.run"
+    The served Node server names its command tool `laptop.terminal.run` (see
+    `serve` in odessy-link, which fixes `ODESSY_DEPLOYMENT=split` for the child), so
+    the enrolled alias stays in target metadata and approval bindings rather than in
+    the tool name.
+    """
+
     return "laptop.terminal.run" if (mode or deployment_mode()) == "split" else "terminal.run"
 
 

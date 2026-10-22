@@ -255,4 +255,88 @@ mod tests {
         assert!(server_task.await.expect("join"), "server must refuse the stranger");
         let _ = (directory_a, directory_c);
     }
+
+    /// An expired connection certificate must be refused even though its chain is
+    /// fine: expiry never triggers an insecure fallback.
+    #[tokio::test]
+    async fn an_expired_certificate_is_refused() {
+        let (directory_a, registry_a) = registry("expired-a");
+        let (directory_c, registry_c) = registry("expired-c");
+        let host_a = Identity::generate("hosta0000003").expect("a");
+        let expired = Identity::expired("hostc0000003").expect("expired identity");
+        registry_a
+            .add_peer("c", &serde_json::to_string(&expired.bundle()).unwrap(), &expired.fingerprint(), None)
+            .expect("a enrols c");
+        registry_c
+            .add_peer("a", &serde_json::to_string(&host_a.bundle()).unwrap(), &host_a.fingerprint(), None)
+            .expect("c enrols a");
+
+        let server = Arc::new(
+            server_config(&host_a, registry_a.enrolled_authorities().expect("authorities"))
+                .expect("server config"),
+        );
+        let peer_a = registry_c.peer("a").expect("read").expect("peer");
+        let client = Arc::new(client_config(&expired, &peer_a).expect("client config"));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("addr");
+        let acceptor = tokio_rustls::TlsAcceptor::from(server);
+        let server_task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            acceptor.accept(stream).await.is_err()
+        });
+        let connector = tokio_rustls::TlsConnector::from(client);
+        let stream = tokio::net::TcpStream::connect(address).await.expect("connect");
+        let name = expected_server_name(&peer_a).expect("name");
+        let _ = connector.connect(name, stream).await;
+        assert!(server_task.await.expect("join"), "an expired leaf must be refused");
+        let _ = (directory_a, directory_c);
+    }
+
+    /// The expected SAN comes from the enrolled record, so a certificate for another
+    /// installation fails even when its chain is valid.
+    #[tokio::test]
+    async fn a_mismatched_san_is_refused() {
+        let (directory_a, registry_a) = registry("san-a");
+        let (directory_c, registry_c) = registry("san-c");
+        let host_a = Identity::generate("hosta0000004").expect("a");
+        let host_c = Identity::generate("hostc0000004").expect("c");
+        registry_a
+            .add_peer("c", &serde_json::to_string(&host_c.bundle()).unwrap(), &host_c.fingerprint(), None)
+            .expect("a enrols c");
+        // Enrol A's certificate under a record that claims a different installation id,
+        // which is what a misleading advertised hostname would look like to the client.
+        let mut bundle = serde_json::to_value(host_a.bundle()).unwrap();
+        bundle["installation_id"] = serde_json::json!("wronghost01");
+        registry_c
+            .add_peer("a", &bundle.to_string(), &host_a.fingerprint(), None)
+            .expect("c enrols a with a different claimed identity");
+
+        let server = Arc::new(
+            server_config(&host_a, registry_a.enrolled_authorities().expect("authorities"))
+                .expect("server config"),
+        );
+        let peer_a = registry_c.peer("a").expect("read").expect("peer");
+        assert_eq!(
+            expected_server_name(&peer_a).unwrap().to_str(),
+            "p-wronghost01.odessy.invalid"
+        );
+        let client = Arc::new(client_config(&host_c, &peer_a).expect("client config"));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let address = listener.local_addr().expect("addr");
+        let acceptor = tokio_rustls::TlsAcceptor::from(server);
+        let server_task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            acceptor.accept(stream).await.is_err()
+        });
+        let connector = tokio_rustls::TlsConnector::from(client);
+        let stream = tokio::net::TcpStream::connect(address).await.expect("connect");
+        let name = expected_server_name(&peer_a).expect("name");
+        let client_result = connector.connect(name, stream).await;
+        assert!(
+            client_result.is_err(),
+            "the expected identity comes from the record, not from the peer's claim"
+        );
+        let _ = server_task.await;
+        let _ = (directory_a, directory_c);
+    }
 }

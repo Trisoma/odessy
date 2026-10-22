@@ -86,6 +86,10 @@ pub fn spawn(node_script: &Path, workspace: &Path) -> Result<NodeSession, String
             command.env(name, value);
         }
     }
+    // Fixed by the host, never by the caller: a served Node server names its command
+    // tool `laptop.terminal.run`, which is the name Odessy's split-mode contracts and
+    // policy already know. A remote peer cannot change this.
+    command.env("ODESSY_DEPLOYMENT", "split");
     let mut child = command
         .spawn()
         .map_err(|error| format!("cannot start node server: {error}"))?;

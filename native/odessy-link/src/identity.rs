@@ -95,8 +95,24 @@ impl EnrollmentBundle {
 impl Identity {
     /// Generate fresh identity material for `installation_id`.
     pub fn generate(installation_id: &str) -> Result<Self, String> {
+        Self::build(installation_id, OffsetDateTime::now_utc(), CA_VALIDITY_DAYS, LEAF_VALIDITY_DAYS)
+    }
+
+    /// Material whose connection certificate expired in the past. Only tests use it:
+    /// an expired certificate must be refused, never used to fall back to anything.
+    #[cfg(test)]
+    pub fn expired(installation_id: &str) -> Result<Self, String> {
+        let start = OffsetDateTime::now_utc() - Duration::days(400);
+        Self::build(installation_id, start, CA_VALIDITY_DAYS, 300)
+    }
+
+    fn build(
+        installation_id: &str,
+        now: OffsetDateTime,
+        ca_days: i64,
+        leaf_days: i64,
+    ) -> Result<Self, String> {
         validate_installation_id(installation_id)?;
-        let now = OffsetDateTime::now_utc();
         let san = dns_name(installation_id);
 
         let ca_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
@@ -110,7 +126,7 @@ impl Identity {
             KeyUsagePurpose::DigitalSignature,
         ];
         ca_params.not_before = now;
-        ca_params.not_after = now + Duration::days(CA_VALIDITY_DAYS);
+        ca_params.not_after = now + Duration::days(ca_days);
         let ca_cert = ca_params
             .self_signed(&ca_key)
             .map_err(|error| format!("cannot sign CA certificate: {error}"))?;
@@ -133,7 +149,7 @@ impl Identity {
             KeyUsagePurpose::KeyEncipherment,
         ];
         leaf_params.not_before = now;
-        leaf_params.not_after = now + Duration::days(LEAF_VALIDITY_DAYS);
+        leaf_params.not_after = now + Duration::days(leaf_days);
         let leaf_cert = leaf_params
             .signed_by(&leaf_key, &ca_cert, &ca_key)
             .map_err(|error| format!("cannot sign connection certificate: {error}"))?;

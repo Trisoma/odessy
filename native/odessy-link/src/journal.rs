@@ -13,6 +13,9 @@ use std::sync::Mutex;
 /// Sessions kept before the oldest rows are dropped. Bounded so the journal cannot
 /// grow without limit on a long-lived host.
 pub const RETAINED_SESSIONS: usize = 200;
+/// Rows kept for a single session. A long-lived session would otherwise grow without
+/// limit; past this window the oldest ids are forgotten and may be reused by the peer.
+pub const ROWS_PER_SESSION: usize = 4096;
 
 pub struct Journal {
     connection: Mutex<Connection>,
@@ -87,23 +90,33 @@ impl Journal {
                 params![session, direction, kind, value, Self::now()],
             )
             .map_err(|error| format!("cannot record request: {error}"))?;
+        // Bound one session's history independently of the session count.
+        connection
+            .execute(
+                "DELETE FROM journal WHERE rowid IN (
+                     SELECT rowid FROM journal WHERE session=?1 ORDER BY rowid DESC LIMIT -1 OFFSET ?2
+                 )",
+                params![session, ROWS_PER_SESSION as i64],
+            )
+            .map_err(|error| format!("cannot bound session rows: {error}"))?;
         Ok(inserted == 1)
     }
 
     /// Mark a request as having received its answer.
     ///
-    /// Matched by session and id, not direction: a response travels the opposite way
-    /// from the request it answers, so the request's row is what must be settled.
+    /// The direction is the one that *carried the request*, which is the opposite of
+    /// the stream that carried the response. Matching only by id would settle a
+    /// same-numbered request in the other direction as well.
     pub fn settle(&self, session: &str, direction: &str, id: &RequestId) -> Result<(), String> {
         let (kind, value) = id_columns(id);
         self.lock()?
             .execute(
-                "UPDATE journal SET state='settled', settled_at=?4
-                 WHERE session=?1 AND id_kind=?2 AND id_value=?3 AND state='admitted'",
-                params![session, kind, value, Self::now()],
+                "UPDATE journal SET state='settled', settled_at=?5
+                 WHERE session=?1 AND direction=?2 AND id_kind=?3 AND id_value=?4
+                   AND state='admitted'",
+                params![session, direction, kind, value, Self::now()],
             )
             .map_err(|error| format!("cannot settle request: {error}"))?;
-        let _ = direction;
         Ok(())
     }
 

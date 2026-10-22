@@ -6,7 +6,7 @@
 //! Node server, or to the local MCP client, before that comparison succeeds.
 
 use crate::{node, relay, tls};
-use crate::identity::{display_fingerprint, fingerprint_sha256};
+use crate::identity::display_fingerprint;
 use crate::trust::Registry;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,6 +21,8 @@ const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10
 /// How long a host waits for the node server to finish answering after the peer
 /// half-closes. Bounded so a wedged child cannot hold the session forever.
 const SESSION_DRAIN: std::time::Duration = std::time::Duration::from_secs(5);
+/// How often a live session rechecks its grant so a revocation can end it.
+const REVOCATION_POLL: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Node server errors terminate the whole relay, so a dead execution backend can
 /// never look like a stalled peer.
@@ -120,6 +122,20 @@ async fn handle_connection(
             enrolled.alias
         ));
     }
+    // The grant names a workspace. Serving a different directory is the host
+    // escalating its own authority, so the paths must agree.
+    match enrolled.workspace.as_deref() {
+        Some(granted) if workspace_matches(granted, &workspace) => {}
+        Some(granted) => {
+            return Err(format!(
+                "{} holds a grant for {}, which is not the served workspace {}",
+                enrolled.alias,
+                granted,
+                workspace.display()
+            ))
+        }
+        None => return Err(format!("{} has no granted workspace", enrolled.alias)),
+    }
     // The host's own workspace configuration wins over anything the peer says.
     if !workspace.is_dir() {
         return Err("configured workspace disappeared".into());
@@ -148,10 +164,20 @@ async fn handle_connection(
     // even though this connection authenticated when it was admitted.
     let trust_path = state_dir()?.join("trust.sqlite3");
     let expected = fingerprint.clone();
+    let served_workspace = workspace.clone();
+    let watch_path = trust_path.clone();
+    let watch_fingerprint = expected.clone();
+    let watch_workspace = workspace.clone();
     let recheck: relay::AdmitCheck = Arc::new(move || {
         let registry = Registry::open(&trust_path)?;
         match registry.peer_by_fingerprint(&expected)? {
-            Some(peer) if peer.has_execution_grant() => Ok(()),
+            Some(peer) if peer.has_execution_grant() => match peer.workspace.as_deref() {
+                Some(granted) if workspace_matches(granted, &served_workspace) => Ok(()),
+                Some(granted) => Err(format!(
+                    "grant moved to {granted}, which is not the served workspace"
+                )),
+                None => Err("the peer's workspace grant was removed".to_string()),
+            },
             Some(_) => Err("capability revoked for this peer".to_string()),
             None => Err("peer is no longer enrolled".to_string()),
         }
@@ -166,6 +192,9 @@ async fn handle_connection(
     let inbound = relay::DirectionState::new()
         .with_journal(journal.clone(), session.clone(), "peer-to-node")
         .with_recheck(recheck);
+    // Linked: an answer on the outbound stream settles the inbound request and frees
+    // its slot, so a long session is not capped at 32 answered requests.
+    let outbound = outbound.answering(&inbound);
     // The peer finishing its request half-closes the child's stdin, but the child
     // keeps its chance to answer: killing it at peer EOF would drop the response.
     let back = tokio::spawn(async move {
@@ -181,7 +210,16 @@ async fn handle_connection(
         drop(stdin);
         result.map_err(|error| relay_error_text("peer to node", error))
     };
-    let outcome: Result<(), String> = forward.await;
+    let outcome: Result<(), String> = tokio::select! {
+        result = forward => result,
+        _ = watch_grant(watch_path, watch_fingerprint, watch_workspace) => {
+            // The plan requires revocation to end an affected session, not only to
+            // block its next request.
+            Err("grant revoked or moved; session terminated".to_string())
+        }
+    };
+    // A revoked session must stop forwarding immediately, in both directions.
+    back.abort();
     // A child that keeps running after the peer finished is reported, then killed. It
     // is not a transport failure: the peer's own half already completed.
     let received = match tokio::time::timeout(SESSION_DRAIN, back).await {
@@ -290,10 +328,104 @@ pub fn connect(arguments: &[String]) -> Result<(), Failure> {
     })
 }
 
-/// Diagnostic used by tests and by `doctor`-style reporting later: the fingerprint
-/// this host would expect for a peer, computed from the enrolled certificate.
-#[allow(dead_code)]
-pub fn enrolled_fingerprint(peer: &crate::trust::Peer) -> Result<String, String> {
-    let der = crate::trust::certificate_der_for(&peer.certificate_pem)?;
-    Ok(fingerprint_sha256(&der))
+/// Poll the local registry and complete when the peer's grant no longer admits this
+/// session. One second is the plan's termination target for responsive processes.
+async fn watch_grant(
+    trust_path: std::path::PathBuf,
+    fingerprint: String,
+    workspace: std::path::PathBuf,
+) {
+    loop {
+        tokio::time::sleep(REVOCATION_POLL).await;
+        let admitted = Registry::open(&trust_path)
+            .and_then(|registry| registry.peer_by_fingerprint(&fingerprint))
+            .ok()
+            .flatten()
+            .map(|peer| {
+                peer.has_execution_grant()
+                    && peer
+                        .workspace
+                        .as_deref()
+                        .map(|granted| workspace_matches(granted, &workspace))
+                        .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        if !admitted {
+            return;
+        }
+    }
 }
+
+/// Compare the workspace an operator granted with the one being served.
+///
+/// Both sides are canonicalised, so a relative grant, a symlink, or an 8.3 alias
+/// cannot name a directory the grant was never meant to cover. Windows compares
+/// case-insensitively, as its filesystem does.
+pub fn workspace_matches(granted: &str, served: &std::path::Path) -> bool {
+    let (Ok(granted), Ok(served)) = (
+        std::fs::canonicalize(granted),
+        std::fs::canonicalize(served),
+    ) else {
+        return false;
+    };
+    if cfg!(windows) {
+        granted.to_string_lossy().eq_ignore_ascii_case(&served.to_string_lossy())
+    } else {
+        granted == served
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{watch_grant, workspace_matches};
+    use crate::identity::Identity;
+    use crate::trust::Registry;
+    use std::time::Duration;
+
+    #[test]
+    fn a_grant_only_covers_the_exact_directory_it_names() {
+        let root = std::env::temp_dir().join(format!("odessy-link-ws-{}", std::process::id()));
+        let granted = root.join("granted");
+        let other = root.join("other");
+        std::fs::create_dir_all(&granted).expect("granted dir");
+        std::fs::create_dir_all(&other).expect("other dir");
+
+        assert!(workspace_matches(&granted.to_string_lossy(), &granted));
+        assert!(
+            !workspace_matches(&granted.to_string_lossy(), &other),
+            "a grant for one directory must not admit another"
+        );
+        assert!(!workspace_matches(&root.to_string_lossy(), &granted), "nor a parent");
+        assert!(!workspace_matches(&root.join("missing").to_string_lossy(), &granted));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Revocation must end a live session, not merely block the next request.
+    #[tokio::test]
+    async fn the_revocation_watcher_fires_after_a_revoke() {
+        let root = std::env::temp_dir().join(format!("odessy-link-watch-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("workspace")).expect("workspace");
+        let workspace = root.join("workspace");
+        let path = root.join("trust.sqlite3");
+        let registry = Registry::open(&path).expect("registry");
+        let peer = Identity::generate("peer00000010").expect("identity");
+        registry
+            .add_peer("peer", &serde_json::to_string(&peer.bundle()).unwrap(), &peer.fingerprint(), None)
+            .expect("enrol");
+        registry
+            .grant("peer", "mcp", &workspace.to_string_lossy())
+            .expect("grant");
+
+        let mut watcher = Box::pin(watch_grant(path, peer.fingerprint(), workspace.clone()));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1200), &mut watcher).await.is_err(),
+            "an admitted session must keep running"
+        );
+        registry.revoke("peer").expect("revoke");
+        tokio::time::timeout(Duration::from_secs(4), watcher)
+            .await
+            .expect("the watcher must notice a revocation");
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
+

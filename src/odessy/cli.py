@@ -631,7 +631,7 @@ async def _builtin_tool_servers(workspace_root: Path) -> AsyncIterator[tuple[obj
             # Only the paired transport is offered. A paired host that cannot answer is
             # an error, never a reason to use a legacy remote URL instead.
             async with ExternalSessions() as sessions:
-                server = NamespacedServer(paired.server_config(), sessions)
+                server = paired.server(sessions)
                 try:
                     tools = await asyncio.wait_for(
                         server.list_tools(), timeout=paired.server_config().timeout

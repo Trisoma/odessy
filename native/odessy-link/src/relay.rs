@@ -41,12 +41,47 @@ impl From<FrameError> for RelayError {
 /// forwarded, so a grant revoked during a live session stops the next request.
 pub type AdmitCheck = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
+/// Requests awaiting a matching response. Shared between the two pumps of one
+/// session so a response clears the *requesting* direction's slot, no matter which
+/// stream carried the answer.
+#[derive(Default)]
+pub struct Pending {
+    ids: std::sync::Mutex<std::collections::HashSet<RequestId>>,
+}
+
+impl Pending {
+    fn insert(&self, id: RequestId) -> Result<(), RelayError> {
+        let mut ids = self.ids.lock().map_err(|_| RelayError::Io("pending lock poisoned".into()))?;
+        if ids.len() >= MAX_OUTSTANDING {
+            return Err(RelayError::TooManyOutstanding);
+        }
+        ids.insert(id);
+        Ok(())
+    }
+
+    fn remove(&self, id: &RequestId) {
+        if let Ok(mut ids) = self.ids.lock() {
+            ids.remove(id);
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.ids.lock().map(|ids| ids.len()).unwrap_or(0)
+    }
+}
+
 pub struct DirectionState {
     used: Option<UsedIds>,
-    pending: std::collections::HashSet<RequestId>,
+    /// Requests carried by this direction and awaiting an answer.
+    own: Arc<Pending>,
+    /// The counterpart's pending set, cleared when this direction carries responses.
+    answers: Option<Arc<Pending>>,
     /// Durable, content-free record of used ids for this session and direction.
     journal: Option<(Arc<Journal>, String)>,
     direction: &'static str,
+    /// Direction whose journal rows a response in this stream settles.
+    request_direction: &'static str,
     recheck: Option<AdmitCheck>,
 }
 
@@ -54,9 +89,11 @@ impl DirectionState {
     pub fn new() -> Self {
         Self {
             used: Some(UsedIds::new(USED_ID_CAPACITY)),
-            pending: std::collections::HashSet::new(),
+            own: Arc::new(Pending::default()),
+            answers: None,
             journal: None,
             direction: "unknown",
+            request_direction: "unknown",
             recheck: None,
         }
     }
@@ -66,11 +103,20 @@ impl DirectionState {
     pub fn with_journal(mut self, journal: Arc<Journal>, session: String, direction: &'static str) -> Self {
         self.journal = Some((journal, session));
         self.direction = direction;
+        self.request_direction = direction;
         self
     }
 
     pub fn with_recheck(mut self, recheck: AdmitCheck) -> Self {
         self.recheck = Some(recheck);
+        self
+    }
+
+    /// Link this direction to the one whose requests it answers. A response here then
+    /// releases the requesting direction's slot and settles its journal row.
+    pub fn answering(mut self, other: &DirectionState) -> Self {
+        self.answers = Some(other.own.clone());
+        self.request_direction = other.direction;
         self
     }
 
@@ -101,21 +147,21 @@ impl DirectionState {
                 if !fresh {
                     return Err(RelayError::DuplicateRequestId);
                 }
-                if self.pending.len() >= MAX_OUTSTANDING {
-                    return Err(RelayError::TooManyOutstanding);
-                }
-                self.pending.insert(id);
+                self.own.insert(id)?;
                 Ok(())
             }
-            // A response releases its slot. An unknown response id is tolerated:
-            // it may answer a request from before a reconnect.
+            // A response releases the requesting direction's slot. An unknown response
+            // id is tolerated: it may answer a request from before a reconnect.
             (false, Some(id)) => {
                 if let Some((journal, session)) = &self.journal {
                     journal
-                        .settle(session, self.direction, &id)
+                        .settle(session, self.request_direction, &id)
                         .map_err(RelayError::Refused)?;
                 }
-                self.pending.remove(&id);
+                match &self.answers {
+                    Some(pending) => pending.remove(&id),
+                    None => self.own.remove(&id),
+                }
                 Ok(())
             }
             // Notifications occupy no slot.
@@ -125,7 +171,7 @@ impl DirectionState {
 
     #[cfg(test)]
     pub fn outstanding(&self) -> usize {
-        self.pending.len()
+        self.own.len()
     }
 }
 
@@ -362,5 +408,36 @@ mod tests {
         let mut received = String::new();
         out_rx.read_to_string(&mut received).await.expect("read");
         assert!(received.is_empty(), "nothing may reach the node server after a refusal");
+    }
+
+    /// Requests answered in the reverse stream must release their own slot. Before
+    /// the two directions were linked, the second batch failed at 33 even though
+    /// every earlier request had been answered.
+    #[test]
+    fn answers_release_the_requesting_directions_slot() {
+        let requests = DirectionState::new();
+        let mut answers = DirectionState::new().answering(&requests);
+        let mut requests = requests;
+
+        for round in 0..3i64 {
+            for offset in 0..MAX_OUTSTANDING as i64 {
+                let id = round * MAX_OUTSTANDING as i64 + offset;
+                requests
+                    .admit(&json!({"jsonrpc":"2.0","id":id,"method":"tools/call"}).to_string())
+                    .unwrap_or_else(|error| panic!("round {round} id {id}: {error:?}"));
+            }
+            assert_eq!(requests.outstanding(), MAX_OUTSTANDING);
+            for offset in 0..MAX_OUTSTANDING as i64 {
+                let id = round * MAX_OUTSTANDING as i64 + offset;
+                answers
+                    .admit(&json!({"jsonrpc":"2.0","id":id,"result":{}}).to_string())
+                    .expect("answer");
+            }
+            assert_eq!(
+                requests.outstanding(),
+                0,
+                "round {round}: answered requests must release their slots"
+            );
+        }
     }
 }

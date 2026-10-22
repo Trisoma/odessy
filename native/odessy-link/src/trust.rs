@@ -66,9 +66,40 @@ impl Registry {
                      address TEXT,
                      capability_mcp INTEGER NOT NULL DEFAULT 0,
                      workspace TEXT
-                 );",
+                 );
+                 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);",
             )
-            .map_err(|error| format!("cannot create schema: {error}"))
+            .map_err(|error| format!("cannot create schema: {error}"))?;
+
+        self.connection
+            .execute(
+                "INSERT OR IGNORE INTO meta(key, value) VALUES('grant_revision', '0')",
+                [],
+            )
+            .map_err(|error| format!("cannot create schema: {error}"))?;
+        Ok(())
+    }
+
+    /// Monotonic local grant revision. Bumped by every enrolment, grant and revoke so
+    /// a coordinator can bind an approval to the permissions it saw.
+    pub fn revision(&self) -> Result<i64, String> {
+        self.connection
+            .query_row("SELECT value FROM meta WHERE key='grant_revision'", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|error| format!("cannot read revision: {error}"))?
+            .parse::<i64>()
+            .map_err(|error| format!("revision is not a number: {error}"))
+    }
+
+    fn bump_revision(&self) -> Result<(), String> {
+        self.connection
+            .execute(
+                "UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key='grant_revision'",
+                [],
+            )
+            .map_err(|error| format!("cannot update revision: {error}"))?;
+        Ok(())
     }
 
     /// Enroll a peer from an exported bundle.
@@ -122,6 +153,7 @@ impl Registry {
             .map_err(|error| format!("cannot save peer: {error}"))?;
         // Re-enrolling the same alias always drops existing grants: a replaced
         // certificate must not inherit the old peer's execution access.
+        self.bump_revision()?;
         self.peer(alias)?
             .ok_or_else(|| "peer disappeared while saving".to_string())
     }
@@ -206,6 +238,7 @@ impl Registry {
         if changed == 0 {
             return Err(format!("unknown peer: {alias}"));
         }
+        self.bump_revision()?;
         self.peer(alias)?
             .ok_or_else(|| "peer disappeared while granting".to_string())
     }
@@ -220,6 +253,9 @@ impl Registry {
                 params![alias],
             )
             .map_err(|error| format!("cannot revoke peer: {error}"))?;
+        if changed > 0 {
+            self.bump_revision()?;
+        }
         Ok(changed > 0)
     }
 }
@@ -314,6 +350,13 @@ fn decode_base64(text: &str) -> Result<Vec<u8>, String> {
         return Err("certificate PEM is empty".into());
     }
     Ok(out)
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+/// Expose the PEM decoder to the identity tests without a second implementation.
+pub fn certificate_der_for_tests(pem: &str) -> Result<Vec<u8>, String> {
+    certificate_der(pem)
 }
 
 #[cfg(test)]
@@ -429,6 +472,28 @@ mod tests {
             .expect("re-enrollment");
         assert_eq!(peer.fingerprint_sha256, second.fingerprint());
         assert!(!peer.has_execution_grant(), "a new certificate must not inherit grants");
+    }
+
+    #[test]
+    fn every_enrolment_grant_and_revoke_bumps_the_revision() {
+        let fixture = TempRegistry::new("revision");
+        let first = Identity::generate("peer00000020").expect("identity");
+        assert_eq!(fixture.registry.revision().expect("revision"), 0);
+        fixture
+            .registry
+            .add_peer("jetson", &bundle_json(&first), &first.fingerprint(), None)
+            .expect("enrol");
+        assert_eq!(fixture.registry.revision().expect("revision"), 1);
+        fixture
+            .registry
+            .grant("jetson", CAPABILITY_MCP, r"C:\work")
+            .expect("grant");
+        assert_eq!(fixture.registry.revision().expect("revision"), 2);
+        fixture.registry.revoke("jetson").expect("revoke");
+        assert_eq!(fixture.registry.revision().expect("revision"), 3);
+        // Revoking nothing changes no permission, so it must not move the revision.
+        fixture.registry.revoke("missing").expect("noop");
+        assert_eq!(fixture.registry.revision().expect("revision"), 3);
     }
 
     #[test]

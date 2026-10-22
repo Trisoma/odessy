@@ -94,6 +94,32 @@ jobs:
           echo "$output"
           [[ "$output" == "Directory entries: "*"pyproject.toml"* ]]
 
+  rust:
+    name: odessy-link (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: native/odessy-link
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/odessy-link
+      # Identity, enrolment, mutual TLS, framing, relay accounting and the journal.
+      # No test here touches a real microphone or a second physical machine.
+      - name: Test
+        run: cargo test --locked
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
   tool-server:
     name: Tool server, Node ${{ matrix.node }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

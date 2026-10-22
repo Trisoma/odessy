@@ -86,15 +86,15 @@ def test_the_transport_command_is_a_connect_for_the_enrolled_alias(fake_binary):
 def test_the_paired_namespace_replaces_the_laptop_namespace(fake_binary, monkeypatch):
     for name, value in ((PAIRED_HOST_ENV, "jetson"), (LINK_BIN_ENV, str(fake_binary))):
         monkeypatch.setenv(name, value)
-    assert command_tool_for_laptop("split") == "jetson.terminal.run"
-    # The paired tool is discovered from the peer, not declared in the static contract,
-    # so the contract list still hides the legacy laptop tool in single mode.
+    # The served Node server names its command tool, so the alias never enters the
+    # tool name: `jetson.laptop.terminal.run` was the bug this pins down.
+    assert command_tool_for_laptop("split") == "laptop.terminal.run"
     assert "laptop.terminal.run" not in model_tool_names("single")
     assert "laptop.terminal.run" in model_tool_names("split")
     prompt = environment_prompt(
-        ["terminal.run", "jetson.terminal.run"], env={PAIRED_HOST_ENV: "jetson"}
+        ["terminal.run", "laptop.terminal.run"], env={PAIRED_HOST_ENV: "jetson"}
     )
-    assert "jetson.terminal.run runs commands on the user's laptop" in prompt
+    assert "laptop.terminal.run runs commands on the user's laptop" in prompt
 
 
 def test_probe_reports_a_missing_binary_rather_than_raising(tmp_path):
@@ -113,13 +113,40 @@ def _write_stub(tmp_path: pathlib.Path) -> pathlib.Path:
 
 
 def test_probe_marks_an_unknown_alias_as_not_enrolled(tmp_path):
-    # A real binary prints the peer table; here a failing stub must surface as detail.
     stub = tmp_path / "odessy-link"
     stub.write_text("stub", encoding="ascii")
     host = paired_host({PAIRED_HOST_ENV: "jetson", LINK_BIN_ENV: str(stub)})
     result = probe(host, timeout=5)
     assert result["ok"] is False
     assert "detail" in result
+
+
+def test_approval_metadata_names_the_enrolled_certificate_and_revision(fake_binary, monkeypatch):
+    """An approval must name the certificate that will be trusted, not just an alias."""
+
+    fingerprint = "ab" * 32
+    recorded = {}
+
+    def prober(host):
+        recorded["alias"] = host.alias
+        return {
+            "ok": True,
+            "enrolled_peers": 1,
+            "configured_alias_present": True,
+            "fingerprint_sha256": fingerprint,
+            "grant_revision": 7,
+            "capability_mcp": True,
+            "workspace": r"C:\work",
+        }
+
+    monkeypatch.setenv(PAIRED_HOST_ENV, "jetson")
+    monkeypatch.setenv(LINK_BIN_ENV, str(fake_binary))
+    host = paired_host(prober=prober)
+    assert recorded["alias"] == "jetson"
+    metadata = host.server_config().target_metadata
+    assert metadata["paired_alias"] == "jetson"
+    assert metadata["paired_fingerprint_sha256"] == fingerprint
+    assert metadata["paired_grant_revision"] == "7"
 
 
 def _paired_cli(monkeypatch, listing):
@@ -141,7 +168,8 @@ def _paired_cli(monkeypatch, listing):
         async def list_tools(self):
             return listing()
 
-    monkeypatch.setattr(cli, "NamespacedServer", FakeServer)
+    # PairedServer builds its session-backed server on demand, from this module.
+    monkeypatch.setattr("odessy.tools.external_tools.NamespacedServer", FakeServer)
 
     async def collect(tmp_path):
         async with cli._builtin_tool_servers(tmp_path) as servers:
@@ -158,6 +186,7 @@ def test_a_paired_host_is_the_only_execution_target(monkeypatch, tmp_path):
     assert len(servers) == 2, "python server plus the paired host, nothing else"
     paired = servers[1].server
     assert paired.config.command == ("odessy-link", "connect", "--peer", "jetson")
+    assert paired.prefix == "", "the peer already names its tools; adding an alias doubles it"
 
 
 def test_an_unreachable_paired_host_never_falls_back(monkeypatch, tmp_path):

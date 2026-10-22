@@ -63,9 +63,20 @@ Re-enrolling an alias replaces the certificate **and drops its grants**.
 - Handshake timeout is 10 seconds; operation deadlines remain the caller's.
 
 Relay limits: 8 MiB per frame, 16 MiB buffered per direction, 32 outstanding requests
-per direction, duplicate request ids rejected (numeric `1` and string `"1"` are
-different), notifications do not consume request slots, and a disconnect leaves
-unresolved work **unknown** — never replayed, never described as exactly-once.
+awaiting a response per direction, duplicate request ids rejected (numeric `1` and
+string `"1"` are different), notifications do not consume request slots, and a
+disconnect leaves unresolved work **unknown** — never replayed, never described as
+exactly-once.
+
+A response releases the requesting direction's slot, whichever stream carried it, so a
+session is not capped at 32 requests overall. The content-free journal records
+peer/session identity, request id, state and timestamps (no payloads, no credentials),
+bounded to 4096 rows per session and 200 sessions. Requests still admitted when a
+session ends are marked `unresolved` and reported.
+
+Revocation is enforced three ways: admission is refused once the grant is gone, every
+request re-checks the local registry and the granted workspace, and a one-second watcher
+terminates a **live** session whose grant disappears.
 
 ## Configuring Odessy
 
@@ -82,21 +93,24 @@ any connection is attempted, and a paired host never falls back to a legacy URL:
   `ODESSY_TOOL_SERVER_URL`;
 - `ODESSY_LINK_BIN` without `ODESSY_PAIRED_HOST`.
 
-Tools from the peer appear as `<alias>.<tool>`, for example
-`jetson.terminal.run`, and `doctor` reports the peer as paired rather than as a
-remote URL.
+Tools from the peer keep the names the peer's own server uses — the served Node
+server registers `laptop.terminal.run`, so Python sees exactly that and applies the
+existing policy and tool contracts. The enrolled alias stays in execution-target
+metadata, and with it the enrolled certificate fingerprint and the local grant
+revision taken from `odessy-link peers list --json`, so an approval names the
+certificate that will be trusted rather than a bare string.
 
 ## Diagnosing
 
 ```powershell
-odessy-link peers list      # enrolment and grants, no keys printed
+odessy-link peers list --json   # enrolment, grants, revision; no keys printed
 odessy-link connect --peer jetson   # run before starting Odessy
 python -m odessy doctor
 ```
 
 `doctor` reports the configured alias, the binary it found, how many peers are
-enrolled, and whether the configured alias is among them. It reads the local registry
-only and prints no key material.
+enrolled, the grant revision, and whether the alias is enrolled and holds `mcp`. It
+reads the local registry only and prints no key material.
 
 ## Not implemented in this version
 
@@ -104,10 +118,11 @@ Do not describe these as available:
 
 - mDNS discovery (`odessy-link discover` fails with an explanation); addresses are
   manual.
-- A trigger that terminates in-flight sessions the moment a grant is revoked;
-  revocation is enforced for subsequent admissions.
-- A durable content-free request journal; used-id tracking is per process.
-- Windows DPAPI and restrictive ACLs for identity keys (Unix uses `0600`).
+- A durable, cross-restart **revision** check on the coordinator before each
+  dispatch; the revision is recorded in the approval binding, but the coordinator
+  does not re-poll it mid-turn.
+- Windows DPAPI and restrictive ACLs for identity keys. Unix creates the key with
+  `0600` before writing; Windows inherits the profile directory's permissions.
 - Remote coding-agent hosting, MCU pairing, internet traversal and fleet management.
 
 Local automated checks live in `native/odessy-link` (`cargo test`) and

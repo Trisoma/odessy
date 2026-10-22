@@ -18,11 +18,13 @@ and confinement checks.
 | 32 outstanding requests per direction, duplicate detection, cancel notifications pass through | Implemented (`src/relay.rs`) |
 | One owned Node subprocess per authenticated connection, fixed executable/env/workspace, killed on session end | Implemented (`src/node.rs`) |
 | 16 MiB per-direction buffer enforced while reading, stalled consumer stops the read | Implemented via `FrameCodec` in `src/relay.rs` |
-| Content-free journal (session, direction, request id, state, timestamps; bounded retention) | **Implemented** (`src/journal.rs`), sqlite-backed |
-| Revocation before admission; per-request recheck during a live session | **Implemented**: `serve` refuses a peer with no grant and re-checks the registry before each request |
-| Terminating an idle session the instant a grant is revoked | **Not implemented** — the session ends at its next request or when the peer disconnects |
+| Content-free journal (session, direction, request id, state, timestamps; bounded retention) | **Implemented** (`src/journal.rs`), sqlite-backed, 4096 rows per session and 200 sessions |
+| Revocation before admission; per-request recheck; live-session termination | **Implemented**: admission and every request re-check the registry and the granted workspace; a 1 s watcher ends a revoked session |
+| Workspace grants enforced (canonical path equality, not just “some grant exists”) | **Implemented** (`workspace_matches`) |
+| Grant revision and enrolled fingerprint available to the coordinator | **Implemented**: `peers list --json`, bound into Python approval metadata |
 | mDNS discovery | **Not implemented** |
 | Python paired-host adapter (`ODESSY_PAIRED_HOST`), `doctor` reporting, approval-binding integration | **Implemented** in `src/odessy/tools/paired.py`, `cli.py`, `config/doctor.py`; see `docs/reference/host-pairing.mdx` |
+| Real Python → Rust → Node integration test | **Implemented** as opt-in `tests/test_paired_integration.py` (`ODESSY_LINK_E2E=1`), passing against the repository's own Node tool server |
 | Windows DPAPI + restrictive ACL for identity keys | **Not implemented**; Unix uses `0600` |
 
 Anything not implemented either fails loudly or is absent; none of it pretends to work.

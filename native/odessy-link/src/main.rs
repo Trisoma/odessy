@@ -24,7 +24,7 @@ odessy-link — authenticated host pairing for Odessy
   odessy-link init
   odessy-link identity export --out <bundle>
   odessy-link pair add --alias <name> --certificate <bundle> --expect-sha256 <fingerprint> [--address <host:port>]
-  odessy-link peers list
+  odessy-link peers list [--json]
   odessy-link peers grant <peer> --capability mcp --workspace <path>
   odessy-link peers revoke <peer>
   odessy-link serve --listen <address> --workspace <path> --node-server <entry>   (not implemented)
@@ -164,9 +164,38 @@ fn pair_add(arguments: &[String]) -> Result<(), Failure> {
 }
 
 fn peers_list(arguments: &[String]) -> Result<(), Failure> {
-    no_extra(arguments)?;
+    // `--json` is a bare switch: the coordinator parses it to bind approvals.
+    let json = arguments.iter().any(|argument| argument == "--json");
+    if let Some(extra) = arguments
+        .iter()
+        .find(|argument| *argument != "--json")
+    {
+        return Err(Failure::Usage(format!("unexpected argument: {extra}")));
+    }
     let registry = open_registry()?;
     let peers = registry.peers()?;
+    if json {
+        let revision = registry.revision()?;
+        let entries: Vec<serde_json::Value> = peers
+            .iter()
+            .map(|peer| {
+                serde_json::json!({
+                    "alias": peer.alias,
+                    "installation_id": peer.installation_id,
+                    "fingerprint_sha256": peer.fingerprint_sha256,
+                    "address": peer.address,
+                    "capability_mcp": peer.capability_mcp,
+                    "workspace": peer.workspace,
+                    "grant_revision": revision,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::json!({"peers": entries, "grant_revision": revision})
+        );
+        return Ok(());
+    }
     if peers.is_empty() {
         println!("no enrolled peers");
         return Ok(());
@@ -269,7 +298,7 @@ pub(crate) fn state_dir() -> Result<PathBuf, String> {
         let base = std::env::var_os("APPDATA")
             .map(PathBuf::from)
             .ok_or_else(|| "APPDATA is not set".to_string())?;
-        return Ok(base.join("odessy-link"));
+        Ok(base.join("odessy-link"))
     }
     #[cfg(unix)]
     {
@@ -352,14 +381,21 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
         std::fs::remove_file(path)
             .map_err(|error| format!("cannot replace {}: {error}", path.display()))?;
     }
-    std::fs::write(path, bytes)
-        .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+    // Create with the final mode, then write: a world-readable window between
+    // creation and chmod would leak the private key.
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|error| format!("cannot restrict {}: {error}", path.display()))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
+    let mut file = options
+        .open(path)
+        .map_err(|error| format!("cannot create {}: {error}", path.display()))?;
+    use std::io::Write;
+    file.write_all(bytes)
+        .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
     Ok(())
 }
 

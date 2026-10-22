@@ -404,7 +404,9 @@ def _paired_checks(env: Mapping[str, str]) -> list[Check]:
         Check(
             "Paired host",
             "ok",
-            f"{host.alias} via {result.get('binary')}; {result.get('enrolled_peers', 0)} enrolled peer(s)",
+            f"{host.alias} via {result.get('binary')}; "
+            f"{result.get('enrolled_peers', 0)} enrolled peer(s); "
+            f"grant revision {result.get('grant_revision', '?')}",
         )
     ]
     if not result.get("configured_alias_present"):
@@ -414,6 +416,23 @@ def _paired_checks(env: Mapping[str, str]) -> list[Check]:
                 "fail",
                 f"{host.alias} is configured but not enrolled on this machine",
                 f"odessy-link pair add --alias {host.alias} --certificate <bundle> --expect-sha256 <fingerprint>",
+            )
+        )
+    elif not result.get("capability_mcp"):
+        checks.append(
+            Check(
+                "Paired host permission",
+                "fail",
+                f"{host.alias} is enrolled but holds no mcp capability on this machine",
+                f"odessy-link peers grant {host.alias} --capability mcp --workspace <path>",
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                "Paired host permission",
+                "ok",
+                f"{host.alias} holds mcp for {result.get('workspace')}",
             )
         )
     return checks
