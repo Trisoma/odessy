@@ -129,6 +129,12 @@ See `docs/security/credential-handling.mdx`.
 
 ## Current Limitations
 
+In paired split deployments, mutual TLS authenticates enrolled hosts; it does not
+approve commands or replace confinement. The coordinator rechecks its local trust
+state before dispatch, and the execution host independently enforces its enrolled
+peer's capability and workspace grant. Revocation stops admission and initiates
+cleanup; completed effects are not undone. See [host pairing](../reference/host-pairing.mdx).
+
 Odessy process control is a local v0.3.0 authority boundary plus best-effort confinement,
 not a complete OS sandbox. Coverage depends on the host, and on this board most backends
 report unavailable.

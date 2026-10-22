@@ -149,6 +149,12 @@ Voice (`python -m odessy voice`) currently needs Whisper.cpp, Kokoro, and the Li
 
 ## Configuration
 
+Optional authenticated split deployment uses `ODESSY_PAIRED_HOST=<enrolled-alias>`
+and the Rust `odessy-link` transport. Enroll both hosts, then grant the permitted
+workspace on the execution host; see [host pairing](docs/reference/host-pairing.mdx).
+Windows loopback tests pass; Jetson, real-network and Linux/ARM64 qualification
+remain pending. This preserves existing tool policy and confirmation requirements.
+
 Settings are environment variables, read in this order (first wins):
 
 1. the environment;

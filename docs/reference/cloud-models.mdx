@@ -243,6 +243,11 @@ already arrived. Adapter retries still stop once a sentence has been emitted.
 Every request in a turn re-sends the conversation so far, so a turn with many tool
 calls costs more with each step. Three things bound it.
 
+Merged via PR #26 (`d565fca`) in the unreleased v0.4.0 cycle. The context threshold
+counts tool-result characters, not total prompt tokens: recent results and other
+messages can keep a request above it. Existing cloud usage budgets still apply;
+compaction does not establish a fixed cost or a measured provider-cache hit rate.
+
 **Compaction.** Once the turn's tool results pass `ODESSY_CLOUD_CONTEXT_CHARS`
 (24000 characters by default), the oldest results are cut to their first 600 and
 last 200 characters, with a note saying how much was left out and that the tool can

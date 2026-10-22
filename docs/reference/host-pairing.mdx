@@ -8,8 +8,10 @@ content:
   type: "reference"
 ---
 
-Host pairing is **optional**, and qualified on Windows x64 to Windows x64 only so far
-(see the qualification note at the end). It replaces the raw remote MCP URL of
+Host pairing is **optional**, merged into `develop` via PR #27 (`47b2d8d`) and
+unreleased. Automated Windows loopback tests have passed; separate-machine and
+real-network qualification remain pending (see the qualification note at the end).
+It replaces the raw remote MCP URL of
 `split` deployments with a mutually authenticated connection to `odessy-link`, and
 keeps the existing division of authority:
 
