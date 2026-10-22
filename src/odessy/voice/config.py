@@ -43,6 +43,8 @@ class VoiceConfig:
     wake_threshold: float = 0.5
     followup_seconds: int = DEFAULT_FOLLOWUP_SECONDS
     max_utterance_seconds: int = DEFAULT_MAX_UTTERANCE_SECONDS
+    #: Speak a streaming (cloud) model's answer sentence by sentence as it arrives.
+    stream_speech: bool = True
 
     def __post_init__(self) -> None:
         if not 0 <= self.settling_ms <= 10000:
@@ -88,6 +90,8 @@ class VoiceConfig:
             max_utterance_seconds=_env_int(
                 "ODESSY_VOICE_MAX_UTTERANCE_SECONDS", DEFAULT_MAX_UTTERANCE_SECONDS
             ),
+            stream_speech=(os.environ.get("ODESSY_VOICE_STREAM_SPEECH") or "on").strip().lower()
+            not in {"0", "off", "false", "no"},
         )
 
 

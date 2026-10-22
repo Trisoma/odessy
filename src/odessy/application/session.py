@@ -118,7 +118,11 @@ class SessionController:
                 secret = os.environ.get(env, '') if env else ''
                 if secret:
                     value = value.replace(secret, '<redacted>')
-            for model in (self._model, self._active_model):
+            models = [self._model, self._active_model]
+            for model in tuple(models):
+                # A failover model holds one adapter (and key) per provider.
+                models.extend(child for _, child in getattr(model, 'candidates', ()))
+            for model in models:
                 key = getattr(model, 'api_key', '')
                 if key:
                     value = value.replace(key, '<redacted>')

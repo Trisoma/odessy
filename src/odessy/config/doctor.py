@@ -196,6 +196,7 @@ def _model_checks(backend: str, env: Mapping[str, str], probes: Probes) -> list[
             checks.extend(_model_checks(config.cloud_backend, env, probes))
         return checks
     if backend in CLOUD_PROVIDERS:
+        from odessy.models.failover import FailoverModel, build_cloud_model_with_failover
         try:
             model = build_cloud_model(backend, dict(env))
         except CloudModelConfigError as error:
@@ -209,7 +210,15 @@ def _model_checks(backend: str, env: Mapping[str, str], probes: Probes) -> list[
                 f"cloud backend {backend}, model {model.model} (API key found; not contacted)",
             )
         ]
-        return [*checks, _cloud_usage_check(env)]
+        try:
+            # Local fallbacks are named here, not probed: the local model checks cover them.
+            chained = build_cloud_model_with_failover(backend, dict(env), local_factory=lambda name: _LocalName(name))
+        except CloudModelConfigError as error:
+            checks.append(Check("Model", "fail", f"failover: {error}", "See docs/reference/cloud-models.mdx#failover."))
+        else:
+            if isinstance(chained, FailoverModel):
+                checks.append(Check("Model", "ok", f"failover: {chained.chain()} (API keys found; not contacted)"))
+        return [*checks, _cloud_usage_check(env), _egress_check(env)]
     if backend in {"lfm", "llama_cpp"}:
         endpoint = env.get("ODESSY_MODEL_ENDPOINT") or DEFAULT_OLLAMA_ENDPOINT
         name = env.get("ODESSY_MODEL_NAME") or DEFAULT_LFM_MODEL
@@ -241,6 +250,20 @@ def _model_checks(backend: str, env: Mapping[str, str], probes: Probes) -> list[
     else:
         checks.append(Check("Model", "fail", f"model {name} is not pulled in Ollama", f"ollama pull {name}"))
     return checks
+
+
+class _LocalName:
+    def __init__(self, name: str) -> None:
+        self.model = f"local {name}"
+
+
+def _egress_check(env: Mapping[str, str]) -> Check:
+    from odessy.authority.egress import EGRESS_FILE_ENV, egress_file
+
+    path = egress_file(env)
+    if path is None:
+        return Check("Model", "ok", f"egress log off ({EGRESS_FILE_ENV} is empty)")
+    return Check("Model", "ok", f"egress log: {path} (what was sent to cloud providers; python -m odessy egress)")
 
 
 def _cloud_usage_check(env: Mapping[str, str]) -> Check:

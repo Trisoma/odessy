@@ -96,7 +96,9 @@ class CollaborationService:
                 scope = consultation_disabled()
             except ImportError:
                 scope = nullcontext()
-            with scope:
+            from odessy.runtime.speech import speech_scope
+            # A peer's advice is reference data for the coordinator, never spoken.
+            with scope, speech_scope(None):
                 clean_question = self._redact(question)[:settings.max_context_chars]
                 clean_context = self._redact(context)[:settings.max_context_chars]
                 if adapter is None:

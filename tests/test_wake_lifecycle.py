@@ -17,7 +17,7 @@ def setup_cli(monkeypatch, tmp_path, *, failure=None):
         kokoro_model='', kokoro_voices='', onnx_provider='auto', onnx_cache_dir=None,
         audio_player='aplay', audio_output_device=None, audio_recorder='arecord',
         audio_input_device=None, tmp_dir=tmp_path, wake_model=Path('fake.onnx'),
-        wake_threshold=.5, max_utterance_seconds=20, interaction='wake',
+        wake_threshold=.5, max_utterance_seconds=20, interaction='wake', stream_speech=True,
         blank_retries=2, followup_seconds=10, settling_ms=300)
     stream = MagicMock()
     stream.start.return_value = stream

@@ -61,6 +61,7 @@ from odessy.voice.session import (
 )
 from odessy.voice.stt import WhisperCppSTT, blank_transcript_reason
 from odessy.voice.tts import KokoroTTS
+from odessy.models.failover import FailoverModel, build_cloud_model_with_failover
 from odessy.models.routed_model import RoutedModel, RoutingConfig, model_uses_cloud
 from odessy.models.usage import CloudBudgetExceeded, CloudUsageConfigError, process_ledger
 from odessy.voice.vad import SileroSpeechDetector
@@ -72,7 +73,7 @@ DEFAULT_LFM_MODEL = "lfm2.5-thinking:1.2b-q8_0"
 LOCAL_BACKENDS = ("lfm", "ollama", "llama_cpp")
 MODEL_BACKENDS = (*LOCAL_BACKENDS, "auto", *CLOUD_PROVIDERS)
 
-Model = FakeModel | OllamaModel | LlamaCppLFMModel | CloudModel | RoutedModel
+Model = FakeModel | OllamaModel | LlamaCppLFMModel | CloudModel | FailoverModel | RoutedModel
 
 
 def _build_model(
@@ -89,9 +90,15 @@ def _build_model(
         return RoutedModel(RoutingConfig.from_env())
     if backend in CLOUD_PROVIDERS:
         # Cloud models ignore model_name: callers pass Ollama names, and the cloud
-        # model is configured separately through ODESSY_CLOUD_MODEL.
+        # model is configured separately through ODESSY_CLOUD_MODEL. A local fallback
+        # in ODESSY_CLOUD_FAILOVER is built as that backend would be on its own.
         try:
-            return build_cloud_model(backend)
+            return build_cloud_model_with_failover(
+                backend,
+                local_factory=lambda name: _build_model(
+                    False, backend=name, model_name=model_name, ollama_model=ollama_model
+                ),
+            )
         except CloudModelConfigError as error:
             raise SystemExit(str(error)) from error
     if backend == "ollama":
@@ -418,6 +425,7 @@ async def _listen_async(
                 memory=ConversationMemory(),
                 status=print,
                 cue=cue,
+                stream_speech=config.stream_speech,
             )
             from odessy.interaction.terminal import TerminalInteractionHandler, race_handlers
             controller.interactions.handler = race_handlers(session.interaction_handler(controller.interactions),
@@ -446,7 +454,9 @@ async def _listen_async(
 
 def _announce_model(model: object) -> None:
     """Show explicit models at startup; auto announces each actual selection."""
-    if not isinstance(model, RoutedModel):
+    if isinstance(model, FailoverModel):
+        print(f"[odessy] model: {model.chain()} (failover in this order)", file=sys.stderr, flush=True)
+    elif not isinstance(model, RoutedModel):
         backend = (
             model.provider if isinstance(model, CloudModel)
             else "lfm" if isinstance(model, LlamaCppLFMModel)
@@ -487,6 +497,22 @@ def _usage_report(*, reset: bool = True):
             print(line, file=sys.stderr, flush=True)
 
 
+def _print_egress(limit: int) -> None:
+    from odessy.authority.egress import EGRESS_FILE_ENV, egress_file, format_record, read_records
+
+    path = egress_file()
+    if path is None:
+        print(f"The egress log is off ({EGRESS_FILE_ENV} is set to an empty value).")
+        return
+    records = read_records(path, limit)
+    if not records:
+        print(f"Nothing sent to a cloud provider is recorded in {path}.")
+        return
+    print(f"Last {len(records)} record(s) in {path}:")
+    for record in records:
+        print(format_record(record))
+
+
 def _announce_cloud(model: object) -> None:
     """Say plainly, once per run, that this turn leaves the machine."""
     if isinstance(model, RoutedModel) and model.uses_cloud:
@@ -495,6 +521,16 @@ def _announce_cloud(model: object) -> None:
         print(
             f"[odessy] cloud model {model.provider}/{model.model}: your request and "
             "redacted tool output are sent to the provider.",
+            file=sys.stderr,
+        )
+    if isinstance(model, FailoverModel):
+        primary = model.candidates[0][0]
+        clouds = [name for name, child in model.candidates if isinstance(child, CloudModel)]
+        print(
+            f"[odessy] cloud model {primary}: your request and redacted tool output are sent to the "
+            f"provider; while it is unavailable, to the next of: {', '.join(clouds[1:]) or 'none'}"
+            + (" (then this machine's local model)" if len(clouds) < len(model.candidates) else "")
+            + ".",
             file=sys.stderr,
         )
 
@@ -657,6 +693,15 @@ def main(argv: list[str] | None = None) -> None:
                                    backend=args.model_backend))
         except (ValueError, RuntimeError) as error:
             raise SystemExit(str(error)) from error
+        return
+    if argv[:1] == ["egress"]:
+        parser = argparse.ArgumentParser(
+            prog="python -m odessy egress",
+            description="Show what Odessy recently sent to cloud providers: sizes and tokens, never content.",
+        )
+        parser.add_argument("--limit", type=int, default=20, help="How many recent records to show (default 20).")
+        args = parser.parse_args(argv[1:])
+        _print_egress(args.limit)
         return
     if argv[:1] == ["doctor"]:
         parser = argparse.ArgumentParser(

@@ -18,6 +18,12 @@ The design rule that shapes everything here is: **one reader, one worker**.
 Interruption is therefore cooperative: a wake event sets the turn's stop event and
 kills playback, and the running turn notices at its next check. Anything the turn
 already completed stays completed.
+
+With ``stream_speech``, a model that streams its reply (the cloud adapters) is heard
+sentence by sentence while the turn runs (``runtime/speech.py``). A sentence is spoken
+only while its turn is current: the wake phrase drops the rest. When the turn's answer
+is the text already spoken it is not said again; any other answer (a stop, a runtime
+message, a different final reply) is spoken as before.
 """
 
 from __future__ import annotations
@@ -30,6 +36,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
+from odessy.runtime.speech import SpeechStream, same_text, speech_scope
 from odessy.runtime.types import ConversationContext
 from odessy.voice.frames import (
     WAKE_FRAME_BYTES,
@@ -109,6 +116,8 @@ class VoiceSession:
     cue: Callable[[], Awaitable[None]] | None = None
 
     close_frames: Callable[[], None] | None = None
+    #: Speak streamed model text while the turn runs, instead of after it.
+    stream_speech: bool = False
     stop_turn: Callable | None = None
 
     state: SessionState = "LISTENING"
@@ -495,17 +504,27 @@ class VoiceSession:
         self._turn_active = True
         self.state = "THINKING"
         self.status("Model is thinking")
+        stream, speaker, finish = self._start_streaming(turn_id) if self.stream_speech else (None, None, None)
         try:
-            answer = await self.run_turn(text, self._stop, self.memory.context())
+            with speech_scope(stream):
+                answer = await self.run_turn(text, self._stop, self.memory.context())
         except asyncio.CancelledError:
+            if speaker is not None:
+                speaker.cancel()
             raise
         except Exception as error:  # noqa: BLE001 - reported; the session continues
             self._turn_active = False
+            if finish is not None:
+                await finish()
             self.status(f"Turn failed: {error}")
             if turn_id == self._turn_id and not self._closing:
                 self._enter_listening()
             return
         self._turn_active = False
+        if finish is not None:
+            if stream is not None and stream.emitted:
+                self.state = "SPEAKING"
+            await finish()
 
         stopped = self._stop.is_set()
         if stopped:
@@ -520,7 +539,58 @@ class VoiceSession:
             # speaking it would talk over whatever the user is now saying.
             return
 
+        if stream is not None and not stopped and stream.emitted and same_text(stream.last_text, answer):
+            self._after_reply(turn_id)
+            return
         await self._say(answer, turn_id)
+
+    def _start_streaming(self, turn_id: int):
+        """A speech stream for this turn, the task that speaks it, and how to finish it.
+
+        The model thread emits sentences onto this loop; one task speaks them in order.
+        A sentence whose turn was stopped or superseded is dropped, not spoken.
+        """
+
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+        stop = self._stop
+        delivered = 0
+
+        def deliver(sentence: str) -> None:
+            nonlocal delivered
+            delivered += 1
+            queue.put_nowait(sentence)
+
+        def emit(sentence: str) -> None:
+            with contextlib.suppress(RuntimeError):  # The loop closed under a late thread.
+                loop.call_soon_threadsafe(deliver, sentence)
+
+        stream = SpeechStream(emit)
+
+        async def speak_sentences() -> None:
+            while (sentence := await queue.get()) is not None:
+                if turn_id != self._turn_id or self._closing or stop.is_set():
+                    continue
+                self.status("Speaking")
+                try:
+                    await self.speak(sentence)
+                except Exception as error:  # noqa: BLE001 - a failed sentence is not fatal
+                    self.status(f"Speech output failed: {error}")
+
+        speaker = asyncio.create_task(speak_sentences())
+
+        async def finish() -> None:
+            # A sentence the model thread emitted can still be on its way to this loop
+            # when the turn returns; the end marker must not overtake it. The count
+            # is final once the generation thread is done, and the wait is bounded in
+            # case a stopped generation is still running.
+            deadline = loop.time() + 1.0
+            while delivered < stream.emitted and loop.time() < deadline:
+                await asyncio.sleep(0.001)
+            queue.put_nowait(None)
+            await speaker
+
+        return stream, speaker, finish
 
     async def _say(self, text: str, turn_id: int) -> None:
         if not text.strip():
@@ -532,6 +602,9 @@ class VoiceSession:
             await self.speak(text)
         except Exception as error:  # noqa: BLE001 - a failed reply is not fatal
             self.status(f"Speech output failed: {error}")
+        self._after_reply(turn_id)
+
+    def _after_reply(self, turn_id: int) -> None:
         if turn_id != self._turn_id or self._closing:
             return
         if self.options.interaction == "conversation":

@@ -43,6 +43,11 @@ def _isolate_config_environment(
         "ODESSY_AUDIT_FILE",
         str(tmp_path_factory.mktemp("audit") / "external-audit.jsonl"),
     )
+    # And the egress log of cloud requests, likewise in the home directory.
+    monkeypatch.setenv(
+        "ODESSY_EGRESS_FILE",
+        str(tmp_path_factory.mktemp("egress") / "egress.jsonl"),
+    )
     # And the commands the developer approved in advance for their workspaces.
     monkeypatch.setenv(
         "ODESSY_COMMANDS_FILE",

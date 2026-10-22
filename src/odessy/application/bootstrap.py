@@ -99,16 +99,20 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
         return account_model(cli._build_model(use_fake_model, backend="auto" if name == "auto" else "lfm"), name)
 
     def account_model(chosen, name):
-        from odessy.models.cloud_model import CloudModel, build_cloud_model
+        from odessy.models.cloud_model import CloudModel
+        from odessy.models.failover import FailoverModel, build_cloud_model_with_failover
         from odessy.models.routed_model import RoutedModel
         from odessy.models.usage import process_ledger
         if isinstance(chosen, CloudModel) and chosen.usage is None:
             ledger = process_ledger()
             chosen.usage = ledger.for_profile(name, chosen.provider, chosen.model, ledger.pricing)
+        if isinstance(chosen, FailoverModel):
+            for _, child in chosen.candidates:
+                account_model(child, name)
         if isinstance(chosen, RoutedModel) and not getattr(chosen, '_profile_accounting', False):
             original = chosen._factories['cloud']
             chosen._factories['cloud'] = lambda: account_model(
-                original() if original else build_cloud_model(chosen.config.cloud_backend), name + '.cloud')
+                original() if original else build_cloud_model_with_failover(chosen.config.cloud_backend), name + '.cloud')
             chosen._profile_accounting = True
         return chosen
 

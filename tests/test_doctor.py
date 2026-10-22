@@ -82,8 +82,9 @@ def test_a_cloud_backend_checks_the_key_without_printing_it() -> None:
     present = run_checks(
         "deepseek", {"ODESSY_DEPLOYMENT": "single", "DEEPSEEK_API_KEY": "sk-secret-value"}, _probes()
     )
-    model, usage = _by_section(present, "Model")
+    model, usage, egress = _by_section(present, "Model")
     assert model.status == "ok" and usage.summary.startswith("cloud usage:")
+    assert egress.summary.startswith("egress log")
     assert "sk-secret-value" not in render(present)
 
 

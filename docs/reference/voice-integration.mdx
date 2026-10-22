@@ -265,6 +265,26 @@ redacted with the same best-effort, name-based filter as the rest of the runtime
 storage, cleared on exit, and never carried into a new turn as a prior approval or
 tool-call identifier. Interrupted turns are not recorded.
 
+### Streamed speech
+
+With a cloud model, a wake-listening session speaks the answer sentence by sentence
+as the reply arrives, instead of after the whole reply. The first sentence is heard
+while the rest is still being generated.
+
+- **On by default;** `ODESSY_VOICE_STREAM_SPEECH=off` turns it off. Local models do
+  not stream, so nothing changes for them.
+- **Text before a tool call is spoken** ("Let me check the disk"). Once a tool call
+  starts in a reply, the rest of that reply is not. Speech is output only: the tool
+  call still goes through validation, policy, and confirmation.
+- **Interruptions still win.** The wake phrase stops playback and drops the
+  sentences not yet spoken; a stopped turn says the usual stopped message.
+- **No repeats.** When the turn's answer is the text already spoken, it is not said
+  again. A different answer (a runtime message such as a turn limit) is spoken after.
+- **A failed stream is not retried once a sentence was spoken,** so nothing is said
+  twice. A consulted peer's advice is never spoken.
+- Sentences are synthesized one at a time, so a short pause between sentences is the
+  TTS time for the next one.
+
 ### Boundaries of this version
 
 - **Headset first.** Listening stays active during playback, but reliable
