@@ -32,7 +32,7 @@ import math
 import os
 import re
 import sys
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, TextIO
@@ -64,6 +64,10 @@ Kind = Literal[
 #: Names built by the installer's connection probe; they carry a random token.
 _IGNORED_PREFIXES = ("ODESSY_BENCHMARK_", "ODESSY_OK_", "ODESSY_TEST_")
 
+#: Spellings a boolean setting may use where the runtime treats anything outside
+#: ``0/off/false/no`` as on. Narrower settings list their own ``choices``.
+_BOOLEAN_VALUES = ("on", "off", "true", "false", "yes", "no", "1", "0")
+
 #: ``ODESSY_CLOUD_<BACKEND>_MODEL`` override the primary model for one fallback
 #: backend. Kept in step with ``CLOUD_PROVIDERS`` by a test.
 _CLOUD_FALLBACK_MODELS = ("claude", "openai", "deepseek", "qwen", "kimi", "custom")
@@ -86,6 +90,12 @@ class Setting:
     #: The runtime's own default, used only when the setting is required in a
     #: context and unset: validation then checks what the runtime would use.
     fallback: str = ""
+    #: A default that depends on the environment, such as the installed wake asset
+    #: directory; used the same way as ``fallback``.
+    fallback_provider: Callable[[Mapping[str, str]], str] | None = None
+    #: A fix line for a missing required path, when "set the variable" is not the
+    #: first thing the user should do (the default exists, it just is not installed).
+    missing_fix: str | None = None
     #: The empty value has a documented meaning (unset, off, provider default).
     allow_empty: bool = False
     #: A bare value is a command looked up on PATH, not a path to check.
@@ -132,6 +142,19 @@ def _s(name: str, kind: Kind, summary: str, **options: object) -> Setting:
     return Setting(name=name, kind=kind, summary=summary, **options)  # type: ignore[arg-type]
 
 
+def _wake_model_default(environ: Mapping[str, str]) -> str:
+    """What ``voice --listen`` loads when ``ODESSY_WAKE_MODEL`` is unset.
+
+    The default lives outside the repository and is installed by
+    ``voice --setup-wake``, so requiring the variable would reject a setup the
+    runtime supports.
+    """
+
+    from odessy.voice.assets import DEFAULT_WAKE_MODEL, asset_dir
+
+    return str(asset_dir(dict(environ)) / DEFAULT_WAKE_MODEL)
+
+
 SETTINGS: tuple[Setting, ...] = (
     # -- deployment ---------------------------------------------------------
     _s("ODESSY_DEPLOYMENT", "enum", "single or split", choices=DEPLOYMENTS,
@@ -167,7 +190,8 @@ SETTINGS: tuple[Setting, ...] = (
     _s("ODESSY_AUTO_CAPABLE_BACKEND", "enum", "the backend used for capable requests",
        choices=("lfm", "ollama", "llama_cpp")),
     _s("ODESSY_AUTO_CAPABLE_MODEL", "model", "the model used for capable requests"),
-    _s("ODESSY_AUTO_CLOUD_FALLBACK", "flag", "on or off", allow_empty=True),
+    _s("ODESSY_AUTO_CLOUD_FALLBACK", "flag", "on or off", choices=("on", "off"),
+       allow_empty=True),
     _s("ODESSY_AUTO_CLOUD_BACKEND", "cloud_backend",
        "the cloud backend auto routing may fall back to", allow_empty=True),
     # -- cloud model --------------------------------------------------------
@@ -236,7 +260,10 @@ SETTINGS: tuple[Setting, ...] = (
     _s("ODESSY_KOKORO_PYTORCH_MODEL_DIR", "dir",
        "the Kokoro PyTorch model directory", allow_empty=True),
     _s("ODESSY_WAKE_MODEL", "file", "the openWakeWord model",
-       required_in=("wake",), allow_empty=True),
+       required_in=("wake",), allow_empty=True,
+       fallback_provider=_wake_model_default,
+       missing_fix="install the default model with `python -m odessy voice --setup-wake`, "
+                   "or point ODESSY_WAKE_MODEL at an openWakeWord model"),
     _s("ODESSY_WAKE_THRESHOLD", "float", "the wake-word score threshold",
        minimum=0, maximum=1, exclusive_minimum=True),
     _s("ODESSY_VOICE_INTERACTION", "enum", "wake or conversation",
@@ -365,10 +392,12 @@ def _check_setting(setting: Setting, source: Mapping[str, str], active: frozense
     required = bool(setting.required_in) and bool(active.intersection(setting.required_in))
     present = setting.name in source
     raw = source.get(setting.name, "")
+    using_default = False
     if not raw.strip():
         if required:
             # The runtime's own default is what this run would use; check that.
-            raw = setting.fallback
+            raw = _runtime_default(setting, source)
+            using_default = True
             if not raw.strip():
                 return [_issue("error", setting,
                                "is required by this command but is not set",
@@ -381,10 +410,20 @@ def _check_setting(setting: Setting, source: Mapping[str, str], active: frozense
             return [_issue("error", setting,
                            "is empty; an empty line is not a value for this setting",
                            f"remove the line to use the default, or set {setting.summary}")]
-    return _check_value(setting, raw, required=required)
+    return _check_value(setting, raw, required=required, using_default=using_default)
 
 
-def _check_value(setting: Setting, raw: str, *, required: bool = False) -> list[Issue]:
+def _runtime_default(setting: Setting, source: Mapping[str, str]) -> str:
+    if setting.fallback:
+        return setting.fallback
+    if setting.fallback_provider is not None:
+        return setting.fallback_provider(source)
+    return ""
+
+
+def _check_value(
+    setting: Setting, raw: str, *, required: bool = False, using_default: bool = False
+) -> list[Issue]:
     value = raw.strip()
     kind = setting.kind
     shown = _show(setting, value)
@@ -414,11 +453,11 @@ def _check_value(setting: Setting, raw: str, *, required: bool = False) -> list[
         return _check_bounds(setting, number, shown)
 
     if kind == "flag":
-        if value.lower() not in {"on", "off"}:
+        allowed = setting.choices or _BOOLEAN_VALUES
+        if value.lower() not in allowed:
             return [_issue("error", setting,
-                           f"must be on or off (got {shown}); "
-                           "another spelling silently means off",
-                           "write on or off")]
+                           f"must be one of: {', '.join(allowed)} (got {shown})",
+                           f"use one of: {', '.join(allowed)}")]
         return []
 
     if kind == "enum":
@@ -440,7 +479,7 @@ def _check_value(setting: Setting, raw: str, *, required: bool = False) -> list[
         return []
 
     if kind in {"file", "dir"}:
-        return _check_path(setting, value, shown, required=required)
+        return _check_path(setting, value, shown, required=required, using_default=using_default)
 
     if kind == "model":
         if not _MODEL_NAME.match(value):
@@ -508,7 +547,14 @@ def _check_url(setting: Setting, value: str, shown: str) -> list[Issue]:
     return []
 
 
-def _check_path(setting: Setting, value: str, shown: str, *, required: bool = False) -> list[Issue]:
+def _check_path(
+    setting: Setting,
+    value: str,
+    shown: str,
+    *,
+    required: bool = False,
+    using_default: bool = False,
+) -> list[Issue]:
     path = Path(value).expanduser()
     # A bare command name is found on PATH by the runtime, not by this check.
     if setting.command and not any(separator in value for separator in ("/", "\\")):
@@ -519,9 +565,11 @@ def _check_path(setting: Setting, value: str, shown: str, *, required: bool = Fa
         return [_issue("error", setting, f"is not a usable path: {shown}",
                        f"point {setting.name} at {setting.summary}")]
     if not exists:
+        fix = (setting.missing_fix if using_default else None) or (
+            f"point {setting.name} at {setting.summary}, or remove the line"
+        )
         return [_issue("error" if required else "warning", setting,
-                       f"does not exist: {shown}",
-                       f"point {setting.name} at {setting.summary}, or remove the line")]
+                       f"does not exist: {shown}", fix)]
     if setting.kind == "file" and not is_file:
         return [_issue("error", setting, f"is not a file: {shown}",
                        f"point {setting.name} at {setting.summary}")]

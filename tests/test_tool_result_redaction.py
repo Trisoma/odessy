@@ -75,6 +75,58 @@ def test_redact_value_leaves_non_string_scalars_alone() -> None:
     }
 
 
+# -- credential-named fields -------------------------------------------------
+
+
+def test_a_credential_named_field_is_redacted_whatever_its_value_looks_like() -> None:
+    """An opaque secret under a telling name has no token shape to detect.
+
+    `redact_text` would leave `{"password": "correct-horse-battery-staple"}` alone:
+    it is neither a `NAME=value` assignment nor a known token shape. The field name
+    is the evidence, so the walk uses it.
+    """
+
+    result = {
+        "password": "correct-horse-battery-staple",
+        "api_key": "opaque-provider-credential",
+        "nested": {"client_secret": "another-opaque-value"},
+        "list": [{"token": "also-opaque"}],
+        "path": ".env",
+    }
+
+    redacted = redact_value(result)
+
+    assert redacted["password"] == REDACTED
+    assert redacted["api_key"] == REDACTED
+    assert redacted["nested"]["client_secret"] == REDACTED
+    assert redacted["list"][0]["token"] == REDACTED
+    # A non-credential field must survive, or the model cannot act on the result.
+    assert redacted["path"] == ".env"
+
+
+def test_a_credential_named_field_keeps_its_nested_structure() -> None:
+    redacted = redact_value({"credentials": {"user": "alice", "pass": "hunter2"}})
+
+    assert redacted == {"credentials": {"user": REDACTED, "pass": REDACTED}}
+
+
+def test_an_empty_credential_value_stays_empty() -> None:
+    assert redact_value({"password": ""}) == {"password": ""}
+
+
+def test_structured_credentials_are_redacted_at_the_observation_boundary() -> None:
+    result = SimpleNamespace(
+        structured_content={
+            "password": "correct-horse-battery-staple",
+            "api_key": "opaque-provider-credential",
+        }
+    )
+
+    observation = _agent()._extract_structured_result(result)
+
+    assert observation == {"password": REDACTED, "api_key": REDACTED}
+
+
 # -- the observation boundary ------------------------------------------------
 
 

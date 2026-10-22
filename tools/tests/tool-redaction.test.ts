@@ -72,6 +72,37 @@ test("redactResult leaves non-string scalars alone", () => {
 });
 
 // --------------------------------------------------------------------------
+// Credential-named fields
+// --------------------------------------------------------------------------
+
+test("a credential-named field is redacted whatever its value looks like", () => {
+  // An opaque value under `password` is neither a `NAME=value` assignment nor a
+  // known token shape, so a values-only walk would let it through.
+  const result = {
+    password: "correct-horse-battery-staple",
+    api_key: "opaque-provider-credential",
+    nested: { client_secret: "another-opaque-value" },
+    list: [{ token: "also-opaque" }],
+    path: ".env",
+  };
+
+  const redacted = redactResult(result);
+
+  assert.equal(redacted.password, "<redacted>");
+  assert.equal(redacted.api_key, "<redacted>");
+  assert.equal(redacted.nested.client_secret, "<redacted>");
+  assert.equal(redacted.list[0]!.token, "<redacted>");
+  // A non-credential field must survive, or the model cannot act on the result.
+  assert.equal(redacted.path, ".env");
+});
+
+test("a credential-named field keeps its nested structure", () => {
+  const redacted = redactResult({ credentials: { user: "alice", pass: "hunter2" } });
+
+  assert.deepEqual(redacted, { credentials: { user: "<redacted>", pass: "<redacted>" } });
+});
+
+// --------------------------------------------------------------------------
 // filesystem.read: captured content goes through the whole pipeline
 // --------------------------------------------------------------------------
 
@@ -122,6 +153,23 @@ test("project.grep redacts the matched line", async () => {
   assert.equal(result.count, 1);
   assert.doesNotMatch(JSON.stringify(result), new RegExp(SECRET));
   assert.match(result.matches[0]!.text, /<redacted>/);
+});
+
+test("project.grep redacts before truncating a match line", async () => {
+  // A token cut in half matches no pattern, so truncating first left its prefix in
+  // the output. These paddings put the cut inside the secret.
+  for (const padding of [480, 495]) {
+    const workspace = makeWorkspace();
+    const line = `${"x".repeat(padding)} API_KEY=${SECRET}`;
+    fs.writeFileSync(path.join(workspace, "config.txt"), `${line}\n`, "utf8");
+    const guard = createWorkspaceGuard(workspace);
+
+    const result = await grepProjectTool(guard, { pattern: "API_KEY" });
+
+    const text = result.matches[0]!.text;
+    assert.ok(text.length <= 500, `padding ${padding}: ${text.length} chars`);
+    assert.ok(!text.includes("sk-"), `padding ${padding} leaked a secret prefix: ${text.slice(-20)}`);
+  }
 });
 
 test("filesystem.list redacts names that contain a known token shape", async () => {

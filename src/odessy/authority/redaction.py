@@ -146,6 +146,12 @@ def redact_value(value: Any) -> Any:
     hold the original object (a cached MCP result, a test fixture), and a redaction
     boundary must not quietly rewrite data someone else owns.
 
+    A field whose **name** says it holds a credential is redacted whatever its
+    value looks like. ``redact_text`` recognises ``NAME=value`` inside text and a
+    few well-known token shapes; ``{"password": "correct-horse-battery-staple"}``
+    is neither, so a walk that only inspects values would let an opaque secret
+    through. Here the name is the evidence, and it decides.
+
     Objects that are not JSON-shaped are returned unchanged: MCP results are
     dictionaries, lists and scalars by contract, and guessing at arbitrary objects
     would be a worse boundary than saying so.
@@ -154,9 +160,31 @@ def redact_value(value: Any) -> Any:
     if isinstance(value, str):
         return redact_text(value)
     if isinstance(value, Mapping):
-        return {key: redact_value(item) for key, item in value.items()}
+        return {key: _redact_field(key, item) for key, item in value.items()}
     if isinstance(value, tuple) and hasattr(value, "_fields"):
         return type(value)(*(redact_value(item) for item in value))
     if isinstance(value, (list, tuple, set, frozenset)):
         return type(value)(redact_value(item) for item in value)
+    return value
+
+
+def _redact_field(key: Any, value: Any) -> Any:
+    """One entry of a mapping: a credential-bearing name redacts everything under it."""
+
+    if looks_like_secret_name(str(key)):
+        return _redact_all_strings(value)
+    return redact_value(value)
+
+
+def _redact_all_strings(value: Any) -> Any:
+    """Redact every non-empty string under a credential-named field, keeping structure."""
+
+    if isinstance(value, str):
+        return REDACTED if value else value
+    if isinstance(value, Mapping):
+        return {key: _redact_all_strings(item) for key, item in value.items()}
+    if isinstance(value, tuple) and hasattr(value, "_fields"):
+        return type(value)(*(_redact_all_strings(item) for item in value))
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return type(value)(_redact_all_strings(item) for item in value)
     return value

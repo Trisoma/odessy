@@ -19,6 +19,7 @@ import type {
 } from "../output/contracts.js";
 import { DEFAULT_MAX_BYTES, normalizeLimit, truncateUtf8 } from "../output/truncate.js";
 import { prepareOutput, redactResult } from "../output/prepare.js";
+import { redactText } from "../output/redaction.js";
 import { SpillStore } from "../output/spill.js";
 import { confineArgv, type Confinement, type SandboxReport } from "../execution/seam.js";
 import { ISOLATION_REQUIREMENTS, MODES } from "../execution/contract.js";
@@ -225,7 +226,9 @@ export async function grepProjectTool(
         matches.push({
           path: guard.relative(absolutePath),
           line: index + 1,
-          text: truncateUtf8(lines[index] ?? "", 500).content,
+          // Redact BEFORE bounding. A token cut in half no longer matches any
+          // pattern, so truncating first would let its prefix through.
+          text: truncateUtf8(redactText(lines[index] ?? ""), 500).content,
         });
       }
     }

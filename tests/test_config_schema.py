@@ -69,7 +69,7 @@ def test_the_committed_default_config_is_declared_and_well_formed() -> None:
         ("ODESSY_CLOUD_PRICE_INPUT", "-1", "at least 0"),
         ("ODESSY_WAKE_THRESHOLD", "1.5", "at most 1"),
         ("ODESSY_VOICE_SETTLING_MS", "10001", "at most 10000"),
-        ("ODESSY_AUTO_CLOUD_FALLBACK", "true", "on or off"),
+        ("ODESSY_AUTO_CLOUD_FALLBACK", "true", "on, off"),
         ("ODESSY_MODEL_NAME", "two words", "without spaces"),
         ("ODESSY_CLOUD_RETRIES", "1.5", "whole number"),
     ],
@@ -92,6 +92,9 @@ def test_a_value_that_does_not_fit_its_shape_is_an_error(
         {"ODESSY_CLOUD_EFFORT": ""},         # documented: empty keeps the default
         {"ODESSY_TOOL_SERVER_URL": ""},      # documented: empty means not configured
         {"ODESSY_AUTO_CLOUD_FALLBACK": "off"},
+        {"ODESSY_CLOUD_PROMPT_CACHE": "false"},   # the runtime reads false as off
+        {"ODESSY_CLOUD_FALLBACKS": "true"},
+        {"ODESSY_VOICE_STREAM_SPEECH": "0"},
         {"ODESSY_MODEL_PROGRESS_TIMEOUT": "120"},
         {"ODESSY_MODEL_BACKEND": "deepseek"},
         {"ODESSY_ISOLATION": "not-required"},
@@ -178,12 +181,30 @@ def test_an_unset_voice_setting_falls_back_to_the_runtime_default() -> None:
     assert {"ODESSY_WHISPER_MODEL", "ODESSY_KOKORO_MODEL", "ODESSY_KOKORO_VOICES"} <= set(_errors(report))
 
 
-def test_a_wake_model_is_required_only_when_listening(tmp_path: Path) -> None:
-    env = {name: str(_touch(tmp_path / name.lower())) for name in VOICE_PATHS}
-    env["ODESSY_WAKE_MODEL"] = str(tmp_path / "missing.onnx")
+def test_the_installed_default_wake_model_is_accepted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`voice --listen` has a default asset; requiring the variable rejected it."""
 
+    monkeypatch.setattr("odessy.voice.assets.DEFAULT_WAKE_ASSET_DIR", tmp_path / "wake")
+    (tmp_path / "wake").mkdir()
+    _touch(tmp_path / "wake" / "hey_jarvis_v0.1.onnx")
+    env = {name: str(_touch(tmp_path / name.lower())) for name in VOICE_PATHS}
+
+    assert validate_config(env, contexts=("voice", "wake")).errors == ()
+
+
+def test_a_missing_default_wake_model_names_the_setup_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("odessy.voice.assets.DEFAULT_WAKE_ASSET_DIR", tmp_path / "wake")
+    env = {name: str(_touch(tmp_path / name.lower())) for name in VOICE_PATHS}
+
+    report = validate_config(env, contexts=("voice", "wake"))
+
+    (issue,) = report.errors
+    assert issue.setting == "ODESSY_WAKE_MODEL"
+    assert "--setup-wake" in (issue.fix or "")
+    # The single-turn voice command does not open the wake gate.
     assert validate_config(env, contexts=("voice",)).errors == ()
-    assert _errors(validate_config(env, contexts=("voice", "wake")))
 
 
 def test_a_directory_where_a_file_is_expected_is_an_error_even_optional(tmp_path: Path) -> None:
