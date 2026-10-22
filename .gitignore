@@ -27,6 +27,8 @@ venv/
 build/
 # `installer/build/` is a real source package, not build output.
 !installer/build/
+# Rust build output (cargo).
+target/
 benchmark/results/
 benchmark/tts/results/
 

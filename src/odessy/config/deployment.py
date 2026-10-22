@@ -38,6 +38,16 @@ DEPLOYMENTS: tuple[Deployment, ...] = ("single", "split")
 #: machine only give a small model a wrong choice to make.
 SPLIT_ONLY_TOOLS = frozenset({"laptop.terminal.run"})
 
+
+def _paired_alias(source: Mapping[str, str]) -> str:
+    """The configured paired-host alias, without importing the transport module.
+
+    Kept as a plain read so importing ``deployment`` stays cheap; validation happens
+    in ``odessy.tools.paired``.
+    """
+
+    return source.get("ODESSY_PAIRED_HOST", "").strip()
+
 _available_tools: ContextVar[frozenset[str] | None] = ContextVar("available_tools", default=None)
 
 
@@ -102,6 +112,17 @@ def remote_tool_server_urls(env: Mapping[str, str] | None = None) -> list[str]:
 def deployment_mode(env: Mapping[str, str] | None = None) -> Deployment:
     source = os.environ if env is None else env
     raw = source.get(DEPLOYMENT_ENV, "").strip().lower()
+    if _paired_alias(source):
+        # A paired host is split execution by definition. The transport module owns
+        # the full validation; it is imported here so a contradiction is reported
+        # before any connection is attempted.
+        from odessy.tools.paired import PairedConfigError, validate_configuration
+
+        try:
+            validate_configuration(source)
+        except PairedConfigError as error:
+            raise DeploymentConfigError(str(error)) from error
+        return "split"
     if not raw:
         return "split" if remote_tool_server_urls(source) else "single"
     if raw not in DEPLOYMENTS:
@@ -126,7 +147,13 @@ def model_tool_names(mode: Deployment | None = None) -> list[str]:
 
 
 def command_tool_for_laptop(mode: Deployment | None = None) -> str:
-    """The tool a request addressed to "my laptop" must use."""
+    """The tool a request addressed to "my laptop" must use.
+
+    The served Node server names its command tool `laptop.terminal.run` (see
+    `serve` in odessy-link, which fixes `ODESSY_DEPLOYMENT=split` for the child), so
+    the enrolled alias stays in target metadata and approval bindings rather than in
+    the tool name.
+    """
 
     return "laptop.terminal.run" if (mode or deployment_mode()) == "split" else "terminal.run"
 
@@ -175,13 +202,14 @@ def environment_prompt(
     parts = []
     if "terminal.run" in tools:
         parts.append(f"terminal.run runs commands on this machine ({here}).")
-    if "laptop.terminal.run" in tools:
+    remote_tool = command_tool_for_laptop(mode)
+    if remote_tool in tools:
         laptop_raw = source.get(LAPTOP_OS_ENV, "").strip()
         laptop = ""
         if laptop_raw:
             laptop_os = _normalize_os(laptop_raw, LAPTOP_OS_ENV)
             laptop = f" ({_OS_DESCRIPTIONS[laptop_os]}. {_SHELL_HINTS[laptop_os]})"
         parts.append(
-            f"laptop.terminal.run runs commands on the user's laptop, a separate machine{laptop}."
+            f"{remote_tool} runs commands on the user's laptop, a separate machine{laptop}."
         )
     return " ".join(parts)

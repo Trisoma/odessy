@@ -788,10 +788,15 @@ class OdessyAgent:
         name = action.name
         _, server = registry[name]
         host = 'laptop' if name.startswith('laptop.') else 'local'
-        if isinstance(server, NamespacedServer):
-            host = server.config.name
+        config = getattr(server, 'config', None)
+        if config is not None:
+            host = config.name
         target = {'host': host, 'server_identity': str(id(server)),
                   'transport': server if isinstance(server, str) else type(server).__qualname__}
+        if config is not None:
+            # A paired host carries its enrolled alias here, so the approval binds the
+            # peer identity the operator enrolled rather than just a namespace string.
+            target.update(dict(getattr(config, 'target_metadata', {}) or {}))
         if name == 'agent.delegate':
             jobs = getattr(self, '_delegation_jobs', None)
             if jobs is None:
@@ -998,18 +1003,23 @@ class OdessyAgent:
 
         registry: dict[str, tuple[Any, Any]] = {}
         for server in self._mcp_servers:
-            namespaced = isinstance(server, NamespacedServer)
-            if namespaced:
-                available_tools = await server.list_tools()
+            # A paired host may carry its own namespace (the peer's Node server names
+            # its tools), and it lists tools through the same shape as a configured
+            # server. Anything that can list its own tools is asked directly; only a
+            # bare transport is wrapped in a client.
+            lister = getattr(server, 'list_tools', None)
+            prefix = getattr(server, 'prefix', '') or ''
+            if callable(lister):
+                available_tools = await lister()
             else:
                 async with Client(server) as client:
-                    tools = await client.list_tools()
-                available_tools = getattr(tools, "tools", tools)
+                    available_tools = await client.list_tools()
+            available_tools = getattr(available_tools, "tools", available_tools)
             for tool in available_tools:
                 # A configured third-party server's tools are offered as
                 # "<server>.<tool>": they cannot shadow a built-in or each other, and the
                 # stored tool keeps its own name for the call.
-                name = public_name(server.prefix, tool.name) if namespaced else tool.name
+                name = public_name(prefix, tool.name) if prefix else tool.name
                 registry.setdefault(name, (tool, server))
         return registry
 
@@ -1028,8 +1038,16 @@ class OdessyAgent:
         if entry is None:
             raise ValueError(f"Unknown MCP tool requested: {name}")
         tool, server = entry
+        # Immediately before dispatch, re-read the coordinator's own view of the peer's
+        # identity and permission revision. A transport object that can do this fails
+        # closed; one that cannot is a local server with nothing to re-read.
+        preflight = getattr(server, 'preflight', None)
+        if callable(preflight):
+            preflight()
         try:
-            if isinstance(server, NamespacedServer):
+            # Any server object that can dispatch a call by name: a configured server or
+            # a paired host, which speaks the same protocol over its own transport.
+            if hasattr(server, 'call_tool'):
                 if isinstance(arguments, _BoundArguments):
                     result = await server.call_tool(tool.name, dict(arguments), before_dispatch=arguments.validate)
                 else:

@@ -149,6 +149,21 @@ def _build_agent(
     )
 
 
+def _paired_host():
+    """The configured paired host, or ``None``.
+
+    Wrapped so tests and the doctor can substitute it, and so a bad configuration is
+    reported as a configuration error rather than an import failure.
+    """
+
+    from odessy.tools.paired import PairedConfigError, paired_host
+
+    try:
+        return paired_host()
+    except PairedConfigError as error:
+        raise SystemExit(str(error)) from error
+
+
 #: Model generations allowed per turn, counting retries and follow-up steps.
 MAX_MODEL_CALLS_ENV = "ODESSY_MAX_MODEL_CALLS"
 DEFAULT_MAX_MODEL_CALLS = 4
@@ -611,6 +626,31 @@ async def _builtin_tool_servers(workspace_root: Path) -> AsyncIterator[tuple[obj
         raise SystemExit(str(error)) from error
 
     if mode == "split":
+        paired = _paired_host()
+        if paired is not None:
+            # Only the paired transport is offered. A paired host that cannot answer is
+            # an error, never a reason to use a legacy remote URL instead.
+            async with ExternalSessions() as sessions:
+                server = paired.server(sessions)
+                try:
+                    tools = await asyncio.wait_for(
+                        server.list_tools(), timeout=paired.server_config().timeout
+                    )
+                except Exception as error:  # noqa: BLE001 - reported, not swallowed
+                    raise SystemExit(
+                        f"Paired host {paired.alias!r} is unavailable: {error}\n"
+                        "Run `odessy-link connect --peer " + paired.alias + "` to test it, or "
+                        "`python -m odessy doctor`. No legacy transport is used instead."
+                    ) from error
+                print(
+                    f"[odessy] paired host {paired.alias}: {len(tools)} tools over mTLS",
+                    file=sys.stderr,
+                )
+                yield (
+                    ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root)),
+                    ExecutionTarget(server),
+                )
+            return
         yield (
             ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root)),
             *(ExecutionTarget(url) for url in remote_tool_server_urls()),
