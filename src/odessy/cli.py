@@ -282,6 +282,43 @@ async def _voice_async(use_fake_model: bool, backend: str | None = None) -> None
             await _run_voice_turn(agent, config)
 
 
+async def _hybrid_voice_async(use_fake_model: bool, backend: str | None = None, *,
+                              listen: bool = True, interaction: str | None = None,
+                              audio_factory=None) -> None:
+    """Keep keyboard, session authority and history alive independently of audio."""
+    from odessy.application.hybrid import HybridConsole
+    config = VoiceConfig.from_env()
+    if interaction is not None:
+        from dataclasses import replace
+        config = replace(config, interaction=interaction)
+    model = _build_model(use_fake_model, backend=backend, model_name=config.ollama_model)
+    _announce_model(model)
+    async with controller_runtime(workspace=Path.cwd(), model=model, interactive=True,
+                                  use_fake_model=use_fake_model, mode='voice') as controller:
+        console = HybridConsole(controller, persistent=listen,
+                                turn_context=lambda: _usage_report(reset=False))
+        try:
+            if audio_factory is None:
+                from odessy.voice.hybrid import HybridAudioAdapter
+                audio_factory = HybridAudioAdapter
+            console.audio = audio_factory(config=config, submit_voice=console.submit_voice,
+                stop_turn=console.stop_turn, report_audio_error=console.report_audio_error,
+                report_status=console.display, memory=controller.memory,
+                interactions=controller.interactions)
+            console.audio.listen = listen
+            console.audio.on_reply_complete = getattr(console, 'voice_reply_complete', None)
+            await console.run()
+        finally:
+            # Idempotent even if run() already closed readers and hardware.
+            close = getattr(console, 'aclose', None)
+            if close is not None:
+                await close()
+            if model_uses_cloud(model):
+                line = process_ledger().session_line()
+                if line:
+                    print(line, file=sys.stderr, flush=True)
+
+
 async def _run_voice_turn(agent: OdessyAgent, config: VoiceConfig) -> None:
     controller = getattr(agent, 'controller', None)
     broker = controller.interactions if controller is not None else None
@@ -737,6 +774,8 @@ def _check_configuration(argv: list[str]) -> None:
         contexts.add("voice")
         if "--listen" in argv:
             contexts.add("wake")
+        if '--no-text-fallback' not in argv and sys.stdin.isatty():
+            contexts.add('hybrid')
     from odessy.config.schema import enforce_config
 
     enforce_config(contexts=contexts)
@@ -812,6 +851,8 @@ def main(argv: list[str] | None = None) -> None:
             action="store_true",
             help="Keep listening for the wake phrase instead of recording one bounded turn.",
         )
+        parser.add_argument('--no-text-fallback', action='store_true',
+                            help='Disable always-available typed requests in an interactive voice terminal.')
         parser.add_argument(
             "--interaction",
             choices=["wake", "conversation"],
@@ -834,6 +875,15 @@ def main(argv: list[str] | None = None) -> None:
             for line in install(asset_dir()):
                 print(line)
             return
+        if not args.no_text_fallback and sys.stdin.isatty():
+            try:
+                asyncio.run(_hybrid_voice_async(use_fake_model=args.fake_model,
+                    backend=args.model_backend, listen=args.listen, interaction=args.interaction))
+            except KeyboardInterrupt:
+                print('\nVoice session stopped.', file=sys.stderr)
+            return
+        if not args.no_text_fallback:
+            print('[odessy] Keyboard fallback unavailable: stdin is not an interactive terminal.', file=sys.stderr)
         if args.listen:
             asyncio.run(
                 _listen_async(

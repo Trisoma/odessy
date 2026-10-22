@@ -188,6 +188,16 @@ with what was done and what is left instead of stopping mid-task.
 
 ## Voice
 
+Development adds keyboard input throughout an interactive voice session:
+`python -m odessy voice --listen --fake-model`. Type a follow-up at any time while
+idle; `/text` pauses audio, `/voice` retries it, `/stop` stops the current turn,
+and `/exit` closes the session. Busy submissions are rejected rather than queued.
+Answers are displayed once, and voice requests are also spoken when available.
+Use `--no-text-fallback` for the previous audio-only interface. Redirected stdin
+is never consumed as requests or approvals. This unreleased integration still
+needs real terminal/microphone and Jetson qualification; see the
+[voice reference](docs/reference/voice-integration.mdx).
+
 Voice uses Whisper.cpp STT and Kokoro ONNX TTS. Set their paths in
 `~/.config/odessy/odessy.env`; the files do not need to be in the repository:
 

@@ -10,6 +10,12 @@ content:
 
 Development-only collaboration adds an authenticated loopback session API and coding jobs. It does not provide durable jobs, verified child-CLI confinement, mid-task model takeover, or hardware qualification. Coding-agent bills are outside the API budget. See [model collaboration](model-collaboration.mdx).
 
+Session-preserving keyboard input is under unreleased integration testing on
+October 22. Interactive voice commands share one controller and history with typed
+requests; this does not establish real-terminal or Jetson acceptance. The full
+Python suite is not green in the current environment; see today's development log
+and [voice integration](voice-integration.mdx) before claiming release readiness.
+
 Risk-aware voice approval and mid-task clarification are **complete offline and
 independently reviewed as of October 22, 2026** on `feat/voice-user-interaction`
 through `3412025`; merged via PR #24 (`6d8b80b`), unreleased. Real microphone echo

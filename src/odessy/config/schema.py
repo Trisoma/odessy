@@ -389,7 +389,8 @@ def setting(name: str) -> Setting | None:
 
 
 def _check_setting(setting: Setting, source: Mapping[str, str], active: frozenset[str]) -> list[Issue]:
-    required = bool(setting.required_in) and bool(active.intersection(setting.required_in))
+    optional_audio = 'hybrid' in active and bool(set(setting.required_in) & {'voice', 'wake'})
+    required = not optional_audio and bool(setting.required_in) and bool(active.intersection(setting.required_in))
     present = setting.name in source
     raw = source.get(setting.name, "")
     using_default = False
@@ -410,7 +411,12 @@ def _check_setting(setting: Setting, source: Mapping[str, str], active: frozense
             return [_issue("error", setting,
                            "is empty; an empty line is not a value for this setting",
                            f"remove the line to use the default, or set {setting.summary}")]
-    return _check_value(setting, raw, required=required, using_default=using_default)
+    issues = _check_value(setting, raw, required=required, using_default=using_default)
+    if optional_audio:
+        # Only voice assets degrade: unrelated malformed model/policy settings must
+        # still stop startup. The audio adapter reports missing defaults on opening.
+        return [Issue('warning', issue.setting, issue.message, issue.fix) for issue in issues]
+    return issues
 
 
 def _runtime_default(setting: Setting, source: Mapping[str, str]) -> str:

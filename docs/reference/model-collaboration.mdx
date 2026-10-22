@@ -78,6 +78,12 @@ are returned explicitly; continued synthesis must not imply peer agreement.
 
 ## CLI, voice, and model selection
 
+Unreleased hybrid TTY voice input uses the same controller and memory for typed
+and spoken turns. Existing model switching, consultations, approvals and question
+API routes are unchanged. `/stop` ends the foreground turn; `/text` only pauses
+audio. See [voice integration](voice-integration.mdx). Background jobs retain their
+separate lifecycle; stopping a foreground turn does not undo completed work.
+
 ```sh
 python -m odessy --model-backend auto "hello"
 python -m odessy voice --listen --model-backend auto

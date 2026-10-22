@@ -119,6 +119,22 @@ class VoiceSession:
     #: Speak streamed model text while the turn runs, instead of after it.
     stream_speech: bool = False
     stop_turn: Callable | None = None
+    #: Append completed turns to :attr:`memory`. A hybrid session supplies its own
+    #: authoritative history, so it disables this and keeps the shared memory read
+    #: only. The default preserves the standalone session's behaviour.
+    remember_turns: bool = True
+    #: Called when a fresh wake activation interrupts whatever is running. It lets a
+    #: hybrid adapter stop the turn *it* owns (a typed one) without reaching into
+    #: private state, and it is never suppressed by a typed turn.
+    on_interrupt: Callable[[], None] | None = None
+    #: Called with ``(stage, message)`` when audio fails. Stages are ``capture``,
+    #: ``wake`` and ``stt``; the adapter decides what each failure disables.
+    on_audio_error: Callable[[str, str], None] | None = None
+    #: A standalone session ends when its device fails: the request cannot be heard,
+    #: so the running turn is stopped and a pending prompt is cancelled. A hybrid
+    #: session only loses its audio: the running turn keeps its model and tool work,
+    #: and a pending prompt keeps its id, expiry and other channels.
+    end_on_device_failure: bool = True
 
     state: SessionState = "LISTENING"
     error: str | None = None
@@ -147,6 +163,12 @@ class VoiceSession:
     _admit_after_index: int = -1
     _interaction_attempts: int = 0
     _interaction_retry_task: asyncio.Task | None = field(default=None, repr=False)
+    _input_suspended: bool = False
+    _admission_enabled: bool = True
+    _preserve_turn: bool = False
+    _resume_signal: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+    start_recording: bool = False
+    on_reply_complete: Callable[[], None] | None = None
 
     def interaction_handler(self, broker):
         async def handle(entry):
@@ -228,6 +250,8 @@ class VoiceSession:
 
         self._worker = asyncio.create_task(self._serve())
         try:
+            if self.start_recording:
+                await self._activate()
             await self._read_loop()
         finally:
             await self.aclose()
@@ -243,12 +267,16 @@ class VoiceSession:
 
     async def aclose(self) -> None:
         self._closing = True
-        self._cancel_interaction('voice session closed')
+        if not self._preserve_turn:
+            self._cancel_interaction('voice session closed')
         self._pending = None
         self._capture_pending = None
-        self._stop.set()
+        if not self._preserve_turn:
+            self._stop.set()
         self._pending_ready.set()
         self._frames_ready.set()
+        # The consumer may be parked on a suspension; closing must always wake it.
+        self._resume_signal.set()
         if self._reader is not None:
             self._reader.cancel()
         close, self.close_frames = self.close_frames, None
@@ -256,6 +284,49 @@ class VoiceSession:
             await asyncio.to_thread(close)
         with contextlib.suppress(Exception):
             self.stop_speaking()
+
+    # -- public seams for a hybrid (typed + voice) session -----------------------
+
+    def set_input_enabled(self, enabled: bool) -> None:
+        """Suspend or resume consuming frames, without closing the device.
+
+        The microphone stream stays open: reopening hardware on a toggle is slow and
+        can fail, and *one reader* is the whole design. While suspended, queued audio
+        is discarded instead of scored, so speech captured for another purpose can
+        never be admitted as a request.
+        """
+
+        self._input_suspended = not enabled
+        if enabled:
+            self._resume_signal.set()
+        else:
+            self._resume_signal.clear()
+
+    def set_utterance_admission(self, enabled: bool) -> None:
+        """Whether speech *without* a fresh wake phrase may open capture.
+
+        The follow-up window is the only such path. A hybrid session closes it while
+        a typed turn owns the foreground; a fresh wake phrase still activates.
+        """
+
+        self._admission_enabled = enabled
+        if not enabled and self.state == "FOLLOWUP":
+            self._enter_listening()
+
+    def invalidate_capture(self) -> None:
+        """Drop the recording in progress and any transcript still decoding.
+
+        The in-flight transcription compares its generation on return, so a stale
+        result is discarded rather than submitted as the user's next request.
+        """
+
+        self._audio_generation += 1
+        self._capture_pending = None
+        self._vad_frames.reset()
+        self.segmenter.begin()
+        self._blank_attempts = 0
+        if self._interaction is None and self.state in ("RECORDING", "TRANSCRIBING"):
+            self._enter_listening()
 
     # -- the reader: owns the device, never blocks on a turn ---------------------
 
@@ -271,12 +342,18 @@ class VoiceSession:
                     frame = await self.frames()
                     if not frame:
                         raise RuntimeError("microphone capture ended")
-                    queue.push(AudioFrame(pcm=frame, index=index))
+                    # A suspended consumer never reads: dropping here is what keeps a
+                    # long typed turn from overflowing the bounded queue.
+                    if not self._input_suspended:
+                        queue.push(AudioFrame(pcm=frame, index=index))
                     self._captured_index = index
                     index += 1
                     if queue.overflowed:
-                        self._fail("microphone capture queue overflow")
-                        return
+                        if self._input_suspended:
+                            queue.clear()
+                        else:
+                            self._fail("microphone capture queue overflow")
+                            return
                 except Exception as error:
                     self._fail(f"microphone capture failed: {error}")
                     return
@@ -287,18 +364,37 @@ class VoiceSession:
         reader = self._reader = asyncio.create_task(capture())
         try:
             while not self._closing:
+                if self._input_suspended:
+                    # Typed input owns the foreground: the device keeps running, but
+                    # nothing heard while suspended may become a request.
+                    queue.clear()
+                    ready.clear()
+                    self._resume_signal.clear()
+                    await self._resume_signal.wait()
+                    if self._closing:
+                        return
+                    queue.clear()
+                    self.invalidate_capture()
+                    self.wake.reset()
+                    self.vad.reset()
+                    self._frames_since_wake = None
+                    continue
                 await ready.wait()
                 ready.clear()
                 for frame in queue.pop_all():
                     if self._closing:
                         return
+                    if self._input_suspended:
+                        # A suspension during a batch voids the rest of it.
+                        queue.clear()
+                        break
                     if frame.index <= self._admit_after_index:
                         continue
                     activation = self._turn_id
                     try:
                         await self._handle_frame(frame.pcm)
                     except Exception as error:
-                        self._fail(f"voice session error: {error}")
+                        self._fail(f"voice session error: {error}", "wake")
                         return
                     if activation != self._turn_id:
                         # Discard audio captured before/during the ready cue.
@@ -352,6 +448,11 @@ class VoiceSession:
         self._stop.set()
         with contextlib.suppress(Exception):
             self.stop_speaking()
+        # A fresh wake phrase is the established interruption, whoever owns the
+        # foreground turn: the adapter stops a typed turn here.
+        if self.on_interrupt is not None:
+            with contextlib.suppress(Exception):
+                self.on_interrupt()
         if interrupting:
             self.status("Interrupted")
 
@@ -408,6 +509,7 @@ class VoiceSession:
                     continue
                 if turn_id == self._turn_id and not self._closing:
                     self.status(f"Transcription failed: {error}")
+                    self._report_audio_error("stt", f"transcription failed: {error}")
                     if self._interaction is not None and generation == self._audio_generation:
                         await self._interaction_retry()
                         continue
@@ -529,7 +631,7 @@ class VoiceSession:
         stopped = self._stop.is_set()
         if stopped:
             answer = STOPPED_TEXT
-        elif turn_id == self._turn_id:
+        elif turn_id == self._turn_id and self.remember_turns:
             self.memory.add(text, answer)
 
         if self._closing:
@@ -607,6 +709,8 @@ class VoiceSession:
     def _after_reply(self, turn_id: int) -> None:
         if turn_id != self._turn_id or self._closing:
             return
+        if self.on_reply_complete is not None:
+            self.on_reply_complete()
         if self.options.interaction == "conversation":
             self.state = "FOLLOWUP"
             self._followup_frames = self.options.followup_ms // WAKE_FRAME_MS
@@ -619,6 +723,9 @@ class VoiceSession:
     async def _followup_speech(self, frame: bytes) -> bool:
         """Within the follow-up window, speech opens capture without a wake phrase."""
 
+        if not self._admission_enabled:
+            self._enter_listening()
+            return False
         if self._followup_frames <= 0:
             self.status("Follow-up window closed")
             self._enter_listening()
@@ -643,9 +750,22 @@ class VoiceSession:
         self._blank_attempts = 0
         self.state = "LISTENING"
 
-    def _fail(self, message: str) -> None:
-        self._cancel_interaction(message)
-        self._stop.set()
+    def _report_audio_error(self, stage: str, message: str) -> None:
+        if self.on_audio_error is not None:
+            with contextlib.suppress(Exception):
+                self.on_audio_error(stage, message)
+
+    def _fail(self, message: str, stage: str = "capture") -> None:
+        self._report_audio_error(stage, message)
+        if self.end_on_device_failure:
+            # Losing the device ends a standalone session, so its prompt goes with it.
+            # A hybrid one keeps the pending request for its other channels.
+            self._cancel_interaction(message)
+            self._stop.set()
+        else:
+            # The session is winding down, but the turn it is running is not: closing
+            # must not read to the model as a stop.
+            self._preserve_turn = True
         self._pending = None
         self._capture_pending = None
         self.error = message

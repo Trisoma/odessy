@@ -70,6 +70,30 @@ remain responsive while a foreground turn waits.
 
 ## Architecture
 
+### Development: session-preserving keyboard input
+
+TTY voice commands now compose `HybridConsole` and `HybridAudioAdapter` over the
+existing controller. One keyboard reader serves requests, approvals and questions;
+the controller remains the sole owner of history, selected models and permissions.
+Try `python -m odessy voice --listen --fake-model`, then type a follow-up.
+One-shot `voice` opens recording immediately and exits after its first reply.
+
+`/text` pauses capture admission and speech without cancelling model/tool work.
+`/voice` explicitly retries audio; `/stop` cancels the owning turn; `/exit`, EOF
+and Ctrl+C close the session. Typed answers are displayed; voice answers are
+displayed and optionally spoken. Busy requests are rejected, never queued.
+Audio failures never retry inference or tools. Missing audio-only assets can
+degrade to keyboard input; invalid model/policy settings still fail startup.
+Voice-mode model-call limits continue to apply to typed fallback turns.
+
+Pending human replies go through the same broker and exact-phrase/channel checks.
+Changing prompt ownership cancels the old keyboard read and discards buffered
+input. High-risk actions still require keyboard or authenticated UI; fallback
+cannot override policy denial. Existing authenticated HTTP endpoints are unchanged.
+Use `--no-text-fallback` for legacy audio-only behavior. Non-TTY stdin is not read
+as requests or approvals. Real terminal buffering, microphone echo and Jetson
+operation remain separate qualification; fake-I/O tests do not establish them.
+
 The staged voice turn is:
 
 ```text
