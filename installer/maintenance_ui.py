@@ -7,8 +7,12 @@ import sys
 import threading
 from pathlib import Path
 
-from installer import maintenance, component_repair, backup_cleanup
-from installer import ui_theme as theme
+from installer.operations import maintenance
+
+from installer.operations import component_repair
+
+from installer.operations import backup_cleanup
+from installer.ui import ui_theme as theme
 
 
 class Maintenance:
@@ -280,8 +284,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     if getattr(sys, 'frozen', False):
-        from installer.bootstrap import bundled_tools
-        from installer.preflight import REPO_ROOT
+        from installer.build.bootstrap import bundled_tools
+        from installer.core.preflight import REPO_ROOT
         bundle = args.tool_bundle or bundled_tools(
             REPO_ROOT, Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData/Local')))
         executable = args.executable or Path(sys.executable)

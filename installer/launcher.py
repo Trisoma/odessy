@@ -6,20 +6,20 @@ import subprocess
 import sys
 from pathlib import Path
 
-from installer.checkpoint import read_state
-from installer.preflight import REPO_ROOT
+from installer.core.checkpoint import read_state
+from installer.core.preflight import REPO_ROOT
 from installer.start import workspace_path
 from installer.entrypoints import entry_command, independent_environment
-from installer import ui_theme as theme
+from installer.ui import ui_theme as theme
 
 
 def launch_console(root: Path, workspace: Path, *, popen=subprocess.Popen):
     if os.name != 'nt':
         raise ValueError('This launcher currently targets Windows.')
     workspace = workspace_path(root, workspace)
-    from installer.maintenance import require_idle
+    from installer.operations.maintenance import require_idle
     require_idle(root)
-    from installer.uninstall import removal_started
+    from installer.operations.uninstall import removal_started
     if removal_started(root):
         raise ValueError('This installation has been uninstalled and cannot be launched.')
     state = read_state(root)

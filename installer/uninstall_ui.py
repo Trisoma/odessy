@@ -5,8 +5,8 @@ import queue
 import threading
 from pathlib import Path
 
-from installer import uninstall
-from installer import ui_theme as theme
+from installer.operations import uninstall
+from installer.ui import ui_theme as theme
 
 
 class Uninstaller:

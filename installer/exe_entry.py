@@ -56,16 +56,16 @@ def main(argv=None):
     if mode.mode == 'uninstall':
         from installer.uninstall_ui import main as run
         return run(remaining)
-    from installer.preflight import REPO_ROOT, default_locations
-    from installer.access import is_elevated
-    from installer.bootstrap import bundled_tools
+    from installer.core.preflight import REPO_ROOT, default_locations
+    from installer.windows.access import is_elevated
+    from installer.build.bootstrap import bundled_tools
     local = Path(os.environ.get('LOCALAPPDATA', str(Path.home() / 'AppData/Local')))
     if mode.mode == 'self-check':
         check = argparse.ArgumentParser(); check.add_argument('--report', type=Path, required=True)
         args = check.parse_args(remaining)
         import tkinter as tk
-        from installer.application import source_snapshot, validate_bundle
-        from installer.toolbundle import source_files
+        from installer.components.application import source_snapshot, validate_bundle
+        from installer.components.toolbundle import source_files
         from installer import workflow
         root = tk.Tk(); root.withdraw()
         try:

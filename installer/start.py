@@ -8,18 +8,24 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from installer import connection, model, ollama_runtime, workflow
-from installer.checkpoint import read_state, writer_lock
-from installer.ollama import local_endpoint, proposed_config
-from installer.process import child_env
-from installer.session_process import ProcessTree
-from installer.access import check_runtime_access
+from installer.components import connection
+
+from installer.components import model
+
+from installer.components import ollama_runtime
+
+from installer import workflow
+from installer.core.checkpoint import read_state, writer_lock
+from installer.components.ollama import local_endpoint, proposed_config
+from installer.core.process import child_env
+from installer.windows.session_process import ProcessTree
+from installer.windows.access import check_runtime_access
 
 
 def inspect_installation(root: Path):
-    from installer.maintenance import require_idle
+    from installer.operations.maintenance import require_idle
     require_idle(root)
-    from installer.uninstall import removal_started
+    from installer.operations.uninstall import removal_started
     if removal_started(root): raise ValueError('This installation is being uninstalled and cannot be started; check the result in the external installer or retry.')
     model.guard_path(root)
     state = read_state(root)

@@ -86,8 +86,12 @@ def ico_bytes():
 
 
 def icon_path():
-    """Path to the checked-in icon used by the PyInstaller build."""
-    return Path(__file__).with_name('assets') / 'odessy-boat.ico'
+    """Path to the checked-in icon used by the PyInstaller build.
+
+    The icon lives in `installer/assets/` (shared build input), not inside the
+    `installer/ui/` package.
+    """
+    return Path(__file__).resolve().parent.parent / 'assets' / 'odessy-boat.ico'
 
 
 if __name__ == '__main__':

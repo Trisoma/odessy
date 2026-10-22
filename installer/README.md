@@ -1,10 +1,19 @@
 # Odessy 在线安装器
 
+> **2026-10-22 决定：暂停当前安装向导工作，延期至 v0.5.0。**
+> 当前版本仍是开发原型，功能范围不完整，界面和图标尚未定稿；不作为 v0.4.0
+> 的已完成安装体验或正式发布入口。保留现有实现供后续迭代，`installation_ready`
+> 保持为 false。后续范围见 [v0.5.0 计划](../docs/releases/v0.5.0.md)。
+
 面向 Windows x64 的图形在线安装器。普通用户可使用独立 EXE 安装，无需预装
 Python、Node.js 或 Git。安装器自动下载和校验锁定资源，在用户可写目录准备
 运行环境、应用、本地模型及连接配置。
 
 ## 使用
+
+向导采用深色界面，按 Welcome → Location → Review → Install → Verify → Ready
+六步展示。Verify 随实际模型与工具验证事件进入，只有工作流确认完成后才显示 Ready。
+底部按钮支持 Tab、Enter 和空格；安装中可以停止，错误信息持续显示以便处理。
 
 1. 普通双击 `OdessySetup.exe`，选择新的独立安装目录。
 2. 点击检查安装方案，核对路径、下载内容和磁盘空间，再确认安装。
@@ -96,6 +105,34 @@ Windows 上自行启动的模型服务及其子进程由独立 Job 管理，退�
 删除模型或配置必须单独选择。用户工作文件夹不属于卸载范围。
 卸载只逐项删除已经检查的内容；未列出的文件或权限问题会导致停止并保留剩余内容。
 早期管理员创建、当前用户无权删除的文件不会被强行接管。
+
+## 目录结构
+
+| 路径 | 用途 |
+| --- | --- |
+| `installer/*.py` | 稳定入口：向导、启动器、终端会话、维护/卸载窗口、工作流与 EXE 分发。 |
+| `installer/core/` | 共享基础逻辑：下载、清单、路径、磁盘空间、解包、检查点、进程环境和预检。 |
+| `installer/components/` | 安装组件：Python/Node、依赖、应用、模型、Ollama、连接验证和工具包。 |
+| `installer/operations/` | 安装后的维护：修复、升级、备份清理和卸载。 |
+| `installer/windows/` | Windows 集成：权限、进程树、Shell 链接和快捷方式。 |
+| `installer/build/` | 发布构建：EXE 打包、wheel 准备与嵌入资源引导。 |
+| `installer/_compat/` | 历史模块名的兼容转发；不放业务实现。原有命令和导入继续有效。 |
+| `installer/ui/` | 表现层：`ui_theme.py` 统一设计令牌与窗口装配，`ui_controls.py` 提供自绘控件，`brand.py` 生成像素帆船标志，`wizard_controller.py` 是界面与工作流之间的适配器。 |
+| `installer/assets/` | 构建与打包资源；`odessy-boat.ico`（16/32/48/64）用作四个窗口的标题栏/任务栏图标，并作为 `OdessySetup.exe` 的 `--icon`。 |
+| `installer/releases/` | 固定版本的下载清单、校验资源与构建依赖。 |
+| `installer/templates/` | 安装完成后写入目标目录的启动模板。 |
+| `installer/examples/` | 示例数据（第三方许可证片段）。 |
+| `tests/test_installer*.py` | 安装器回归测试，覆盖 UI、权限、快捷方式、卸载与端到端流程。 |
+
+图标只在 `installer/ui/ui_theme.py` 的 `configure()` 中应用一次，因此向导、维护、
+卸载和启动器四个窗口自动获得同一图标；新增窗口应复用该方法，不要各自调用
+`iconphoto`。
+
+新代码使用分组后的模块路径，例如 `installer.components.runtime`、
+`installer.core.checkpoint` 和 `installer.operations.maintenance`。
+历史导入指向同一模块对象，保留类型与测试替换的一致性；原有
+`python -m installer.runtime`、`python -m installer.build_exe` 等命令保持可用。
+资源清单、模板和 EXE 入口位置不变。此整理不改变 v0.5.0 延期决定。
 
 ## 源码开发与构建
 

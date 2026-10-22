@@ -149,7 +149,7 @@ class ShortcutTests(unittest.TestCase):
         self.assertFalse((self.root/'launcher').exists())
 
     def test_close_during_background_creation_waits_for_result_without_false_cancellation(self):
-        from installer.wizard_controller import Controller
+        from installer.ui.wizard_controller import Controller
         from types import SimpleNamespace
         import threading
         entered=threading.Event();release=threading.Event()

@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from installer import workflow
-from installer.checkpoint import fingerprint, read_state, state_path
+from installer.core.checkpoint import fingerprint, read_state, state_path
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,7 @@ class Backend:
     def record(self, options: Options):
         root = Path(options.install_dir.strip())
         workflow.model.guard_path(root)
-        from installer.uninstall import removal_started
+        from installer.operations.uninstall import removal_started
         if removal_started(root): raise ValueError('This installation has been uninstalled. Use "Uninstall / clean this directory…" to review or continue, or choose a new directory for a new installation.')
         state = read_state(root)
         plan = state['plan']
@@ -63,7 +63,7 @@ class Backend:
         return {'state': state, 'options': asdict(restored)}
 
     def shortcuts(self, payload):
-        from installer.shortcuts import create
+        from installer.windows.shortcuts import create
         return create(Path(payload['install_dir']),Path(payload['executable']),
                       desktop=payload['desktop'],start_menu=payload['start_menu'])
 

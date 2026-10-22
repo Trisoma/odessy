@@ -8,13 +8,23 @@ import subprocess
 import uuid
 from pathlib import Path
 
-from installer import application, connection, dependencies, model, ollama_runtime, runtime
-from installer.checkpoint import Step, fingerprint, read_state, run_steps, state_path
-from installer.download import DownloadError, _reject_link, download_artifact
-from installer.ollama import local_endpoint, proposed_config, write_config
-from installer.preflight import REPO_ROOT, default_locations
-from installer.process import validate_runtimes
-from installer.space import RESERVE_BYTES, load_resources, volume_for
+from installer.components import application
+
+from installer.components import connection
+
+from installer.components import dependencies
+
+from installer.components import model
+
+from installer.components import ollama_runtime
+
+from installer.components import runtime
+from installer.core.checkpoint import Step, fingerprint, read_state, run_steps, state_path
+from installer.core.download import DownloadError, _reject_link, download_artifact
+from installer.components.ollama import local_endpoint, proposed_config, write_config
+from installer.core.preflight import REPO_ROOT, default_locations
+from installer.core.process import validate_runtimes
+from installer.core.space import RESERVE_BYTES, load_resources, volume_for
 
 STEP_NAMES = ('tool_bundle', 'runtime', 'dependencies', 'application', 'ollama_runtime', 'model', 'connection', 'configuration')
 
@@ -34,7 +44,9 @@ def release_inputs(bundle: Path):
     source = application.source_snapshot(REPO_ROOT)
     files = {}
     installer = Path(__file__).resolve().parent
-    selected = list(installer.glob('*.py')) + list((installer / 'templates').glob('*.py'))
+    # Every installer module, including subpackages such as installer/ui, plus the
+    # template and release manifests, contributes to the release fingerprint.
+    selected = [p for p in installer.rglob('*.py') if '__pycache__' not in p.parts]
     selected += [p for p in (installer / 'releases').rglob('*') if p.is_file() and p.suffix in {'.json', '.txt'}]
     for path in sorted(selected):
         files[path.relative_to(installer).as_posix()] = hashlib.sha256(path.read_bytes().replace(b'\r\n', b'\n')).hexdigest()
@@ -195,9 +207,9 @@ def steps_for(plan: dict, *, emit_progress=print, cancelled=lambda: False) -> li
 
 
 def execute(plan: dict, *, resume=False, emit=lambda event: None, cancelled=lambda: False) -> dict:
-    from installer.maintenance import require_idle
+    from installer.operations.maintenance import require_idle
     require_idle(Path(plan['install_dir']))
-    from installer.uninstall import removal_started
+    from installer.operations.uninstall import removal_started
     if removal_started(Path(plan['install_dir'])): raise ValueError('This installation has been uninstalled; choose a new directory to install.')
     ollama_runtime.require_windows()
     expected = build_plan(Path(plan['install_dir']), Path(plan['cache_dir']), Path(plan['tool_bundle']), plan['endpoint'], plan['timeout'])

@@ -9,28 +9,28 @@ from __future__ import annotations
 FONT = 'Segoe UI'
 
 COLORS = {
-    'bg': '#F7F8FA',
-    'surface': '#FFFFFF',
-    'border': '#E4E7EC',
-    'border_strong': '#D0D5DD',
-    'text': '#101828',
-    'muted': '#667085',
-    'faint': '#98A2B3',
-    'accent': '#2563EB',
-    'accent_hover': '#1D4ED8',
-    'accent_soft': '#EFF4FF',
-    'accent_disabled': '#A9C2F8',
-    'success': '#067647',
-    'danger': '#B42318',
-    'danger_soft': '#FEF3F2',
-    'warning': '#B54708',
+    'bg': '#080808',
+    'surface': '#141414',
+    'border': '#252525',
+    'border_strong': '#393939',
+    'text': '#F0F0F0',
+    'muted': '#B8B8B8',
+    'faint': '#777777',
+    'accent': '#ECECEC',
+    'accent_hover': '#FFFFFF',
+    'accent_soft': '#292929',
+    'accent_disabled': '#424242',
+    'success': '#99D5AC',
+    'danger': '#FF9A9A',
+    'danger_soft': '#2B1717',
+    'warning': '#E8C791',
 }
 
 
 def configure(root):
     """Apply the Odessy ttk styles to *root* and return the Style object."""
     from tkinter import ttk
-    from installer import brand
+    from installer.ui import brand
     s = ttk.Style(root)
     s.theme_use('clam')
     s.configure('.', font=(FONT, 10), foreground=COLORS['text'])
@@ -44,14 +44,16 @@ def configure(root):
     s.configure('Error.TLabel', background=COLORS['bg'], foreground=COLORS['danger'])
     s.configure('Success.TLabel', background=COLORS['bg'], foreground=COLORS['success'])
     s.configure('Title.TLabel', background=COLORS['bg'], foreground=COLORS['text'], font=(FONT, 20, 'bold'))
+    s.configure('Hero.TLabel', background=COLORS['bg'], foreground=COLORS['text'], font=(FONT, 23, 'bold'))
+    s.configure('Body.TLabel', background=COLORS['bg'], foreground=COLORS['muted'], font=(FONT, 11))
     s.configure('Section.TLabel', background=COLORS['bg'], foreground=COLORS['muted'], font=(FONT, 9, 'bold'))
 
-    s.configure('Primary.TButton', background=COLORS['accent'], foreground='#FFFFFF',
+    s.configure('Primary.TButton', background=COLORS['accent'], foreground=COLORS['bg'],
                 padding=(18, 10), borderwidth=0, relief='flat', focusthickness=0)
     s.map('Primary.TButton',
           background=[('disabled', COLORS['accent_disabled']), ('pressed', COLORS['accent_hover']),
                       ('active', COLORS['accent_hover'])],
-          foreground=[('disabled', '#F5F8FF')])
+          foreground=[('disabled', COLORS['faint'])])
 
     s.configure('Secondary.TButton', background=COLORS['surface'], foreground=COLORS['text'],
                 padding=(14, 8), borderwidth=1, relief='flat', bordercolor=COLORS['border_strong'])
@@ -71,9 +73,12 @@ def configure(root):
           lightcolor=[('focus', COLORS['accent'])], darkcolor=[('focus', COLORS['accent'])])
 
     s.configure('TCheckbutton', background=COLORS['bg'], foreground=COLORS['muted'], padding=(0, 2))
+    s.map('TCheckbutton', background=[('active', COLORS['bg'])],
+          foreground=[('disabled', COLORS['faint']), ('active', COLORS['text'])],
+          indicatorbackground=[('selected', COLORS['text']), ('!selected', COLORS['surface'])])
     s.configure('Surface.TCheckbutton', background=COLORS['surface'], foreground=COLORS['text'], padding=(0, 2))
 
-    s.configure('Treeview', rowheight=34, background=COLORS['surface'],
+    s.configure('Treeview', rowheight=29, background=COLORS['surface'], foreground=COLORS['text'],
                 fieldbackground=COLORS['surface'], borderwidth=0, font=(FONT, 10))
     s.configure('Treeview.Heading', font=(FONT, 9, 'bold'), background=COLORS['bg'],
                 foreground=COLORS['muted'], padding=(10, 8), borderwidth=0, relief='flat')
@@ -119,7 +124,7 @@ def link_button(parent, text, command):
 
 
 def card(parent, **kwargs):
-    """A white surface with a hairline border; returns the inner frame."""
+    """A raised surface with a hairline border; returns the inner frame."""
     import tkinter as tk
     outer = tk.Frame(parent, background=COLORS['surface'],
                      highlightthickness=1, highlightbackground=COLORS['border'],
@@ -127,43 +132,60 @@ def card(parent, **kwargs):
     return outer
 
 
-def header(root, *, title='Odessy', caption='Windows x64  ·  Preview'):
-    """Thin application header: brand mark, wordmark and an optional caption."""
+def pill_button(parent, text, command, *, primary=False):
+    from installer.ui.ui_controls import PillButton
+    return PillButton(parent, text=text, command=command, primary=primary)
+
+
+def sparkle(parent, *, size=52, success=False):
+    """Resolution-independent illustration, with no image runtime dependency."""
     import tkinter as tk
-    from installer import brand
-    bar = tk.Frame(root, background=COLORS['surface'], height=56)
+    c = tk.Canvas(parent, width=size, height=size, background=COLORS['bg'], highlightthickness=0)
+    ink = COLORS['text']
+    if success:
+        c.create_oval(6, 6, size - 6, size - 6, outline=ink, width=2)
+        c.create_line(size * .28, size * .51, size * .44, size * .66,
+                      size * .73, size * .35, fill=ink, width=2.5,
+                      capstyle='round', joinstyle='round')
+    else:
+        points = (.46,.18,.55,.39,.76,.48,.55,.57,.46,.80,.37,.57,.15,.48,.37,.39,.46,.18)
+        c.create_line(*(n * size for n in points), fill=ink, width=2.3, smooth=True)
+        c.create_oval(size*.72, size*.12, size*.83, size*.23, outline=ink, width=2)
+    return c
+
+
+def header(root, *, title='Odessy', caption='Windows x64'):
+    """Quiet brand header with a compact platform badge."""
+    import tkinter as tk
+    bar = tk.Frame(root, background=COLORS['bg'], height=70)
     bar.grid(row=0, column=0, sticky='ew')
     bar.grid_propagate(False)
-    mark = tk.Canvas(bar, width=30, height=30, background=COLORS['surface'], highlightthickness=0)
-    for y, row in enumerate(brand.ROWS):
-        for x, (red, green, blue, alpha) in enumerate(row):
-            if alpha == 0:
-                continue
-            mark.create_rectangle(x + 7, y + 7, x + 8, y + 8,
-                                  fill='#%02x%02x%02x' % (red, green, blue), outline='')
-    mark.pack(side='left', padx=(24, 10), pady=13)
-    tk.Label(bar, text=title, background=COLORS['surface'], foreground=COLORS['text'],
-             font=(FONT, 14, 'bold')).pack(side='left')
-    tk.Label(bar, text=caption, background=COLORS['surface'], foreground=COLORS['faint'],
-             font=(FONT, 9)).pack(side='right', padx=24)
-    tk.Frame(bar, background=COLORS['border'], height=1).place(relx=0, rely=1, relwidth=1, anchor='sw')
+    mark = tk.Canvas(bar, width=30, height=30, background=COLORS['bg'], highlightthickness=0)
+    mark.create_oval(6, 8, 24, 22, outline=COLORS['text'], width=1.5)
+    mark.create_oval(10, 4, 20, 26, outline=COLORS['text'], width=1.5)
+    mark.create_oval(13, 12, 17, 16, fill=COLORS['text'], outline='')
+    mark.pack(side='left', padx=(24, 8), pady=18)
+    label = tk.Frame(bar, background=COLORS['bg'])
+    label.pack(side='left')
+    tk.Label(label, text=title, background=COLORS['bg'], foreground=COLORS['text'],
+             font=(FONT, 13, 'bold'), anchor='w').pack(anchor='w')
+    tk.Label(label, text='Local AI. Under your control.', background=COLORS['bg'],
+             foreground=COLORS['muted'], font=(FONT, 8), anchor='w').pack(anchor='w')
+    tk.Label(bar, text='  ' + caption + '  ', background=COLORS['surface'],
+             foreground=COLORS['muted'], font=(FONT, 9), padx=5, pady=4).pack(side='right', padx=26)
     return bar
 
 
 class Stepper:
-    """Horizontal three-step track drawn on a canvas.
-
-    Parameters are just the step labels; ``set(index, completed)`` repaints.
-    """
-
+    """Responsive segmented progress; completed steps retain their labels."""
     def __init__(self, root, labels, row):
         import tkinter as tk
-        self.canvas = tk.Canvas(root, height=64, background=COLORS['bg'], highlightthickness=0)
-        self.canvas.grid(row=row, column=0, sticky='ew')
+        self.canvas = tk.Canvas(root, height=46, background=COLORS['bg'], highlightthickness=0)
+        self.canvas.grid(row=row, column=0, sticky='ew', padx=24)
         self.labels = tuple(labels)
         self.index = 0
         self.completed = 0
-        self.canvas.bind('<Configure>', lambda _event: self._draw())
+        self.canvas.bind('<Configure>', lambda _: self._draw())
 
     def set(self, index, completed=None):
         self.index = index
@@ -173,28 +195,14 @@ class Stepper:
 
     def _draw(self):
         c = self.canvas
-        width = c.winfo_width() or 900
         c.delete('all')
+        width = max(c.winfo_width(), 1)
         count = len(self.labels)
-        margin = 40
-        usable = max(width - margin * 2, count * 120)
-        step = usable / max(count - 1, 1)
-        xs = [margin + step * i for i in range(count)]
-        y = 24
-        for i in range(count - 1):
-            done = i < self.index
-            c.create_line(xs[i] + 13, y, xs[i + 1] - 13, y, width=2,
-                          fill=COLORS['accent'] if done else COLORS['border'])
-        for i, (x, label) in enumerate(zip(xs, self.labels)):
-            if i < self.index:
-                fill, glyph, ring, text = COLORS['accent'], '✓', COLORS['accent'], COLORS['muted']
-            elif i == self.index:
-                fill, glyph, ring, text = COLORS['accent'], str(i + 1), COLORS['accent_soft'], COLORS['text']
-            else:
-                fill, glyph, ring, text = COLORS['surface'], str(i + 1), COLORS['border'], COLORS['faint']
-            c.create_oval(x - 13, y - 13, x + 13, y + 13, fill=fill, outline=ring, width=2)
-            c.create_text(x, y, text=glyph,
-                          fill='#FFFFFF' if i <= self.index else COLORS['faint'],
-                          font=(FONT, 9, 'bold'))
-            c.create_text(x, y + 30, text=label, fill=text,
-                          font=(FONT, 9, 'bold' if i == self.index else 'normal'))
+        cell = width / max(count, 1)
+        for i, label in enumerate(self.labels):
+            x = cell * i
+            c.create_line(x + 3, 5, x + cell - 3, 5, width=4, capstyle='round',
+                          fill=COLORS['text'] if i <= self.index else COLORS['border'])
+            c.create_text(x + cell / 2, 27, text=f'{i + 1}  {label}',
+                          fill=COLORS['text'] if i == self.index else COLORS['faint'],
+                          font=(FONT, 8, 'bold' if i == self.index else 'normal'))

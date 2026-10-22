@@ -8,11 +8,11 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from installer.checkpoint import fingerprint, state_path
-from installer.preflight import default_locations, REPO_ROOT
-from installer.wizard_controller import Controller, Options
+from installer.core.checkpoint import fingerprint, state_path
+from installer.core.preflight import default_locations, REPO_ROOT
+from installer.ui.wizard_controller import Controller, Options
 from installer.entrypoints import entry_command, independent_environment
-from installer import ui_theme as theme
+from installer.ui import ui_theme as theme
 
 STAGES = {
     'tool_bundle': 'Resource verification',
@@ -40,7 +40,8 @@ class Wizard:
         self.tk = tk; self.ttk = ttk; self.filedialog = filedialog
         self.root = root
         self.controller = controller or Controller()
-        self.page = 0
+        self.page = -1
+        self.verifying = False
         self.active = False
         self.close_pending = False
         self.preview = None
@@ -57,7 +58,7 @@ class Wizard:
         self.count = tk.StringVar(value='0 of 8 stages completed')
 
         self.root.title('Odessy Setup')
-        self.root.geometry('900x680')
+        self.root.geometry('940x690')
         self.root.minsize(820, 600)
         self.root.configure(background=theme.COLORS['bg'])
         self.root.protocol('WM_DELETE_WINDOW', self.close)
@@ -68,19 +69,23 @@ class Wizard:
         self.root.rowconfigure(2, weight=1)
 
         # ── Header ──────────────────────────────────────────────────────────
-        theme.header(root, title='Odessy', caption='Windows x64  ·  Setup')
+        theme.header(root, title='Odessy Setup', caption='Windows x64')
 
         # ── Step track ──────────────────────────────────────────────────────
-        self._stepper = theme.Stepper(root, ('Settings', 'Review', 'Progress'), row=1)
+        self._stepper = theme.Stepper(root, ('Welcome', 'Location', 'Review', 'Install', 'Verify', 'Ready'), row=1)
 
         # ── Content area ────────────────────────────────────────────────────
         outer = ttk.Frame(root, padding=(36, 24, 36, 0))
         outer.grid(row=2, column=0, sticky='nsew')
         outer.columnconfigure(0, weight=1)
-        outer.rowconfigure(1, weight=1)
 
-        self.heading = ttk.Label(outer, text='Installation settings', style='Title.TLabel')
+        heading_row = ttk.Frame(outer)
+        heading_row.grid(row=0, column=0, sticky='ew')
+        heading_row.columnconfigure(0, weight=1)
+        self.heading = ttk.Label(heading_row, text='Welcome', style='Title.TLabel')
         self.heading.grid(row=0, column=0, sticky='w')
+        self.step_count = ttk.Label(heading_row, text='1 of 6', style='Hint.TLabel')
+        self.step_count.grid(row=0, column=1, sticky='e')
 
         self.subtitle = ttk.Label(outer, text='Review the plan before downloading, configuring and validating.',
                                   style='Hint.TLabel', wraplength=780)
@@ -91,35 +96,84 @@ class Wizard:
         self.stack.columnconfigure(0, weight=1)
         self.stack.rowconfigure(0, weight=1)
         outer.rowconfigure(2, weight=1)
+        ttk.Label(outer, textvariable=self.error, style='Error.TLabel', wraplength=820).grid(
+            row=3, column=0, sticky='ew', pady=(8, 0))
 
-        self.pages = [ttk.Frame(self.stack) for _ in range(3)]
+        self.pages = [ttk.Frame(self.stack) for _ in range(4)]
         for page in self.pages:
             page.grid(row=0, column=0, sticky='nsew')
+        self.welcome = ttk.Frame(self.stack)
+        self.welcome.grid(row=0, column=0, sticky='nsew')
 
         self.inputs = []
         self._setup_page()
         self._review_page()
         self._progress_page()
+        self._welcome_page()
+        self._ready_page()
 
         # ── Footer ──────────────────────────────────────────────────────────
-        footer = ttk.Frame(root, padding=(36, 12, 36, 20))
-        footer.grid(row=3, column=0, sticky='ew')
+        ttk.Separator(root).grid(row=3, column=0, sticky='ew', padx=24, pady=(16, 0))
+        footer = ttk.Frame(root, padding=(24, 14, 24, 18))
+        footer.grid(row=4, column=0, sticky='ew')
         footer.columnconfigure(1, weight=1)
 
-        self.back_button = ttk.Button(footer, text='← Back', command=lambda: self.show(0))
+        self.back_button = theme.pill_button(footer, 'Back', self.back)
         self.back_button.grid(row=0, column=0)
 
-        self.close_button = ttk.Button(footer, text='Close', command=self.close)
+        self.close_button = theme.pill_button(footer, 'Close', self.close)
         self.close_button.grid(row=0, column=2, padx=(8, 0))
 
-        self.primary = ttk.Button(footer, text='Check installation plan',
-                                  style='Primary.TButton', command=self.primary_action)
+        self.primary = theme.pill_button(footer, 'Continue  →', self.primary_action, primary=True)
         self.primary.grid(row=0, column=3, padx=(8, 0))
 
-        self.show(0)
+        self.show(0 if options.resume else -1)
         self.root.after(60, self.poll)
 
     # ── Field helpers ────────────────────────────────────────────────────────
+
+    def _welcome_page(self):
+        page = self.welcome
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(0, weight=1)
+        page.rowconfigure(2, weight=1)
+        hero = self.ttk.Frame(page)
+        hero.grid(row=1, column=0)
+        theme.sparkle(hero).pack(pady=(0, 12))
+        self.ttk.Label(hero, text='Welcome to Odessy', style='Hero.TLabel').pack(pady=(0, 16))
+        self.ttk.Label(hero, text='Your personal AI agent, running with your permission and under your control.',
+                       style='Body.TLabel', wraplength=740, justify='center').pack()
+        self.ttk.Label(hero, text='Setup will check dependencies, configure your local model, and verify tool execution before the first launch.',
+                       style='Hint.TLabel', wraplength=710, justify='center').pack(pady=(14, 0))
+
+    def _ready_page(self):
+        page = self.pages[3]
+        page.columnconfigure(0, weight=1)
+        hero = self.ttk.Frame(page)
+        hero.grid(row=0, column=0, pady=(8, 8))
+        theme.sparkle(hero, size=44, success=True).pack(pady=(0, 8))
+        self.ttk.Label(hero, text='Odessy is ready', style='Hero.TLabel').pack()
+        self.ttk.Label(hero, text='Local model and tool execution verified.', style='Body.TLabel').pack(pady=(8, 0))
+        self.ttk.Label(page, textvariable=self.result_note, style='Hint.TLabel',
+                       wraplength=740, justify='center').grid(row=1, column=0, pady=8)
+        shortcuts = self.ttk.Frame(page)
+        shortcuts.grid(row=2, column=0, pady=4)
+        self.shortcut_desktop = self.tk.BooleanVar(value=True)
+        self.shortcut_menu = self.tk.BooleanVar(value=True)
+        self.shortcut_choices = [
+            self.ttk.Checkbutton(shortcuts, text='Desktop shortcut', variable=self.shortcut_desktop),
+            self.ttk.Checkbutton(shortcuts, text='Start menu shortcut', variable=self.shortcut_menu),
+        ]
+        for i, widget in enumerate(self.shortcut_choices):
+            widget.grid(row=0, column=i, padx=10)
+        self.shortcut_button = self.ttk.Button(shortcuts, text='Create / restore shortcuts', command=self.create_shortcuts)
+        self.shortcut_button.grid(row=1, column=0, columnspan=2, pady=6)
+        self.ttk.Button(page, text='View diagnostic log', command=self.show_logs).grid(row=3, column=0, pady=4)
+
+    def back(self):
+        if self.active:
+            return
+        self.show({0: -1, 1: 0, 2: 0, 3: 2}.get(self.page, -1))
 
     def _path_row(self, parent, row, label, field):
         ttk = self.ttk
@@ -209,6 +263,14 @@ class Wizard:
         rep = theme.ghost_button(maint, 'Repair / upgrade this directory…', self.open_maintenance)
         rep.pack(side='left', padx=(10, 0))
         self.inputs.extend((diag, unin, rep))
+        def scroll(event):
+            canvas.yview_scroll(-int(event.delta / 120), 'units')
+            return 'break'
+        def bind_scroll(widget):
+            widget.bind('<MouseWheel>', scroll, add='+')
+            for child in widget.winfo_children():
+                bind_scroll(child)
+        bind_scroll(container)
 
     # ── Page 1: Review ───────────────────────────────────────────────────────
 
@@ -292,40 +354,28 @@ class Wizard:
         ttk.Label(page, textvariable=self.result_note, style='Hint.TLabel', wraplength=760).grid(
             row=4, column=0, sticky='w', pady=(10, 0))
 
-        shortcuts = ttk.Frame(page)
-        shortcuts.grid(row=5, column=0, sticky='w', pady=(10, 0))
-        self.shortcut_desktop = tk.BooleanVar(value=True)
-        self.shortcut_menu = tk.BooleanVar(value=True)
-        self.shortcut_choices = [
-            ttk.Checkbutton(shortcuts, text='Desktop shortcut', variable=self.shortcut_desktop),
-            ttk.Checkbutton(shortcuts, text='Start menu shortcut', variable=self.shortcut_menu),
-        ]
-        for i, w in enumerate(self.shortcut_choices):
-            w.grid(row=0, column=i, padx=(0, 14))
-        self.shortcut_button = ttk.Button(shortcuts, text='Create / restore shortcuts',
-                                          command=self.create_shortcuts)
-        self.shortcut_button.grid(row=0, column=2)
-
     # ── Navigation ───────────────────────────────────────────────────────────
 
     def show(self, index):
         self.page = index
-        self._stepper.set(index)
-        titles = ('Installation settings', 'Review plan', 'Installation progress')
+        logical = {-1: 0, 0: 1, 1: 2, 2: 4 if self.verifying else 3, 3: 5}[index]
+        self._stepper.set(logical)
+        self.step_count.configure(text=f'{logical + 1} of 6')
+        titles = ('Choose your installation', 'Review your setup', 'Verifying your setup' if self.verifying else 'Installing Odessy', 'Ready to begin')
         subtitles = (
-            'Review the plan before downloading, configuring and validating.',
-            'Confirm the plan below, then start the installation.',
-            'Monitor progress and review the diagnostic log.',
+            'Choose where Odessy lives. Advanced settings are optional.',
+            'Nothing is installed until you confirm the plan below.',
+            'Checking real model responses and tools.' if self.verifying else 'You can follow each stage below. It is safe to stop and resume.',
+            'Choose a workspace when you launch. Existing action permissions still apply.',
         )
-        self.heading.configure(text=titles[index])
-        self.subtitle.configure(text=subtitles[index])
-        for i, page in enumerate(self.pages):
-            if i == index:
-                page.tkraise()
+        self.heading.configure(text='Welcome' if index == -1 else titles[index])
+        self.subtitle.configure(text='' if index == -1 else subtitles[index])
+        (self.welcome if index == -1 else self.pages[index]).tkraise()
         self.sync_controls()
 
     def sync_controls(self):
-        self.back_button.configure(state='normal' if self.page == 1 else 'disabled')
+        self.back_button.configure(state='normal' if self.page >= 0 and not self.active else 'disabled')
+        self.close_button.configure(text='Close' if not self.active else 'Close safely')
 
         for widget in self.inputs:
             try:
@@ -335,9 +385,10 @@ class Wizard:
 
         if self.active:
             self.primary.configure(text='Stop', style='Secondary.TButton', state='normal')
+        elif self.page == -1:
+            self.primary.configure(text='Continue  →', style='Primary.TButton', state='normal')
         elif self.page == 0:
             self.primary.configure(text='Check installation plan', style='Primary.TButton', state='normal')
-            self.error.set('')
         elif self.page == 1:
             can_start = bool(self.preview) and self.preview.get('sufficient', False)
             if self.resume:
@@ -348,10 +399,12 @@ class Wizard:
                                        state='normal' if can_start else 'disabled')
         elif self.page == 2:
             if self.outcome == 'completed':
-                self.primary.configure(text='Open Odessy', style='Primary.TButton', state='normal')
+                self.primary.configure(text='Back to summary  →', style='Primary.TButton', state='normal')
             else:
                 self.primary.configure(text='Check plan and retry', style='Secondary.TButton',
                                        state='normal' if self.preview else 'disabled')
+        elif self.page == 3:
+            self.primary.configure(text='Open Odessy  →', style='Primary.TButton', state='normal')
 
         shortcut_active = (self.outcome == 'completed' and not self.active
                            and self.installed_root is not None)
@@ -360,7 +413,10 @@ class Wizard:
     def primary_action(self):
         if self.active:
             self.stop(); return
-        if self.page == 0:
+        if self.page == -1:
+            self.show(0)
+        elif self.page == 0:
+            self.error.set('')
             if self.preview and not self._options_changed():
                 self.show(1); return
             self.begin('preview', self.options())
@@ -369,10 +425,14 @@ class Wizard:
                 self.show(0); return
             if not self.preview.get('sufficient', False):
                 return
+            self.verifying = False
+            self.outcome = None
+            self.result_note.set('')
             self.begin('execute', self.preview)
+            self.show(2)
         elif self.page == 2:
             if self.outcome == 'completed':
-                self._open_launcher()
+                self.show(3)
             elif self.preview:
                 self.fill_options({**self.preview['options'],
                                    'resume': state_path(Path(self.preview['plan']['install_dir'])).is_file()})
@@ -380,6 +440,8 @@ class Wizard:
                 self.begin('preview', self.options())
             else:
                 self.show(0)
+        elif self.page == 3:
+            self._open_launcher()
 
     def _options_changed(self):
         if self.preview is None:
@@ -528,6 +590,9 @@ class Wizard:
         if kind == 'progress':
             event = message['event']
             step, status = event.get('step'), event.get('status')
+            if status == 'running' and step in {'connection', 'configuration'} and not self.verifying:
+                self.verifying = True
+                self.show(2)
             if step in STAGES:
                 self.tree.item(step, values=(STAGES[step], STATUS.get(status, status)),
                                tags=(status,))
@@ -548,7 +613,7 @@ class Wizard:
                 self.outcome = 'failed' if message['job'] == 'execute' else self.outcome
                 self.current.set('Installation did not complete')
                 self.result_note.set(message['message'][:400])
-                self.show(2)
+                self.show(3 if message['job'] == 'shortcuts' and self.outcome == 'completed' else 2)
             else:
                 self.show(0)
 
@@ -600,7 +665,7 @@ class Wizard:
                 if state['status'] == 'completed':
                     self.outcome = 'completed'
                     self.installed_root = Path(result['options']['install_dir'])
-                self.show(2)
+                self.show(3 if self.outcome == 'completed' else 2)
                 self.current.set('Installation record loaded: ' + STATUS.get(state['status'], state['status']))
                 completed = sum(s['status'] == 'completed' for s in state['steps'])
                 self.bar['value'] = completed
@@ -639,7 +704,7 @@ class Wizard:
                     self.result_note.set(
                         'Connection configuration saved. The model service started during this session has been stopped; '
                         'pre-existing services are unchanged. Click "Open Odessy" to choose a workspace folder.')
-                self.show(2)
+                self.show(3 if self.outcome == 'completed' else 2)
 
         self.sync_controls()
 

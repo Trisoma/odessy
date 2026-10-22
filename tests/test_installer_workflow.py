@@ -1,6 +1,7 @@
 """Workflow planning and stage wiring without downloads or model inference."""
 from __future__ import annotations
 import contextlib
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -100,7 +101,30 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(events, ['stopped'])
 
     def test_connection_retry_preserves_abandoned_locks_and_uses_fresh_session(self):
-        plan = self.plan(); paths = workflow.paths_for(self.root)
+        self._check_connection_retry()
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows 8.3 path aliases')
+    def test_connection_retry_with_short_windows_directory_alias(self):
+        import ctypes
+        directory = Path(self.temp.name) / 'Long installer validation directory'
+        directory.mkdir()
+        get_short = ctypes.windll.kernel32.GetShortPathNameW
+        size = get_short(str(directory), None, 0)
+        if not size:
+            self.skipTest('Short directory aliases are unavailable on this volume')
+        buffer = ctypes.create_unicode_buffer(size)
+        get_short(str(directory), buffer, size)
+        alias = Path(buffer.value)
+        if alias == directory:
+            self.skipTest('8.3 name creation is disabled on this volume')
+        self.root, self.cache, self.bundle = (alias / name for name in ('install', 'cache', 'bundle'))
+        self.bundle.mkdir()
+        self._check_connection_retry()
+
+    def _check_connection_retry(self):
+        # build_plan resolves Windows 8.3 aliases (RUNNER~1) to long names.
+        # Compare session ancestry using the same canonical installation path.
+        plan = self.plan(); paths = workflow.paths_for(Path(plan['install_dir']))
         paths['service_state'].mkdir(parents=True)
         legacy = paths['service_state'] / 'serve.lock'; legacy.write_text('old installer')
         sessions = []

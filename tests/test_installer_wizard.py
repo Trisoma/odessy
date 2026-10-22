@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from installer import checkpoint, workflow
-from installer.wizard_controller import Backend, Controller, Options, QueueLog
+from installer.ui.wizard_controller import Backend, Controller, Options, QueueLog
 
 
 class BackendTests(unittest.TestCase):
@@ -229,7 +229,29 @@ class TkTests(unittest.TestCase):
         if self.controller.thread: self.controller.thread.join(1)
 
     def preview(self):
+        if self.ui.page == -1:
+            self.ui.primary_action()
         self.ui.primary_action(); self.pump(); self.assertEqual(self.ui.page, 1)
+
+    def test_welcome_navigation_never_starts_installation(self):
+        self.assertEqual(self.ui.page, -1)
+        self.assertEqual(self.ui.step_count.cget('text'), '1 of 6')
+        self.assertIn('disabled', self.ui.back_button.state())
+        self.ui.primary.invoke()
+        self.assertEqual(self.ui.page, 0)
+        self.assertEqual(self.ui.step_count.cget('text'), '2 of 6')
+        self.assertIsNone(self.controller.thread)
+        self.ui.back_button.invoke()
+        self.assertEqual(self.ui.page, -1)
+
+    def test_verification_step_tracks_real_progress_and_errors_remain_visible(self):
+        self.ui.show(2)
+        self.ui.handle(dict(kind='progress', event=dict(step='connection', status='running', completed_steps=6)))
+        self.assertEqual(self.ui.step_count.cget('text'), '5 of 6')
+        self.ui.handle(dict(kind='error', job='preview', message='Select a valid path', error='invalid path'))
+        self.ui.sync_controls()
+        self.assertEqual(self.ui.page, 0)
+        self.assertEqual(self.ui.error.get(), 'Select a valid path')
 
     def test_preview_does_not_execute_and_low_space_blocks_start(self):
         self.backend.sufficient = False; self.preview()
@@ -242,7 +264,8 @@ class TkTests(unittest.TestCase):
 
     def test_success_updates_ui_after_background_worker(self):
         self.preview(); self.release.set(); self.ui.primary_action(); self.pump()
-        self.assertEqual(self.ui.page, 2); self.assertEqual(self.ui.outcome, 'completed')
+        self.assertEqual(self.ui.page, 3); self.assertEqual(self.ui.outcome, 'completed')
+        self.assertEqual(self.ui.step_count.cget('text'), '6 of 6')
         self.assertEqual(float(self.ui.bar['value']), 8)
 
     def test_stop_keeps_window_and_offers_resume_after_worker_cleanup(self):
@@ -277,9 +300,9 @@ class TkTests(unittest.TestCase):
         self.assertTrue(begin.call_args.args[1]['desktop']);self.assertFalse(begin.call_args.args[1]['start_menu'])
 
     def test_shortcut_failure_keeps_completed_installation_and_launch_action(self):
-        self.ui.outcome='completed';self.ui.installed_root=Path(self.options.install_dir);self.ui.show(2)
+        self.ui.outcome='completed';self.ui.installed_root=Path(self.options.install_dir);self.ui.show(3)
         self.ui.handle(dict(kind='error',job='shortcuts',message='foreign shortcut',error='foreign shortcut'))
-        self.assertEqual(self.ui.outcome,'completed');self.assertEqual(self.ui.page,2)
+        self.assertEqual(self.ui.outcome,'completed');self.assertEqual(self.ui.page,3)
         self.assertIn('foreign shortcut',self.ui.result_note.get())
 
     def test_window_close_waits_for_active_worker(self):
