@@ -69,8 +69,13 @@ string `"1"` are different), notifications do not consume request slots, and a
 disconnect leaves unresolved work **unknown** — never replayed, never described as
 exactly-once.
 
-A response releases the requesting direction's slot, whichever stream carried it, so a
-session is not capped at 32 requests overall. The content-free journal records
+A response releases the requesting direction's slot, whichever stream carried it, and both
+streams are linked in both roles: a request the Node server itself starts is answered on
+the peer-to-node stream, and its slot is released there. Each direction therefore keeps
+its own 32-slot budget, its own id namespace and its own journal rows, so numeric and
+string ids never collide across directions and a long session is not capped at 32
+requests overall. A request refused for the cap is never forwarded and leaves no journal
+row: the session reports the refusal, not a phantom request. The content-free journal records
 peer/session identity, request id, state and timestamps (no payloads, no credentials).
 It never evicts a used id while a session is live and never evicts unresolved work, so
 its size is bounded by refusing further ids rather than by forgetting them: a session
@@ -131,6 +136,12 @@ change means re-enrolling: the running `serve` keeps using the admission records
 reads per connection, and a peer whose grant or certificate changed is refused on its
 next connection.
 
+Discovered addresses are formatted as socket addresses: IPv4 as `192.0.2.10:7443`,
+IPv6 bracketed as `[2001:db8::10]:7443`. A link-local address (`fe80::/10`) is only
+reachable through one interface and discovery carries no scope, so such a candidate is
+reported as unusable instead of being handed to a connector that could never reach it;
+a scoped form (`fe80::1%7`) is kept and its scope survives parsing.
+
 ## Diagnosing
 
 ```powershell
@@ -146,11 +157,16 @@ reads the local registry only and prints no key material.
 ## Qualification and limits
 
 Identity material is protected by the platform: Windows stores it through DPAPI
-(user-bound ciphertext) and sets a non-inherited ACL granting only the current user;
-Unix creates the directory `0700` and files `0600` from the first write. SQLite
-registry and journal files get the same owner-only treatment. An existing plaintext
-Windows identity is migrated on first use, verified by a round trip, and the plaintext
-copy is removed; `odessy-link` reports that it happened.
+(user-bound ciphertext) and enforces an owner-only DACL. The owner is identified by the
+current process token's **SID**, not by a user name, and the ACL is reset before being
+narrowed, so an explicit grant that already existed (`Everyone: FullControl`, for
+example) is removed along with inherited access. The resulting DACL is read back and the
+call fails if anything but that SID still has access. Existing state is tightened when
+it is read as well as when it is written, so a directory or identity file created by an
+older build does not stay open. Unix creates the directory `0700` and files `0600` from
+the first write. SQLite registry and journal files get the same owner-only treatment.
+An existing plaintext Windows identity is migrated on first use, verified by a round
+trip, and the plaintext copy is removed; `odessy-link` reports that it happened.
 
 Windows–Jetson pairing, real-network acceptance and Linux/ARM64 packaging have **not**
 been performed, so treat those as unqualified until they are. Remote coding-agent

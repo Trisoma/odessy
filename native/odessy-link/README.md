@@ -15,13 +15,13 @@ and confinement checks.
 | Enrollment grants no execution access until `peers grant` | Implemented + tested |
 | Newline-delimited framing, 8 MiB frame limit, 16 MiB buffered limit, partial frames, EOF discard, duplicate ids keeping numeric/string distinct | Implemented (`src/framing.rs`) |
 | Mutual-TLS `serve`/`connect`, enrolled CA roots only, expected-SAN verification, mandatory client certificates, exact leaf-fingerprint match before forwarding, resumption disabled, 10 s handshake timeout | Implemented (`src/tls.rs`, `src/commands.rs`) |
-| Requests answered in either direction release the requesting slot; 32 outstanding per direction, 33rd refused | Implemented (`src/relay.rs`), proven over the real two-process transport |
+| Requests answered in either direction release the requesting slot; both directions linked in `serve` and `connect`; 32 outstanding per direction, 33rd refused | Implemented (`src/relay.rs`, `src/commands.rs`), proven over the real two-process transport with 96 answered requests each way |
 | Workspace grant enforced as canonical path equality at admission, per request, and in the revocation watcher | Implemented (`workspace_matches`) |
 | Content-free journal with a hard per-session id allowance; no eviction of used or unresolved ids | Implemented (`src/journal.rs`); exhaustion requires a fresh session |
 | Live-session termination on revocation | Implemented (1 s watcher) |
 | Owned process **tree** termination (taskkill /T on Windows, process group on Unix) with explicit failure reporting | Implemented (`src/node.rs`) |
-| DPAPI-protected identity + explicit ACL on Windows; `0600` creation on Unix; plaintext migration | Implemented (`src/store.rs`) |
-| mDNS discovery as an address aid (`discover --seconds`, `serve --advertise`, `connect --discover`) | Implemented (`src/discover.rs`); never enrols or grants |
+| DPAPI-protected identity + enforced owner-only DACL on Windows (current user's token SID, explicit grants removed, DACL read back); `0600` creation on Unix; plaintext migration | Implemented (`src/store.rs`) |
+| mDNS discovery as an address aid (`discover --seconds`, `serve --advertise`, `connect --discover`), socket-address formatting for IPv4/IPv6, unusable candidates reported | Implemented (`src/discover.rs`); never enrols or grants |
 | Python paired-host adapter, fail-closed startup, per-dispatch trust recheck, approval metadata | Implemented in `src/odessy/tools/paired.py`, `runtime/agent_loop.py`, `config/doctor.py` |
 | Real Python → Rust → Node call and two-process transport tests | Implemented as opt-in tests (`ODESSY_LINK_E2E=1`), run by the `pairing` CI job |
 | Windows–Jetson, real-network and Linux/ARM64 qualification | **Not performed**; only Windows x64 → Windows x64 has been exercised |
@@ -69,12 +69,15 @@ cargo test
 cargo clippy --all-targets -- -D warnings
 ```
 
-57 tests on Windows. Beyond the identity, trust, storage, framing, journal and relay
+62 tests on Windows. Beyond the identity, trust, storage, framing, journal and relay
 cases, they include real loopback TLS handshakes: enrolled hosts complete mutual TLS
 and each side reports the fingerprinted leaf it was enrolled with, an unenrolled
 identity is refused with no application byte exchanged, an expired certificate and a
 wrong-SAN certificate are refused, and a **sibling leaf under the same enrolled CA**
-validates against the chain and is still refused by `admit_peer`.
+validates against the chain and is still refused by `admit_peer`. Storage tests include a
+directory that already carries an explicit `Everyone: FullControl` grant: after
+initialization only the current user's SID remains, and the DPAPI identity and registry
+are still created and reopened by it.
 
 The two-process transport itself is proven from Python rather than from Rust, because
 the point is that two operating-system processes, a real socket and a real child Node
@@ -88,6 +91,9 @@ That suite sends 96 sequential requests through the relay and counts what the ch
 executed, sends 33 requests at once and shows the 33rd is refused and never executes,
 replays a duplicate id, exhausts a session's id allowance, refuses a grant for another
 directory, revokes a live session, and checks the child's descendant process is gone.
+It also runs both directions at once: the peer answers 96 requests and starts 96 of its
+own with the same ids, and a peer that starts 33 requests without waiting has the 33rd
+refused by the host and never delivered.
 
 Manual two-process check performed on Windows:
 

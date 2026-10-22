@@ -211,8 +211,11 @@ async fn handle_connection(
         .with_journal(journal.clone(), session.clone(), "peer-to-node")
         .with_journal_limit(session_limit)
         .with_recheck(recheck);
-    // Linked: an answer on the outbound stream settles the inbound request and frees
-    // its slot, so a long session is not capped at 32 answered requests.
+    // Linked both ways: each stream carries requests *and* the answers to the other
+    // stream's requests, so an answer must release the slot in the direction that
+    // carried the request. Linking only one way leaked a slot on every request the
+    // Node server itself started, until its own 32-slot budget was exhausted.
+    let inbound = inbound.answering(&outbound);
     let outbound = outbound.answering(&inbound);
     // The peer finishing its request half-closes the child's stdin, but the child
     // keeps its chance to answer: killing it at peer EOF would drop the response.
@@ -270,7 +273,13 @@ async fn handle_connection(
     };
     let cleanup = session_child.shutdown().await;
     // The journal has already been closed by its guard, which reports unresolved work.
-    match (outcome.and(received), cleanup) {
+    // When both halves failed, report the node-to-peer error: refusing a request there
+    // is what ends the session, and the peer's own EOF error is only its consequence.
+    let session_result = match (outcome, received) {
+        (_, Err(error)) => Err(error),
+        (outcome, Ok(())) => outcome,
+    };
+    match (session_result, cleanup) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(error), _) => Err(error),
         (Ok(()), Err(error)) => Err(format!("session ended but cleanup was incomplete: {error}")),
@@ -341,10 +350,12 @@ pub fn connect(arguments: &[String]) -> Result<(), Failure> {
         );
 
         let (mut tls_reader, mut tls_writer) = tokio::io::split(stream);
-        // Both directions share accounting: a reply on the inbound stream frees the slot
-        // of the request it answers in the outbound stream.
+        // Both directions share accounting: a reply on either stream frees the slot of
+        // the request it answers, whichever end started it.
         let outbound = relay::DirectionState::new();
-        let inbound = relay::DirectionState::new().answering(&outbound);
+        let inbound = relay::DirectionState::new();
+        let inbound = inbound.answering(&outbound);
+        let outbound = outbound.answering(&inbound);
         // Stdin EOF half-closes the connection, then remaining replies are still
         // drained. A `select!` here would drop the last response whenever the local
         // caller finished writing before the peer finished answering.

@@ -27,8 +27,58 @@ pub struct Advertisement {
 }
 
 impl Advertisement {
-    pub fn address(&self) -> String {
-        format!("{}:{}", self.host, self.port)
+    /// `host:port` in the form a connector expects: IPv4 as-is, IPv6 bracketed.
+    pub fn address(&self) -> Result<String, String> {
+        connect_address(&self.host, self.port)
+    }
+}
+
+/// Turn a discovered host and port into something dialable.
+///
+/// An address advertisement supplies an `IpAddr`, and formatting that as `host:port`
+/// is wrong for IPv6: `fe80::1:7443` parses as a different address, so the connection
+/// would go nowhere. Standard socket formatting brackets the address instead. A
+/// link-local address is only reachable through a specific interface, and discovery
+/// carries no scope, so such a candidate is reported as unusable rather than returned
+/// as an address that can never connect.
+pub fn connect_address(host: &str, port: u16) -> Result<String, String> {
+    if port == 0 {
+        return Err("an advertisement without a port is not an address".into());
+    }
+    let host = host.trim();
+    let (address, scope) = match host.split_once('%') {
+        Some((address, scope)) => (address, Some(scope)),
+        None => (host, None),
+    };
+    let address: std::net::IpAddr = address
+        .parse()
+        .map_err(|_| format!("advertisement names {host}, which is not an IP address"))?;
+    match address {
+        std::net::IpAddr::V4(v4) => match scope {
+            None => Ok(std::net::SocketAddr::from((v4, port)).to_string()),
+            Some(scope) => Err(format!(
+                "IPv4 address {host} cannot carry an interface scope ({scope})"
+            )),
+        },
+        std::net::IpAddr::V6(v6) => {
+            let scope_id = match scope {
+                Some(scope) => scope.parse::<u32>().map_err(|_| {
+                    format!("interface scope {scope} in {host} is not an interface index")
+                })?,
+                // fe80::/10: link-local, which is scoped by definition. No scope means
+                // no usable destination.
+                None if (v6.segments()[0] & 0xffc0) == 0xfe80 => {
+                    return Err(format!(
+                        "link-local address {host} has no interface scope; the candidate is unusable"
+                    ))
+                }
+                None => 0,
+            };
+            Ok(std::net::SocketAddr::V6(std::net::SocketAddrV6::new(
+                v6, port, 0, scope_id,
+            ))
+            .to_string())
+        }
     }
 }
 
@@ -91,8 +141,24 @@ pub fn select_address(
             }
         ));
     }
-    matching.sort_by_key(|candidate| candidate.address());
-    Ok(matching[0].address())
+    // Deterministic order so a reconnect reaches the same peer, independent of the
+    // order the daemon reported them in.
+    matching.sort_by(|left, right| {
+        (&left.alias, &left.host, left.port).cmp(&(&right.alias, &right.host, right.port))
+    });
+    // A candidate that cannot be dialled is not an address. Reporting it beats handing
+    // the caller a string that fails only after the TLS timeout.
+    let mut unusable: Vec<String> = Vec::new();
+    for candidate in matching {
+        match candidate.address() {
+            Ok(address) => return Ok(address),
+            Err(reason) => unusable.push(format!("{} ({})", candidate.alias, reason)),
+        }
+    }
+    Err(format!(
+        "every advertisement for the enrolled certificate is unusable: {}",
+        unusable.join(", ")
+    ))
 }
 
 /// Collect advertisements for a short window. Discovery being unavailable is an
@@ -181,8 +247,75 @@ mod tests {
         assert!(from_service("id", "", 7443, &empty).is_none());
         assert!(from_service("id", "10.0.0.5", 0, &empty).is_none());
         let advertisement = from_service("id", "10.0.0.5", 7443, &empty).expect("address");
-        assert_eq!(advertisement.address(), "10.0.0.5:7443");
+        assert_eq!(advertisement.address().expect("usable"), "10.0.0.5:7443");
         assert_eq!(advertisement.fingerprint, None);
+    }
+
+    #[test]
+    fn addresses_are_formatted_as_socket_addresses() {
+        // IPv4 is unchanged; IPv6 must be bracketed or the port reads as part of it.
+        assert_eq!(connect_address("10.0.0.5", 7443).expect("v4"), "10.0.0.5:7443");
+        assert_eq!(connect_address("::1", 7443).expect("v6"), "[::1]:7443");
+        assert_eq!(
+            connect_address("2001:db8::10", 7443).expect("v6"),
+            "[2001:db8::10]:7443"
+        );
+        assert_eq!(
+            connect_address("fe80::1%7", 7443).expect("scoped"),
+            "[fe80::1%7]:7443",
+            "a scope that identifies the interface is kept"
+        );
+        // The unbracketed form is not equivalent, so formatting it would have dialled
+        // a different address entirely.
+        assert_ne!(connect_address("2001:db8::10", 7443).expect("v6"), "2001:db8::10:7443");
+        // What a connector does with the string: parse it back as a socket address.
+        for host in ["10.0.0.5", "::1", "2001:db8::10", "fe80::1%7"] {
+            let text = connect_address(host, 7443).expect("usable");
+            let parsed: std::net::SocketAddr = text
+                .parse()
+                .unwrap_or_else(|error| panic!("{text} must parse as a socket address: {error}"));
+            assert_eq!(parsed.port(), 7443, "{text}");
+        }
+        match connect_address("fe80::1%7", 7443).expect("scoped").parse::<std::net::SocketAddr>() {
+            Ok(std::net::SocketAddr::V6(v6)) => assert_eq!(v6.scope_id(), 7, "the scope survives"),
+            other => panic!("expected a scoped IPv6 address, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_link_local_address_without_an_interface_scope_is_unusable() {
+        let error = connect_address("fe80::1", 7443).expect_err("no scope");
+        assert!(error.contains("no interface scope"), "{error}");
+        assert!(error.contains("unusable"), "{error}");
+        // A named scope is not an interface index, so it is refused rather than guessed.
+        let error = connect_address("fe80::1%Wi-Fi", 7443).expect_err("named scope");
+        assert!(error.contains("not an interface index"), "{error}");
+        // IPv4 has no scope concept at all.
+        let error = connect_address("10.0.0.5%7", 7443).expect_err("v4 scope");
+        assert!(error.contains("cannot carry an interface scope"), "{error}");
+        // A host name is not dialable by this path.
+        let error = connect_address("peer.local", 7443).expect_err("hostname");
+        assert!(error.contains("not an IP address"), "{error}");
+    }
+
+    #[test]
+    fn selection_prefers_a_usable_address_over_an_unusable_one() {
+        let candidates = [
+            advertisement("peer", "fe80::1", 7443, Some("ab")),
+            advertisement("peer", "2001:db8::10", 7443, Some("ab")),
+        ];
+        assert_eq!(
+            select_address(&candidates, "ab").expect("usable"),
+            "[2001:db8::10]:7443"
+        );
+    }
+
+    #[test]
+    fn a_match_that_cannot_be_dialled_is_reported_rather_than_returned() {
+        let candidates = [advertisement("peer", "fe80::1", 7443, Some("ab"))];
+        let error = select_address(&candidates, "ab").expect_err("unusable");
+        assert!(error.contains("unusable"), "{error}");
+        assert!(error.contains("fe80::1"), "the candidate is named: {error}");
     }
 
     #[test]
@@ -212,7 +345,11 @@ mod tests {
         // The struct exposes only an address and an informational fingerprint: there is
         // nowhere to put a CA, a certificate, a capability or a workspace grant.
         let advertisement = advertisement("peer", "10.0.0.5", 7443, Some("ab"));
-        let rendered = format!("{} {:?}", advertisement.address(), advertisement.fingerprint);
+        let rendered = format!(
+            "{} {:?}",
+            advertisement.address().expect("usable"),
+            advertisement.fingerprint
+        );
         assert!(rendered.contains("10.0.0.5:7443"));
         assert!(!rendered.to_lowercase().contains("grant"));
     }

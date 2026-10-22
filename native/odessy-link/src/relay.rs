@@ -148,25 +148,42 @@ impl DirectionState {
                 if let Some(recheck) = &self.recheck {
                     recheck().map_err(RelayError::Refused)?;
                 }
-                let fresh = match &self.journal {
-                    Some((journal, session)) => match journal
+                // Reserve the slot before recording anything: a 33rd outstanding request
+                // is refused here, and a journal row claiming it was admitted would make
+                // the session report work it never accepted.
+                self.own.insert(id.clone())?;
+                let outcome = match &self.journal {
+                    Some((journal, session)) => journal
                         .admit_with_limit(session, self.direction, &id, self.journal_limit)
-                        .map_err(RelayError::Refused)?
-                    {
-                        AdmitOutcome::Fresh => true,
-                        AdmitOutcome::Duplicate => false,
-                        AdmitOutcome::Exhausted => return Err(RelayError::SessionExhausted),
-                    },
-                    None => self
-                        .used
-                        .get_or_insert_with(|| UsedIds::new(USED_ID_CAPACITY))
-                        .insert(id.clone()),
+                        .map_err(RelayError::Refused),
+                    None => Ok(
+                        if self
+                            .used
+                            .get_or_insert_with(|| UsedIds::new(USED_ID_CAPACITY))
+                            .insert(id.clone())
+                        {
+                            AdmitOutcome::Fresh
+                        } else {
+                            AdmitOutcome::Duplicate
+                        },
+                    ),
                 };
-                if !fresh {
-                    return Err(RelayError::DuplicateRequestId);
+                match outcome {
+                    Ok(AdmitOutcome::Fresh) => Ok(()),
+                    // The slot was only reserved; nothing was forwarded.
+                    Ok(AdmitOutcome::Duplicate) => {
+                        self.own.remove(&id);
+                        Err(RelayError::DuplicateRequestId)
+                    }
+                    Ok(AdmitOutcome::Exhausted) => {
+                        self.own.remove(&id);
+                        Err(RelayError::SessionExhausted)
+                    }
+                    Err(error) => {
+                        self.own.remove(&id);
+                        Err(error)
+                    }
                 }
-                self.own.insert(id)?;
-                Ok(())
             }
             // A response releases the requesting direction's slot. An unknown response
             // id is tolerated: it may answer a request from before a reconnect.
@@ -304,6 +321,36 @@ mod tests {
         let mut state = state();
         assert_eq!(state.admit("[1,2,3]"), Err(RelayError::Malformed));
         assert_eq!(state.admit("not json"), Err(RelayError::Malformed));
+    }
+
+    #[test]
+    fn a_request_refused_for_the_outstanding_limit_leaves_no_journal_row() {
+        let directory = std::env::temp_dir().join(format!(
+            "odessy-link-relay-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let journal = Arc::new(
+            crate::journal::Journal::open(&directory.join("journal.sqlite3")).expect("journal"),
+        );
+        let mut state = DirectionState::new().with_journal(journal.clone(), "s".into(), "peer-to-node");
+        for id in 0..MAX_OUTSTANDING {
+            state
+                .admit(&json!({"jsonrpc":"2.0","id":id,"method":"tools/call"}).to_string())
+                .expect("within limit");
+        }
+        assert_eq!(
+            state.admit(&json!({"jsonrpc":"2.0","id":999,"method":"tools/call"}).to_string()),
+            Err(RelayError::TooManyOutstanding)
+        );
+        // The refused request must not look like work the session accepted.
+        journal.close_session("s").expect("close");
+        let unresolved = journal.unresolved("s").expect("unresolved");
+        assert_eq!(unresolved.len(), MAX_OUTSTANDING, "only admitted requests are recorded");
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[tokio::test]

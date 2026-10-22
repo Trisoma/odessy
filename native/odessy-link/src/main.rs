@@ -1,9 +1,7 @@
 //! `odessy-link` — authenticated host pairing for Odessy.
 //!
-//! This build implements checkpoint 1 of the pairing plan as far as identity,
-//! enrollment and the framing primitives go. The TLS relay (`serve`/`connect`)
-//! and mDNS discovery are deliberately not wired yet, and say so instead of
-//! pretending to work.
+//! Implements the pairing plan's local slice: identity and enrolment, mutual TLS
+//! `serve`/`connect`, the MCP relay, and mDNS discovery as an address aid only.
 
 mod commands;
 mod discover;
@@ -29,9 +27,9 @@ odessy-link — authenticated host pairing for Odessy
   odessy-link peers list [--json]
   odessy-link peers grant <peer> --capability mcp --workspace <path>
   odessy-link peers revoke <peer>
-  odessy-link serve --listen <address> --workspace <path> --node-server <entry>   (not implemented)
-  odessy-link connect --peer <alias>                                              (not implemented)
-  odessy-link discover                                                            (not implemented)
+  odessy-link serve --listen <address> --workspace <path> --node-server <entry> [--advertise]
+  odessy-link connect --peer <alias> [--address <host:port>] [--discover]
+  odessy-link discover [--seconds <n>]
 
 State directory: $ODESSY_LINK_STATE_DIR or the per-user data directory.
 ";
@@ -75,6 +73,8 @@ fn run(arguments: Vec<String>) -> Result<(), Failure> {
         "init" => {
             no_extra(&arguments[1..])?;
             let state = state_dir()?;
+            // The whole state directory is private, not only the identity inside it.
+            store::ensure_state_dir(&state)?;
             let directory = state.join("identity");
             store::ensure_state_dir(&directory)?;
             let existing = directory.join("identity.json");
@@ -238,10 +238,13 @@ fn discover_peers(arguments: &[String]) -> Result<(), Failure> {
         return Ok(());
     }
     for advertisement in found {
+        let address = advertisement
+            .address()
+            .unwrap_or_else(|reason| format!("unusable ({reason})"));
         println!(
             "{}  {}  advertised fingerprint: {} (unverified; compare with `peers list`)",
             advertisement.alias,
-            advertisement.address(),
+            address,
             advertisement.fingerprint.as_deref().unwrap_or("none")
         );
     }
