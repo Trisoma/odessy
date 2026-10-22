@@ -12,10 +12,16 @@ Development-only collaboration adds an authenticated loopback session API and co
 
 Risk-aware voice approval and mid-task clarification are **complete offline and
 independently reviewed as of October 22, 2026** on `feat/voice-user-interaction`
-through `3412025`; the feature is not yet merged or released. Real microphone echo
+through `3412025`; merged via PR #24 (`6d8b80b`), unreleased. Real microphone echo
 behaviour, Jetson operation and packaged-device acceptance remain unqualified.
 Spoken approval signals intent and does not authenticate identity. See
 [voice integration](voice-integration.mdx).
+
+Cloud resilience merged via PR #23 (`d05e1b8`): configured pre-tool failover,
+sentence-level cloud wake speech and a content-free egress log. No live-provider
+or new Jetson qualification is established. Failover cannot resume a turn after
+tools ran; streaming compatibility and acoustic interruption remain hardware/provider
+checks. See [cloud models](cloud-models.mdx).
 
 Odessy v0.3.0 has a real local command-line authority boundary, and an isolation layer whose coverage depends on the host.
 It was released privately as a prerelease on October 19, 2026. Future feature work is

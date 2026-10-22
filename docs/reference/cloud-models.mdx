@@ -10,6 +10,11 @@ content:
 
 Development collaboration profiles reuse these adapters with participant/provider/model identities and per-profile prices. API budgets remain shared; coding CLI bills are separate. See [model collaboration](model-collaboration.mdx).
 
+October 22 development status: cloud failover, streamed wake speech and egress
+visibility are merged via PR #23 (`d05e1b8`, feature commit `8a74430`), unreleased.
+They are extra features beyond the original v0.4.0 plan. Offline verification does
+not establish live-provider or Jetson acceptance.
+
 
 Odessy can use a cloud model in place of the local LFM or Gemma model. This is
 opt-in and off by default. A cloud model is a stronger **proposer**, not a stronger
@@ -169,7 +174,7 @@ the fallback providers too when failover is configured.
 
 ### Egress log
 
-Every request to a cloud model is recorded, one JSON line each, in
+Each cloud adapter exchange is recorded as a JSON line in
 `~/.local/state/odessy/egress.jsonl` (`ODESSY_EGRESS_FILE` sets another path; an
 empty value turns it off). A record holds **no content**: no request text, tool
 output, or answer. It holds:
@@ -189,6 +194,7 @@ python -m odessy egress --limit 20
 
 The log answers "what of mine went where"; it is not a copy of what was sent. It is
 separate from the [third-party tool audit log](external-servers.mdx).
+Retries inside one exchange are not separate egress records.
 
 ## Failover
 
@@ -218,13 +224,17 @@ ODESSY_CLOUD_FAILOVER=deepseek,lfm
   `ODESSY_CLOUD_FAILOVER_COOLDOWN` seconds (60 by default), then tried first again.
   When every backend is cooling down, all are tried in order.
 - **Announced:** each move prints where the request now goes, and adds a `failover`
-  record to the egress log.
+  record to the egress log, including turns that bypass a provider during cooldown.
 - **Budgets:** the token budget covers every provider. `ODESSY_CLOUD_BUDGET_COST`
   assumes one set of prices, so it cannot be combined with another cloud provider in
   the list; use the token budget instead.
 
 Failover changes only which model proposes. Every proposal still passes validation,
 policy, and confirmation in the runtime. `python -m odessy doctor` shows the chain.
+
+An OpenAI-compatible stream must provide `[DONE]` or a non-null `finish_reason`.
+EOF without either is transient failure, including when a partial tool call has
+already arrived. Adapter retries still stop once a sentence has been emitted.
 
 ## Cost and usage
 

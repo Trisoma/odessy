@@ -37,6 +37,13 @@ The model proposes actions. Python Odessy validates and authorizes them. MCP tra
 
 ## v0.4.0 development additions (unreleased)
 
+Extra features beyond the original plan now include model collaboration and the
+session API, mid-task clarification, cloud caching/usage budgets, and cloud
+resilience. PR #23 (`d05e1b8`) merged configured cloud failover, sentence-level cloud
+wake speech and a content-free egress log; PR #24 merged risk-aware voice approval
+and clarification. These remain unreleased; live-provider and hardware acceptance
+are pending. See the [updated roadmap](docs/releases/v0.4.0.md).
+
 Configurable collaboration is merged into `develop` and remains unreleased. It
 adds named cloud/local/coding-agent participants,
 attributed consultations, confirmed jobs, and shared CLI/voice sessions. It is

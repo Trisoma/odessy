@@ -19,8 +19,8 @@ Voice does not replace the policy, MCP, workspace authority, process authority, 
 The `feat/voice-user-interaction` worktree extends the shared session controller.
 Both wake sessions and one-shot voice support human clarification and one-use
 approval. **Offline implementation and independent review are complete as of
-October 22, 2026**, through `3412025` on the feature branch; the feature is not yet
-merged or released. Independent review reran **72 relevant tests, all passed**.
+October 22, 2026**; the feature merged into `develop` via PR #24 (`6d8b80b`) and
+remains unreleased. Independent review reran **72 relevant tests, all passed**.
 DeepSeek reported **1,449 passed, 5 skipped** for the full suite; that full count
 was not independently repeated. Real microphone, Jetson and packaged-device
 qualification remain pending, separate opt-in checks.
@@ -125,8 +125,9 @@ python -m odessy voice --model-backend deepseek
 ```
 
 This example uses the same low-effort setting as text mode and evals. The adapter
-retains returned reasoning content when continuing tool conversations; this does
-not introduce a streaming voice path or a voice-latency guarantee.
+retains returned reasoning content when continuing tool conversations. This
+one-shot example does not enable streamed speech; development wake sessions with
+`--listen` support the streamed path described below. No latency gain is measured.
 
 With a cloud backend the transcript and that turn's tool observations leave the machine.
 The voice pipeline itself is unchanged — the same authority invariant and the same
@@ -267,6 +268,8 @@ tool-call identifier. Interrupted turns are not recorded.
 
 ### Streamed speech
 
+Merged via PR #23 (`d05e1b8`) as an extra v0.4.0 development feature; unreleased.
+
 With a cloud model, a wake-listening session speaks the answer sentence by sentence
 as the reply arrives, instead of after the whole reply. The first sentence is heard
 while the rest is still being generated.
@@ -311,13 +314,14 @@ while the rest is still being generated.
 The v0.3.0 private prerelease retains these limits. Blank-audio handling is
 implemented; wake-up activation is implemented in software and awaiting hardware
 qualification. Risk-aware voice approval and clarification are complete offline
-on the v0.4.0 feature branch; hardware acceptance remains pending. Further
+and merged into v0.4.0 development; hardware acceptance remains pending. Further
 voice/local-model optimization belongs to the [v0.4.0 roadmap](../releases/v0.4.0.md).
 
 Voice mode is staged and turn-based unless `--listen` is used.
-It is not streaming TTS and not a real-time voice assistant: a reply is synthesised in
-full before it is played, and interruptions stop playback rather than the synthesis
-of the next sentence.
+Local and non-streaming replies are synthesised in full before playback.
+Development cloud wake sessions can instead synthesize and play one sentence at a
+time as model text arrives. This is not continuous audio-token TTS or a measured
+real-time guarantee; real microphone and Jetson acceptance remain pending.
 
 The ordinary automated tests use fake audio/STT/TTS components.
 A real Bluetooth headset test must still be run on the Jetson environment before claiming the physical voice loop is complete.
