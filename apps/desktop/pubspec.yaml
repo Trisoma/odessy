@@ -1,0 +1,23 @@
+name: odessy_desktop
+description: Odessy v0.5.0 desktop preview.
+publish_to: none
+version: 0.5.0+1
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  odessy_client:
+    path: ../../packages/odessy_client
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+flutter:
+  uses-material-design: true
+  fonts:
+    - family: OdessySans
+      fonts:
+        - asset: assets/fonts/roboto-regular.ttf
+        - asset: assets/fonts/roboto-bold.ttf
+          weight: 700

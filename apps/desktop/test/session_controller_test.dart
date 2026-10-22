@@ -1,0 +1,114 @@
+import 'dart:async';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:odessy_client/odessy_client.dart';
+import 'package:odessy_desktop/app/session_controller.dart';
+
+void main() {
+  test('reconnect restores the same session without resubmitting', () async {
+    final api = ReconnectApi();
+    final c = DesktopSession(api);
+    await c.start();
+    await c.send('hello');
+    api.first.addError(const ApiFailure(500));
+    await Future<void>.delayed(const Duration(milliseconds: 2200));
+    expect(c.connected, true);
+    expect(api.sends, 1);
+    expect(api.creates, 1);
+    expect(c.session!.messages.where((m) => m.role == 'assistant').length, 1);
+    c.dispose();
+  });
+  test('failed Stop does not claim cancellation', () async {
+    final c = DesktopSession(FailedStopApi());
+    await c.start();
+    await c.send('hello');
+    await c.stop();
+    expect(c.session!.running, true);
+    expect(c.status.startsWith('Stopped'), false);
+    expect(c.error, isNotEmpty);
+    c.dispose();
+  });
+  test('settings transaction cannot follow a connection replacement', () async {
+    final first = DelayedSettingsApi();
+    final second = DelayedSettingsApi();
+    final c = DesktopSession(first);
+    await c.start();
+    final save = c.updateConsultationLimit(2);
+    final outcome = expectLater(save, throwsStateError);
+    await c.replace(second);
+    first.gate.complete({
+      'settings': {'max_consultations': 1},
+      'participants': {}
+    });
+    await outcome;
+    expect(first.writes, 0);
+    expect(second.writes, 0);
+    c.dispose();
+  });
+  test('one foreground turn, pinned model and stale response protection',
+      () async {
+    final c = DesktopSession(DemoApi(delay: const Duration(milliseconds: 30)));
+    await c.start();
+    expect(await c.send('hello'), true);
+    expect(await c.send('must not run'), false);
+    await c.select('local');
+    expect(c.session!.activeProfile, 'auto');
+    expect(c.session!.selectedProfile, 'local');
+    await c.stop();
+    await c.resolve({'id': 'obsolete'}, approved: true);
+    expect(c.error, contains('no longer pending'));
+    c.dispose();
+  });
+  test('switching connection during an active turn is refused', () async {
+    final c = DesktopSession(DemoApi());
+    await c.start();
+    await c.send('hello');
+    final original = c.api;
+    await c.replace(DemoApi());
+    expect(identical(c.api, original), true);
+    expect(c.error, contains('Stop'));
+    c.dispose();
+  });
+}
+
+class FailedStopApi extends DemoApi {
+  @override
+  Future<void> stop(String sid) async => throw const ApiFailure(500);
+}
+
+class ReconnectApi extends DemoApi {
+  ReconnectApi() : super(delay: const Duration(milliseconds: 20));
+  final first = StreamController<SessionEvent>();
+  int sends = 0, creates = 0, streams = 0;
+  @override
+  Future<Session> createSession() {
+    creates++;
+    return super.createSession();
+  }
+
+  @override
+  Future<void> send(String sid, String text) {
+    sends++;
+    return super.send(sid, text);
+  }
+
+  @override
+  Stream<SessionEvent> events(String sid, int after) =>
+      streams++ == 0 ? first.stream : super.events(sid, after);
+  @override
+  void close() {
+    unawaited(first.close());
+    super.close();
+  }
+}
+
+class DelayedSettingsApi extends DemoApi {
+  final gate = Completer<Json>();
+  int writes = 0;
+  @override
+  Future<Json> settings() => gate.future;
+  @override
+  Future<Json> saveSettings(Json value) async {
+    writes++;
+    return value;
+  }
+}

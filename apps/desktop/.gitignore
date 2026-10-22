@@ -1,0 +1,10 @@
+.dart_tool/
+.flutter-plugins*
+build/
+coverage/
+*.iml
+linux/flutter/ephemeral/
+macos/Flutter/ephemeral/
+windows/flutter/ephemeral/
+macos/Pods/
+macos/Flutter/GeneratedPluginRegistrant.swift
