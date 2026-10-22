@@ -141,6 +141,18 @@ _REFERENCE: dict[str, list[object]] = {
         tool("filesystem.read", path="config/app.toml"),
         answer("The server uses port 9412 in config/app.toml. Which port should it use instead?"),
     ],
+    "hard-ctx-three-logs": [
+        tool("filesystem.read", path="logs/service-a.log"),
+        tool("filesystem.read", path="logs/service-b.log"),
+        tool("filesystem.read", path="logs/service-c.log"),
+        answer("service-a logged ERR-4471 at 2026-10-20 09:26:55 UTC; the other two logged no errors."),
+    ],
+    "hard-ctx-runbook-fix": [
+        tool("project.grep", pattern="ERROR", path="logs"),
+        tool("filesystem.read", path="docs/runbook.md"),
+        answer("service-a hit ERR-4471. Restart chronyd on that host, check the offset is under 50 ms, "
+               "then run ledgerctl replay --since 1h. Leave max_skew_ms in config/service.toml as it is."),
+    ],
 }
 
 

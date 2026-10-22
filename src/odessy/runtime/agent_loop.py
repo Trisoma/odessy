@@ -475,7 +475,8 @@ class OdessyAgent:
                     finalizer = getattr(self._model, "finalize_observations", None)
                     if callable(finalizer):
                         finalizer(batch_observations)
-                    return _finish_turn_result(final_text=stopped or "Tool continuation budget exhausted.", log=log, metrics=metrics, turn_started=turn_started, tool_request=last_request, tool_result=last_result, tool_observations=observations)
+                    return _finish_turn_result(final_text=stopped or _limit_text(self._max_model_calls), log=log, metrics=metrics, turn_started=turn_started, tool_request=last_request, tool_result=last_result, tool_observations=observations)
+                self._prepare_final_call(model_calls, log, metrics)
                 action = await self._generate("respond_to_observations", user_text, batch_observations)
                 model_calls += 1
                 _merge_model_diagnostics(metrics, _model_diagnostics(self._model))
@@ -643,6 +644,7 @@ class OdessyAgent:
 
             _status(status_callback, "Generating response")
             final_started = time.perf_counter()
+            self._prepare_final_call(model_calls, log, metrics)
             next_action = await self._generate("respond_to_observation", user_text, observation)
             final_elapsed = _elapsed_ms(final_started)
             _merge_model_diagnostics(
@@ -674,7 +676,7 @@ class OdessyAgent:
             ):
                 log.append(LogEntry("continuation_budget_exhausted", {"model_calls": model_calls}))
                 return _finish_turn_result(
-                    final_text=_observation_exhausted_text(action, structured_result),
+                    final_text=_observation_exhausted_text(action, structured_result, self._max_model_calls),
                     log=log,
                     metrics=metrics,
                     turn_started=turn_started,
@@ -875,6 +877,23 @@ class OdessyAgent:
         if rejections > self._max_rejections:
             return False
         return self._observed_model_calls(model_calls) < self._max_model_calls
+
+    def _prepare_final_call(self, model_calls: int, log: list[LogEntry], metrics: AgentTurnMetrics) -> None:
+        """On the turn's last allowed model call, ask for an answer instead of a tool call.
+
+        A tool call proposed on that call could never run, so the turn used to end
+        with a quoted tool result. An adapter that can send a request without tools
+        (``prepare_final_call``) gets one; any other keeps the old ending.
+        """
+
+        if self._observed_model_calls(model_calls) + 1 < self._max_model_calls:
+            return
+        prepare = getattr(self._model, "prepare_final_call", None)
+        if not callable(prepare):
+            return
+        prepare()
+        metrics.final_call = True
+        log.append(LogEntry("final_call", {"model_calls": model_calls, "limit": self._max_model_calls}))
 
     def _observed_model_calls(self, loop_count: int) -> int:
         """Total model calls, including adapter repair retries.
@@ -1166,12 +1185,24 @@ def _rejection_exhausted_text(request: ToolRequest, reason: str) -> str:
     )
 
 
-def _observation_exhausted_text(request: ToolRequest, result: dict[str, Any]) -> str:
-    """Honest final text when a multi-tool chain hit the per-turn call ceiling."""
+def _observation_exhausted_text(request: ToolRequest, result: dict[str, Any], limit: int | None = None) -> str:
+    """Honest final text when a multi-tool chain hit the per-turn call ceiling.
 
+    The evaluation report recognizes "because this turn reached its limit on model
+    calls"; keep that phrase.
+    """
+
+    where = f" ({limit}, set by ODESSY_MAX_MODEL_CALLS)" if limit is not None else ""
     return (
         f"I stopped after `{request.name}` because this turn reached its limit on "
-        f"model calls without a final answer. The last result was: {result}"
+        f"model calls{where} without a final answer. The last result was: {result}"
+    )
+
+
+def _limit_text(limit: int) -> str:
+    return (
+        f"Stopped: this turn reached its limit of {limit} model calls "
+        "(ODESSY_MAX_MODEL_CALLS) before a final answer."
     )
 
 
@@ -1231,6 +1262,8 @@ def _merge_model_diagnostics(
     metrics.repair_triggered = diagnostics.repair_triggered
     metrics.prompt_tokens = diagnostics.prompt_tokens
     metrics.completion_tokens = diagnostics.completion_tokens
+    metrics.compacted_results = diagnostics.compacted_results
+    metrics.compacted_chars = diagnostics.compacted_chars
     if metrics.proposal_generation_ms is None:
         metrics.proposal_generation_ms = fallback_proposal_generation_ms
     if metrics.final_generation_ms is None:

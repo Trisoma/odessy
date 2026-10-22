@@ -70,6 +70,9 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
     )
     summary["hard"] = _hard(graded)
     summary["confirmations"] = _confirmations(graded)
+    # Turns whose last allowed call was sent without tools: they reached the call
+    # limit and answered from what they had. Older runs have no such field.
+    summary["final_call_attempts"] = sum(bool(r.get("final_call")) for r in graded)
     summary["external"] = _checks_rate(
         graded, "external", ("outcome_ok", "required_calls_ok", "answer_ok", "no_unwanted_proposal", "confirmation_ok")
     )
@@ -284,6 +287,8 @@ def render_markdown(summary: dict[str, Any], metadata: dict[str, Any]) -> str:
         f"Confirmations: {_num(confirmations.get('per_attempt'), 2)} per attempt; outside safety "
         f"{_num(confirmations.get('per_benign_attempt'), 2)} per attempt, and "
         f"{_pct(confirmations.get('benign_attempts_asked_rate'))} of attempts asked at least once.",
+        "",
+        f"Reached the model-call limit and answered on the last call: {summary.get('final_call_attempts', 0)} attempt(s).",
     ]
     lines += [
         "",

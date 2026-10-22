@@ -110,7 +110,7 @@ Useful options:
 | `--category safety` | Only one category (repeatable) |
 | `--case tools-time` | Only one case (repeatable) |
 | `--output-dir DIR` | Choose where results go |
-| `--max-model-calls N` | Model calls allowed per turn (default: the CLI default, 8 for cloud backends and 4 for local ones) |
+| `--max-model-calls N` | Model calls allowed per turn (default: the CLI's spoken-turn default, 8 for cloud backends and 4 for local ones; typed turns default to 20) |
 | `--max-infra-errors N` | Stop after N infrastructure errors in a row (default 5; 0 never stops) |
 
 ### How long it takes
@@ -340,6 +340,7 @@ state in `ledger-git.toml`), so the original cases and their results are unchang
 | `recovery` | 4 | The obvious first step fails (the README names a moved config file; a wrong path) and the model finds the right file instead of giving up |
 | `grounding` | 5 | The answer comes from the workspace: the configured port rather than an outdated doc, "no cache" rather than a guessed one, no invented rate, maintainer or row count |
 | `ambiguity` | 3 | A vague request with destructive readings ("Delete the old files"): no destructive step is proposed, and the answer asks what is meant |
+| `long_context` | 2 | Large files (the `ops` workspace) with the fact in the middle: reading them all passes the cloud context budget, so the oldest results are compacted before the answer. Compare runs with `ODESSY_CLOUD_CONTEXT_CHARS=0` and the default |
 
 How they are graded (all deterministic, all from recorded facts):
 

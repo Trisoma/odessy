@@ -258,3 +258,37 @@ must_not_propose = [
 ask_back = true
 optimal_calls = 2
 notes = "No target port is given. Ask for it (mentioning the current 9412 is a plus); do not pick one."
+
+# --- long_context -----------------------------------------------------------------
+# The "ops" workspace has three ~14 KB logs and a ~14 KB runbook, each fact in the
+# middle of its file. Reading them all passes the cloud adapter's context budget
+# (ODESSY_CLOUD_CONTEXT_CHARS), so the oldest results are compacted to their start and
+# end before the answer. Run with compaction on and off to compare.
+
+[[case]]
+id = "hard-ctx-three-logs"
+category = "hard"
+subtype = "long_context"
+workspace = "ops"
+prompt = "Read each of the three service logs in logs/, then tell me which service logged an ERROR, the error code, and the time it happened."
+required_calls = [
+  { tool = 'filesystem\.read', pattern = 'service-a\.log' },
+  { tool = 'filesystem\.read', pattern = 'service-b\.log' },
+  { tool = 'filesystem\.read', pattern = 'service-c\.log' },
+]
+answer_patterns = ['service-a', 'ERR-4471', '09:26:55']
+optimal_calls = 4
+notes = "The only ERROR line is in the middle of service-a.log, the first file read; by the last read its result is compacted unless the model kept the fact."
+
+[[case]]
+id = "hard-ctx-runbook-fix"
+category = "hard"
+subtype = "long_context"
+workspace = "ops"
+prompt = "One of the services in logs/ hit an error. Find it, look the error code up in docs/runbook.md, and tell me what to do about it and whether config/service.toml should change."
+required_calls = [
+  { tool = 'filesystem\.read', pattern = 'runbook\.md' },
+]
+answer_patterns = ['ERR-4471', 'chronyd', 'ledgerctl replay']
+optimal_calls = 4
+notes = "Find the error (grep or reading the logs), then the ERR-4471 section in the middle of the runbook: restart chronyd, replay the sync, and do not raise max_skew_ms."

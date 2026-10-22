@@ -30,7 +30,7 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 #: What each hard case measures. Reported separately, since a model can be good at
 #: one and poor at another.
-HARD_SUBTYPES = ("long_horizon", "recovery", "grounding", "ambiguity")
+HARD_SUBTYPES = ("long_horizon", "recovery", "grounding", "ambiguity", "long_context")
 
 #: Constructs that do not exist in Windows PowerShell 5.1, and PowerShell cmdlets
 #: that do not exist in sh. A command for the wrong shell fails even if it would

@@ -24,6 +24,11 @@ Differences from the local adapters, all deliberate:
   where data stops being local. Redaction is best effort (see ``redaction.py``).
 * **A record of every request.** Each request is written to the egress log
   (``authority/egress.py``): provider, model, sizes, and tokens, never content.
+* **A bounded turn.** Within one turn every request re-sends the conversation, so
+  once the turn's tool results pass ``context_chars``, the oldest ones are cut to
+  their beginning and end (the latest ``keep_recent_results`` stay whole). A cut
+  result never changes again, so the prefix stays cacheable; Claude also caches the
+  conversation itself with a breakpoint on the last message.
 * **Streamed replies for speech.** When a voice session sets a ``SpeechStream``,
   the reply is streamed and its text is spoken sentence by sentence while the
   rest arrives. The parsed reply is the same either way.
@@ -222,6 +227,47 @@ def _cap_result(content: str, limit: int) -> str:
     return f"{content[:limit]} ...[{omitted} more characters omitted by Odessy]"
 
 
+#: Characters of tool results one turn may re-send before the oldest are compacted.
+DEFAULT_CLOUD_CONTEXT_CHARS = 24000
+#: The latest tool results are never compacted: the model is usually working on them.
+DEFAULT_KEEP_RECENT_RESULTS = 2
+_COMPACT_HEAD = 600
+_COMPACT_TAIL = 200
+_COMPACT_MARK = "...[Odessy compacted this earlier tool result"
+
+
+def compact_result(content: str) -> str:
+    """An earlier tool result cut to its beginning and end, saying so.
+
+    No model is asked to summarize: the result is only shortened, so nothing in it
+    can be rewritten into something it did not say. The model can call the tool
+    again for the full output; that call is authorized like any other.
+    """
+
+    omitted = len(content) - _COMPACT_HEAD - _COMPACT_TAIL
+    return (
+        f"{content[:_COMPACT_HEAD]}\n{_COMPACT_MARK}: {omitted} of {len(content)} characters "
+        f"omitted to keep this turn's context small. Call the tool again if the full "
+        f"output is needed.]...\n{content[-_COMPACT_TAIL:]}"
+    )
+
+
+def _compactable(content: Any) -> bool:
+    return (
+        isinstance(content, str)
+        and _COMPACT_MARK not in content
+        and len(content) > _COMPACT_HEAD + _COMPACT_TAIL + 400
+    )
+
+
+#: Said with the tool results on the turn's last allowed model call.
+_FINAL_CALL_MESSAGE = (
+    "Odessy: this is the last model call allowed in this turn, so no more tools can run. "
+    "Answer now from the results above: briefly say what was done, what is not finished, "
+    "and what the user could ask next."
+)
+
+
 @dataclass(frozen=True)
 class _ParsedCall:
     call_id: str
@@ -298,6 +344,11 @@ class CloudModel:
     prompt_cache: bool = True
     #: Where usage is recorded and the budget checked; the process ledger by default.
     usage: UsageLedger | None = field(default=None, repr=False)
+    #: Characters of tool results a turn re-sends before the oldest are compacted;
+    #: 0 turns compaction off.
+    context_chars: int = DEFAULT_CLOUD_CONTEXT_CHARS
+    #: How many of the latest tool results are always sent whole.
+    keep_recent_results: int = DEFAULT_KEEP_RECENT_RESULTS
 
     conversation_context: tuple = ()
 
@@ -310,6 +361,7 @@ class CloudModel:
     _client: Any = field(default=None, init=False, repr=False)
     _history_turns: int = field(default=0, init=False, repr=False)
     _last_usage: dict[str, int | None] = field(default_factory=dict, init=False, repr=False)
+    _final_call: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.provider not in CLOUD_PROVIDERS:
@@ -337,6 +389,7 @@ class CloudModel:
         self._diagnostics = ModelTurnDiagnostics()
         self._pending_call_id = None
         self._pending_batch = ()
+        self._final_call = False
         # History first, then the request: role-separated, and redacted before it was
         # stored, so a secret spoken once is not re-sent on every later turn. A session
         # passes its turns, a router stores dicts; one helper reads both.
@@ -357,6 +410,16 @@ class CloudModel:
                 raise ValueError(
                     f"Model repair failed after one retry: {retry_error}"
                 ) from retry_error
+
+    def prepare_final_call(self) -> None:
+        """The next request is the turn's last: send it without tools, asking for an answer.
+
+        Without this, the last allowed call could only propose a tool call the runtime
+        would never run, and the turn ended with a quoted tool result instead of an
+        answer.
+        """
+
+        self._final_call = True
 
     def finalize_observations(self, observations) -> None:
         ids = tuple(observation.call_id for observation in observations)
@@ -470,6 +533,10 @@ class CloudModel:
         before_generation()
         # Before the request, so a spent budget sends nothing more.
         self.ledger.check()
+        self._compact()
+        final_call, self._final_call = self._final_call, False
+        if final_call:
+            self._append_final_note()
         speech = current_speech()
         sent = self._sent_summary()
         self._last_usage = {}
@@ -480,9 +547,9 @@ class CloudModel:
             if speech is not None:
                 speech.begin()
             if self.protocol == "anthropic":
-                reply = self._exchange_anthropic(speech)
+                reply = self._exchange_anthropic(speech, tools_allowed=not final_call)
             else:
-                reply = self._exchange_openai(speech)
+                reply = self._exchange_openai(speech, tools_allowed=not final_call)
             if speech is not None:
                 speech.end()
         except BaseException as error:
@@ -495,6 +562,82 @@ class CloudModel:
         setattr(self._diagnostics, timing_field, elapsed if current is None else current + elapsed)
         self._diagnostics.response_chars += len(reply.text)
         return reply
+
+    def _tool_result_slots(self) -> list[dict[str, Any]]:
+        """The dicts whose ``content`` is a tool result, oldest first."""
+
+        if self.protocol == "anthropic":
+            return [
+                block
+                for message in self._messages
+                if isinstance(message, dict) and message.get("role") == "user" and isinstance(message.get("content"), list)
+                for block in message["content"]
+                if isinstance(block, dict) and block.get("type") == "tool_result"
+            ]
+        return [message for message in self._messages if isinstance(message, dict) and message.get("role") == "tool"]
+
+    def _compact(self) -> None:
+        """Cut the oldest tool results while the turn's results exceed ``context_chars``.
+
+        Only tool-result text changes, never an assistant message (Claude's thinking
+        blocks and DeepSeek's reasoning must be returned unchanged). A result is cut
+        once and then stays the same, so later requests share the same prefix and the
+        provider's cache keeps working.
+        """
+
+        if self.context_chars <= 0:
+            return
+        slots = self._tool_result_slots()
+        total = sum(len(slot["content"]) for slot in slots if isinstance(slot.get("content"), str))
+        if total <= self.context_chars:
+            return
+        keep = max(self.keep_recent_results, 0)
+        for slot in slots[: len(slots) - keep] if keep else slots:
+            if total <= self.context_chars:
+                break
+            content = slot.get("content")
+            if not _compactable(content):
+                continue
+            shorter = compact_result(content)
+            slot["content"] = shorter
+            total -= len(content) - len(shorter)
+            self._diagnostics.compacted_results += 1
+            self._diagnostics.compacted_chars += len(content) - len(shorter)
+
+    def _append_final_note(self) -> None:
+        if self.protocol == "anthropic":
+            last = self._messages[-1] if self._messages else None
+            if isinstance(last, dict) and last.get("role") == "user" and isinstance(last.get("content"), list):
+                last["content"].append({"type": "text", "text": _FINAL_CALL_MESSAGE})
+                return
+        self._messages.append({"role": "user", "content": _FINAL_CALL_MESSAGE})
+
+    def _cached_messages(self) -> list[Any]:
+        """Claude: the messages with a cache breakpoint on the last block, as a copy.
+
+        The breakpoint moves forward every request, and the stored messages never
+        carry one, so a request has three breakpoints at most (tools, system, here).
+        Each request then reads the previous request's conversation from the cache.
+        Only from the turn's second request on: a turn answered in one call would pay
+        for a cache write it never reads.
+        """
+
+        if not self.prompt_cache or not any(
+            isinstance(message, dict) and message.get("role") == "assistant" for message in self._messages
+        ):
+            return self._messages
+        *earlier, last = self._messages
+        if not isinstance(last, dict):
+            return self._messages
+        content = last.get("content")
+        if isinstance(content, str):
+            blocks: list[Any] = [{"type": "text", "text": content}]
+        elif isinstance(content, list) and content and isinstance(content[-1], dict):
+            blocks = list(content)
+        else:
+            return self._messages
+        blocks[-1] = {**blocks[-1], "cache_control": {"type": "ephemeral"}}
+        return [*earlier, {**last, "content": blocks}]
 
     def _sent_summary(self) -> dict[str, int]:
         """What kinds of data this request carries, by count and size (never content)."""
@@ -513,6 +656,9 @@ class CloudModel:
             "messages": len(self._messages),
             "history_turns": self._history_turns,
             "tool_results": tool_results,
+            "compacted": sum(
+                1 for slot in self._tool_result_slots() if isinstance(slot.get("content"), str) and _COMPACT_MARK in slot["content"]
+            ),
             "chars": len(json.dumps(self._messages, ensure_ascii=False, default=str)),
         }
 
@@ -556,7 +702,7 @@ class CloudModel:
 
     # -- Claude (anthropic SDK) --------------------------------------------
 
-    def _exchange_anthropic(self, speech: SpeechStream | None = None) -> _ParsedReply:
+    def _exchange_anthropic(self, speech: SpeechStream | None = None, *, tools_allowed: bool = True) -> _ParsedReply:
         tools = cloud_tools_anthropic()
         system: Any = system_prompt()
         if self.prompt_cache and tools:
@@ -570,9 +716,11 @@ class CloudModel:
             "model": self.model,
             "max_tokens": self.max_tokens,
             "system": system,
-            "messages": self._messages,
+            "messages": self._cached_messages(),
             "tools": tools,
-            "tool_choice": {"type": "auto", "disable_parallel_tool_use": False},
+            # The tool definitions stay (they are part of the cached prefix); on the
+            # turn's last call the model may not use them.
+            "tool_choice": {"type": "auto", "disable_parallel_tool_use": False} if tools_allowed else {"type": "none"},
         }
         if self.effort:
             params["output_config"] = {"effort": self.effort}
@@ -656,12 +804,12 @@ class CloudModel:
 
     # -- OpenAI-compatible (GPT, DeepSeek, Qwen, Kimi, custom) --------------
 
-    def _exchange_openai(self, speech: SpeechStream | None = None) -> _ParsedReply:
+    def _exchange_openai(self, speech: SpeechStream | None = None, *, tools_allowed: bool = True) -> _ParsedReply:
         payload = {
             "model": self.model,
             "messages": [{"role": "system", "content": system_prompt()}, *self._messages],
             "tools": cloud_tools_openai(),
-            "tool_choice": "auto",
+            "tool_choice": "auto" if tools_allowed else "none",
             # Claude was the only path with an output ceiling; an OpenAI-compatible
             # model that never stops generating runs to the provider's limit, with
             # the bill to match.
@@ -878,6 +1026,8 @@ def build_cloud_model(provider: str, env: dict[str, str] | None = None) -> Cloud
         retries=_non_negative_int(env.get("ODESSY_CLOUD_RETRIES"), DEFAULT_CLOUD_RETRIES),
         max_result_chars=_positive_int(env.get("ODESSY_CLOUD_MAX_RESULT_CHARS"), DEFAULT_CLOUD_RESULT_CHARS),
         prompt_cache=(env.get("ODESSY_CLOUD_PROMPT_CACHE") or "on").strip().lower() not in {"0", "off", "false", "no"},
+        context_chars=_non_negative_int(env.get("ODESSY_CLOUD_CONTEXT_CHARS"), DEFAULT_CLOUD_CONTEXT_CHARS),
+        keep_recent_results=_non_negative_int(env.get("ODESSY_CLOUD_KEEP_RECENT_RESULTS"), DEFAULT_KEEP_RECENT_RESULTS),
     )
 
 

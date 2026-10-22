@@ -561,10 +561,20 @@ def test_claude_observation_is_a_tool_result_after_the_full_assistant_content() 
     assert action == FinalResponse(text="Your tree is clean.")
     messages = model.params[1]["messages"]
     assert messages[1] == {"role": "assistant", "content": first.content}
+    # The second request carries a cache breakpoint on its last block (a copy: the
+    # stored conversation never holds one).
     assert messages[2] == {
         "role": "user",
-        "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": '{"clean": true}'}],
+        "content": [
+            {
+                "type": "tool_result",
+                "tool_use_id": "toolu_1",
+                "content": '{"clean": true}',
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
     }
+    assert "cache_control" not in str(model._messages)
 
 
 def test_claude_refusal_becomes_final_response() -> None:
