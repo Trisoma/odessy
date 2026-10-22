@@ -96,3 +96,102 @@ def test_queued_remote_job_refuses_a_target_swapped_after_approval(tmp_path):
         assert calls == [], 'neither target may be used once the grant no longer matches'
 
     asyncio.run(run())
+
+
+def test_queued_local_job_refuses_an_adapter_swapped_after_approval(tmp_path):
+    """A local job dispatched through a replaced adapter must not run."""
+
+    async def run():
+        profile = ParticipantProfile('coder', 'custom_agent', capabilities=('delegate',),
+                                     workspace=str(tmp_path))
+        started = []
+
+        def approved_adapter(profile, *, task, mode, workspace):
+            started.append('approved')
+            return ['approved-cli', task]
+
+        def swapped_adapter(profile, *, task, mode, workspace):
+            started.append('swapped')
+            return ['swapped-cli', task]
+
+        jobs = JobManager({'coder': profile}, adapters={'custom_agent': approved_adapter})
+        job = {
+            'job_id': 'j1', 'participant': 'coder', 'mode': 'advice', 'task': 'review',
+            'state': 'queued', 'workspace': str(tmp_path), 'worktree': None, 'diff': '',
+            'changed_files': [], 'validation': {'status': 'unknown', 'report': None},
+            'result': None, 'error': None, 'progress': [], 'log': '', 'usage': {},
+            'remote_state_unknown': False, 'permissions': {},
+            'binding': {'remote_identity': None, 'adapter_identity': str(id(approved_adapter))},
+        }
+        jobs._jobs['j1'] = job
+        jobs._reserve(('local', str(tmp_path)), 'j1')
+        jobs.adapters['custom_agent'] = swapped_adapter
+        await jobs._execute(job, profile, tmp_path, None, ('local', str(tmp_path)), False)
+        assert job['state'] == 'failed'
+        assert 'adapter changed after approval' in str(job['error'])
+        assert started == [], 'neither adapter may be used once the grant no longer matches'
+        assert not jobs._reserved(('local', str(tmp_path))), 'the failed job releases its reservation'
+
+    asyncio.run(run())
+
+
+def test_local_patch_job_refuses_adapter_swapped_during_worktree_setup(tmp_path):
+    """Worktree creation awaits; the adapter must be rechecked afterwards.
+
+    `_execute()` validated the adapter before `_git('worktree', ...)`, but
+    `_command()` looked it up again after that await, so a swap during setup could
+    still be dispatched under the old approval.
+    """
+
+    async def run():
+        profile = ParticipantProfile('coder', 'custom_agent', capabilities=('delegate',),
+                                     workspace=str(tmp_path))
+        started = []
+
+        def approved_adapter(profile, *, task, mode, workspace):
+            started.append('approved')
+            return ['approved-cli', task]
+
+        def swapped_adapter(profile, *, task, mode, workspace):
+            started.append('swapped')
+            return ['swapped-cli', task]
+
+        job_id = 'j2'
+        worktree = tmp_path.parent / (tmp_path.name + '-odessy-' + job_id[:12])
+        jobs = JobManager({'coder': profile}, adapters={'custom_agent': approved_adapter})
+        job = {
+            'job_id': job_id, 'participant': 'coder', 'mode': 'patch', 'task': 'review',
+            'state': 'queued', 'workspace': str(tmp_path), 'worktree': None, 'diff': '',
+            'changed_files': [], 'validation': {'status': 'unknown', 'report': None},
+            'result': None, 'error': None, 'progress': [], 'log': '', 'usage': {},
+            'remote_state_unknown': False, 'permissions': {},
+            'binding': {'remote_identity': None, 'adapter_identity': str(id(approved_adapter))},
+        }
+        jobs._jobs[job_id] = job
+        jobs._reserve(('local', str(tmp_path)), job_id)
+
+        async def fake_git(path, *args, check=True):
+            if 'worktree' in args:
+                # Swap the registered adapter while the job awaits worktree setup.
+                jobs.adapters['custom_agent'] = swapped_adapter
+                worktree.mkdir(exist_ok=True)
+            return ''
+
+        runner_calls = []
+
+        async def fake_runner(command, **kwargs):
+            runner_calls.append(command)
+            return {'state': 'completed', 'output': ''}
+
+        jobs._git = fake_git
+        jobs.runner = fake_runner
+        await jobs._execute(job, profile, tmp_path, tmp_path, ('local', str(tmp_path)), False)
+        assert job['state'] == 'failed'
+        assert 'adapter changed after approval' in str(job['error'])
+        assert started == [], 'neither adapter may run once the grant no longer matches'
+        assert runner_calls == [], 'no command may be dispatched under a stale grant'
+        assert not jobs._reserved(('local', str(tmp_path))), 'the failed job releases its reservation'
+
+    asyncio.run(run())
+
+

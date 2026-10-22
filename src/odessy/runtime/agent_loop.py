@@ -106,6 +106,26 @@ def _error_text(result: Any) -> str:
     return message[:_TOOL_ERROR_CHARS]
 
 
+def _same_value(left: Any, right: Any) -> bool:
+    """Compare approved and current arguments without Python's loose equality.
+
+    `1 == True` and `1.0 == True` in Python, so a plain `==` would let a grant
+    approved for `1` dispatch `True` (and vice versa). Types therefore have to
+    match at every level, including inside lists, tuples, dicts and sets.
+    """
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        if left.keys() != right.keys():
+            return False
+        return all(_same_value(left[key], right[key]) for key in left)
+    if isinstance(left, (list, tuple)):
+        return len(left) == len(right) and all(_same_value(a, b) for a, b in zip(left, right))
+    if isinstance(left, (set, frozenset)):
+        return left == right
+    return left == right
+
+
 class _BoundArguments(dict):
     """Private one-dispatch envelope; authorization metadata never crosses MCP."""
     def __init__(self, arguments, revalidate):
@@ -115,7 +135,7 @@ class _BoundArguments(dict):
         self.consumed = False
 
     def validate(self):
-        if self != self._snapshot:
+        if not _same_value(dict(self), self._snapshot):
             raise PermissionError('Prepared arguments changed; a new authorization decision is required')
         try:
             self._revalidate()

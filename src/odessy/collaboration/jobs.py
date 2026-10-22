@@ -339,6 +339,17 @@ class JobManager:
         self._emit(job)
         return self.get(job_id)
 
+    def _require_approved_adapter(self, job, profile):
+        """The grant names one adapter; a swap or removal voids it.
+
+        Call this immediately before any adapter lookup, and again after awaited
+        setup, because `_command()` resolves the adapter from `self.adapters`.
+        """
+        custom = self.adapters.get(profile.adapter)
+        current_adapter = str(id(custom)) if custom is not None else None
+        if current_adapter != job['binding']['adapter_identity']:
+            raise ValueError('agent adapter changed after approval; a new authorization decision is required')
+
     def _command(self, profile, task, mode, cwd):
         adapter = profile.adapter
         if adapter in self.adapters:
@@ -387,10 +398,7 @@ class JobManager:
                 target = self.remote_targets[profile.host]
                 if str(id(target)) != job['binding']['remote_identity']:
                     raise ValueError('execution target changed after approval; a new authorization decision is required')
-                custom = self.adapters.get(profile.adapter)
-                current_adapter = str(id(custom)) if custom is not None else None
-                if current_adapter != job['binding']['adapter_identity']:
-                    raise ValueError('agent adapter changed after approval; a new authorization decision is required')
+                self._require_approved_adapter(job, profile)
                 payload = {k: job[k] for k in ('job_id', 'participant', 'task', 'mode', 'workspace')}
                 self._remote_inflight.add(job['job_id'])
                 result = await asyncio.wait_for(self._remote_call(target, 'start', payload),
@@ -414,11 +422,18 @@ class JobManager:
                 if isinstance(result.get('permissions'), dict):
                     job['permissions']['remote_report'] = self._safe_remote_value(job['job_id'], result['permissions'])
             else:
+                # Local jobs dispatch through the same adapter lookup, so a
+                # registered adapter swapped or removed while the job was queued
+                # would silently run different code under the old approval.
+                self._require_approved_adapter(job, profile)
                 if job['mode'] == 'patch':
                     worktree = repo.parent / (repo.name + '-odessy-' + job['job_id'][:12])
                     await self._git(repo, 'worktree', 'add', '--detach', str(worktree), 'HEAD')
                     job['worktree'] = str(worktree)
                     cwd = worktree / cwd.relative_to(repo)
+                # Worktree setup awaits, so check again: `_command()` resolves the
+                # adapter from this mapping when it builds argv.
+                self._require_approved_adapter(job, profile)
                 command = self._command(profile, job['task'], job['mode'], cwd)
                 result = await asyncio.wait_for(self.runner(command, cwd=cwd, env=self._environment(profile),
                     on_output=lambda output: self._emit(job, output)), getattr(profile, 'timeout', 120))

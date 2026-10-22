@@ -143,3 +143,41 @@ def test_type_only_argument_change_invalidates_the_grant(tmp_path):
         changed = ToolRequest('terminal.run', {'command': 'ls', 'timeout': other})
         assert not plan.matches(changed, decision, policy, execution_target='jetson'), other
     assert plan.matches(approved, decision, policy, execution_target='jetson')
+
+
+def test_dispatch_envelope_detects_type_only_changes_at_any_depth():
+    """The pre-dispatch check must not rely on Python's loose ``==``.
+
+    ``ActionApprovalPlan.matches()`` compares a typed snapshot, but the runtime
+    envelope rechecks the arguments it is about to hand to MCP. A plain ``!=``
+    there would accept ``1`` -> ``True`` and would also miss nested swaps.
+    """
+
+    from odessy.runtime.agent_loop import _BoundArguments
+
+    checks = []
+    arguments = {'command': 'ls', 'timeout': 1, 'options': {'depth': 2}, 'items': [1, {'x': 2}]}
+    envelope = _BoundArguments(arguments, lambda: checks.append('revalidated'))
+    envelope.validate()
+    assert checks == ['revalidated']
+
+    for path, other in (
+        (('timeout',), True),
+        (('options', 'depth'), True),
+        (('items', 0), True),
+        (('items', 1, 'x'), True),
+    ):
+        changed = _BoundArguments(arguments, lambda: checks.append('leaked'))
+        target = changed
+        for key in path[:-1]:
+            target = target[key]
+        target[path[-1]] = other
+        with pytest.raises(PermissionError, match='Prepared arguments changed'):
+            changed.validate()
+    assert checks == ['revalidated'], 'no revalidation may run for a stale envelope'
+
+    removed = _BoundArguments(arguments, lambda: checks.append('leaked'))
+    del removed['options']
+    with pytest.raises(PermissionError, match='Prepared arguments changed'):
+        removed.validate()
+
