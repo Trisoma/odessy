@@ -110,10 +110,13 @@ export function redactResult<T>(value: T): T {
   return value;
 }
 
-/** Redact every non-empty string under a credential-named field, keeping structure. */
+/** Redact strings and numbers under a credential-named field, keeping structure. */
 function redactAllStrings<T>(value: T): T {
   if (typeof value === "string") {
     return (value === "" ? value : REDACTED) as T;
+  }
+  if (typeof value === "number") {
+    return REDACTED as T;
   }
   if (Array.isArray(value)) {
     return value.map((item) => redactAllStrings(item)) as T;

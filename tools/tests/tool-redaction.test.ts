@@ -30,6 +30,16 @@ import { createWorkspaceGuard } from "../src/workspace/path-guard.js";
 
 const SECRET = "sk-abcdefghijklmnopqrstuvwxyz";
 
+test("numeric credentials are redacted without changing ordinary numbers", () => {
+  assert.deepEqual(redactResult({
+    password: 123456789, api_key: 0,
+    credentials: { items: [42, 1.25, -7] }, count: 9,
+  }), {
+    password: "<redacted>", api_key: "<redacted>",
+    credentials: { items: ["<redacted>", "<redacted>", "<redacted>"] }, count: 9,
+  });
+});
+
 function makeWorkspace(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "odessy-redaction-"));
 }

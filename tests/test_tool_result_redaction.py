@@ -8,7 +8,6 @@ so that is where the tests look.
 """
 
 from __future__ import annotations
-
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,6 +21,16 @@ from odessy.runtime.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.tools.mcp_server import build_odessy_mcp_server
 
 SECRET = "sk-abcdefghijklmnopqrstuvwxyz"
+
+
+def test_numeric_credentials_are_redacted_without_changing_ordinary_numbers() -> None:
+    assert redact_value({
+        "password": 123456789, "api_key": 0,
+        "credentials": {"items": [42, 1.25, -7]}, "count": 9,
+    }) == {
+        "password": REDACTED, "api_key": REDACTED,
+        "credentials": {"items": [REDACTED, REDACTED, REDACTED]}, "count": 9,
+    }
 
 
 @pytest.fixture

@@ -21,6 +21,21 @@ def _settings(**values: str) -> dict[str, str]:
     return dict(values)
 
 
+@pytest.mark.parametrize("url", [
+    "http://:11434", "http://localhost:not-a-port", "http://localhost:99999",
+    "http://localhost:-1", "http://user@:11434", "http://bad host:11434",
+])
+def test_endpoint_requires_a_hostname_and_valid_port(url):
+    assert validate_config({"ODESSY_MODEL_ENDPOINT": url}).errors
+
+
+@pytest.mark.parametrize("url", [
+    "http://localhost:11434", "https://example.test/api", "http://[::1]:11434",
+])
+def test_valid_hostnames_and_ipv6_endpoints_remain_accepted(url):
+    assert not validate_config({"ODESSY_MODEL_ENDPOINT": url}).errors
+
+
 VOICE_PATHS = ("ODESSY_WHISPER_BIN", "ODESSY_WHISPER_MODEL", "ODESSY_KOKORO_MODEL",
                "ODESSY_KOKORO_VOICES")
 

@@ -536,7 +536,11 @@ def _check_bounds(setting: Setting, number: float, shown: str) -> list[Issue]:
 def _check_url(setting: Setting, value: str, shown: str) -> list[Issue]:
     try:
         parsed = urlparse(value)
-        has_host = bool(parsed.netloc)
+        hostname = parsed.hostname
+        has_host = bool(hostname) and not any(char.isspace() for char in hostname)
+        # Accessing .port validates numeric spelling and the 0-65535 range.
+        # netloc alone accepts both an empty hostname and a malformed port.
+        _ = parsed.port
     except ValueError:
         # A malformed IPv6 literal is the usual way `urlparse` raises.
         parsed, has_host = None, False

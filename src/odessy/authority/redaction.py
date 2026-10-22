@@ -177,10 +177,12 @@ def _redact_field(key: Any, value: Any) -> Any:
 
 
 def _redact_all_strings(value: Any) -> Any:
-    """Redact every non-empty string under a credential-named field, keeping structure."""
+    """Redact strings and numbers under a credential-named field, keeping structure."""
 
     if isinstance(value, str):
         return REDACTED if value else value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return REDACTED
     if isinstance(value, Mapping):
         return {key: _redact_all_strings(item) for key, item in value.items()}
     if isinstance(value, tuple) and hasattr(value, "_fields"):
