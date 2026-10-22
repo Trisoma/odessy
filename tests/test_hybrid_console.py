@@ -220,6 +220,7 @@ async def test_text_voice_switches_do_not_stop_an_active_turn():
     await console.handle_line('/text')
     assert not audio.input_available and not audio.output_available
     await console.handle_line('/voice')
+    await console._audio_start
     assert audio.input_available and audio.output_available
     release.set()
     await console.wait_idle()
@@ -234,6 +235,27 @@ async def test_unknown_commands_never_reach_the_model():
     await console.handle_line('/unknown')
     assert not seen
     assert '/help' in output.getvalue()
+    await console.aclose()
+    await controller.close()
+
+
+@pytest.mark.anyio
+async def test_latest_voice_command_is_reconciled_after_slow_startup():
+    console, controller, audio, output, seen = fixture_console()
+    gate = asyncio.Event()
+    async def startup():
+        await gate.wait()
+        return audio.input_available
+    audio.start = startup
+    console._audio_start = asyncio.create_task(console._start_audio())
+    console._audio_start.add_done_callback(console._audio_ready)
+    await console.handle_line('/text')
+    await console.handle_line('/voice')
+    gate.set()
+    await console._audio_start
+    await asyncio.sleep(0)
+    await console._audio_start
+    assert audio.input_available and audio.output_available
     await console.aclose()
     await controller.close()
 

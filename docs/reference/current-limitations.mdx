@@ -12,9 +12,12 @@ Development-only collaboration adds an authenticated loopback session API and co
 
 Session-preserving keyboard input is under unreleased integration testing on
 October 22. Interactive voice commands share one controller and history with typed
-requests; this does not establish real-terminal or Jetson acceptance. The full
-Python suite is not green in the current environment; see today's development log
-and [voice integration](voice-integration.mdx) before claiming release readiness.
+requests; this does not establish real-terminal or Jetson acceptance. Slow audio
+setup and explicit retry now leave typing responsive. Earlier MCP/runtime failures
+were corrected. Verification: 2,010 passed in the full run with one outdated
+synchronous-retry assertion; after updating it, 47 final affected tests passed.
+These are separate runs, not a clean full-suite rerun of the final snapshot.
+See [voice integration](voice-integration.mdx).
 
 Risk-aware voice approval and mid-task clarification are **complete offline and
 independently reviewed as of October 22, 2026** on `feat/voice-user-interaction`

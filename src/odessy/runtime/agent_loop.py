@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
 from mcp import Client
+from mcp.server import MCPServer
 
 from odessy.execution.escalation import EscalationApproval, EscalationApprover, EscalationDeniedError
 from odessy.authority.audit import current_audit
@@ -1028,7 +1029,7 @@ class OdessyAgent:
             # bare transport is wrapped in a client.
             lister = getattr(server, 'list_tools', None)
             prefix = getattr(server, 'prefix', '') or ''
-            if callable(lister):
+            if callable(lister) and not isinstance(server, MCPServer):
                 available_tools = await lister()
             else:
                 async with Client(server) as client:
@@ -1066,7 +1067,7 @@ class OdessyAgent:
         try:
             # Any server object that can dispatch a call by name: a configured server or
             # a paired host, which speaks the same protocol over its own transport.
-            if hasattr(server, 'call_tool'):
+            if hasattr(server, 'call_tool') and not isinstance(server, MCPServer):
                 if isinstance(arguments, _BoundArguments):
                     result = await server.call_tool(tool.name, dict(arguments), before_dispatch=arguments.validate)
                 else:

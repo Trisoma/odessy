@@ -36,6 +36,7 @@ class HybridConsole:
         self._turn_task = None
         self._turn_stop = None
         self._audio_start = None
+        self._resume_requested = False
         self._reserved = False
         self._voice_enabled = True
         self._closed = False
@@ -143,6 +144,10 @@ class HybridConsole:
         elif command in ('/text', '/voice'):
             self._voice_enabled = command == '/voice'
             if self.audio is not None:
+                if self._voice_enabled:
+                    self._schedule_audio_resume()
+                    self.display('[odessy] Resuming audio; keyboard input remains available.')
+                    return
                 if not self._voice_enabled:
                     self.audio.stop_speaking()
                 available = await self.audio.set_input_enabled(self._voice_enabled)
@@ -198,11 +203,39 @@ class HybridConsole:
         except Exception as error:
             self.report_audio_error('startup', str(error))
 
+    async def _resume_audio(self):
+        try:
+            available = await self.audio.set_input_enabled(True)
+            if not self._voice_enabled:
+                await self.audio.set_input_enabled(False)
+                return
+            await self.audio.set_output_enabled(True)
+            if not self._voice_enabled:
+                await self.audio.set_input_enabled(False)
+                await self.audio.set_output_enabled(False)
+            else:
+                self.display('[odessy] Voice enabled.' if available else '[odessy] Voice input unavailable; keyboard input is ready.')
+        except Exception as error:
+            self.report_audio_error('startup', str(error))
+
+    def _audio_ready(self, task):
+        if self._resume_requested and self._voice_enabled and not self._closing.is_set():
+            self._schedule_audio_resume()
+
+    def _schedule_audio_resume(self):
+        if self._audio_start is not None and not self._audio_start.done():
+            self._resume_requested = True
+            return
+        self._resume_requested = False
+        self._audio_start = asyncio.create_task(self._resume_audio())
+        self._audio_start.add_done_callback(self._audio_ready)
+
     async def run(self):
         if not self.stdin.isatty():
             raise TerminalUnavailable('Keyboard fallback requires an interactive terminal.')
         self.display('[odessy] Keyboard input is available throughout this session. ' + self.HELP)
         self._audio_start = asyncio.create_task(self._start_audio())
+        self._audio_start.add_done_callback(self._audio_ready)
         try:
             while not self._closing.is_set():
                 self._input_changed.clear()

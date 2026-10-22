@@ -1,11 +1,70 @@
 """Composition checks: actual audio adapter, controller and terminal arbiter."""
 import asyncio
+import threading
 
 import pytest
 
 from odessy.runtime.types import AgentTurnResult
 from test_hybrid_console import fixture_console
 from test_hybrid_audio import build, say, record, wait_until, FakeTTS, FakePlayer
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('component', ['wake', 'tts', 'capture'])
+async def test_slow_audio_startup_does_not_block_typed_requests(tmp_path, component):
+    from test_hybrid_audio import FakeWake
+    console, controller, rig, output, seen = connect(tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    def slow(value):
+        entered.set()
+        release.wait(1)
+        return value
+    if component == 'wake':
+        rig.adapter.wake_factory = lambda: slow(FakeWake())
+    elif component == 'tts':
+        rig.adapter.tts_factory = lambda: slow(FakeTTS())
+    else:
+        original = rig.stream.start
+        rig.stream.start = lambda: slow(original())
+    startup = asyncio.create_task(rig.adapter.start())
+    try:
+        await wait_until(entered.is_set)
+        assert not startup.done(), 'audio loading blocked the event loop until it finished'
+        assert await console.submit_text('hello while audio loads')
+        await asyncio.wait_for(console.wait_idle(), .25)
+        assert len(seen) == 1
+        assert not release.is_set()
+    finally:
+        release.set()
+        await startup
+        await console.aclose()
+        await controller.close()
+
+
+@pytest.mark.anyio
+async def test_text_pause_during_device_start_does_not_admit_voice(tmp_path):
+    console, controller, rig, output, seen = connect(tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    original = rig.stream.start
+    def slow_start():
+        entered.set()
+        release.wait(1)
+        return original()
+    rig.stream.start = slow_start
+    startup = asyncio.create_task(rig.adapter.start())
+    try:
+        await wait_until(entered.is_set)
+        await console.handle_line('/text')
+        release.set()
+        assert await startup is False
+        assert rig.adapter._session is None
+        assert rig.stream.closes >= 1
+        assert not seen
+    finally:
+        release.set()
+        await startup
+        await console.aclose()
+        await controller.close()
 
 
 @pytest.fixture

@@ -131,6 +131,7 @@ class HybridAudioAdapter:
     _output_failure: str | None = field(default=None, init=False, repr=False)
     _started: bool = field(default=False, init=False, repr=False)
     _closing: bool = field(default=False, init=False, repr=False)
+    _initializing: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
     # -- availability ------------------------------------------------------------
 
@@ -177,8 +178,9 @@ class HybridAudioAdapter:
             return False
         self._started = True
         self._input_enabled = True
-        await self._prepare_output()
-        return await self._open_input()
+        async with self._initializing:
+            await self._prepare_output()
+            return await self._open_input()
 
     async def set_input_enabled(self, enabled: bool) -> bool:
         """Suspend voice input, or explicitly resume it. Returns input availability.
@@ -196,7 +198,8 @@ class HybridAudioAdapter:
                 self._session.set_input_enabled(False)
             return False
         self._input_enabled = True
-        return await self._open_input()
+        async with self._initializing:
+            return await self._open_input()
 
     async def set_output_enabled(self, enabled: bool) -> bool:
         """Suppress or explicitly resume speech. Returns output availability."""
@@ -207,7 +210,8 @@ class HybridAudioAdapter:
         if not enabled:
             self.stop_speaking()
             return False
-        await self._prepare_output()
+        async with self._initializing:
+            await self._prepare_output()
         return self.output_available
 
     async def set_typed_turn(self, active: bool) -> None:
@@ -345,22 +349,31 @@ class HybridAudioAdapter:
             self._status('Audio retry deferred until this turn completes; type /voice again afterward.')
             return False
         self._input_failure = None
-        if not self._ensure_components():
+        if self._closing or not self._input_enabled:
+            return False
+        if not await self._ensure_components():
+            return False
+        if self._closing or not self._input_enabled:
             return False
         if self._session is not None and not self._session_alive():
             await self._stop_session()
         if self._session is None:
-            if not self._open_stream():
+            if not await self._open_stream():
+                return False
+            if self._closing or not self._input_enabled:
+                self._close_stream()
                 return False
             self._start_session()
+            if self._typed_turn:
+                self._session.set_utterance_admission(False)
         else:
             self._session.set_input_enabled(True)
         return self.input_available
 
-    def _ensure_components(self) -> bool:
+    async def _ensure_components(self) -> bool:
         if self._stream is None:
             if self.stream_factory is not None:
-                self._stream = self.stream_factory()
+                self._stream = await self._run_blocking(self.stream_factory)
             elif not recorder_available(self.config.audio_recorder):
                 self._fail_input(
                     CAPTURE,
@@ -382,7 +395,7 @@ class HybridAudioAdapter:
                         pass
                 self._wake = NoWake()
             elif self.wake_factory is not None:
-                self._wake = self.wake_factory()
+                self._wake = await self._run_blocking(self.wake_factory)
             else:
                 model = Path(self.config.wake_model)
                 if not model.is_file():
@@ -393,23 +406,23 @@ class HybridAudioAdapter:
                     )
                     return False
                 try:
-                    self._wake = OpenWakeWordDetector(str(model))
+                    self._wake = await self._run_blocking(OpenWakeWordDetector, str(model))
                 except Exception as error:  # noqa: BLE001 - optional dependency
                     self._fail_input(WAKE, f"wake word detection is unavailable: {error}")
                     return False
         if self._vad is None:
             try:
                 self._vad = (
-                    self.vad_factory()
+                    await self._run_blocking(self.vad_factory)
                     if self.vad_factory is not None
-                    else SileroSpeechDetector()
+                    else await self._run_blocking(SileroSpeechDetector)
                 )
             except Exception as error:  # noqa: BLE001 - optional dependency
                 self._fail_input(CAPTURE, f"speech detection could not start: {error}")
                 return False
         if self._stt is None:
             if self.stt_factory is not None:
-                self._stt = self.stt_factory()
+                self._stt = await self._run_blocking(self.stt_factory)
             else:
                 reason = _recognition_missing(self.config)
                 if reason is not None:
@@ -421,14 +434,18 @@ class HybridAudioAdapter:
                 )
         return True
 
-    def _open_stream(self) -> bool:
+    async def _open_stream(self) -> bool:
         if self._stream is None:
             self._fail_input(CAPTURE, "microphone capture is not configured")
             return False
         if self._stream_started:
             return True
         try:
-            self._stream.start()
+            def open_stream():
+                self._stream.start()
+                if self._closing:
+                    self._stream.close()
+            await self._run_blocking(open_stream)
         except Exception as error:  # noqa: BLE001 - reported, never propagated
             self._fail_input(CAPTURE, f"microphone capture could not start: {error}")
             return False
@@ -474,7 +491,7 @@ class HybridAudioAdapter:
             end_on_device_failure=False,
             on_interrupt=self._on_interrupt,
             on_audio_error=self._on_audio_error,
-            start_recording=not self.listen,
+            start_recording=not self.listen and not self._typed_turn,
             on_reply_complete=self.on_reply_complete,
         )
         self._session = session
@@ -574,7 +591,7 @@ class HybridAudioAdapter:
             return False
         if self._player is None:
             if self.player_factory is not None:
-                self._player = self.player_factory()
+                self._player = await self._run_blocking(self.player_factory)
             elif not player_available(self.config.audio_player):
                 self._fail_output(
                     PLAYBACK,
@@ -589,7 +606,7 @@ class HybridAudioAdapter:
                 )
         if self._tts is None:
             if self.tts_factory is not None:
-                self._tts = self.tts_factory()
+                self._tts = await self._run_blocking(self.tts_factory)
             else:
                 reason = _synthesis_missing(self.config)
                 if reason is not None:

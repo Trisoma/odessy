@@ -86,6 +86,11 @@ Audio failures never retry inference or tools. Missing audio-only assets can
 degrade to keyboard input; invalid model/policy settings still fail startup.
 Voice-mode model-call limits continue to apply to typed fallback turns.
 
+Wake/VAD loading, audio factories and device startup run off the event loop.
+`/voice` retries in the background while the keyboard remains available. Input
+pause is rechecked after opening the device, and rapid `/text` then `/voice`
+commands preserve the latest requested mode without competing initializers.
+
 Pending human replies go through the same broker and exact-phrase/channel checks.
 Changing prompt ownership cancels the old keyboard read and discards buffered
 input. High-risk actions still require keyboard or authenticated UI; fallback
