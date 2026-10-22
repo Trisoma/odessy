@@ -3,73 +3,9 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-
-typedef Json = Map<String, dynamic>;
-
-class ChatMessage {
-  const ChatMessage(this.role, this.text);
-  final String role, text;
-}
-
-class Session {
-  Session(this.id,
-      {this.selectedProfile = 'auto',
-      this.activeProfile,
-      this.running = false,
-      this.messages = const [],
-      this.pending = const [],
-      this.events = const []});
-  final String id, selectedProfile;
-  final String? activeProfile;
-  final bool running;
-  final List<ChatMessage> messages;
-  final List<Json> pending;
-  final List<SessionEvent> events;
-  factory Session.fromJson(Json json) {
-    final messages = <ChatMessage>[];
-    for (final turn in (json['history'] as List? ?? [])) {
-      if (turn is Map) {
-        if (turn['user'] is String)
-          messages.add(ChatMessage('user', turn['user']));
-        if (turn['assistant'] is String)
-          messages.add(ChatMessage('assistant', turn['assistant']));
-      }
-    }
-    final events = (json['events'] as List? ?? [])
-        .map((e) => SessionEvent.fromJson(Map<String, dynamic>.from(e)))
-        .toList();
-    // Events include the in-flight user message that isn't in bounded memory yet.
-    final transcripts = events.where((e) => e.type == 'transcript').toList();
-    if (transcripts.isNotEmpty) {
-      messages.clear();
-      messages.addAll(transcripts.map((e) =>
-          ChatMessage(e.data['role'] as String, e.data['text'] as String)));
-    }
-    return Session(json['id'] as String,
-        selectedProfile: json['selected_profile'] as String,
-        activeProfile: json['active_profile'] as String?,
-        running: json['running'] == true,
-        messages: List.unmodifiable(messages),
-        events: List.unmodifiable(events),
-        pending: List<Json>.unmodifiable([
-          ...(json['pending_approvals'] as List? ?? [])
-              .map((e) => Map<String, dynamic>.from(e)),
-          ...(json['pending_questions'] as List? ?? [])
-              .map((e) => Map<String, dynamic>.from(e)),
-        ]));
-  }
-}
-
-class SessionEvent {
-  const SessionEvent(this.id, this.type, this.data);
-  final int id;
-  final String type;
-  final Json data;
-  factory SessionEvent.fromJson(Json value) => SessionEvent(
-      value['id'] as int,
-      value['type'] as String,
-      Map<String, dynamic>.from(value['data'] as Map? ?? {}));
-}
+import 'src/models.dart';
+export 'src/models.dart';
+export 'src/credentials.dart';
 
 /// Bounded SSE parsing. UTF-8 decoding belongs to the transport, before this parser.
 Stream<SessionEvent> decodeEvents(Stream<String> chunks) async* {
@@ -129,7 +65,7 @@ class ApiFailure implements Exception {
       };
 }
 
-class LocalApi implements OdessyApi {
+class LocalApi implements OdessyApi, ProfileMetadataApi {
   LocalApi(this.base, String token) : _token = token {
     if (!['http', 'https'].contains(base.scheme) ||
         !['localhost', '127.0.0.1', '::1'].contains(base.host) ||
@@ -192,6 +128,13 @@ class LocalApi implements OdessyApi {
           .keys
           .cast<String>()
           .toList();
+  @override
+  Future<List<Profile>> profileMetadata() async {
+    final values = (await _json('/v1/profiles'))['profiles'] as Map;
+    return List.unmodifiable(values.entries.map((e) => Profile(e.key as String,
+        e.value is Map ? Map<String, dynamic>.from(e.value) : {})));
+  }
+
   @override
   Future<Session> createSession() async =>
       Session.fromJson(await _json('/v1/sessions', 'POST'));

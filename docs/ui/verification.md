@@ -1,5 +1,26 @@
 # Preview verification · October 22, 2026
 
+## Backbone follow-up · October 23, 2026
+
+Independent review identified connection replacement/shutdown races, stale
+same-ID interaction callbacks, and bounded-event history loss. These are now
+guarded by serialized replacement, immutable current-request identity/channel/
+expiry validation and authoritative-history preservation. Dedicated regressions
+cover all three. Connection-origin token clearing also has a widget regression.
+
+Fresh results: pure Dart analysis clean; **9 client tests passed**, including the
+real loopback API/broker integration fixture; runtime settings inventory validates
+all **89 entries**, with **2 Python drift tests passing**. Flutter analysis is
+clean; the complete backbone Flutter suite passed **27 tests**.
+Windows optimized release build succeeded. No live provider or hardware tests ran.
+
+Added reusable settings form, credential interface (memory-only default), lifecycle
+exit cleanup, state gallery, architectural boundaries and accessible frosted-glass
+navigation. Read [handoff.md](handoff.md) for protected paths and remaining backend/
+native milestones. No commits, merges or pushes were performed in this follow-up.
+
+## Original preview baseline
+
 Branch: `feat/flutter-desktop-preview`, base `fd7e140`. No merge, push or commit.
 Main `develop` checkout and its pre-existing release-document edit preserved.
 

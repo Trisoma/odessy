@@ -4,6 +4,26 @@ import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/app/session_controller.dart';
 
 void main() {
+  test('shutdown is awaitable and idempotent', () async {
+    final api = LifecycleApi();
+    final c = DesktopSession(api);
+    await c.start();
+    await Future.wait([c.shutdown(), c.shutdown()]);
+    expect(api.deletes, 1);
+    expect(api.closes, 1);
+    expect(c.connected, false);
+    expect(await c.send('after shutdown'), false);
+    c.dispose();
+  });
+  test('memory credentials are isolated and explicitly ephemeral', () async {
+    final store = MemoryCredentialStore();
+    await store.write('local', 'secret');
+    expect(store.persistsAcrossRestarts, false);
+    expect(await store.read('remote'), isNull);
+    expect(await MemoryCredentialStore().read('local'), isNull);
+    await store.remove('local');
+    expect(await store.read('local'), isNull);
+  });
   test('reconnect restores the same session without resubmitting', () async {
     final api = ReconnectApi();
     final c = DesktopSession(api);
@@ -110,5 +130,19 @@ class DelayedSettingsApi extends DemoApi {
   Future<Json> saveSettings(Json value) async {
     writes++;
     return value;
+  }
+}
+
+class LifecycleApi extends DemoApi {
+  int deletes = 0, closes = 0;
+  @override
+  Future<void> deleteSession(String sid) async {
+    deletes++;
+  }
+
+  @override
+  void close() {
+    closes++;
+    super.close();
   }
 }

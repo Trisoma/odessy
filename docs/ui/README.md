@@ -1,4 +1,11 @@
-# Desktop preview · v0.5.0
+# Desktop preview and handoff backbone · v0.5.0
+
+Start with [the teammate handoff](handoff.md) and [architecture](architecture.md).
+Protected foundation now includes immutable client contracts, lifecycle cleanup,
+an ephemeral credential-store seam, reusable async settings forms, a checked
+89-setting inventory, development state gallery and accessible glass primitives.
+The final verification record distinguishes tested behavior from native/backend
+work still deferred.
 
 Flutter/Dart desktop client for Odessy's existing Python session API. This work is
 isolated on `feat/flutter-desktop-preview`; it changes no Python, Rust or Node
@@ -98,4 +105,4 @@ package. No live provider tests or hardware tests run automatically.
 
 ## Verification
 
-See `docs/ui/verification.md` for the commands actually run on this revision.
+See [verification](verification.md) for commands actually run on this revision.

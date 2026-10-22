@@ -40,3 +40,16 @@ ThemeData odessyTheme(Brightness brightness) {
                     dark ? const Color(0xff34383a) : const Color(0xffe0e2dc)))),
   );
 }
+
+/// Shared desktop geometry; nested radii subtract their inset.
+abstract final class OdessyTokens {
+  static const spaceSmall = 4.0;
+  static const spaceCompact = 8.0;
+  static const spaceMedium = 12.0;
+  static const spaceRegular = 16.0;
+  static const spaceLarge = 24.0;
+  static const radiusSmall = 10.0;
+  static const radiusMedium = 14.0;
+  static const radiusLarge = 20.0;
+  static const accent = Color(0xff537d67);
+}

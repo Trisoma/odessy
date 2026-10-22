@@ -1,3 +1,4 @@
+import 'dart:ui' show AppExitResponse;
 import 'package:flutter/material.dart';
 import 'package:odessy_client/odessy_client.dart';
 import '../features/conversation/presentation/conversation.dart';
@@ -5,6 +6,8 @@ import '../features/devices/presentation/devices.dart';
 import '../features/settings/presentation/settings.dart';
 import 'session_controller.dart';
 import 'theme.dart';
+import 'connections/connection_dialog.dart';
+import '../widgets/glass_surface.dart';
 
 class OdessyApp extends StatefulWidget {
   const OdessyApp({super.key, this.api});
@@ -15,17 +18,24 @@ class OdessyApp extends StatefulWidget {
 
 class _OdessyAppState extends State<OdessyApp> {
   late final DesktopSession controller;
+  final CredentialStore credentials = MemoryCredentialStore();
+  late final AppLifecycleListener lifecycle;
   ThemeMode mode = ThemeMode.dark;
   String page = 'Conversation', device = 'This computer';
   @override
   void initState() {
     super.initState();
     controller = DesktopSession(widget.api ?? DemoApi());
+    lifecycle = AppLifecycleListener(onExitRequested: () async {
+      await controller.shutdown();
+      return AppExitResponse.exit;
+    });
     controller.start();
   }
 
   @override
   void dispose() {
+    lifecycle.dispose();
     controller.dispose();
     super.dispose();
   }
@@ -47,7 +57,10 @@ class _OdessyAppState extends State<OdessyApp> {
                     drawer: narrow ? Drawer(child: sidebar) : null,
                     appBar: narrow ? AppBar(title: const Text('Odessy')) : null,
                     body: Row(children: [
-                      if (!narrow) SizedBox(width: 236, child: sidebar),
+                      if (!narrow)
+                        SizedBox(
+                            width: 236,
+                            child: GlassSurface(radius: 0, child: sidebar)),
                       if (!narrow) const VerticalDivider(width: 1),
                       Expanded(
                           child: Column(children: [
@@ -222,69 +235,11 @@ class _OdessyAppState extends State<OdessyApp> {
               fontWeight: FontWeight.w600,
               letterSpacing: 1)));
   Future<void> _connect(BuildContext context) async {
-    final endpoint = TextEditingController(text: 'http://127.0.0.1:8765');
-    final token = TextEditingController();
-    String error = '';
-    final result = await showDialog<OdessyApi>(
-        context: context,
-        builder: (context) => StatefulBuilder(
-            builder: (context, update) => AlertDialog(
-                    title: const Text('Connect to Odessy'),
-                    content: SizedBox(
-                        width: 420,
-                        child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                  'Use the address and token from odessy serve. The token stays in memory. Remote engines require a preconfigured local tunnel.'),
-                              const SizedBox(height: 20),
-                              TextField(
-                                  controller: endpoint,
-                                  decoration: const InputDecoration(
-                                      labelText: 'Local API address')),
-                              const SizedBox(height: 12),
-                              TextField(
-                                  controller: token,
-                                  obscureText: true,
-                                  enableSuggestions: false,
-                                  autocorrect: false,
-                                  decoration: const InputDecoration(
-                                      labelText: 'Bearer token')),
-                              if (error.isNotEmpty)
-                                Padding(
-                                    padding: const EdgeInsets.only(top: 12),
-                                    child: Text(error,
-                                        style: TextStyle(
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .error))),
-                            ])),
-                    actions: [
-                      TextButton(
-                          onPressed: () => Navigator.pop(context, DemoApi()),
-                          child: const Text('Use demo')),
-                      TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('Cancel')),
-                      FilledButton(
-                          onPressed: () {
-                            try {
-                              Navigator.pop(
-                                  context,
-                                  LocalApi(Uri.parse(endpoint.text.trim()),
-                                      token.text));
-                            } catch (_) {
-                              update(() => error =
-                                  'Enter a valid loopback address and a bearer token.');
-                            }
-                          },
-                          child: const Text('Connect'))
-                    ])));
-    // Dialog route transitions may still reference controllers until the next frame.
-    await Future<void>.delayed(const Duration(milliseconds: 300));
-    endpoint.dispose();
-    token.dispose();
+    final result = await showConnectionDialog(context, credentials);
+    if (!mounted) {
+      result?.close();
+      return;
+    }
     if (result != null) await controller.replace(result);
   }
 }

@@ -5,6 +5,9 @@ on:
     paths:
       - 'apps/desktop/**'
       - 'packages/odessy_client/**'
+      - 'docs/ui/**'
+      - 'tool/check_desktop_contracts.py'
+      - 'src/odessy/config/schema.py'
       - '.github/workflows/desktop-preview.yml'
 permissions:
   contents: read
@@ -17,12 +20,17 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python tool/check_desktop_contracts.py
+      - run: python -m unittest discover -s tests -p test_desktop_settings_inventory.py -v
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.47.7'
           channel: stable
           cache: true
-      - run: dart pub get && dart analyze && dart test
+      - run: dart pub get && dart format --output=none --set-exit-if-changed lib test && dart analyze && dart test
         working-directory: packages/odessy_client
-      - run: flutter pub get && flutter analyze && flutter test
+      - run: flutter pub get && dart format --output=none --set-exit-if-changed lib test && flutter analyze && flutter test
         working-directory: apps/desktop

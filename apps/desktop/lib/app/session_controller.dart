@@ -11,6 +11,7 @@ class DesktopSession extends ChangeNotifier {
   String status = 'Connecting', error = '', route = '';
   bool connected = false, busy = false, stopping = false, _disposed = false;
   int _epoch = 0;
+  Future<void>? _shutdown;
   StreamSubscription<SessionEvent>? _subscription;
   Timer? _retry;
   int get lastEvent =>
@@ -20,6 +21,7 @@ class DesktopSession extends ChangeNotifier {
   }
 
   Future<void> start() async {
+    if (_disposed || busy) return;
     final epoch = ++_epoch;
     busy = true;
     error = '';
@@ -96,7 +98,8 @@ class DesktopSession extends ChangeNotifier {
       final value = await api.snapshot(sid);
       final version = value.events.fold<int>(0, (n, e) => e.id > n ? e.id : n);
       if (_disposed || captured != _epoch || version < lastEvent) return;
-      session = value;
+      if (value.id != sid) throw StateError('Session identity changed');
+      session = reduceSessionSnapshot(session, value);
       if (value.running) {
         status = value.pending.isNotEmpty ? 'Waiting for you' : 'Working';
       } else if (!status.startsWith('Stopped')) {
@@ -114,7 +117,9 @@ class DesktopSession extends ChangeNotifier {
 
   Future<bool> command(Future<void> Function(String sid) operation,
       {bool requireIdle = false}) async {
-    if (busy ||
+    if (_disposed ||
+        busy ||
+        stopping ||
         !connected ||
         session == null ||
         (requireIdle && session!.running)) {
@@ -185,8 +190,31 @@ class DesktopSession extends ChangeNotifier {
   }
 
   Future<void> resolve(Json pending, {bool? approved, String? answer}) async {
-    final id = pending['id'] as String;
-    if (!(session?.pending.any((e) => e['id'] == id) ?? false)) {
+    final id = pending['id'];
+    if (id is! String ||
+        id.isEmpty ||
+        (approved == null && (answer == null || answer.trim().isEmpty)) ||
+        (approved != null && answer != null)) {
+      error = 'Invalid interaction response.';
+      _notify();
+      return;
+    }
+    final current = session?.pending.where((e) => identical(e, pending));
+    final expiry = pending['expires_at'];
+    final channels = pending['allowed_channels'];
+    final kind = pending['kind'];
+    if (current == null ||
+        current.isEmpty ||
+        expiry is! num ||
+        expiry <= DateTime.now().millisecondsSinceEpoch / 1000 ||
+        channels is! List ||
+        !channels.contains('authenticated_ui') ||
+        (approved != null && kind != 'approval') ||
+        (answer != null && kind != 'question') ||
+        (answer != null &&
+            pending['allow_free_text'] != true &&
+            !(pending['choices'] is List &&
+                (pending['choices'] as List).contains(answer)))) {
       error = 'This request is no longer pending.';
       _notify();
       return;
@@ -197,13 +225,15 @@ class DesktopSession extends ChangeNotifier {
   }
 
   Future<void> replace(OdessyApi next) async {
-    if (busy || stopping || session?.running == true) {
+    if (_disposed || busy || stopping || session?.running == true) {
       next.close();
       error = 'Stop the active turn before changing connection.';
       _notify();
       return;
     }
-    ++_epoch;
+    final transition = ++_epoch;
+    busy = true;
+    connected = false;
     _retry?.cancel();
     _retry = null;
     await _subscription?.cancel();
@@ -215,29 +245,41 @@ class DesktopSession extends ChangeNotifier {
       } catch (_) {/* Closing the client never retries work. */}
     }
     previous.close();
+    if (_disposed || transition != _epoch) {
+      next.close();
+      return;
+    }
     api = next;
     session = null;
     route = '';
     connected = false;
+    busy = false;
     await start();
+  }
+
+  Future<void> shutdown() => _shutdown ??= _close();
+
+  Future<void> _close() async {
+    _disposed = true;
+    connected = false;
+    ++_epoch;
+    _retry?.cancel();
+    final transport = api, sid = session?.id;
+    try {
+      await _subscription?.cancel();
+      if (sid != null) {
+        await transport.deleteSession(sid).timeout(const Duration(seconds: 3));
+      }
+    } catch (_) {
+      // Cleanup failure never replays work or prevents transport closure.
+    } finally {
+      transport.close();
+    }
   }
 
   @override
   void dispose() {
-    _disposed = true;
-    ++_epoch;
-    _retry?.cancel();
-    unawaited(_subscription?.cancel());
-    final transport = api, sid = session?.id;
-    unawaited(() async {
-      try {
-        if (sid != null) await transport.deleteSession(sid);
-      } catch (_) {
-        /* Shutdown does not replay or resubmit anything. */
-      } finally {
-        transport.close();
-      }
-    }());
+    unawaited(shutdown());
     super.dispose();
   }
 }
