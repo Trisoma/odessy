@@ -1,0 +1,115 @@
+---
+title: "Host Pairing"
+sidebar-title: "Host Pairing"
+description: "Reference for the optional odessy-link paired-host transport: enrolment, mutual TLS, admission, limits, and what is not implemented yet."
+description-agent: "Use when configuring or diagnosing a paired host. Do not describe unbuilt parts as available."
+keywords: ["odessy-link", "pairing", "mutual tls", "enrolment", "jetson", "laptop"]
+content:
+  type: "reference"
+---
+
+Host pairing is **optional and incomplete**. It replaces the raw remote MCP URL of
+`split` deployments with a mutually authenticated connection to `odessy-link`, and
+keeps the existing division of authority:
+
+**Python coordinator → owned stdio → Rust client → mutual TLS → Rust host → owned Node stdio server**
+
+- **Python** keeps action decisions, confirmations, sandbox escalation and approval
+  audit.
+- **`odessy-link`** admits only enrolled peers, binds the granted capability and
+  workspace, owns the child process, and enforces the relay limits.
+- **Node** keeps argument validation, workspace restrictions and confinement.
+
+Nothing here claims identity *authentication of a person*; it authenticates two
+machines that were enrolled by their operators.
+
+## Enrolment
+
+Each machine generates an ECDSA P-256 installation CA and a CA-signed connection
+certificate valid for one year (the CA for five). The certificate carries both client
+and server authentication usages and a DNS name `p-<installation-id>.odessy.invalid`.
+
+```powershell
+odessy-link init
+odessy-link identity export --out peer.json
+```
+
+Both operators exchange bundles and compare the **full SHA-256 fingerprint** through
+an independently trusted channel:
+
+```powershell
+odessy-link pair add --alias jetson --certificate jetson.json --expect-sha256 <fingerprint> --address 192.0.2.10:7443
+```
+
+Enrolment grants no execution access. The host operator must also grant it:
+
+```powershell
+odessy-link peers grant jetson --capability mcp --workspace D:\work
+odessy-link peers list
+odessy-link peers revoke jetson
+```
+
+Re-enrolling an alias replaces the certificate **and drops its grants**.
+
+## Connection rules
+
+- The client trusts only the selected peer's enrolled CA, and verifies the expected
+  SAN from that record — not the connection address and not any advertised name.
+- Client certificates are mandatory; the server identifies the peer by the exact
+  fingerprint of the presented certificate, so a valid chain with a substituted leaf
+  is refused.
+- Both ends require that exact match **before any MCP byte is forwarded**.
+- Session resumption is disabled. No accept-any verifier exists in the codebase.
+- Handshake timeout is 10 seconds; operation deadlines remain the caller's.
+
+Relay limits: 8 MiB per frame, 16 MiB buffered per direction, 32 outstanding requests
+per direction, duplicate request ids rejected (numeric `1` and string `"1"` are
+different), notifications do not consume request slots, and a disconnect leaves
+unresolved work **unknown** — never replayed, never described as exactly-once.
+
+## Configuring Odessy
+
+```powershell
+$env:ODESSY_PAIRED_HOST = "jetson"
+$env:ODESSY_LINK_BIN = "D:\odessy\native\odessy-link\target\release\odessy-link.exe"  # optional
+```
+
+`ODESSY_PAIRED_HOST` selects split execution. These combinations are rejected before
+any connection is attempted, and a paired host never falls back to a legacy URL:
+
+- `ODESSY_PAIRED_HOST` together with `ODESSY_DEPLOYMENT=single`;
+- `ODESSY_PAIRED_HOST` together with `ODESSY_MCP_SERVER_URLS` or
+  `ODESSY_TOOL_SERVER_URL`;
+- `ODESSY_LINK_BIN` without `ODESSY_PAIRED_HOST`.
+
+Tools from the peer appear as `<alias>.<tool>`, for example
+`jetson.terminal.run`, and `doctor` reports the peer as paired rather than as a
+remote URL.
+
+## Diagnosing
+
+```powershell
+odessy-link peers list      # enrolment and grants, no keys printed
+odessy-link connect --peer jetson   # run before starting Odessy
+python -m odessy doctor
+```
+
+`doctor` reports the configured alias, the binary it found, how many peers are
+enrolled, and whether the configured alias is among them. It reads the local registry
+only and prints no key material.
+
+## Not implemented in this version
+
+Do not describe these as available:
+
+- mDNS discovery (`odessy-link discover` fails with an explanation); addresses are
+  manual.
+- A trigger that terminates in-flight sessions the moment a grant is revoked;
+  revocation is enforced for subsequent admissions.
+- A durable content-free request journal; used-id tracking is per process.
+- Windows DPAPI and restrictive ACLs for identity keys (Unix uses `0600`).
+- Remote coding-agent hosting, MCU pairing, internet traversal and fleet management.
+
+Local automated checks live in `native/odessy-link` (`cargo test`) and
+`tests/test_paired_host.py`. Windows–Jetson testing and Linux/ARM64 packaging have
+**not** been performed.

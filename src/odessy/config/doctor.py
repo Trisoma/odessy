@@ -128,6 +128,8 @@ def run_checks(
     checks.extend(_model_checks(backend or source.get("ODESSY_MODEL_BACKEND") or "lfm", source, probes))
     if mode == "single":
         checks.extend(_node_checks(probes))
+    elif paired_alias(source):
+        checks.extend(_paired_checks(source))
     else:
         checks.extend(_remote_checks(source, probes))
     checks.extend(_server_checks(backend or source.get("ODESSY_MODEL_BACKEND") or "lfm", source, probes))
@@ -189,10 +191,16 @@ def _settings_checks(env: Mapping[str, str]) -> list[Check]:
         )
         for issue in report.issues
     ]
+def paired_alias(env: Mapping[str, str]) -> str:
+    """The configured paired-host alias, read without importing the transport."""
+
+    return env.get("ODESSY_PAIRED_HOST", "").strip()
 
 
 def _deployment_check(mode: str, env: Mapping[str, str]) -> Check:
-    if env.get(DEPLOYMENT_ENV, "").strip():
+    if paired_alias(env):
+        reason = f"set by ODESSY_PAIRED_HOST={paired_alias(env)}"
+    elif env.get(DEPLOYMENT_ENV, "").strip():
         reason = f"set by {DEPLOYMENT_ENV}"
     elif mode == "split":
         reason = "a remote tool server URL is configured"
@@ -365,6 +373,50 @@ def _node_checks(probes: Probes) -> list[Check]:
 def _node_major(version: str) -> int | None:
     digits = version.strip().lstrip("v").split(".", 1)[0]
     return int(digits) if digits.isdigit() else None
+
+
+def _paired_checks(env: Mapping[str, str]) -> list[Check]:
+    """Paired-host status: configured, binary present, enrolment, alias match.
+
+    Runs `odessy-link peers list`, which reads the local registry only: no connection
+    is attempted and no key material or fingerprint is printed.
+    """
+
+    from odessy.tools.paired import PairedConfigError, paired_host, probe
+
+    try:
+        host = paired_host(env)
+    except PairedConfigError as error:
+        return [Check("Paired host", "fail", str(error), "Fix ODESSY_PAIRED_HOST or ODESSY_LINK_BIN.")]
+    if host is None:  # pragma: no cover - guarded by the caller
+        return []
+    result = probe(host)
+    if not result.get("ok"):
+        return [
+            Check(
+                "Paired host",
+                "fail",
+                f"{host.alias}: {result.get('detail')}",
+                "Build odessy-link (`cargo build --release` in native/odessy-link) or set ODESSY_LINK_BIN.",
+            )
+        ]
+    checks = [
+        Check(
+            "Paired host",
+            "ok",
+            f"{host.alias} via {result.get('binary')}; {result.get('enrolled_peers', 0)} enrolled peer(s)",
+        )
+    ]
+    if not result.get("configured_alias_present"):
+        checks.append(
+            Check(
+                "Paired host enrolment",
+                "fail",
+                f"{host.alias} is configured but not enrolled on this machine",
+                f"odessy-link pair add --alias {host.alias} --certificate <bundle> --expect-sha256 <fingerprint>",
+            )
+        )
+    return checks
 
 
 def _remote_checks(env: Mapping[str, str], probes: Probes) -> list[Check]:

@@ -792,6 +792,10 @@ class OdessyAgent:
             host = server.config.name
         target = {'host': host, 'server_identity': str(id(server)),
                   'transport': server if isinstance(server, str) else type(server).__qualname__}
+        if isinstance(server, NamespacedServer):
+            # A paired host carries its enrolled alias here, so the approval binds the
+            # peer identity the operator enrolled rather than just a namespace string.
+            target.update(dict(getattr(server.config, 'target_metadata', {}) or {}))
         if name == 'agent.delegate':
             jobs = getattr(self, '_delegation_jobs', None)
             if jobs is None:

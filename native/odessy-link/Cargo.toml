@@ -1,0 +1,31 @@
+[package]
+name = "odessy-link"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Authenticated host pairing and MCP transport for Odessy."
+license = "Apache-2.0"
+
+[[bin]]
+name = "odessy-link"
+path = "src/main.rs"
+
+[dependencies]
+# Certificate generation. ECDSA P-256 per the pairing plan; ring is the installed
+# crypto provider, so no C toolchain beyond rusqlite's bundled build is needed.
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
+# Per-user trust registry.
+rusqlite = { version = "0.32", features = ["bundled"] }
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+time = "0.3"
+# TLS. `ring` (not aws-lc-rs) keeps the build to a C compiler we already need for
+# rusqlite's bundled SQLite.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-pemfile = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "process", "time", "sync"] }
+
+[profile.release]
+strip = "symbols"

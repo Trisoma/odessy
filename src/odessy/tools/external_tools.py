@@ -86,6 +86,9 @@ class ServerConfig:
     #: Argument names that hold paths; they are checked against the workspace.
     workspace_paths: tuple[str, ...] = ()
     timeout: int = DEFAULT_SERVER_TIMEOUT_SECONDS
+    #: Stable, non-secret facts about who this server is (a paired host's alias, for
+    #: example). Carried into execution-target metadata and approval bindings.
+    target_metadata: Mapping[str, str] = field(default_factory=dict)
 
     def connection(self, environ: Mapping[str, str] | None = None) -> Any:
         """What ``mcp.Client`` connects to: a URL, or the parameters to launch a command."""
