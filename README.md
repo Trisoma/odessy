@@ -3,6 +3,7 @@
 > v0.3.0 was released privately on October 19, 2026, and is marked as a prerelease.
 > See [release notes](docs/releases/v0.3.0.md) for changes and verification limits.
 > Future feature work belongs to the [v0.4.0 roadmap](docs/releases/v0.4.0.md).
+> The unfinished Windows installation wizard is deferred to [v0.5.0](docs/releases/v0.5.0.md).
 
 Odessy is a local, single-user edge-AI agent runtime. It runs on one computer, or split across a Jetson (model and voice) and a laptop (controlled command execution). An optional cloud model backend can replace the local model; policy, authorization, and confirmation stay local in every configuration. See `docs/reference/cloud-models.mdx`.
 

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "platform": "windows-x64",
+  "download_manifest": "ollama-downloads.json",
+  "download_manifest_sha256": "1d532c0b7daecac598ed813e3bcebb075c5fee7a417ca1d9be6071bb327deaff",
+  "unpacked_bytes": 1942921587,
+  "files": 82,
+  "sources": {
+    "release": "https://github.com/ollama/ollama/releases/tag/v0.40.6",
+    "checksum": "https://github.com/ollama/ollama/releases/expanded_assets/v0.40.6",
+    "layout": "ZIP central-directory byte ranges; expanded sum of declared file sizes; full size/hash verified before extraction"
+  }
+}

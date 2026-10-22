@@ -49,6 +49,8 @@ def test_direct_job_approval_rejects_changed_profile_and_preflights_before_promp
 
 def test_jobs_api_rejects_unavailable_target_before_creating_approval(tmp_path):
     async def run():
+        # fastapi lives in the optional `[ui]` extra; CI installs `.[test]` only.
+        pytest.importorskip('fastapi')
         import httpx
         from odessy.application.api import create_app
         profile = ParticipantProfile('coder', 'codex', host='laptop', capabilities=('delegate',), workspace=r'C:\work')

@@ -21,9 +21,14 @@ def _native_path_text(candidate_path: str) -> str:
     climbs as it would on Windows. On Windows the native rules already apply.
     """
 
+    windows = PureWindowsPath(candidate_path)
+    # C:relative is tied to per-drive process state, even when C: happens to be
+    # the workspace drive. Never silently reinterpret it as a workspace path.
+    if windows.drive and not windows.root:
+        raise WorkspaceAuthorityError("drive-relative paths are not authorized")
     if os.name == "nt":
         return candidate_path
-    if PureWindowsPath(candidate_path).drive:
+    if windows.drive:
         raise WorkspaceAuthorityError("path is outside the allowed workspace")
     return candidate_path.replace("\\", "/")
 
