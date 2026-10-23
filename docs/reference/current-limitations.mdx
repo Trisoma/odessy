@@ -117,13 +117,14 @@ Reads, network, and process visibility are **not** restricted on Windows.
 
 ### Not isolated at all
 
-- **Host pairing is merged via PR #27, unreleased and hardware-unqualified.** `native/odessy-link`
+- **Host pairing is merged via PR #27, unreleased, with a Windows–Jetson LAN smoke test.** `native/odessy-link`
   implements enrolment, mutual TLS with exact leaf-fingerprint matching, the MCP relay
   limits, a durable content-free journal, revocation-triggered session termination,
   mDNS discovery as an address aid, and DPAPI/ACL key protection on Windows;
-  `ODESSY_PAIRED_HOST` selects it instead of a raw remote URL. It has **not** been run
-  between Windows and the Jetson, on a real network, or on Linux/ARM64, so treat those
-  as unqualified. See [host pairing](host-pairing.mdx). Split mode still supports
+  `ODESSY_PAIRED_HOST` selects it instead of a raw remote URL. October 23 tests
+  exercised LAN discovery, mTLS, real Node tools, workspace restrictions and live
+  revocation; ARM64 build/tests passed. Packaging and broader network coverage
+  remain unqualified. See [host pairing](host-pairing.mdx). Split mode still supports
   configured remote MCP URLs without authenticated pairing. A server must be explicitly
   marked an `ExecutionTarget` before anything will execute on it.
 - **No device backend exists.** ESP32 / STM32 / RP2040 are declared and unbacked.

@@ -3,6 +3,11 @@
 October 23, 2026. Runtime source snapshot: `218b3b78903bf844a11d9634e9d3cbe0f1fb02a1`.
 Testing only; no runtime fixes, release tag or sign-off.
 
+Deployment acceptance decision, October 23: physical echo/pre-cue trials are
+deferred until the complete software is deployed. Software timing/isolation
+regressions pass; physical echo/pre-cue admission and open-speaker operation are
+not qualified by WAV injection. This does not block ongoing development.
+
 ## Shared approval/clarification paths
 
 Focused Windows pytest run with `ODESSY_LINK_E2E=1`: **106 passed in 58.53 s**.

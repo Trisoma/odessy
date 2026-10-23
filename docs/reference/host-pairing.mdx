@@ -170,8 +170,14 @@ the first write. SQLite registry and journal files get the same owner-only treat
 An existing plaintext Windows identity is migrated on first use, verified by a round
 trip, and the plaintext copy is removed; `odessy-link` reports that it happened.
 
-Windows–Jetson pairing, real-network acceptance and Linux/ARM64 packaging have **not**
-been performed, so treat those as unqualified until they are. Remote coding-agent
+October 23 Windows–Jetson LAN tests passed discovery without a saved address,
+enrolled-certificate mTLS, real Node listing/proof-file read, workspace rejection
+and live revocation. Bare discovery switches were fixed and retested. Native ARM64
+build/tests passed; Linux/ARM64 packaging remains unqualified. A Windows cleanup
+warning occurred when `taskkill` could not find an already-ended Node PID;
+inspection found no leftover child/listener. See the
+[qualification record](../qualification/2026-10-23-interactions-and-pairing.md).
+Remote coding-agent
 hosting, MCU pairing, internet traversal and fleet management are out of scope.
 
 Automated checks: `cargo test` and `cargo clippy --all-targets -- -D warnings` in

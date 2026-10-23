@@ -57,6 +57,16 @@ python -m odessy "what time is it?"
 
 ## Run
 
+### October 23 validation deferral
+
+The current live-cloud subset and targeted live checks of newer collaboration,
+cloud and external-server integrations are deferred to pre-release or complete-
+deployment acceptance by user decision. Automated regression coverage is available;
+current live-provider validation remains pending. The saved October 18 Q8 and
+DeepSeek results remain historical baselines and do not qualify later changes.
+No new overnight sweep is required now. Cloud evaluations and targeted live checks
+can run from a laptop without Jetson hardware.
+
 Each configuration is a separate run with its own results folder. The cloud model is
 the main target; the local model is optional and much slower.
 

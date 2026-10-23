@@ -25,6 +25,21 @@ DeepSeek reported **1,449 passed, 5 skipped** for the full suite; that full coun
 was not independently repeated. Real microphone, Jetson and packaged-device
 qualification remain pending, separate opt-in checks.
 
+October 23 follow-up: real Jetson/JBL wake and spoken-reply smoke tests completed.
+Five recorded WAVs through actual Whisper and the session/broker verified exact
+medium approval, bare-yes refusal, high-risk/escalation refusal, natural denial,
+cancellation and free-text clarification. Updated phrase regressions and voice
+integration checks: **155 passed**. Physical playback echo/pre-cue admission,
+the deferred one-hour false-activation run and packaged-device acceptance remain
+unqualified. Echo/pre-cue checks test Odessy's capture/admission integration,
+not the TTS/STT provider in isolation. See the
+[qualification results](../qualification/2026-10-23-interactions-and-pairing.md).
+
+Deployment acceptance decision (October 23): defer the physical echo/pre-cue
+trials until the complete software is deployed. Software timing/isolation
+regressions pass; physical response-admission behavior and open-speaker operation
+are not yet qualified. This deferral does not block ongoing development.
+
 | Policy decision | Accepted approval channels |
 | --- | --- |
 | Allowed low-risk action | Existing policy; no new prompt |
