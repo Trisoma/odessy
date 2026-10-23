@@ -5,7 +5,7 @@ title: Automatic model selection
 Configurable collaboration supports explicit peer requests and next-turn profile switching through the shared session controller. Explicit consultation bypasses Auto's text-only path; ordinary classification is unchanged. See [model collaboration](model-collaboration.mdx).
 
 Automatic selection is merged into `develop` via PR #19 (`ea2b973`), opt-in,
-unreleased v0.4.0 work. It chooses a model; it
+released v0.4.0 functionality. It chooses a model; it
 does not filter the capable model's tool list or authorize actions.
 
 ```bash
@@ -27,6 +27,12 @@ Fluent wrong answers cannot reliably be detected; this is a conservative routing
 policy, not a correctness checker. LFM's historical tool failures remain relevant.
 
 ## Routing boundary and October 20 Jetson observations
+
+v0.5.0 onboarding requirement: detect installed models and let users select an
+existing local/remote model or cloud configuration. LFM is optional; installation
+must not silently download LFM, Gemma or every Auto role. Runtime routing below
+describes existing behavior, not a completed model-discovery wizard. See the
+[v0.5.0 roadmap](../releases/v0.5.0.md) for planned selection/validation.
 
 The boundary applies to the text received by the router, including the supplied
 history; spoken intent alone does not establish what Whisper submitted.

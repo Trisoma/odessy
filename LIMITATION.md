@@ -1,29 +1,20 @@
 # Odessy Current Limitations
 
-Release baseline: **v0.3.0**, released privately as a prerelease on October 19,
-2026. Unfinished feature work belongs to the [v0.4.0 roadmap](docs/releases/v0.4.0.md).
-Historical measurements below retain their original dates and versions.
+Release baseline: **v0.4.0**, released October 23, 2026. Active development
+targets the [v0.5.0 roadmap](docs/releases/v0.5.0.md); planned UI/installer/Go
+monitoring and custom wake-word features are not already available.
 
-Wake listening, automatic model selection, confirmation UX, and batch follow-ups
-are merged into `develop` for unreleased v0.4.0. Hardware wake detection,
-interruption latency, false activations, and model speed/memory benefits remain
-unqualified. [Jetson wake testing](docs/jetson-wake-testing.md) records the setup
-and acceptance procedure; the keyword-only download does not supply all detector
-assets needed by openWakeWord.
+Jetson headset voice/recorded interaction and Windows–Jetson pairing/discovery
+smoke checks passed; see [qualification](docs/qualification/2026-10-23-interactions-and-pairing.md).
+Physical echo/pre-cue, extended wake metrics, packaged acceptance and current
+live-cloud/new-integration checks remain deferred to deployment acceptance.
+Q8 memory reliability remains a limitation. Auto selected Gemma then fell back
+to Q8 after empty output; no model speedup or stable offload guarantee is claimed.
 
-October 20 user-reported Jetson smoke tests now reached transcription, model
-execution, and speaking with fake-model and auto wake listening, after a local
-Silero VAD `frame_size=512` correction. The repository adapter now includes that
-fix and a hardware-free regression test; synced Jetson verification is pending.
-Q8 with 15 GPU layers remains a test baseline with
-intermittent allocation failures. Auto voice using LFM after spoken `Hi` needs
-transcript, history, and escalation evidence before calling it a routing bug;
-see [model selection](docs/reference/model-selection.mdx). Hardware qualification
-and automatic-selection performance benefits remain open.
-
-Third-party MCP server support is v0.4.0 development work and is not part of the
-released v0.3.0 baseline. See `docs/reference/external-servers.mdx` for its
-transport, trust, schema, and policy boundaries.
+Third-party MCP support is included in v0.4.0; see
+[external servers](docs/reference/external-servers.mdx) for its trust boundaries.
+Current limits are maintained in [the reference](docs/reference/current-limitations.mdx).
+The dated measurements below are historical evidence, not new v0.5.0 acceptance.
 
 ## Voice Smoke Test Limitations
 

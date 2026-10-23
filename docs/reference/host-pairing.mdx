@@ -8,9 +8,11 @@ content:
   type: "reference"
 ---
 
-Host pairing is **optional**, merged into `develop` via PR #27 (`47b2d8d`) and
-unreleased. Automated Windows loopback tests have passed; separate-machine and
-real-network qualification remain pending (see the qualification note at the end).
+Host pairing is **optional** and included in released v0.4.0 via PR #27
+(`47b2d8d`). Windows loopback and Windows–Jetson LAN discovery/mTLS/tool smoke
+checks passed; see the qualification note at the end for remaining limits.
+Planned v0.5.0 Go health aggregation/device inventory must reuse authenticated
+host identity and admission; it does not replace pairing, grants or execution policy.
 It replaces the raw remote MCP URL of
 `split` deployments with a mutually authenticated connection to `odessy-link`, and
 keeps the existing division of authority:

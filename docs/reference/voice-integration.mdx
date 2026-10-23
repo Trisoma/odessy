@@ -26,7 +26,7 @@ The `feat/voice-user-interaction` worktree extends the shared session controller
 Both wake sessions and one-shot voice support human clarification and one-use
 approval. **Offline implementation and independent review are complete as of
 October 22, 2026**; the feature merged into `develop` via PR #24 (`6d8b80b`) and
-remains unreleased. Independent review reran **72 relevant tests, all passed**.
+is released in v0.4.0. Independent review reran **72 relevant tests, all passed**.
 DeepSeek reported **1,449 passed, 5 skipped** for the full suite; that full count
 was not independently repeated. Real microphone, Jetson and packaged-device
 qualification remain pending, separate opt-in checks.
@@ -217,7 +217,7 @@ ODESSY_AUDIO_PLAYER     player command, default aplay
 ODESSY_AUDIO_INPUT_DEVICE
 ODESSY_AUDIO_OUTPUT_DEVICE
 ODESSY_VOICE_SECONDS    bounded recording duration, default 5
-ODESSY_VOICE_BLANK_RETRIES  v0.4.0 development: extra recordings for no speech; default 2, 0 disables retries
+ODESSY_VOICE_BLANK_RETRIES  v0.4.0: extra recordings for no speech; default 2, 0 disables retries
 ODESSY_VOICE_TMPDIR     controlled temporary audio directory
 ```
 
@@ -237,7 +237,7 @@ This latency was accepted for v0.2.0 because the priority is a working local voi
 
 ## Wake-Word Sessions
 
-Merged into `develop` in the unreleased v0.4.0 cycle. For Linux installation,
+Merged into `develop` in the v0.4.0 release cycle. For Linux installation,
 support-model setup, audio checks, and a staged real-device test, follow the
 [Jetson wake test guide](../jetson-wake-testing.md). Automated CI does not qualify
 the Jetson microphone, detector, or playback latency.
@@ -325,7 +325,7 @@ tool-call identifier. Interrupted turns are not recorded.
 
 ### Streamed speech
 
-Merged via PR #23 (`d05e1b8`) as an extra v0.4.0 development feature; unreleased.
+Merged via PR #23 (`d05e1b8`) and released as an extra v0.4.0 feature.
 
 With a cloud model, a wake-listening session speaks the answer sentence by sentence
 as the reply arrives, instead of after the whole reply. The first sentence is heard
@@ -371,8 +371,9 @@ while the rest is still being generated.
 The v0.3.0 private prerelease retains these limits. Blank-audio handling is
 implemented; wake-up activation is implemented in software and awaiting hardware
 qualification. Risk-aware voice approval and clarification are complete offline
-and merged into v0.4.0 development; hardware acceptance remains pending. Further
-voice/local-model optimization belongs to the [v0.4.0 roadmap](../releases/v0.4.0.md).
+and merged into v0.4.0; hardware acceptance remains pending. Further
+voice/local-model optimization remains measurement-led follow-up in the
+[v0.5.0 roadmap](../releases/v0.5.0.md), not a promised speedup.
 
 Voice mode is staged and turn-based unless `--listen` is used.
 Local and non-streaming replies are synthesised in full before playback.

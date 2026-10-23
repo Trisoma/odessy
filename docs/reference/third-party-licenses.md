@@ -119,6 +119,8 @@ include required license/NOTICE texts and fulfill any source obligations. A
 source inventory is not a declaration that every possible bundle is cleared.
 Future Flutter/Dart dependencies belong to the separate desktop branch's package
 inventory and must be included when v0.5.0 packaging is defined.
+The planned v0.5.0 Go monitoring service also needs a dependency/license inventory
+when modules and distributed collectors are chosen; it is not present in v0.4.0.
 
 ## Wake-word roadmap
 

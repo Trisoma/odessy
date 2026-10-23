@@ -6,9 +6,13 @@ Third-party runtime and model licenses are listed in the
 not replace model-specific terms, including the Hey Jarvis weights' noncommercial
 restriction or the default phonemizer stack's GPL licenses.
 
-> v0.3.0 was released privately on October 19, 2026, and is marked as a prerelease.
-> See [release notes](docs/releases/v0.3.0.md) for changes and verification limits.
-> Future feature work belongs to the [v0.4.0 roadmap](docs/releases/v0.4.0.md).
+> v0.4.0 was released on October 23, 2026. See the
+> [release record](docs/releases/v0.4.0.md) and [known limits](docs/reference/current-limitations.mdx).
+> Active development targets [v0.5.0](docs/releases/v0.5.0.md): Flutter desktop,
+> finished onboarding with model detection/choice rather than mandatory LFM,
+> Go multi-host monitoring, custom Odessy wake word and GitHub Pages documentation.
+> These v0.5.0 goals are planned, not already available.
+> Future feature work belongs to the [v0.5.0 roadmap](docs/releases/v0.5.0.md).
 > The unfinished Windows installation wizard is deferred to [v0.5.0](docs/releases/v0.5.0.md).
 
 Odessy is a local, single-user edge-AI agent runtime. It runs on one computer, or split across a Jetson (model and voice) and a laptop (controlled command execution). An optional cloud model backend can replace the local model; policy, authorization, and confirmation stay local in every configuration. See `docs/reference/cloud-models.mdx`.
@@ -35,22 +39,22 @@ The model proposes actions. Python Odessy validates and authorizes them. MCP tra
 - Optional cloud backends support native tool conversations; DeepSeek accepts
   configured reasoning effort and retains returned reasoning content.
 - The agent evaluation suite covers 56 safety, command, tool, multi-step, and hard cases
-  (v0.4.0 development adds 24 third-party server, conversation, and batch cases, and 2 long-context hard cases)
+  (v0.4.0 adds 24 third-party server, conversation, and batch cases, and 2 long-context hard cases)
   using recorded execution, with code-provenance diagnostics in run metadata.
 
 > The long-term technical category could be:
 > Embodied Edge-AI Agent for Multimodal Device and Engineering Automation
 
-## v0.4.0 development additions (unreleased)
+## Released in v0.4.0; next target v0.5.0
 
 Extra features beyond the original plan now include model collaboration and the
 session API, mid-task clarification, cloud caching/usage budgets, and cloud
 resilience. PR #23 (`d05e1b8`) merged configured cloud failover, sentence-level cloud
 wake speech and a content-free egress log; PR #24 merged risk-aware voice approval
-and clarification. These remain unreleased; live-provider and hardware acceptance
+and clarification. These are included in v0.4.0; selected live-provider and hardware acceptance
 are pending. See the [updated roadmap](docs/releases/v0.4.0.md).
 
-Configurable collaboration is merged into `develop` and remains unreleased. It
+Configurable collaboration is included in v0.4.0. It
 adds named cloud/local/coding-agent participants,
 attributed consultations, confirmed jobs, and shared CLI/voice sessions. It is
 off until configured. An optional loopback bearer API and diagnostic client run
@@ -64,18 +68,16 @@ their namespaced tools under Odessy's validation and authorization path. See
 boundaries, and the [roadmap](docs/releases/v0.4.0.md) for status and follow-ups.
 This feature is not part of the released v0.3.0 private prerelease.
 
-Opt-in automatic selection is also available in v0.4.0 development with
+Opt-in automatic selection is also available in v0.4.0 with
 `--model-backend auto`: narrow text tasks use a tool-free fast model, while
 uncertain/tool requests use the configured capable model. Cloud fallback is off
 by default. See [model selection](docs/reference/model-selection.mdx); Jetson
 speed and memory benefits have not been established.
 
 Wake listening, confirmation UX (PR #17), automatic model selection (PR #19), and
-batch confirmation follow-ups (PR #18) are merged into `develop` and remain
-unreleased. `python -m odessy voice --listen` uses the integrated wake session.
+batch confirmation follow-ups (PR #18) are included in v0.4.0. `python -m odessy voice --listen` uses the integrated wake session.
 October 20 Jetson smoke tests reached transcription, model execution, and speaking;
-full hardware acceptance remains pending. Auto using LFM after spoken `Hi` is an
-unresolved routing observation. Follow
+full hardware acceptance remains pending. Recorded Jetson greetings initially selected Gemma, then visibly fell back to Q8 after empty fast-model output; this does not establish a speedup. Follow
 [Jetson wake testing](docs/jetson-wake-testing.md), including the auxiliary
 openWakeWord model downloads, the integrated VAD correction, and the Q8 profile.
 
@@ -194,14 +196,13 @@ with what was done and what is left instead of stopping mid-task.
 
 ## Voice
 
-Development adds keyboard input throughout an interactive voice session:
+v0.4.0 adds keyboard input throughout an interactive voice session:
 `python -m odessy voice --listen --fake-model`. Type a follow-up at any time while
 idle; `/text` pauses audio, `/voice` retries it, `/stop` stops the current turn,
 and `/exit` closes the session. Busy submissions are rejected rather than queued.
 Answers are displayed once, and voice requests are also spoken when available.
 Use `--no-text-fallback` for the previous audio-only interface. Redirected stdin
-is never consumed as requests or approvals. This unreleased integration still
-needs real terminal/microphone and Jetson qualification; see the
+is never consumed as requests or approvals. Jetson smoke checks passed; physical echo/pre-cue and packaged acceptance remain deferred; see the
 [voice reference](docs/reference/voice-integration.mdx).
 
 Voice uses Whisper.cpp STT and Kokoro ONNX TTS. Set their paths in

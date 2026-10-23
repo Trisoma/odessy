@@ -8,10 +8,10 @@ content:
   type: "reference"
 ---
 
-Development collaboration profiles reuse these adapters with participant/provider/model identities and per-profile prices. API budgets remain shared; coding CLI bills are separate. See [model collaboration](model-collaboration.mdx).
+Collaboration profiles reuse these adapters with participant/provider/model identities and per-profile prices. API budgets remain shared; coding CLI bills are separate. See [model collaboration](model-collaboration.mdx).
 
 October 22 development status: cloud failover, streamed wake speech and egress
-visibility are merged via PR #23 (`d05e1b8`, feature commit `8a74430`), unreleased.
+visibility are merged via PR #23 (`d05e1b8`, feature commit `8a74430`), released in v0.4.0.
 They are extra features beyond the original v0.4.0 plan. Offline verification does
 not establish live-provider or Jetson acceptance.
 
@@ -133,7 +133,7 @@ results when comparing runs.
 - **Native tool-result messages.** Tool results go back as `tool` / `tool_result`
   messages tied to the call id, so the model sees the whole turn. Returned
   `reasoning_content` is retained for OpenAI-compatible conversations.
-- **Native tool batches in v0.4.0 development.** Cloud adapters preserve multiple
+- **Native tool batches in v0.4.0.** Cloud adapters preserve multiple
   calls from a completed assistant response. Execution defaults to sequential;
   `ODESSY_TOOL_CONCURRENCY` permits bounded overlap only for eligible built-in
   tools. Authorization, ordering barriers, and cancellation still apply to each
@@ -243,7 +243,7 @@ already arrived. Adapter retries still stop once a sentence has been emitted.
 Every request in a turn re-sends the conversation so far, so a turn with many tool
 calls costs more with each step. Three things bound it.
 
-Merged via PR #26 (`d565fca`) in the unreleased v0.4.0 cycle. The context threshold
+Merged via PR #26 (`d565fca`) in the v0.4.0 release cycle. The context threshold
 counts tool-result characters, not total prompt tokens: recent results and other
 messages can keep a request above it. Existing cloud usage budgets still apply;
 compaction does not establish a fixed cost or a measured provider-cache hit rate.
