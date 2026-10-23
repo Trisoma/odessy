@@ -12,8 +12,8 @@ dependencies = [
 ]
 
 [project.scripts]
-odessy-loop = "odessy.cli:main"
-odessy = "odessy.cli:main"
+odessy-loop = "odessy.entrypoint:main"
+odessy = "odessy.entrypoint:main"
 
 [project.optional-dependencies]
 test = [

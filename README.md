@@ -1,5 +1,11 @@
 # Odessy: A Voice-Controlled Edge-AI Personal Agent and Device Orchestration Platform
 
+v0.5.0 development: `python -m odessy setup --role combined` reviews a headless
+configuration with **no default model download**. Existing-model discovery,
+cloud-only selection and optional voice asset checks are described in the
+[setup guide](docs/setup/headless.md). This configures existing components;
+it is not the completed installer or Flutter wizard.
+
 Third-party runtime and model licenses are listed in the
 [license inventory](docs/reference/third-party-licenses.md) and
 [attribution notices](THIRD-PARTY-NOTICES.md). Odessy's Apache-2.0 license does
