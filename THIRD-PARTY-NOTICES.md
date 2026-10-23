@@ -1,5 +1,18 @@
 # Third-Party Notices And Licenses
 
+## Runtime libraries and model assets (October 23, 2026)
+
+See the [third-party license inventory](docs/reference/third-party-licenses.md)
+for voice, wake detection, local models, Python/Node/Rust dependencies and external
+tools. Code licenses and weight licenses are separate. In particular: openWakeWord
+code is Apache-2.0, pretrained Hey Jarvis weights are CC-BY-NC-SA-4.0, Kokoro weights
+are Apache-2.0, kokoro-onnx is MIT, and Whisper code/weights and whisper.cpp are MIT.
+The default phonemizer/eSpeak NG path includes GPL-3.0-or-later components.
+LFM and Gemma use their own model terms, not Odessy's Apache-2.0 license.
+This inventory does not replace a release bundle's exact transitive notices.
+
+The following historical adaptation notices remain unchanged.
+
 Odessy includes original code plus selected tool-handler and process-confinement code and implementation patterns adapted from permissively licensed open-source references. Odessy's runtime architecture, authority model, Python policy layer, confirmation boundary, and MCP integration remain project-specific.
 
 Full upstream license texts are included in:

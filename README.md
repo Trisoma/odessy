@@ -1,5 +1,11 @@
 # Odessy: A Voice-Controlled Edge-AI Personal Agent and Device Orchestration Platform
 
+Third-party runtime and model licenses are listed in the
+[license inventory](docs/reference/third-party-licenses.md) and
+[attribution notices](THIRD-PARTY-NOTICES.md). Odessy's Apache-2.0 license does
+not replace model-specific terms, including the Hey Jarvis weights' noncommercial
+restriction or the default phonemizer stack's GPL licenses.
+
 > v0.3.0 was released privately on October 19, 2026, and is marked as a prerelease.
 > See [release notes](docs/releases/v0.3.0.md) for changes and verification limits.
 > Future feature work belongs to the [v0.4.0 roadmap](docs/releases/v0.4.0.md).

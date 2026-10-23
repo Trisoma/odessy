@@ -16,6 +16,12 @@ Voice does not replace the policy, MCP, workspace authority, process authority, 
 
 ## Development: approval and clarification
 
+Voice dependencies and model weights retain separate licenses. In particular,
+Hey Jarvis pretrained weights are noncommercial CC-BY-NC-SA-4.0, while
+openWakeWord code is Apache-2.0. Kokoro/Whisper and the GPL phonemizer dependencies
+are detailed in the [third-party license inventory](third-party-licenses.md).
+Custom Odessy wake-word support targets v0.5.0; v0.4.0 keeps Hey Jarvis.
+
 The `feat/voice-user-interaction` worktree extends the shared session controller.
 Both wake sessions and one-shot voice support human clarification and one-use
 approval. **Offline implementation and independent review are complete as of
