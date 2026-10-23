@@ -1,0 +1,8 @@
+name: odessy_client
+description: Typed desktop transport for the existing Odessy session API.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+dev_dependencies:
+  test: ^1.25.8

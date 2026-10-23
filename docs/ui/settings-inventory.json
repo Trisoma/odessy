@@ -1,0 +1,1393 @@
+{
+  "version": 1,
+  "settings": [
+    {
+      "name": "ODESSY_ACL_TEST_PATH",
+      "kind": "path",
+      "summary": "the installer's access probe path",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_API_TOKEN",
+      "kind": "secret",
+      "summary": "the API server's bearer token",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_AUDIO_INPUT_DEVICE",
+      "kind": "text",
+      "summary": "the recording device",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_AUDIO_OUTPUT_DEVICE",
+      "kind": "text",
+      "summary": "the playback device",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_AUDIO_PLAYER",
+      "kind": "text",
+      "summary": "the playback command",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_AUDIO_RECORDER",
+      "kind": "text",
+      "summary": "the recording command",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_AUDIT_FILE",
+      "kind": "path",
+      "summary": "the third-party call audit log (empty turns it off)",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_AUTO_CAPABLE_BACKEND",
+      "kind": "enum",
+      "summary": "the backend used for capable requests",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [
+          "lfm",
+          "ollama",
+          "llama_cpp"
+        ],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_AUTO_CAPABLE_MODEL",
+      "kind": "model",
+      "summary": "the model used for capable requests",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_AUTO_CLOUD_BACKEND",
+      "kind": "cloud_backend",
+      "summary": "the cloud backend auto routing may fall back to",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_AUTO_CLOUD_FALLBACK",
+      "kind": "flag",
+      "summary": "on or off",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [
+          "on",
+          "off"
+        ],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_AUTO_FAST_MODEL",
+      "kind": "model",
+      "summary": "the model used for fast text-only requests",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_API_KEY",
+      "kind": "secret",
+      "summary": "the API key for a custom endpoint",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_BASE_URL",
+      "kind": "url",
+      "summary": "the provider's API endpoint",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_BUDGET_COST",
+      "kind": "float",
+      "summary": "the per-run cost ceiling",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 0,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_BUDGET_TOKENS",
+      "kind": "int",
+      "summary": "the per-run token ceiling",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 0,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_CLAUDE_MODEL",
+      "kind": "model",
+      "summary": "the model used when failing over to claude",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_CUSTOM_MODEL",
+      "kind": "model",
+      "summary": "the model used when failing over to custom",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_DEEPSEEK_MODEL",
+      "kind": "model",
+      "summary": "the model used when failing over to deepseek",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_EFFORT",
+      "kind": "enum",
+      "summary": "the provider's effort setting",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max"
+        ],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_FAILOVER",
+      "kind": "backend_list",
+      "summary": "comma-separated backends tried after the selected one",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_FAILOVER_COOLDOWN",
+      "kind": "float",
+      "summary": "seconds a failed backend is skipped",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 0,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_FALLBACKS",
+      "kind": "flag",
+      "summary": "on or off",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_KIMI_MODEL",
+      "kind": "model",
+      "summary": "the model used when failing over to kimi",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_MAX_RESULT_CHARS",
+      "kind": "int",
+      "summary": "characters kept from one tool result",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 1,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_MAX_TOKENS",
+      "kind": "int",
+      "summary": "Claude's output ceiling",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 1,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_MODEL",
+      "kind": "model",
+      "summary": "the provider's model name",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_OPENAI_MAX_TOKENS",
+      "kind": "int",
+      "summary": "the OpenAI-compatible output ceiling",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 1,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_OPENAI_MODEL",
+      "kind": "model",
+      "summary": "the model used when failing over to openai",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_PRICE_CACHED_INPUT",
+      "kind": "float",
+      "summary": "cached-input price per million tokens",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 0,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_PRICE_CURRENCY",
+      "kind": "text",
+      "summary": "the currency label for prices",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_PRICE_INPUT",
+      "kind": "float",
+      "summary": "input price per million tokens",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 0,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_PRICE_OUTPUT",
+      "kind": "float",
+      "summary": "output price per million tokens",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 0,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_PROMPT_CACHE",
+      "kind": "flag",
+      "summary": "on or off",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_QWEN_MODEL",
+      "kind": "model",
+      "summary": "the model used when failing over to qwen",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_RETRIES",
+      "kind": "int",
+      "summary": "retries after a transient failure",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 0,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_TIMEOUT",
+      "kind": "int",
+      "summary": "seconds per cloud request",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 1,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_COLLABORATION_FILE",
+      "kind": "file",
+      "summary": "the model collaboration file",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_COMMANDS_FILE",
+      "kind": "file",
+      "summary": "the approved commands file",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CONFIG_FILE",
+      "kind": "file",
+      "summary": "the one config file to load",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_DEBUG_HTTP",
+      "kind": "enum",
+      "summary": "set to 1 to keep httpx logs",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [
+          "0",
+          "1"
+        ],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_DEBUG_MODEL_REPAIR",
+      "kind": "enum",
+      "summary": "set to 1 to trace model repairs",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [
+          "0",
+          "1"
+        ],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_DEPLOYMENT",
+      "kind": "enum",
+      "summary": "single or split",
+      "source": "runtime environment",
+      "screen": "Devices and deployment",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [
+          "single",
+          "split"
+        ],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_EGRESS_FILE",
+      "kind": "path",
+      "summary": "the cloud egress log (empty turns it off)",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_INTERACTION_MAX_QUESTIONS",
+      "kind": "int",
+      "summary": "questions allowed per turn",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 1,
+        "maximum": 20
+      }
+    },
+    {
+      "name": "ODESSY_INTERACTION_PROMPT_TIMEOUT",
+      "kind": "float",
+      "summary": "seconds a question may stay unanswered",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 0,
+        "maximum": 120
+      }
+    },
+    {
+      "name": "ODESSY_INTERACTION_RESPONSE_TIMEOUT",
+      "kind": "float",
+      "summary": "seconds to wait for an answer",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 0,
+        "maximum": 300
+      }
+    },
+    {
+      "name": "ODESSY_INTERACTION_STRONG_RESPONSE_TIMEOUT",
+      "kind": "float",
+      "summary": "seconds to wait for an approval",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 0,
+        "maximum": 600
+      }
+    },
+    {
+      "name": "ODESSY_ISOLATION",
+      "kind": "enum",
+      "summary": "how strict this deployment is about isolation",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [
+          "required",
+          "preferred",
+          "not-required"
+        ],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_KOKORO_MODEL",
+      "kind": "file",
+      "summary": "the Kokoro ONNX model",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_KOKORO_PYTORCH_MODEL_DIR",
+      "kind": "dir",
+      "summary": "the Kokoro PyTorch model directory",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_KOKORO_VOICES",
+      "kind": "file",
+      "summary": "the Kokoro voices file",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_LAPTOP_OS",
+      "kind": "enum",
+      "summary": "the operating system of the remote laptop",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [
+          "windows",
+          "linux",
+          "macos",
+          "win32",
+          "darwin",
+          "mac",
+          "osx"
+        ],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_LOCAL_OS",
+      "kind": "enum",
+      "summary": "the operating system model-facing commands run on",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [
+          "windows",
+          "linux",
+          "macos",
+          "win32",
+          "darwin",
+          "mac",
+          "osx"
+        ],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_MAX_MODEL_CALLS",
+      "kind": "int",
+      "summary": "model calls allowed per turn",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 1,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_MCP_HOST",
+      "kind": "text",
+      "summary": "the tool server's bind address",
+      "source": "runtime environment",
+      "screen": "Devices and deployment",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_MCP_PORT",
+      "kind": "int",
+      "summary": "the tool server's port",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 1,
+        "maximum": 65535
+      }
+    },
+    {
+      "name": "ODESSY_MCP_SERVER_URLS",
+      "kind": "url_list",
+      "summary": "comma-separated remote MCP endpoints",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_MCP_TRANSPORT",
+      "kind": "enum",
+      "summary": "http or stdio",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [
+          "http",
+          "stdio"
+        ],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_MODEL_BACKEND",
+      "kind": "backend",
+      "summary": "the selected model backend",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_MODEL_CALL_TIMEOUT",
+      "kind": "int",
+      "summary": "seconds allowed for one streamed call",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 1,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_MODEL_ENDPOINT",
+      "kind": "url",
+      "summary": "the Ollama endpoint for the lfm backend",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_MODEL_NAME",
+      "kind": "model",
+      "summary": "the model to request from Ollama",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_MODEL_NUM_CTX",
+      "kind": "int",
+      "summary": "the context window requested from Ollama",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 1,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_MODEL_NUM_PREDICT",
+      "kind": "int",
+      "summary": "generated tokens allowed per call",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 1,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_MODEL_PROGRESS_TIMEOUT",
+      "kind": "int",
+      "summary": "seconds of silence allowed between chunks",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 1,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_OLLAMA_MODEL",
+      "kind": "model",
+      "summary": "the model the ollama backend requests",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_OLLAMA_URL",
+      "kind": "url",
+      "summary": "the Ollama endpoint for the ollama backend",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_ONNX_CACHE_DIR",
+      "kind": "path",
+      "summary": "the ONNX Runtime cache directory",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_ONNX_PROVIDER",
+      "kind": "enum",
+      "summary": "the ONNX Runtime provider",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [
+          "auto",
+          "tensorrt",
+          "cuda",
+          "cpu"
+        ],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_PROBE_READONLY",
+      "kind": "text",
+      "summary": "a probe marker, not a setting",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_PROBE_WRITABLE",
+      "kind": "text",
+      "summary": "a probe marker, not a setting",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_SERVERS_FILE",
+      "kind": "file",
+      "summary": "the third-party MCP servers file",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_SHORTCUT_JSON",
+      "kind": "text",
+      "summary": "the installer's shortcut payload",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_TOOL_CONCURRENCY",
+      "kind": "int",
+      "summary": "tools allowed to overlap, from 1 to 8",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 1,
+        "maximum": 8
+      }
+    },
+    {
+      "name": "ODESSY_TOOL_SERVER_URL",
+      "kind": "url",
+      "summary": "the laptop tool server's MCP endpoint",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_VOICE_BLANK_RETRIES",
+      "kind": "int",
+      "summary": "extra recordings after an unusable transcript",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 0,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_VOICE_FOLLOWUP_SECONDS",
+      "kind": "int",
+      "summary": "seconds a follow-up window stays open",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 1,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_VOICE_INTERACTION",
+      "kind": "enum",
+      "summary": "wake or conversation",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [
+          "wake",
+          "conversation"
+        ],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_VOICE_MAX_UTTERANCE_SECONDS",
+      "kind": "int",
+      "summary": "the ceiling on one utterance",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 1,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_VOICE_SECONDS",
+      "kind": "int",
+      "summary": "seconds recorded per bounded turn",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 1,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_VOICE_SETTLING_MS",
+      "kind": "int",
+      "summary": "milliseconds of silence that end an utterance",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 0,
+        "maximum": 10000
+      }
+    },
+    {
+      "name": "ODESSY_VOICE_STREAM_SPEECH",
+      "kind": "flag",
+      "summary": "on or off",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_VOICE_TMPDIR",
+      "kind": "path",
+      "summary": "where recordings are written",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_WAKE_MODEL",
+      "kind": "file",
+      "summary": "the openWakeWord model",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_WAKE_THRESHOLD",
+      "kind": "float",
+      "summary": "the wake-word score threshold",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 0,
+        "maximum": 1
+      }
+    },
+    {
+      "name": "ODESSY_WHISPER_BIN",
+      "kind": "file",
+      "summary": "the whisper.cpp executable",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_WHISPER_MODEL",
+      "kind": "file",
+      "summary": "the Whisper model file",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_WORKSPACE_ROOT",
+      "kind": "path",
+      "summary": "the tool server's workspace",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    }
+  ]
+}

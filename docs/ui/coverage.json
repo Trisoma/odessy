@@ -1,0 +1,16 @@
+{
+  "release": "0.5.0-preview",
+  "features": {
+    "conversation": "live",
+    "model_selection": "live-next-turn",
+    "stop": "live",
+    "approvals": "live-broker",
+    "clarification": "live-broker",
+    "collaboration_limit": "live-new-sessions",
+    "device_management": "unavailable-api-pending",
+    "desktop_voice": "unavailable-api-pending",
+    "provider_editing": "not-in-preview",
+    "usage_jobs": "not-in-preview",
+    "persistent_credentials": "not-in-preview"
+  }
+}
