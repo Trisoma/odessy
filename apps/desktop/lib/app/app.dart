@@ -8,6 +8,9 @@ import 'session_controller.dart';
 import 'theme.dart';
 import 'connections/connection_dialog.dart';
 import '../widgets/glass_surface.dart';
+import '../features/setup/controllers/setup_controller.dart';
+import '../features/setup/presentation/setup_wizard.dart';
+import 'setup/local_setup_backend.dart';
 
 class OdessyApp extends StatefulWidget {
   const OdessyApp({super.key, this.api});
@@ -18,6 +21,7 @@ class OdessyApp extends StatefulWidget {
 
 class _OdessyAppState extends State<OdessyApp> {
   late final DesktopSession controller;
+  late final SetupController setup;
   final CredentialStore credentials = MemoryCredentialStore();
   late final AppLifecycleListener lifecycle;
   ThemeMode mode = ThemeMode.dark;
@@ -26,8 +30,10 @@ class _OdessyAppState extends State<OdessyApp> {
   void initState() {
     super.initState();
     controller = DesktopSession(widget.api ?? DemoApi());
+    setup = SetupController(LocalSetupBackend());
     lifecycle = AppLifecycleListener(onExitRequested: () async {
       await controller.shutdown();
+      await setup.shutdown();
       return AppExitResponse.exit;
     });
     controller.start();
@@ -37,6 +43,7 @@ class _OdessyAppState extends State<OdessyApp> {
   void dispose() {
     lifecycle.dispose();
     controller.dispose();
+    setup.dispose();
     super.dispose();
   }
 
@@ -109,6 +116,7 @@ class _OdessyAppState extends State<OdessyApp> {
                               ]),
                         Expanded(
                             child: switch (page) {
+                          'Setup' => SetupWizardPage(controller: setup),
                           'Devices' =>
                             DevicePage(device: device, controller: controller),
                           'Settings' => SettingsPage(
@@ -187,6 +195,12 @@ class _OdessyAppState extends State<OdessyApp> {
                 icon: const Icon(Icons.add, size: 16),
                 label: const Text('Pair a device')),
             const Spacer(),
+            _nav(context, 'Set up this computer', Icons.build_outlined,
+                page == 'Setup', () {
+              if (controller.session?.running != true) {
+                setState(() => page = 'Setup');
+              }
+            }),
             const Divider(),
             const SizedBox(height: 10),
             _nav(context, 'Settings', Icons.tune, page == 'Settings',

@@ -1,0 +1,102 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'package:odessy_client/odessy_client.dart';
+
+/// Launches only the configured Python interpreter and fixed setup module.
+class LocalSetupBackend implements SetupBackend {
+  LocalSetupBackend(
+      {this.python = const String.fromEnvironment('ODESSY_SETUP_PYTHON',
+          defaultValue: 'python'),
+      this.sourceRoot = const String.fromEnvironment('ODESSY_SETUP_ROOT'),
+      this.timeout = const Duration(seconds: 30)});
+  final String python, sourceRoot;
+  final Duration timeout;
+  Process? _process;
+  Completer<void>? _settled;
+  bool _closed = false;
+  int _epoch = 0;
+
+  Future<String> _read(Stream<List<int>> stream, int limit) async {
+    final bytes = <int>[];
+    await for (final chunk in stream) {
+      if (bytes.length + chunk.length > limit) {
+        throw const FormatException('Setup output exceeds its limit.');
+      }
+      bytes.addAll(chunk);
+    }
+    return utf8.decode(bytes);
+  }
+
+  @override
+  Future<SetupReply> execute(SetupRequest request) async {
+    if (_closed || _settled != null) {
+      throw StateError('Setup helper is unavailable or busy.');
+    }
+    final payload = utf8.encode('${jsonEncode(request.toJson())}\n');
+    if (payload.length > 65536) {
+      throw const FormatException('Setup request exceeds 64 KiB.');
+    }
+    final settled = Completer<void>();
+    _settled = settled;
+    final epoch = ++_epoch;
+    Process? process;
+    try {
+      process = await Process.start(python, ['-m', 'odessy.setup.bridge'],
+          workingDirectory: sourceRoot.isEmpty ? null : sourceRoot,
+          environment: {
+            'PYTHONUNBUFFERED': '1',
+            if (sourceRoot.isNotEmpty)
+              'PYTHONPATH': '$sourceRoot${Platform.pathSeparator}src'
+          },
+          runInShell: false);
+      _process = process;
+      if (_closed || epoch != _epoch) throw const SetupCancelled();
+      final stdout = _read(process.stdout, 4 * 1024 * 1024);
+      final stderr = _read(process.stderr, 65536);
+      process.stdin.add(payload);
+      await process.stdin.close();
+      final results = await Future.wait<Object>(
+              [stdout, stderr, process.exitCode],
+              eagerError: true)
+          .timeout(timeout);
+      if (_closed || epoch != _epoch) throw const SetupCancelled();
+      final value = jsonDecode(results[0] as String);
+      if (value is! Json) {
+        throw const FormatException('Invalid setup response.');
+      }
+      final reply = SetupReply.fromJson(value, request.id);
+      if ((results[2] != 0) && reply.ok) {
+        throw StateError('Setup helper failed.');
+      }
+      return reply;
+    } finally {
+      if (process != null) {
+        process.kill();
+        try {
+          await process.exitCode.timeout(const Duration(seconds: 2));
+        } on TimeoutException {
+          process.kill(ProcessSignal.sigkill);
+          await process.exitCode;
+        }
+      }
+      if (identical(_process, process)) _process = null;
+      if (identical(_settled, settled)) _settled = null;
+      if (!settled.isCompleted) settled.complete();
+    }
+  }
+
+  @override
+  Future<void> cancel() async {
+    ++_epoch;
+    _process?.kill();
+    final pending = _settled;
+    if (pending != null) await pending.future;
+  }
+
+  @override
+  Future<void> close() async {
+    _closed = true;
+    await cancel();
+  }
+}

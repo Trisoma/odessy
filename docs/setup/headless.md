@@ -127,9 +127,10 @@ not implemented. Validation/export failures return 2. Argparse errors also exit 
 Core modules are in `src/odessy/setup/`: contracts, pure planning, bounded
 discovery, create-only persistence, verification and the thin CLI. No imports
 from the root installer tree, Tk or Flutter are required. These block-1 Python
-functions are synchronous; block 2 must run discovery/verification off the GUI
-event loop through its owned bridge. A private stdio server, job cancellation,
-resumable installation and native services are not implemented by this CLI.
+functions are synchronous. The Flutter wizard now runs them off the GUI event
+loop through an owned, one-request stdio helper with cancellation and read-only
+save recovery. See [the wizard guide](wizard.md). Resumable installation and
+native services are not implemented; recovery only inspects configuration exports.
 
 Reuse existing authorization and doctor checks for future integration, but avoid
 running the entire doctor suite on every screen: some existing checks start or

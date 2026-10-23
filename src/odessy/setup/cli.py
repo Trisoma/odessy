@@ -36,6 +36,10 @@ def _load(path: str) -> SetupSelection:
 
 
 def main(argv: list[str] | None = None, *, input_stream=None, output_stream=None, error_stream=None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ['manage']:
+        from .manage import main as manage_main
+        return manage_main(arguments[1:])
     parser = argparse.ArgumentParser(prog='odessy setup', description='Configure existing components without installing services or downloading models.')
     parser.add_argument('--role', choices=ROLES)
     parser.add_argument('--config', help='Validated selection JSON or a previous setup export.')
