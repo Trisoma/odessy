@@ -100,11 +100,12 @@ def format_interaction(entry: dict) -> str:
 def answer_interaction(broker, entry: dict, text: str, *, stop_turn=None) -> str:
     """Validate a reply for this exact request; never interpret it as a new turn."""
     from odessy.interaction.broker import InteractionError
+    from odessy.interaction.phrases import DENY_PHRASES, is_cancel, normalize_answer
     text = text.strip()
-    answer = text.casefold()
+    answer = normalize_answer(text)
     if not broker.is_pending(entry['id']):
         return 'stale'
-    if answer in ('stop', 'cancel'):
+    if is_cancel(text):
         broker.cancel_pending('stopped from terminal')
         from odessy.voice.interaction import schedule_stop
         schedule_stop(stop_turn)
@@ -114,7 +115,7 @@ def answer_interaction(broker, entry: dict, text: str, *, stop_turn=None) -> str
             if text and (entry.get('allow_free_text', True) or text in entry.get('choices', ())):
                 broker.resolve_question(entry['id'], text, channel='terminal')
                 return 'resolved'
-        elif answer in ('approve this action', 'deny', 'no', 'reject'):
+        elif answer == 'approve this action' or answer in DENY_PHRASES:
             broker.resolve_approval(entry['id'], answer == 'approve this action', channel='terminal')
             return 'resolved'
     except InteractionError as error:

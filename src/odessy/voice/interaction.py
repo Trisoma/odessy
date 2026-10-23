@@ -5,6 +5,7 @@ import re
 import asyncio
 import inspect
 import json
+from odessy.interaction.phrases import DENY_PHRASES, normalize_answer
 
 _stop_tasks = set()
 
@@ -26,10 +27,6 @@ def schedule_stop(callback) -> None:
 def interaction_details(entry: dict) -> str:
     return '\n'.join(name + ': ' + json.dumps(entry.get(name), sort_keys=True, ensure_ascii=False)
                      for name in ('operation', 'host', 'arguments', 'scopes', 'allowed_channels'))
-
-
-def normalize_answer(text: str) -> str:
-    return ' '.join(re.findall(r"[\w']+", text.casefold()))
 
 
 def voice_allowed(entry: dict) -> bool:
@@ -65,7 +62,7 @@ def resolve_spoken_answer(entry: dict, broker, text: str) -> bool:
         if answer == 'approve this action':
             broker.resolve_approval(entry['id'], True, channel='voice')
             return True
-        if answer in ('deny', 'no', 'reject'):
+        if answer in DENY_PHRASES:
             broker.resolve_approval(entry['id'], False, channel='voice')
             return True
         return False

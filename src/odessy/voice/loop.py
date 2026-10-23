@@ -77,7 +77,7 @@ class VoiceLoop:
             raise
 
     async def handle_interaction(self, entry: dict) -> None:
-        from odessy.voice.interaction import interaction_prompt, resolve_spoken_answer, normalize_answer, voice_allowed
+        from odessy.voice.interaction import interaction_prompt, resolve_spoken_answer, voice_allowed
 
         broker = self.interactions
         if broker is None:
@@ -109,7 +109,8 @@ class VoiceLoop:
                 result = await self._blocking(self.stt.transcribe, reply_audio)
                 if result.status not in ('ok', 'empty'):
                     continue
-                if normalize_answer(result.text) in ('stop', 'cancel', 'never mind', 'nevermind'):
+                from odessy.interaction.phrases import is_cancel
+                if is_cancel(result.text):
                     broker.cancel_pending('stopped by voice')
                     from odessy.voice.interaction import schedule_stop
                     schedule_stop(self.stop_turn)

@@ -34,6 +34,80 @@ def test_voice_acceptance_is_exact_and_medium_only():
     assert not resolve_spoken_answer(high,b,'approve this action')
     assert b.pending
 
+@pytest.mark.parametrize('text', ['I deny.', 'Don’t do that!', "don't do that", 'No, thanks.', 'Please reject this.'])
+def test_natural_denial_is_not_approval(text):
+    b = Broker()
+    assert resolve_spoken_answer(entry(), b, text)
+    assert b.answers == [('a', False, 'voice')]
+
+@pytest.mark.parametrize('text', ["don't approve this action", "don't deny", "don't stop", 'sounds good', 'yes', 'please approve this action'])
+def test_ambiguous_or_negated_answers_never_authorize(text):
+    b = Broker()
+    assert not resolve_spoken_answer(entry(), b, text)
+    assert b.pending and not b.answers
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('text', ['Stop this!', 'Cancel that.', 'Please stop.', 'Never mind.'])
+async def test_natural_stop_cancels_pending_wake_turn(text):
+    from test_wake_session import Harness
+    from dataclasses import replace
+    h = Harness([]); session = h.build()
+    session.options = replace(session.options, settling_ms=0)
+    b = Broker(); task = asyncio.create_task(session.handle_interaction(entry(), b))
+    await asyncio.sleep(0); await asyncio.sleep(0)
+    try:
+        await session._submit(text, session._turn_id)
+        assert session._stop.is_set() and not b.pending
+        assert not h.turns
+        await task
+    finally:
+        if not task.done():
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError): await task
+
+@pytest.mark.parametrize('text,expected', [('I deny.', 'resolved'), ('Stop this!', 'stopped'), ("Don't stop.", 'invalid'), ('Sounds good.', 'invalid')])
+def test_typed_interaction_uses_safe_whole_phrases(text, expected):
+    from odessy.interaction.terminal import answer_interaction
+    b = Broker()
+    assert answer_interaction(b, entry(), text) == expected
+    assert not any(value for _, value, _ in b.answers)
+    if expected == 'invalid':
+        assert b.pending
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('text', ["Don't stop.", "Don't cancel that.", 'Do not stop.'])
+async def test_negated_stop_does_not_cancel_wake_interaction(text):
+    from test_wake_session import Harness
+    from dataclasses import replace
+    h = Harness([]); session = h.build()
+    session.options = replace(session.options, settling_ms=0)
+    b = Broker(); task = asyncio.create_task(session.handle_interaction(entry(), b))
+    await asyncio.sleep(0); await asyncio.sleep(0)
+    try:
+        await session._submit(text, session._turn_id)
+        assert not session._stop.is_set() and b.pending and not b.answers
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError): await task
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('text', ['Stop this!', 'Cancel that.'])
+async def test_one_shot_natural_stop(tmp_path, text):
+    from types import SimpleNamespace
+    from odessy.voice.loop import VoiceLoop
+    class Audio:
+        def record(self, path, seconds): path.touch()
+        def play(self, path): pass
+    class STT:
+        def transcribe(self, path): return SimpleNamespace(status='ok', text=text)
+    class TTS:
+        def synthesize(self, text, path): path.touch(); return SimpleNamespace(status='ok')
+    b = Broker(); stopped = []
+    voice = VoiceLoop(None, Audio(), STT(), TTS(), tmp_path, interactions=b,
+                      settling_ms=0, stop_turn=lambda: stopped.append(True))
+    await asyncio.wait_for(voice.handle_interaction(entry()), 2)
+    assert not b.pending and not b.answers and stopped == [True]
+
 @pytest.mark.anyio
 async def test_terminal_non_tty_is_explicitly_unavailable():
     with pytest.raises(TerminalUnavailable):

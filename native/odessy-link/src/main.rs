@@ -291,18 +291,35 @@ pub(crate) fn required<'a>(
 pub(crate) fn parse(
     arguments: &[String],
     allowed: &[&str],
-) -> Result<std::collections::BTreeMap<String, String>, Failure> {    let mut options = std::collections::BTreeMap::new();
+) -> Result<std::collections::BTreeMap<String, String>, Failure> {
+    parse_with_switches(arguments, allowed, &[])
+}
+
+pub(crate) fn parse_with_switches(
+    arguments: &[String],
+    allowed: &[&str],
+    switches: &[&str],
+) -> Result<std::collections::BTreeMap<String, String>, Failure> {
+    let mut options = std::collections::BTreeMap::new();
     let mut index = 0;
     while index < arguments.len() {
         let name = &arguments[index];
         if !name.starts_with("--") {
             return Err(Failure::Usage(format!("unexpected argument: {name}")));
         }
+        if switches.contains(&name.as_str()) {
+            if options.insert(name.clone(), String::new()).is_some() {
+                return Err(Failure::Usage(format!("{name} was given more than once")));
+            }
+            index += 1;
+            continue;
+        }
         if !allowed.contains(&name.as_str()) {
             return Err(Failure::Usage(format!("unsupported option: {name}")));
         }
         let value = arguments
             .get(index + 1)
+            .filter(|value| !value.starts_with("--"))
             .ok_or_else(|| Failure::Usage(format!("{name} requires a value")))?;
         if options.insert(name.clone(), value.clone()).is_some() {
             return Err(Failure::Usage(format!("{name} was given more than once")));
@@ -310,6 +327,46 @@ pub(crate) fn parse(
         index += 2;
     }
     Ok(options)
+}
+
+#[cfg(test)]
+mod cli_switch_tests {
+    #[test]
+    fn switches_preserve_values_and_reject_invalid_input() {
+        for arguments in [
+            vec!["--discover", "--peer", "laptop"],
+            vec!["--peer", "laptop", "--discover"],
+        ] {
+            let arguments: Vec<String> = arguments.into_iter().map(String::from).collect();
+            let options = crate::parse_with_switches(&arguments, &["--peer"], &["--discover"])
+                .unwrap_or_else(|_| panic!("valid switch rejected"));
+            assert_eq!(options.get("--peer").map(String::as_str), Some("laptop"));
+            assert!(options.contains_key("--discover"));
+        }
+        for arguments in [
+            vec!["--discover", "--discover"],
+            vec!["--discover", "true"],
+            vec!["--peer", "--discover"],
+            vec!["--unknown"],
+            vec!["--peer", "one", "--peer", "two"],
+        ] {
+            let arguments: Vec<String> = arguments.into_iter().map(String::from).collect();
+            assert!(crate::parse_with_switches(&arguments, &["--peer"], &["--discover"]).is_err());
+        }
+        assert!(crate::parse(&["--discover".into()], &[]).is_err());
+    }
+
+    #[test]
+    fn advertise_is_a_bare_serve_switch() {
+        let error = crate::commands::serve(&["--advertise".into()]).unwrap_err();
+        assert!(matches!(error, crate::Failure::Usage(message) if message == "missing --listen"));
+    }
+
+    #[test]
+    fn discover_is_a_bare_connect_switch() {
+        let error = crate::commands::connect(&["--discover".into()]).unwrap_err();
+        assert!(matches!(error, crate::Failure::Usage(message) if message == "missing --peer"));
+    }
 }
 
 fn no_extra(arguments: &[String]) -> Result<(), Failure> {

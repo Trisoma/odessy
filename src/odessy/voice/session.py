@@ -66,7 +66,7 @@ SessionState = Literal[
 Interaction = Literal["wake", "conversation"]
 
 #: Exact phrases handled locally after the cue. Normalised to lowercase words.
-CANCEL_PHRASES = frozenset({"stop", "cancel", "never mind", "nevermind"})
+from odessy.interaction.phrases import CANCEL_PHRASES, is_cancel
 
 #: What a stopped turn is told, and what the user is told back. The wording matters:
 #: a cancellation does not undo an action that already ran.
@@ -778,7 +778,7 @@ class VoiceSession:
 
 
 def _is_cancel(text: str) -> bool:
-    return " ".join(text.lower().split()).rstrip(".!?") in CANCEL_PHRASES
+    return is_cancel(text)
 
 
 def _frame_ms(frame_bytes: int) -> int:

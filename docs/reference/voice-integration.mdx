@@ -32,6 +32,13 @@ qualification remain pending, separate opt-in checks.
 | High-risk action or any sandbox expansion | Keyboard or authenticated UI only |
 | Denied action | None; confirmation cannot override denial |
 
+Denial accepts whole-response variants including **I deny**, **don't do that**,
+**no thanks**, and **please reject this**. Cancellation accepts **stop this**,
+**cancel that**, and **please stop**, alongside stop/cancel/never mind. These
+deterministic phrases are shared by wake, one-shot voice, and typed pending replies;
+they are not model-inferred permissions. Negations such as **don't stop** do not
+cancel. Clarification remains free text or an explicitly restricted choice.
+
 For eligible approval, say **approve this action** after the cue. Bare yes,
 spoken session grants and spoken approve-all are unsupported. The phrase is
 shown on screen but never spoken in a pending prompt. Voice indicates intent;

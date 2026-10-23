@@ -34,9 +34,11 @@ fn relay_error_text(context: &str, error: relay::RelayError) -> String {
 }
 
 pub fn serve(arguments: &[String]) -> Result<(), Failure> {
-    let options = crate::parse(arguments, &["--listen", "--workspace", "--node-server"])?;
+    let options = crate::parse_with_switches(
+        arguments, &["--listen", "--workspace", "--node-server"], &["--advertise"],
+    )?;
     // `--advertise` is a bare switch: opt-in address discovery, never trust.
-    let advertise = arguments.iter().any(|argument| argument == "--advertise");
+    let advertise = options.contains_key("--advertise");
     let listen = crate::required(&options, "--listen")?.to_string();
     let workspace = PathBuf::from(crate::required(&options, "--workspace")?);
     let node_server = PathBuf::from(crate::required(&options, "--node-server")?);
@@ -287,9 +289,9 @@ async fn handle_connection(
 }
 
 pub fn connect(arguments: &[String]) -> Result<(), Failure> {
-    let options = crate::parse(arguments, &["--peer", "--address"])?;
+    let options = crate::parse_with_switches(arguments, &["--peer", "--address"], &["--discover"])?;
     // `--discover` is a bare switch: use discovery only when no address is saved.
-    let discover = arguments.iter().any(|argument| argument == "--discover");
+    let discover = options.contains_key("--discover");
     let alias = crate::required(&options, "--peer")?;
     let registry = open_registry()?;
     let peer = registry
