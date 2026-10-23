@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import subprocess
 
 from .configuration import consent_id, destination, environment_text, export_environment, export_selection
 from .contracts import DiscoveryRequest, SetupSelection, fields, public
@@ -15,8 +16,11 @@ MAX_REQUEST = 65536
 
 
 def execute(request: dict) -> dict:
-    fields(request, {'id', 'operation', 'selection', 'output', 'format', 'confirm_plan', 'endpoint'}, 'request')
+    fields(request, {'id', 'operation', 'selection', 'output', 'format', 'confirm_plan', 'endpoint', 'parameters'}, 'request')
     operation = request.get('operation')
+    if operation in ('manage','pair'):
+        from .native_bridge import manage,pair
+        return (manage if operation=='manage' else pair)(request.get('parameters'))
     if operation not in ('review', 'discover', 'verify', 'save', 'recover'):
         raise ValueError('unsupported setup operation')
     selection = SetupSelection.from_dict(request.get('selection'))
@@ -77,7 +81,7 @@ def run(stdin=None, stdout=None) -> int:
             raise ValueError('valid controller request id required')
         identifier = request['id']
         response = {'id': identifier, 'status': 'ok', 'result': execute(request)}
-    except (ValueError, TypeError, OSError, RecursionError):
+    except (ValueError, TypeError, OSError, RecursionError, RuntimeError, KeyError, subprocess.SubprocessError):
         response = {'id': identifier, 'status': 'error', 'error': 'Setup failed. Check selection, paths, existing files and review confirmation. No existing configuration was replaced.'}
     stdout.write(json.dumps(response).encode('utf-8')+b'\n')
     stdout.flush()

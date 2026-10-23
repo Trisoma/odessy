@@ -15,9 +15,10 @@ from .services import ServiceManager, ServiceSpec
 
 def main(argv=None):
     parser=argparse.ArgumentParser(prog='odessy setup manage')
-    parser.add_argument('operation',choices=('plan','install','inspect','verify','repair','rollback','uninstall','service-plan','service-install','start','stop','status','service-remove'))
+    parser.add_argument('operation',choices=('plan','repair-plan','install','inspect','verify','repair','rollback','uninstall','service-plan','service-install','start','stop','status','service-remove'))
     parser.add_argument('--root',required=True)
     parser.add_argument('--bundle')
+    parser.add_argument('--python-runtime')
     parser.add_argument('--config')
     parser.add_argument('--role',choices=('combined','coordinator','execution'))
     parser.add_argument('--confirm')
@@ -34,12 +35,14 @@ def main(argv=None):
         for sig in (signal.SIGINT,signal.SIGTERM):
             old[sig]=signal.signal(sig,lambda *_:cancelled.set())
     try:
-        manager=ManagedInstallation(args.root)
+        manager=ManagedInstallation(args.root,runtime_source=args.python_runtime)
         if args.config and args.role: raise ValueError('select config or role, not both')
         selection=_load(args.config) if args.config else SetupSelection(role=args.role) if args.role else None
-        if args.operation in ('plan','install','repair'):
+        if args.operation in ('plan','repair-plan','install','repair'):
             if not args.bundle: raise ValueError('an offline bundle is required')
-            if args.operation=='repair':
+            if args.operation=='repair-plan':
+                result=manager.plan(args.bundle,SetupSelection.from_dict(manager.record()['selection']))
+            elif args.operation=='repair':
                 result=manager.repair(args.bundle,confirm=args.confirm,cancelled=cancelled.is_set)
             else:
                 if selection is None: raise ValueError('explicit selection or role required')

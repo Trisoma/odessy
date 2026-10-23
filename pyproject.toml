@@ -1,7 +1,7 @@
 [project]
 name = "odessy"
-version = "0.3.0"
-description = "Odessy v0.3.0 local command-line agent runtime."
+version = "0.5.0.dev0"
+description = "Odessy agent runtime and role-aware desktop setup."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"

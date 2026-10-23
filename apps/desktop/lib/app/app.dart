@@ -11,6 +11,8 @@ import '../widgets/glass_surface.dart';
 import '../features/setup/controllers/setup_controller.dart';
 import '../features/setup/presentation/setup_wizard.dart';
 import 'setup/local_setup_backend.dart';
+import '../features/setup/controllers/maintenance_controller.dart';
+import '../features/setup/presentation/maintenance_page.dart';
 
 class OdessyApp extends StatefulWidget {
   const OdessyApp({super.key, this.api});
@@ -22,6 +24,7 @@ class OdessyApp extends StatefulWidget {
 class _OdessyAppState extends State<OdessyApp> {
   late final DesktopSession controller;
   late final SetupController setup;
+  late final MaintenanceController maintenance, pairing;
   final CredentialStore credentials = MemoryCredentialStore();
   late final AppLifecycleListener lifecycle;
   ThemeMode mode = ThemeMode.dark;
@@ -31,9 +34,13 @@ class _OdessyAppState extends State<OdessyApp> {
     super.initState();
     controller = DesktopSession(widget.api ?? DemoApi());
     setup = SetupController(LocalSetupBackend());
+    maintenance = MaintenanceController(LocalSetupBackend());
+    pairing = MaintenanceController(LocalSetupBackend());
     lifecycle = AppLifecycleListener(onExitRequested: () async {
       await controller.shutdown();
       await setup.shutdown();
+      await maintenance.shutdown();
+      await pairing.shutdown();
       return AppExitResponse.exit;
     });
     controller.start();
@@ -44,6 +51,8 @@ class _OdessyAppState extends State<OdessyApp> {
     lifecycle.dispose();
     controller.dispose();
     setup.dispose();
+    maintenance.dispose();
+    pairing.dispose();
     super.dispose();
   }
 
@@ -117,6 +126,12 @@ class _OdessyAppState extends State<OdessyApp> {
                         Expanded(
                             child: switch (page) {
                           'Setup' => SetupWizardPage(controller: setup),
+                          'Maintenance' =>
+                            MaintenancePage(controller: maintenance),
+                          'Pairing' => MaintenancePage(
+                              key: const ValueKey('pairing'),
+                              controller: pairing,
+                              pairing: true),
                           'Devices' =>
                             DevicePage(device: device, controller: controller),
                           'Settings' => SettingsPage(
@@ -189,8 +204,7 @@ class _OdessyAppState extends State<OdessyApp> {
             const SizedBox(height: 12),
             TextButton.icon(
                 onPressed: () => setState(() {
-                      page = 'Devices';
-                      device = 'This computer';
+                      page = 'Pairing';
                     }),
                 icon: const Icon(Icons.add, size: 16),
                 label: const Text('Pair a device')),
@@ -199,6 +213,12 @@ class _OdessyAppState extends State<OdessyApp> {
                 page == 'Setup', () {
               if (controller.session?.running != true) {
                 setState(() => page = 'Setup');
+              }
+            }),
+            _nav(context, 'Runtime maintenance', Icons.handyman_outlined,
+                page == 'Maintenance', () {
+              if (controller.session?.running != true) {
+                setState(() => page = 'Maintenance');
               }
             }),
             const Divider(),

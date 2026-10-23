@@ -87,10 +87,11 @@ def run(argv,*,cancelled=lambda:False):
                 process.kill();process.wait()
 
 class ManagedInstallation:
-    def __init__(self,root,*,runner=run):
+    def __init__(self,root,*,runner=run,runtime_source=None):
         self.root=guard(root)
         if self.root==Path(self.root.anchor) or self.root==Path.home(): raise ValueError('choose a dedicated installation directory')
         self.runner=runner
+        self.runtime_source=guard(runtime_source) if runtime_source else None
 
     def record(self):
         data=read_json(self.root/'installation.json')
@@ -150,6 +151,10 @@ class ManagedInstallation:
         if (local.platform,local.architecture)!=(selection.platform,selection.architecture): raise ValueError('bundle must be applied on its selected platform')
         state=self.record() if (self.root/'installation.json').exists() else None
         data={'previous_state':state,'schema_version':1,'root':str(self.root),'bundle':str(bundle),'manifest':manifest,'selection':public(selection),'downloads':[],'service_changes':[]}
+        if self.runtime_source:
+            from .runtime import inventory
+            data['python_runtime']=inventory(self.runtime_source)
+            data['python_runtime_source']=str(self.runtime_source)
         data['plan_id']=hashlib.sha256(json.dumps(data,sort_keys=True,separators=(',',':')).encode()).hexdigest()
         return data
 
@@ -168,7 +173,14 @@ class ManagedInstallation:
             journal={'schema_version':1,'version':version,'status':'preparing','previous':record['active']}
             atomic(self.root/'operation.json',journal)
             try:
-                self.runner([sys.executable,'-m','venv','--copies',str(target)],cancelled=cancelled)
+                python_builder=sys.executable
+                if self.runtime_source:
+                    from .runtime import copy_owned
+                    runtime_key=hashlib.sha256(json.dumps(plan['python_runtime'],sort_keys=True).encode()).hexdigest()[:32]
+                    python_builder=str(copy_owned(self.runtime_source,guard(self.root/'runtimes'/runtime_key),plan['python_runtime']))
+                    record.setdefault('runtimes',{})[runtime_key]=plan['python_runtime']['files']
+                    atomic(self.root/'installation.json',record)
+                self.runner([python_builder,'-m','venv','--copies',str(target)],cancelled=cancelled)
                 python=target/('Scripts/python.exe' if os.name=='nt' else 'bin/python')
                 # Recheck artifacts immediately before pip; no index or dependency resolution.
                 if self.plan(bundle,selection)['manifest']!=plan['manifest']: raise ValueError('bundle changed after review')
@@ -216,6 +228,7 @@ class ManagedInstallation:
             return {'active':version,'service_started':False}
 
     def uninstall(self,*,confirm):
+        if Path(sys.executable).resolve().is_relative_to(self.root): raise ValueError('run uninstall from the external setup bootstrap')
         with self.lock():
             record=self.record()
             if confirm!=record['id']: raise ValueError('confirm exact installation identity')
@@ -227,5 +240,13 @@ class ManagedInstallation:
                     path=guard(base/name)
                     if path.is_file() and digest(path)==sha: path.unlink();removed.append(f'{version}/{name}')
                     elif path.exists(): retained.append(f'{version}/{name}')
+            for runtime_id,files in record.get('runtimes',{}).items():
+                if not re.fullmatch('[a-f0-9]{32}',runtime_id):raise ValueError('invalid runtime ownership identity')
+                for name,sha in files.items():
+                    relative=Path(name)
+                    if relative.is_absolute() or '..' in relative.parts or ':' in name or chr(92) in name or not re.fullmatch('[a-f0-9]{64}',str(sha)):raise ValueError('invalid runtime ownership path')
+                    path=guard(self.root/'runtimes'/runtime_id/name)
+                    if path.is_file() and digest(path)==sha:path.unlink();removed.append('runtimes/'+runtime_id+'/'+name)
+                    elif path.exists():retained.append('runtimes/'+runtime_id+'/'+name)
             record['active']=None;atomic(self.root/'installation.json',record)
             return {'removed':removed,'retained':retained,'models_removed':False,'settings_removed':False}

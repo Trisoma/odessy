@@ -22,7 +22,9 @@ class SetupRequest {
     this.format = 'selection',
     this.confirmPlan = '',
     this.endpoint = '',
-  }) : selection = _freeze(jsonDecode(jsonEncode(selection))) as Json {
+    Json parameters = const {},
+  })  : parameters = _freeze(jsonDecode(jsonEncode(parameters))) as Json,
+        selection = _freeze(jsonDecode(jsonEncode(selection))) as Json {
     if (!RegExp(r'^[a-zA-Z0-9_-]{1,80}$').hasMatch(id) ||
         !{
           'review',
@@ -30,17 +32,20 @@ class SetupRequest {
           'verify',
           'save',
           'recover',
+          'manage',
+          'pair',
         }.contains(operation) ||
         !{'selection', 'env'}.contains(format)) {
       throw const FormatException('Invalid setup request.');
     }
   }
   final String id, operation, output, format, confirmPlan, endpoint;
-  final Json selection;
+  final Json selection, parameters;
   Json toJson() => {
         'id': id,
         'operation': operation,
         'selection': selection,
+        if (parameters.isNotEmpty) 'parameters': parameters,
         if (output.isNotEmpty) 'output': output,
         'format': format,
         if (confirmPlan.isNotEmpty) 'confirm_plan': confirmPlan,

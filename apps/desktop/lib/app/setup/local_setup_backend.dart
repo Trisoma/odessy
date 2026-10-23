@@ -6,10 +6,34 @@ import 'package:odessy_client/odessy_client.dart';
 /// Launches only the configured Python interpreter and fixed setup module.
 class LocalSetupBackend implements SetupBackend {
   LocalSetupBackend(
-      {this.python = const String.fromEnvironment('ODESSY_SETUP_PYTHON',
-          defaultValue: 'python'),
-      this.sourceRoot = const String.fromEnvironment('ODESSY_SETUP_ROOT'),
-      this.timeout = const Duration(seconds: 30)});
+      {String python = const String.fromEnvironment('ODESSY_SETUP_PYTHON'),
+      String sourceRoot = const String.fromEnvironment('ODESSY_SETUP_ROOT'),
+      this.timeout = const Duration(seconds: 30)})
+      : python = python.isNotEmpty ? python : _bundledPython(),
+        sourceRoot = sourceRoot.isNotEmpty ? sourceRoot : _bundledRoot();
+  static String _bundledRoot() {
+    var candidate = File(Platform.resolvedExecutable).parent;
+    for (var depth = 0; depth < 7; depth++) {
+      if (Directory('${candidate.path}${Platform.pathSeparator}bootstrap')
+              .existsSync() &&
+          Directory('${candidate.path}${Platform.pathSeparator}runtime')
+              .existsSync()) {
+        return candidate.path;
+      }
+      if (candidate.parent.path == candidate.path) break;
+      candidate = candidate.parent;
+    }
+    return '';
+  }
+
+  static String _bundledPython() {
+    final root = _bundledRoot();
+    if (root.isEmpty) return 'python';
+    final relative =
+        Platform.isWindows ? 'runtime/python.exe' : 'runtime/bin/python3';
+    return '$root${Platform.pathSeparator}$relative';
+  }
+
   final String python, sourceRoot;
   final Duration timeout;
   Process? _process;
@@ -47,7 +71,8 @@ class LocalSetupBackend implements SetupBackend {
           environment: {
             'PYTHONUNBUFFERED': '1',
             if (sourceRoot.isNotEmpty)
-              'PYTHONPATH': '$sourceRoot${Platform.pathSeparator}src'
+              'PYTHONPATH':
+                  '$sourceRoot${Platform.pathSeparator}${Directory('$sourceRoot${Platform.pathSeparator}bootstrap').existsSync() ? 'bootstrap' : 'src'}'
           },
           runInShell: false);
       _process = process;
@@ -57,9 +82,10 @@ class LocalSetupBackend implements SetupBackend {
       process.stdin.add(payload);
       await process.stdin.close();
       final results = await Future.wait<Object>(
-              [stdout, stderr, process.exitCode],
-              eagerError: true)
-          .timeout(timeout);
+              [stdout, stderr, process.exitCode], eagerError: true)
+          .timeout(request.operation == 'manage'
+              ? const Duration(minutes: 12)
+              : timeout);
       if (_closed || epoch != _epoch) throw const SetupCancelled();
       final value = jsonDecode(results[0] as String);
       if (value is! Json) {
@@ -89,7 +115,15 @@ class LocalSetupBackend implements SetupBackend {
   @override
   Future<void> cancel() async {
     ++_epoch;
-    _process?.kill();
+    final process = _process;
+    if (process != null) {
+      if (Platform.isWindows) {
+        await Process.run(
+            'taskkill.exe', ['/PID', '${process.pid}', '/T', '/F']);
+      } else {
+        process.kill(ProcessSignal.sigterm);
+      }
+    }
     final pending = _settled;
     if (pending != null) await pending.future;
   }
