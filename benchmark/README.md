@@ -96,10 +96,10 @@ Rules any comparison must follow:
    changes which runs can complete at all.
 ```
 
-### Caveat for the ONNX/TTS path until v0.3.0
+### Historical ONNX/TTS measurement caveat
 
-Warm/cold currently distinguishes **OS page-cache warmth, not model warmth**, on
-the ONNX path. `KokoroTTS._synthesize_with_kokoro` previously called
+Before session reuse, warm/cold distinguished **OS page-cache warmth, not model
+warmth** on the ONNX path. `KokoroTTS._synthesize_with_kokoro` previously called
 `build_kokoro` -- constructing a fresh `ort.InferenceSession` -- on every
 `synthesize()`, so a "warm" iteration still reloaded the weights and gained only
 page-cache speed.

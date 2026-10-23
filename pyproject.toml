@@ -7,6 +7,7 @@ license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
   "mcp>=2,<3",
+  "jsonschema>=4",
   "tomli>=2.0.1; python_version < '3.11'",
 ]
 
@@ -18,9 +19,30 @@ odessy = "odessy.cli:main"
 test = [
   "pytest>=8",
   "anyio>=4",
+  "httpx>=0.27,<1",
 ]
 cloud = [
   "anthropic>=1.15",
+]
+ui = [
+  "fastapi>=0.115,<1",
+  "uvicorn>=0.30,<1",
+]
+# Wake-word activation. Optional: importing `odessy.voice` must not require it, so
+# the detector and the VAD import openwakeword lazily and fail with a message that
+# says how to install it. Model weights are NOT covered by this extra and are not
+# Apache-licensed; `odessy voice --setup-wake` fetches them explicitly.
+wake = [
+  "openwakeword>=0.6.0",
+  "numpy>=1.26",
+]
+# The existing voice pipeline's Python dependencies. Declared now because the wake
+# session reuses them, and because a clone could not run `odessy voice` at all while
+# they were undeclared.
+voice = [
+  "kokoro-onnx>=0.4.0",
+  "onnxruntime>=1.17",
+  "numpy>=1.26",
 ]
 
 [tool.pytest.ini_options]

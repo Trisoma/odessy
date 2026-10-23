@@ -1,7 +1,15 @@
 # Odessy: A Voice-Controlled Edge-AI Personal Agent and Device Orchestration Platform
 
-> v0.3.0 is prepared for a developer release. Publication and tagging are pending.
+Third-party runtime and model licenses are listed in the
+[license inventory](docs/reference/third-party-licenses.md) and
+[attribution notices](THIRD-PARTY-NOTICES.md). Odessy's Apache-2.0 license does
+not replace model-specific terms, including the Hey Jarvis weights' noncommercial
+restriction or the default phonemizer stack's GPL licenses.
+
+> v0.3.0 was released privately on October 19, 2026, and is marked as a prerelease.
 > See [release notes](docs/releases/v0.3.0.md) for changes and verification limits.
+> Future feature work belongs to the [v0.4.0 roadmap](docs/releases/v0.4.0.md).
+> The unfinished Windows installation wizard is deferred to [v0.5.0](docs/releases/v0.5.0.md).
 
 Odessy is a local, single-user edge-AI agent runtime. It runs on one computer, or split across a Jetson (model and voice) and a laptop (controlled command execution). An optional cloud model backend can replace the local model; policy, authorization, and confirmation stay local in every configuration. See `docs/reference/cloud-models.mdx`.
 
@@ -16,7 +24,7 @@ Voice command
 
 The model proposes actions. Python Odessy validates and authorizes them. MCP transports them. The model is never the authority.
 
-## Current v0.3.0 development
+## Released v0.3.0 capabilities
 
 - LFM2.5-Thinking 1.2B through Ollama is the default model path.
 - Gemma 3 1B remains available with `--model-backend ollama`.
@@ -27,10 +35,70 @@ The model proposes actions. Python Odessy validates and authorizes them. MCP tra
 - Optional cloud backends support native tool conversations; DeepSeek accepts
   configured reasoning effort and retains returned reasoning content.
 - The agent evaluation suite covers 56 safety, command, tool, multi-step, and hard cases
+  (v0.4.0 development adds 24 third-party server, conversation, and batch cases, and 2 long-context hard cases)
   using recorded execution, with code-provenance diagnostics in run metadata.
 
 > The long-term technical category could be:
 > Embodied Edge-AI Agent for Multimodal Device and Engineering Automation
+
+## v0.4.0 development additions (unreleased)
+
+Extra features beyond the original plan now include model collaboration and the
+session API, mid-task clarification, cloud caching/usage budgets, and cloud
+resilience. PR #23 (`d05e1b8`) merged configured cloud failover, sentence-level cloud
+wake speech and a content-free egress log; PR #24 merged risk-aware voice approval
+and clarification. These remain unreleased; live-provider and hardware acceptance
+are pending. See the [updated roadmap](docs/releases/v0.4.0.md).
+
+Configurable collaboration is merged into `develop` and remains unreleased. It
+adds named cloud/local/coding-agent participants,
+attributed consultations, confirmed jobs, and shared CLI/voice sessions. It is
+off until configured. An optional loopback bearer API and diagnostic client run
+with `python -m odessy serve` (`pip install -e '.[ui]'`). See
+[model collaboration](docs/reference/model-collaboration.mdx) for setup and limits.
+
+Third-party MCP servers are an extra feature beyond the original v0.4.0 roadmap,
+merged through PR #11. Configure HTTP or stdio servers in `servers.toml` to offer
+their namespaced tools under Odessy's validation and authorization path. See
+[external servers](docs/reference/external-servers.mdx) for trust and execution
+boundaries, and the [roadmap](docs/releases/v0.4.0.md) for status and follow-ups.
+This feature is not part of the released v0.3.0 private prerelease.
+
+Opt-in automatic selection is also available in v0.4.0 development with
+`--model-backend auto`: narrow text tasks use a tool-free fast model, while
+uncertain/tool requests use the configured capable model. Cloud fallback is off
+by default. See [model selection](docs/reference/model-selection.mdx); Jetson
+speed and memory benefits have not been established.
+
+Wake listening, confirmation UX (PR #17), automatic model selection (PR #19), and
+batch confirmation follow-ups (PR #18) are merged into `develop` and remain
+unreleased. `python -m odessy voice --listen` uses the integrated wake session.
+October 20 Jetson smoke tests reached transcription, model execution, and speaking;
+full hardware acceptance remains pending. Auto using LFM after spoken `Hi` is an
+unresolved routing observation. Follow
+[Jetson wake testing](docs/jetson-wake-testing.md), including the auxiliary
+openWakeWord model downloads, the integrated VAD correction, and the Q8 profile.
+
+## Python source layout
+
+Implementation modules under `src/odessy/` are grouped by responsibility:
+
+| Package | Responsibility |
+|---|---|
+| `runtime/` | Agent loop, shared message types, repeat guard, and tool deadlines |
+| `models/` | Cloud, Ollama, LFM, and fake model adapters |
+| `tools/` | MCP servers, external tools, tool schemas, and calculator |
+| `authority/` | Policy, workspace boundaries, command bridge, redaction, and output retention |
+| `config/` | Configuration files, deployment selection, and setup diagnostics |
+| `execution/` | Execution contracts, providers, isolation, and escalation |
+| `devices/` | Device descriptors and profiles |
+| `voice/` | Audio input/output, STT, TTS, and voice loop |
+
+`cli.py` and `__main__.py` remain at the package root, so CLI commands and console
+entry points stay the same. New Python code should use the grouped imports, such
+as `from odessy.runtime.agent_loop import OdessyAgent`. Historical imports such as
+`odessy.agent_loop` still resolve through the small aliases in `_compat/`; these
+return the canonical module rather than duplicating classes or module state.
 
 ## Deployment
 
@@ -87,6 +155,12 @@ Voice (`python -m odessy voice`) currently needs Whisper.cpp, Kokoro, and the Li
 
 ## Configuration
 
+Optional authenticated split deployment uses `ODESSY_PAIRED_HOST=<enrolled-alias>`
+and the Rust `odessy-link` transport. Enroll both hosts, then grant the permitted
+workspace on the execution host; see [host pairing](docs/reference/host-pairing.mdx).
+Windows loopback tests pass; Jetson, real-network and Linux/ARM64 qualification
+remain pending. This preserves existing tool policy and confirmation requirements.
+
 Settings are environment variables, read in this order (first wins):
 
 1. the environment;
@@ -97,11 +171,38 @@ Put machine-specific values (model paths, the laptop address) in your own file r
 than editing `config/odessy.env`. `ODESSY_CONFIG_FILE=<path>` loads that one file
 instead of both. `python -m odessy doctor` shows which files it found.
 
+Every `ODESSY_*` setting is declared with the shape its value must have
+(`src/odessy/config/schema.py`), and the values a run will use are checked before it
+starts: a malformed number, an unknown deployment, a bad URL, or a required path that
+does not exist stops the run with the setting named and the fix. A name Odessy does
+not read is reported as a warning with the closest real setting, because a misspelled
+setting that is silently ignored is worse than one that is refused. The voice paths
+are required only by `python -m odessy voice`. `python -m odessy doctor` reports the
+same issues and still starts when the configuration is broken.
+
+Third-party MCP servers are listed in `~/.config/odessy/servers.toml`. Their tools are
+offered as `<server>.<tool>`. Calls require confirmation by default; explicit
+per-tool config may allow or deny them, and trusted read-only annotations may
+allow them under the documented rules. Each call is recorded in an audit log, and
+`python -m odessy doctor` checks the servers. See `docs/reference/external-servers.mdx`.
+
 `ODESSY_MAX_MODEL_CALLS` caps the model calls in one turn, counting corrections and
-follow-up steps: 8 by default for a cloud backend (about 2 s a call), 4 for a local
-one (about 30 s a call on the Jetson).
+follow-up steps. With a cloud backend (about 2 s a call) the default is 8 for a spoken
+turn and 20 for a typed turn or the session API; with a local one (about 30 s a call
+on the Jetson) it is 4. A cloud model's last allowed call has no tools, so it answers
+with what was done and what is left instead of stopping mid-task.
 
 ## Voice
+
+Development adds keyboard input throughout an interactive voice session:
+`python -m odessy voice --listen --fake-model`. Type a follow-up at any time while
+idle; `/text` pauses audio, `/voice` retries it, `/stop` stops the current turn,
+and `/exit` closes the session. Busy submissions are rejected rather than queued.
+Answers are displayed once, and voice requests are also spoken when available.
+Use `--no-text-fallback` for the previous audio-only interface. Redirected stdin
+is never consumed as requests or approvals. This unreleased integration still
+needs real terminal/microphone and Jetson qualification; see the
+[voice reference](docs/reference/voice-integration.mdx).
 
 Voice uses Whisper.cpp STT and Kokoro ONNX TTS. Set their paths in
 `~/.config/odessy/odessy.env`; the files do not need to be in the repository:
@@ -239,7 +340,10 @@ python -m odessy --model-backend deepseek "on my laptop, run pwd"
 This explicitly selects `deepseek-flash` with low reasoning effort. Without these
 overrides the DeepSeek preset remains `deepseek-chat` with provider-default effort.
 Providers, PowerShell equivalents, and data-flow details are in
-[Cloud Model Backends](docs/reference/cloud-models.mdx).
+[Cloud Model Backends](docs/reference/cloud-models.mdx). There you can also set
+fallback providers for outages (`ODESSY_CLOUD_FAILOVER`). Every cloud request is
+recorded without content in an egress log (`python -m odessy egress`). Voice
+sessions speak a cloud answer sentence by sentence as it arrives.
 
 ## Demo
 

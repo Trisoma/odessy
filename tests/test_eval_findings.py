@@ -18,13 +18,13 @@ from evals.graders import grade
 from evals.harness import Attempt, DecliningApprover, run_attempt
 from evals.report import regrade, summarize, write_summary
 from odessy.execution.escalation import ApprovalRequest, EscalationDeniedError
-from odessy.lfm_model import LlamaCppLFMModel
-from odessy.ollama_model import (
+from odessy.models.lfm_model import LlamaCppLFMModel
+from odessy.models.ollama_model import (
     _is_laptop_command_intent,
     _observation_messages,
 )
-from odessy.tool_contracts import tool_description
-from odessy.types import FinalResponse, ModelAction, ToolObservation, ToolRequest
+from odessy.tools.tool_contracts import tool_description
+from odessy.runtime.types import FinalResponse, ModelAction, ToolObservation, ToolRequest
 
 
 @pytest.fixture
@@ -153,7 +153,9 @@ def test_command_tools_say_what_a_shell_is_for(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(("answer", "outcome"), [("y", "allowed-once"), ("yes", "allowed-once"), ("", "rejected")])
+@pytest.mark.parametrize(
+    ("answer", "outcome"), [("yes", "allowed-once"), ("YES", "allowed-once"), ("y", "rejected"), ("", "rejected")]
+)
 async def test_terminal_approver_asks_the_user(monkeypatch: pytest.MonkeyPatch, answer: str, outcome: str) -> None:
     monkeypatch.setattr("builtins.input", lambda prompt: answer)
     request = ApprovalRequest(agent=object(), tool_name="terminal.run", call_id="c1", reason="escalate sandbox to x: y")
@@ -171,7 +173,7 @@ async def test_terminal_approver_without_a_terminal_is_unavailable(monkeypatch: 
 
 
 def test_cli_agent_has_an_escalation_approver(tmp_path: Path) -> None:
-    from odessy.fake_model import FakeModel
+    from odessy.models.fake_model import FakeModel
 
     agent = cli._build_agent(tmp_path, FakeModel())
     assert isinstance(agent._approver, cli.TerminalEscalationApprover)
@@ -379,8 +381,8 @@ def test_regrade_marks_old_limit_turns_exhausted() -> None:
 # --- policy: found in the DeepSeek and LFM safety cases ------------------------------
 
 
-from odessy.policy import OdessyPolicy  # noqa: E402
-from odessy.workspace_authority import WorkspaceAuthorityError, _native_path_text  # noqa: E402
+from odessy.authority.policy import OdessyPolicy  # noqa: E402
+from odessy.authority.workspace_authority import WorkspaceAuthorityError, _native_path_text  # noqa: E402
 
 
 def _decide(tmp_path: Path, name: str, **arguments: Any) -> str:
@@ -414,7 +416,7 @@ def test_download_and_run_is_denied(tmp_path: Path, command: str) -> None:
     ],
 )
 def test_downloads_and_pipes_without_execution_are_not_denied_by_that_rule(tmp_path: Path, command: str) -> None:
-    from odessy.policy import _matches_remote_execution_rule
+    from odessy.authority.policy import _matches_remote_execution_rule
 
     assert not _matches_remote_execution_rule(command.lower())
     assert _decide(tmp_path, "terminal.run", command=command) != "deny"
@@ -455,7 +457,7 @@ def test_writes_to_system_locations_are_denied(tmp_path: Path, command: str) -> 
     ],
 )
 def test_reads_and_workspace_writes_are_not_system_writes(tmp_path: Path, command: str) -> None:
-    from odessy.policy import _matches_system_write_rule
+    from odessy.authority.policy import _matches_system_write_rule
 
     assert not _matches_system_write_rule(command.lower())
 
@@ -486,7 +488,7 @@ def test_backslash_paths_inside_the_workspace_still_work(tmp_path: Path) -> None
 
 
 def test_posix_reading_of_windows_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    import odessy.workspace_authority as authority
+    import odessy.authority.workspace_authority as authority
 
     monkeypatch.setattr(authority.os, "name", "posix")
     with pytest.raises(WorkspaceAuthorityError):
@@ -593,7 +595,7 @@ def test_follow_up_prompt_points_arithmetic_at_the_calculator() -> None:
     ],
 )
 def test_thinking_is_removed_from_answers(raw: str, expected: str) -> None:
-    from odessy.ollama_model import _strip_thinking
+    from odessy.models.ollama_model import _strip_thinking
 
     assert _strip_thinking(raw) == expected
 
@@ -678,7 +680,7 @@ def test_the_model_call_limit_reaches_the_harness(tmp_path: Path, monkeypatch: p
 
 
 def test_cli_model_call_limit_comes_from_the_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from odessy.fake_model import FakeModel
+    from odessy.models.fake_model import FakeModel
 
     assert cli._build_agent(tmp_path, FakeModel())._max_model_calls == 4
     monkeypatch.setenv("ODESSY_MAX_MODEL_CALLS", "6")

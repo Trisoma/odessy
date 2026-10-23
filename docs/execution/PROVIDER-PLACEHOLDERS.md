@@ -3,6 +3,10 @@
 The authoritative list of capability Odessy **declares** and does not **implement**.
 Referenced by `odessy/execution/__init__.py` and `odessy/devices/__init__.py`.
 
+Baseline: the released **v0.3.0 private prerelease**. Unfinished capabilities and
+design decisions below move to the [v0.4.0 cycle](../releases/v0.4.0.md), subject
+to their prerequisites; they are not promised implementations.
+
 ## Why this document exists
 
 A capability-driven system that silently *lacks* something is indistinguishable from
@@ -105,8 +109,8 @@ gets defined when the first device is actually driven, against something real.
 
 | Item | Status |
 |---|---|
-| **Host pairing** | Not implemented. The host is currently a **local subprocess** of the Jetson, so there is nothing remote to pair with. Pairing needs a real threat model; designing one without an adversary produces the wrong design. The `ExecutionTarget` marker occupies the seat: a server must be explicitly authorized to be executable, so a future paired host inherits the same gate. |
-| **Voice escalation approval** | The seam is async and returns a closed outcome. The approval prompt is still a console prompt. |
+| **Host pairing — v0.4.0** | Not implemented. A concrete remote-host trust scenario and adversary model are still needed. Single mode starts a local subprocess; split mode supports a configured remote MCP URL, which does not establish authenticated pairing. The `ExecutionTarget` marker provides the explicit authorization gate a future paired host must retain. |
+| **Voice escalation approval — v0.4.0** | The seam is wired end to end, async, and returns a closed outcome. The prompt is still a console prompt; spoken approval waits on a composition decision. |
 | **Python Windows backend** | Python ships no Windows provider, so on Windows the Python bridge reports `unconfined` while the TypeScript host can genuinely confine. The Jetson runs Linux, so this is not on the production path — but it is an asymmetry, not a non-issue. |
 
 ---

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "release": "ollama-0.40.6-windows-x64",
+  "platform": "windows-x64",
+  "artifacts": [
+    {
+      "id": "ollama-runtime",
+      "version": "0.40.6",
+      "url": "https://github.com/ollama/ollama/releases/download/v0.40.6/ollama-windows-amd64.zip",
+      "size_bytes": 1471164488,
+      "sha256": "e359637575302f288d76c0007c408a4be9c7376d59c4f28684d63b232a44b427"
+    }
+  ]
+}

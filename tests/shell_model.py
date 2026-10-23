@@ -1,7 +1,7 @@
 """Fake model for execution tests that do not measure shell startup time."""
 
-from odessy.fake_model import FakeModel
-from odessy.types import ModelAction, ToolRequest
+from odessy.models.fake_model import FakeModel
+from odessy.runtime.types import ModelAction, ToolRequest
 
 
 class ShellModel(FakeModel):

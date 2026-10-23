@@ -244,7 +244,11 @@ refactoring mixed into a provenance-sensitive Windows security port destroys the
 attribution that makes a later failure diagnosable: it would be impossible to say
 whether something broke because of the port or because of the redesign.
 
-## Deferred To Later Steps
+## Deferred work after v0.3.0
+
+v0.3.0 is released privately as a prerelease. Unfinished implementation work below
+belongs to the [v0.4.0 cycle](../releases/v0.4.0.md); the port sequence remains a
+historical implementation record, not a statement that those steps are all pending.
 
 Two things are intentionally incomplete, recorded here so neither is mistaken for
 an oversight:

@@ -1,0 +1,152 @@
+---
+title: Automatic model selection
+---
+
+Configurable collaboration supports explicit peer requests and next-turn profile switching through the shared session controller. Explicit consultation bypasses Auto's text-only path; ordinary classification is unchanged. See [model collaboration](model-collaboration.mdx).
+
+Automatic selection is merged into `develop` via PR #19 (`ea2b973`), opt-in,
+unreleased v0.4.0 work. It chooses a model; it
+does not filter the capable model's tool list or authorize actions.
+
+```bash
+python -m odessy --model-backend auto "hello"
+python -m odessy --model-backend auto "read README.md"
+python -m odessy voice --model-backend auto
+python -m odessy doctor --model-backend auto
+```
+
+Full-message greetings (`hello`, `hi`, `hey`, `thanks`, `thank you`, ignoring
+case and trailing punctuation) and explicit `rewrite:`, `rephrase:`,
+`translate to <language>:`, and `summarize:` text tasks use Gemma3 1B without
+tools. Text following a transformation prefix is data to transform. Unknown
+requests and requests with conversation history use the capable local model.
+
+The fast adapter has a 256-token output ceiling. Native or structured tool
+proposals, empty/malformed output, and model errors escalate once to capable.
+Fluent wrong answers cannot reliably be detected; this is a conservative routing
+policy, not a correctness checker. LFM's historical tool failures remain relevant.
+
+## Routing boundary and October 20 Jetson observations
+
+The boundary applies to the text received by the router, including the supplied
+history; spoken intent alone does not establish what Whisper submitted.
+
+| Input and state | Expected initial route |
+|---|---|
+| Exact standalone greeting such as `hi`, with no conversation history | Fast Gemma |
+| Explicit supported text-transformation prefix, with no history | Fast Gemma |
+| Time/tool request or an uncertain request | Capable LFM by default |
+| Request carrying conversation history, including a greeting | Capable |
+| Fast attempt fails or returns rejected output | Escalate to capable |
+
+On October 20 the user obtained text answers for `hello`,
+`rewrite: The meeting starts tomorrow.`, and `what time is it?` on Jetson.
+The rewrite repeated the original sentence. The voice auto run reached
+transcription, thinking, and speaking. These are smoke-test observations;
+the printed answers do not prove model selection or time-tool execution.
+
+The user also reported speaking only `Hi` while `ollama ps` showed Q8 LFM.
+This remains unresolved: the transcript, history state, and whether Gemma failed
+were not captured in the pasted console output. An exact first-turn `Hi` without
+history should start on Gemma. If it instead starts directly on LFM, that would
+violate the intended routing boundary. A later fallback to LFM is a different case.
+
+`ollama ps` identifies a resident model, not the router's initial decision or its
+reason. `Stopping...` is consistent with local `keep_alive=0`; it is not evidence
+of incorrect routing. To investigate, capture the actual transcript, whether
+history was supplied, and the ordered routing stages and escalation reason from
+turn diagnostics. Text, one-shot voice, and wake listening now print the actual
+selected model before each initial generation stage, including fallback stages:
+
+```text
+[odessy] model: gemma3:1b (backend=ollama, role=fast, reason=greeting)
+[odessy] model: odessy-lfm-q8:jetson (backend=lfm, role=capable, reason=fast_failed)
+```
+
+These example lines illustrate a greeting followed by fallback, not a measured
+Jetson result. Reasons also include `conversation_context`,
+`explicit_text_transform`, `uncertain_or_tool_request`, and `capable_failed`.
+Explicit backends print their model and backend at startup. Status goes to
+stderr, keeping the answer on stdout; transcript/history contents and raw
+exception messages are not included. The transcript and detailed failure cause
+still require separate diagnostics. This helper does not change routing policy.
+
+The board's current test profile is **Q8**, `odessy-lfm-q8:jetson`, derived from
+`lfm2.5-thinking:1.2b-q8_0` with 15 GPU layers, batch 64, and context 1024.
+Set `ODESSY_AUTO_CAPABLE_MODEL` to that profile for this test setup; it does not
+change the application default. Intermittent GPU allocation failures mean this
+is not a qualified memory or performance configuration. See the
+[Jetson guide](../jetson-wake-testing.md) for the full commands and VAD correction.
+
+| Variable | Default |
+|---|---|
+| `ODESSY_MODEL_BACKEND` | Existing `lfm`; set `auto` to opt in |
+| `ODESSY_AUTO_FAST_MODEL` | `gemma3:1b` |
+| `ODESSY_AUTO_CAPABLE_BACKEND` | `lfm` (`ollama` and `llama_cpp` also accepted) |
+| `ODESSY_AUTO_CAPABLE_MODEL` | `lfm2.5-thinking:1.2b-q8_0` |
+| `ODESSY_AUTO_CLOUD_FALLBACK` | `off`; accepts `on` or `off` |
+| `ODESSY_AUTO_CLOUD_BACKEND` | Unset; required when fallback is `on` |
+
+Both local roles use `ODESSY_MODEL_ENDPOINT` and `keep_alive=0`. Models are built
+lazily; Odessy neither pulls weights nor warms them at startup. Releasing weights
+after requests can add reload latency, including between tool continuations. It
+does not guarantee a memory boundary or improve measured Jetson performance.
+
+Cloud fallback is possible only after the initial capable proposal fails. It
+requires both explicit enablement and normal provider credentials/configuration.
+Odessy announces the possibility at startup and actual escalation when it occurs.
+Tool errors, policy denials, declined confirmation, and failed continuations
+never switch models. After a capable/cloud proposal, that adapter owns the rest
+of the turn, including batches and observations.
+
+Repairs, model transitions, and OpenAI-compatible transport retries share one
+generation budget. Auto mode disables opaque Anthropic SDK retries so they cannot
+bypass that budget. Existing explicit cloud-backend retry defaults are unchanged.
+
+Auto generation runs in a worker while the event loop remains responsive.
+Cancellation prevents another generation or dispatch and discards late output;
+it does not abort a blocking HTTP read or undo an executed tool. The caller waits
+for that worker before it can start a replacement. Existing transport timeouts
+still apply. This may delay cancellation completion.
+
+The integrated wake controller supplies `run_turn(..., context=...)` with a
+`ConversationContext`. The legacy `conversation_context=...` API still accepts
+user/assistant message dictionaries. The router redacts and forwards history and
+keeps no session store; the wake controller owns bounded session memory. See
+[Jetson wake testing](../jetson-wake-testing.md) for setup and hardware checks.
+
+## Diagnostics and evaluation
+
+### Reproduce the voice routing boundary locally
+
+No Jetson, microphone, Ollama server, or downloaded model is needed for:
+
+```bash
+python -m pytest tests/test_wake_auto_routing.py -v -s
+```
+
+The test feeds synthetic wake/speech frames and a scripted `Hi` transcript through
+the real `VoiceSession`, `OdessyAgent`, and `RoutedModel`. Three cases assert the
+actual adapters called, the history forwarded, spoken response, and model-status
+lines: fresh `Hi` selects Gemma; `Hi` with seeded conversation history selects
+LFM; a simulated Gemma failure selects Gemma then falls back visibly to LFM.
+The adapters are mocks, so this verifies routing integration rather than Whisper
+accuracy, real model output, or the cause of the reported Jetson observation.
+
+### Turn diagnostics
+
+Turn metrics expose additive `routing` diagnostics: policy version, reason,
+selected role, cancellation flag, and ordered stages with backend/model, calls,
+wall time, tokens, and available model-load time. Evaluation metadata adds
+`model_routing`; each attempt retains its route. Existing metadata keys remain.
+
+`python -m evals run --backend auto ...` uses the same router. The existing 56-case
+suite is unchanged; deterministic routing fixtures are separate under `tests`.
+
+Before recommending this mode on Jetson, compare Gemma-only, LFM-only, and auto
+on a small fixed set of greetings, text transformations, and tool requests. Run
+both repeated and alternating requests. Record correctness, tool completion,
+p50/p95 total latency, load time, peak memory, and failures. Acceptance requires
+lower median latency for eligible fast tasks, no tool-fixture regression, and no
+additional memory failures. Hardware measurements remain pending. No paid cloud
+evaluation is needed for scripted regression tests.

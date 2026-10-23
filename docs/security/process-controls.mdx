@@ -120,13 +120,20 @@ If that write fails, the untruncated original is returned rather than a lossy cu
 This prevents a model-requested command from flooding logs, observations, or model context without destroying the output it bounded.
 
 Output is also redacted for credential-shaped values before it is exposed or spilled.
-That redaction is name-based and now covers **both** terminal executors -- this
+That redaction is name-based and covers **both** terminal executors -- this
 `terminal.run` path and the Node command path (`terminal.run` in single mode,
-`laptop.terminal.run` in split mode), the latter since v0.3.0. It
-does not cover MCP tool results in general.
+`laptop.terminal.run` in split mode), the latter since v0.3.0. Since v0.4.0
+development it also covers every MCP tool result at the observation boundary, and the
+Node file, search and Git tools at their own boundary.
 See `docs/security/credential-handling.mdx`.
 
 ## Current Limitations
+
+In paired split deployments, mutual TLS authenticates enrolled hosts; it does not
+approve commands or replace confinement. The coordinator rechecks its local trust
+state before dispatch, and the execution host independently enforces its enrolled
+peer's capability and workspace grant. Revocation stops admission and initiates
+cleanup; completed effects are not undone. See [host pairing](../reference/host-pairing.mdx).
 
 Odessy process control is a local v0.3.0 authority boundary plus best-effort confinement,
 not a complete OS sandbox. Coverage depends on the host, and on this board most backends

@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument(
         "--backend",
         required=True,
-        help="Model backend, as for `python -m odessy --model-backend`: lfm, ollama, claude, openai, deepseek, qwen, kimi, custom.",
+        help="Model backend, as for `python -m odessy --model-backend`: auto, lfm, ollama, claude, openai, deepseek, qwen, kimi, custom.",
     )
     run.add_argument("--repeat", type=int, default=3, help="Attempts per case (default 3).")
     run.add_argument(
@@ -126,7 +126,7 @@ def _select(cases: list[Case], categories: list[str] | None, case_ids: list[str]
 async def _run(args: argparse.Namespace) -> int:
     # Imported here so `list`/`compare` work without the model stack configured.
     from odessy.cli import _build_model
-    from odessy.config_file import load_config_env
+    from odessy.config.config_file import load_config_env
 
     from evals.graders import grade
     from evals.harness import (
@@ -153,6 +153,8 @@ async def _run(args: argparse.Namespace) -> int:
         raise SystemExit("no cases selected")
 
     model = _build_model(False, backend=args.backend)
+    from odessy.cli import _announce_cloud
+    _announce_cloud(model)
     attempt_timeout = args.attempt_timeout
     if attempt_timeout is None:
         attempt_timeout = DEFAULT_ATTEMPT_TIMEOUT_SECONDS
@@ -160,16 +162,20 @@ async def _run(args: argparse.Namespace) -> int:
     if args.max_model_calls is None:
         # Evaluate what the product does by default for this backend.
         from odessy.cli import default_max_model_calls
-        from odessy.cloud_model import CloudModel
+        from odessy.models.routed_model import model_uses_cloud
 
-        args.max_model_calls = default_max_model_calls(cloud=isinstance(model, CloudModel))
+        args.max_model_calls = default_max_model_calls(cloud=model_uses_cloud(model))
     label = args.label or args.backend
     started = datetime.now(timezone.utc)
     run_dir = args.output_dir or RESULTS_DIR / f"{started.strftime('%Y%m%d-%H%M%S')}-{label}"
     run_dir.mkdir(parents=True, exist_ok=False)
 
     git_commit, git_commit_note = _git_commit()
+    from odessy.runtime.scheduler import concurrency_from_env
     metadata = {
+        "tool_concurrency": concurrency_from_env(),
+        "max_tools_per_batch": 16,
+        "max_tools_per_turn": 64,
         "label": label,
         "backend": args.backend,
         "model": getattr(model, "model", type(model).__name__),
@@ -184,6 +190,8 @@ async def _run(args: argparse.Namespace) -> int:
         "platform": f"{platform.system()} {platform.release()} ({platform.machine()}), Python {platform.python_version()}",
         "started_at": started.isoformat(),
     }
+    if getattr(model, "routing_config", None) is not None:
+        metadata["model_routing"] = model.routing_config
     (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
     total = len(cases) * args.repeat

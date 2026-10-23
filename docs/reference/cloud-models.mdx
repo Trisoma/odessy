@@ -8,6 +8,14 @@ content:
   type: "reference"
 ---
 
+Development collaboration profiles reuse these adapters with participant/provider/model identities and per-profile prices. API budgets remain shared; coding CLI bills are separate. See [model collaboration](model-collaboration.mdx).
+
+October 22 development status: cloud failover, streamed wake speech and egress
+visibility are merged via PR #23 (`d05e1b8`, feature commit `8a74430`), unreleased.
+They are extra features beyond the original v0.4.0 plan. Offline verification does
+not establish live-provider or Jetson acceptance.
+
+
 Odessy can use a cloud model in place of the local LFM or Gemma model. This is
 opt-in and off by default. A cloud model is a stronger **proposer**, not a stronger
 authority: every tool call it proposes still passes tool-contract validation,
@@ -59,8 +67,14 @@ Or select the backend persistently with `ODESSY_MODEL_BACKEND=claude`.
 | `ODESSY_CLOUD_EFFORT` | Claude, DeepSeek | Claude: `output_config.effort` (`low`, `medium`, `high`, `xhigh`, or `max`, subject to model support). DeepSeek: `reasoning_effort`; see the example below. Unset keeps the provider default. Other OpenAI-compatible backends do not receive this setting. |
 | `ODESSY_CLOUD_FALLBACKS` | Claude | `on` (default) enables server-side refusal fallbacks on models that support them; `off` disables |
 | `ODESSY_CLOUD_RETRIES` | all | Retries after a rate limit (429), server error (5xx, 529), timeout or dropped connection, default 2. Waits 1 s, 2 s, ... or the server's `Retry-After`, at most 20 s. `0` disables. A 4xx such as a bad request or a wrong key is never retried |
+| `ODESSY_CLOUD_FAILOVER` | all | Backends to try, in order, while the selected provider is unavailable; see [Failover](#failover) |
+| `ODESSY_CLOUD_FAILOVER_COOLDOWN` | all | Seconds a provider that failed is skipped, default 60 |
+| `ODESSY_CLOUD_<NAME>_MODEL` | failover | Model for fallback provider `<NAME>` (for example `ODESSY_CLOUD_QWEN_MODEL`); default is its preset |
+| `ODESSY_EGRESS_FILE` | all | Where the [egress log](#egress-log) is written; an empty value turns it off |
 | `ODESSY_CLOUD_MAX_RESULT_CHARS` | all | Characters of one tool result sent to the provider, default 16000; longer results are cut with a note saying how much was omitted |
-| `ODESSY_MAX_MODEL_CALLS` | all | Model calls per turn, counting corrections and follow-up steps. Default 8 for cloud backends, 4 for local ones |
+| `ODESSY_MAX_MODEL_CALLS` | all | Model calls per turn, counting corrections and follow-up steps. Cloud default: 8 for a spoken turn, 20 for a typed turn or the session API; local: 4. See [Within one turn](#within-one-turn) |
+| `ODESSY_CLOUD_CONTEXT_CHARS` | all | Characters of tool results one turn re-sends before the oldest are compacted, default 24000; `0` turns compaction off |
+| `ODESSY_CLOUD_KEEP_RECENT_RESULTS` | all | How many of the latest tool results are never compacted, default 2 |
 
 ### DeepSeek with low reasoning effort
 
@@ -119,9 +133,11 @@ results when comparing runs.
 - **Native tool-result messages.** Tool results go back as `tool` / `tool_result`
   messages tied to the call id, so the model sees the whole turn. Returned
   `reasoning_content` is retained for OpenAI-compatible conversations.
-- **One tool call per step.** Claude is asked for one call at a time
-  (`disable_parallel_tool_use`). If an OpenAI-compatible model returns several,
-  Odessy runs the first and answers the rest as "not executed".
+- **Native tool batches in v0.4.0 development.** Cloud adapters preserve multiple
+  calls from a completed assistant response. Execution defaults to sequential;
+  `ODESSY_TOOL_CONCURRENCY` permits bounded overlap only for eligible built-in
+  tools. Authorization, ordering barriers, and cancellation still apply to each
+  call. Text-JSON fallbacks remain singular. See [tool concurrency](tool-concurrency.mdx).
 - **One repair per step.** An invalid proposal (unknown tool, bad arguments,
   malformed JSON) is sent back as an error tool result once. A second invalid first
   proposal fails the turn; a second invalid follow-up ends it with a summary of the
@@ -130,7 +146,11 @@ results when comparing runs.
   wrong path), goes back as an error tool result (`is_error` for Claude), so the model
   can correct it.
 - **Transient errors are retried** (see `ODESSY_CLOUD_RETRIES`); the Anthropic SDK
-  receives the same retry count.
+  receives the same retry count. When the retries are spent, the turn can move to a
+  fallback backend (see [Failover](#failover)).
+- **Replies are streamed in voice sessions** so the answer is spoken sentence by
+  sentence (see [voice integration](voice-integration.mdx#streamed-speech)). Text
+  mode and evaluations use plain requests.
 - **Tool names are encoded.** Neither API accepts dots in function names, so
   `laptop.terminal.run` is sent as `laptop__terminal__run` and decoded on return.
 
@@ -151,14 +171,188 @@ misses unrecognized secrets (see `docs/security/credential-handling.mdx`). Do no
 point a cloud backend at a workspace whose files you would not send to that
 provider.
 
-Odessy prints a notice on stderr at startup when a cloud backend is active.
+Odessy prints a notice on stderr at startup when a cloud backend is active, naming
+the fallback providers too when failover is configured.
+
+### Egress log
+
+Each cloud adapter exchange is recorded as a JSON line in
+`~/.local/state/odessy/egress.jsonl` (`ODESSY_EGRESS_FILE` sets another path; an
+empty value turns it off). A record holds **no content**: no request text, tool
+output, or answer. It holds:
+
+- the provider, host and model;
+- what the request carried: the number of messages, earlier spoken turns, and tool
+  results, and the characters sent;
+- tokens (input, cached, output), the outcome, the duration, and whether the reply
+  was streamed.
+
+A turn that moved to another backend adds a `failover` record. To read the recent
+records:
+
+```bash
+python -m odessy egress --limit 20
+```
+
+The log answers "what of mine went where"; it is not a copy of what was sent. It is
+separate from the [third-party tool audit log](external-servers.mdx).
+Retries inside one exchange are not separate egress records.
+
+## Failover
+
+`ODESSY_CLOUD_FAILOVER` lists backends to try, in order, while the selected provider
+is unavailable:
+
+```bash
+ODESSY_MODEL_BACKEND=claude
+ODESSY_CLOUD_FAILOVER=deepseek,lfm
+```
+
+- **Fallbacks:** other cloud providers (not `custom`), and for an explicit cloud
+  backend a local one (`lfm` or `ollama`) as the last resort. With
+  `--model-backend auto`, local names are ignored: the router's local roles already
+  come first. Each fallback provider reads its own key variable and preset, not
+  `ODESSY_CLOUD_MODEL`, `ODESSY_CLOUD_BASE_URL`, or `ODESSY_CLOUD_API_KEY`; set
+  `ODESSY_CLOUD_<NAME>_MODEL` to choose its model. Every fallback is configured at
+  startup, so a missing key stops the run before anything is sent.
+- **When a turn moves:** only on the first request of a turn, before any tool ran,
+  and only when the provider is unavailable: a rate limit, overload, server error,
+  timeout, or dropped connection that survived the retries. A wrong key, a bad
+  request, a refusal, or a spent budget is reported as it is.
+- **Mid-turn failures end the turn.** Tools already ran under the first provider's
+  conversation, so the turn is not replayed elsewhere; the next turn starts on a
+  backend that is up.
+- **Cooldown:** a provider that failed is skipped for
+  `ODESSY_CLOUD_FAILOVER_COOLDOWN` seconds (60 by default), then tried first again.
+  When every backend is cooling down, all are tried in order.
+- **Announced:** each move prints where the request now goes, and adds a `failover`
+  record to the egress log, including turns that bypass a provider during cooldown.
+- **Budgets:** the token budget covers every provider. `ODESSY_CLOUD_BUDGET_COST`
+  assumes one set of prices, so it cannot be combined with another cloud provider in
+  the list; use the token budget instead.
+
+Failover changes only which model proposes. Every proposal still passes validation,
+policy, and confirmation in the runtime. `python -m odessy doctor` shows the chain.
+
+An OpenAI-compatible stream must provide `[DONE]` or a non-null `finish_reason`.
+EOF without either is transient failure, including when a partial tool call has
+already arrived. Adapter retries still stop once a sentence has been emitted.
+
+## Within one turn
+
+Every request in a turn re-sends the conversation so far, so a turn with many tool
+calls costs more with each step. Three things bound it.
+
+Merged via PR #26 (`d565fca`) in the unreleased v0.4.0 cycle. The context threshold
+counts tool-result characters, not total prompt tokens: recent results and other
+messages can keep a request above it. Existing cloud usage budgets still apply;
+compaction does not establish a fixed cost or a measured provider-cache hit rate.
+
+**Compaction.** Once the turn's tool results pass `ODESSY_CLOUD_CONTEXT_CHARS`
+(24000 characters by default), the oldest results are cut to their first 600 and
+last 200 characters, with a note saying how much was left out and that the tool can
+be called again. The latest `ODESSY_CLOUD_KEEP_RECENT_RESULTS` (2) stay whole.
+
+- Only tool-result text changes. The model's own messages, including Claude's
+  thinking and DeepSeek's reasoning content, are sent back unchanged.
+- A result is cut once and then stays the same, so later requests keep the same
+  prefix and the provider's cache keeps working.
+- No model writes a summary: the result is only shortened, so nothing in it is
+  rewritten into something it did not say. A repeated tool call is authorized like
+  any other.
+- Turn diagnostics count the compacted results and characters, and the egress log
+  records `compacted` per request.
+
+**Conversation caching (Claude).** From the second request of a turn on, the last
+message carries a cache breakpoint, so each request reads the previous one's
+conversation from the cache. That makes three breakpoints in all: tools, system
+prompt, and the latest message. OpenAI-compatible providers cache the repeated prefix
+on their own. `ODESSY_CLOUD_PROMPT_CACHE=off` turns this off too.
+
+**The call limit.** `ODESSY_MAX_MODEL_CALLS` caps model calls per turn. The cloud
+default depends on how the turn arrives:
+
+- **8 for a spoken turn:** someone is waiting to hear the answer.
+- **20 for a typed turn or the session API:** finding a problem, changing a file and
+  checking it often takes 10 to 20 steps.
+- The evaluation suite keeps 8, so its results stay comparable.
+
+On the last allowed call, a cloud model gets the tool results without tools and is
+asked to answer: what was done, what is not finished, and what to ask next. A tool
+call proposed on that call could never run anyway. A turn that still ends without an
+answer says which limit it reached and names `ODESSY_MAX_MODEL_CALLS`. Local
+adapters keep the previous ending.
+
+## Cost and usage
+
+Every cloud call in a run is recorded in one ledger (`odessy.models.usage`),
+whichever adapter or router made it.
+
+**Prompt caching.** The tool definitions and system prompt are the same on every
+call, and they make up most of each request.
+
+- **Claude:** Odessy marks them cacheable with `cache_control`, so later calls in a
+  turn, and turns within the cache lifetime, read them from the cache.
+- **OpenAI, DeepSeek, Qwen and Kimi:** these providers cache a repeated prefix on
+  their own. Odessy keeps the prefix byte-stable, with no timestamps and a fixed
+  tool order.
+- **Turning it off:** set `ODESSY_CLOUD_PROMPT_CACHE=off`. This affects Claude's
+  markers only.
+- **Minimum size:** a prefix below the model's minimum cacheable length is not
+  cached, and nothing fails.
+
+**Usage.** Each turn that used the cloud prints one line on stderr:
+
+```text
+[odessy] cloud usage: this turn 6,060 in (3,000 cached), 14 out (2 call(s)); run 18,230 in (...)
+```
+
+`in` counts all input tokens. `cached` is the part of `in` that was served from
+the provider's cache. Turn diagnostics and eval attempts record the same
+`cached_prompt_tokens`. A wake-listening session prints a total for the run when it
+ends.
+
+**Estimated cost.** Odessy ships no prices: they change, and they differ by
+provider, region and plan. To get an estimate, set prices per million tokens:
+
+| Setting | Meaning |
+|---|---|
+| `ODESSY_CLOUD_PRICE_INPUT` | Uncached input. Required together with output |
+| `ODESSY_CLOUD_PRICE_CACHED_INPUT` | Cached input. Defaults to the input price |
+| `ODESSY_CLOUD_PRICE_OUTPUT` | Output |
+| `ODESSY_CLOUD_PRICE_CURRENCY` | Label only. Defaults to `USD` |
+
+The estimate is labelled `~` because it can differ from your bill, for example
+through cache-write surcharges, reasoning tokens or discounts.
+
+**Budget.** These settings cap one run (one `python -m odessy` invocation, or one
+voice session):
+
+| Setting | Meaning |
+|---|---|
+| `ODESSY_CLOUD_BUDGET_TOKENS` | All tokens, cached or not |
+| `ODESSY_CLOUD_BUDGET_COST` | In the price currency. Needs prices |
+
+- The budget is checked **before** each request. Once it is reached, no further
+  request is sent: a text turn stops with the reason, and a voice turn reports it.
+- A warning is printed once at 80%.
+- A turn can end mid-task when the budget runs out. Tools that already ran in
+  that turn have run.
+- A malformed price or budget setting stops a cloud run at startup.
+- `python -m odessy doctor` shows the environment-based settings. Collaboration
+  profile pricing is enforced by the runtime but is not yet inspected by doctor;
+  see [model collaboration](model-collaboration.mdx#accounting-and-qualification).
 
 ## Not covered yet
 
-- No streaming: each request waits for the full reply.
-- No automatic fallback to the local model when the network or provider fails;
-  the turn fails with the provider's (redacted) error.
-- No cost tracking beyond the token counts recorded in turn metrics.
+- Streaming is used only for spoken answers in voice sessions. Some
+  OpenAI-compatible endpoints may reject `stream_options`; turn streaming off with
+  `ODESSY_VOICE_STREAM_SPEECH=off` if one does.
+- Failover does not resume a turn that failed after a tool ran.
+- The egress log covers cloud model requests, not third-party MCP servers or
+  coding-agent delegation.
+- Costs are estimates from prices you set; Odessy does not read your provider bill.
+- The budget is per run; there is no daily or cross-run limit.
 - The component-performance `benchmark/` harness has no cloud adapter yet.
   Agent-behaviour evaluations in `evals/` do support cloud backends.
 - Tests run against recorded response shapes, not live provider APIs.

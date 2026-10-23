@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "release": "lfm2.5-thinking-1.2b-q8_0",
+  "platform": "windows-x64",
+  "artifacts": [
+    {
+      "id": "model-blob-0",
+      "version": "1.2b-q8_0",
+      "url": "https://registry.ollama.ai/v2/library/lfm2.5-thinking/blobs/sha256:aa694b3b5d844cf35bdacb5b03e8797324ecb5aca1c6f3b3ea771d5bda03731b",
+      "size_bytes": 481,
+      "sha256": "aa694b3b5d844cf35bdacb5b03e8797324ecb5aca1c6f3b3ea771d5bda03731b"
+    },
+    {
+      "id": "model-blob-1",
+      "version": "1.2b-q8_0",
+      "url": "https://registry.ollama.ai/v2/library/lfm2.5-thinking/blobs/sha256:41d42bc65aafd9e1501b73ea028ccd25829cb465d59fcff57977d6fc48e198be",
+      "size_bytes": 1246511552,
+      "sha256": "41d42bc65aafd9e1501b73ea028ccd25829cb465d59fcff57977d6fc48e198be"
+    },
+    {
+      "id": "model-blob-2",
+      "version": "1.2b-q8_0",
+      "url": "https://registry.ollama.ai/v2/library/lfm2.5-thinking/blobs/sha256:55a61add48383d18363d9c80355acc747a1b0fb2bdb527964ce0583bb54b689d",
+      "size_bytes": 10556,
+      "sha256": "55a61add48383d18363d9c80355acc747a1b0fb2bdb527964ce0583bb54b689d"
+    },
+    {
+      "id": "model-blob-3",
+      "version": "1.2b-q8_0",
+      "url": "https://registry.ollama.ai/v2/library/lfm2.5-thinking/blobs/sha256:c663a241289d1c7cf2bd094564cb172014b3d6f522c46c33797b13c3f9241ec7",
+      "size_bytes": 32,
+      "sha256": "c663a241289d1c7cf2bd094564cb172014b3d6f522c46c33797b13c3f9241ec7"
+    }
+  ]
+}

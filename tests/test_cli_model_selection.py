@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from odessy.cli import _build_model
-from odessy.fake_model import FakeModel
-from odessy.lfm_model import LlamaCppLFMModel
-from odessy.ollama_model import OllamaModel
+from odessy.models.fake_model import FakeModel
+from odessy.models.lfm_model import LlamaCppLFMModel
+from odessy.models.ollama_model import OllamaModel
 
 
 def test_text_mode_defaults_to_lfm_model() -> None:
@@ -24,3 +24,13 @@ def test_legacy_fake_model_switch_remains_available() -> None:
     model = _build_model(True, ollama_model="gemma3:1b")
 
     assert isinstance(model, FakeModel)
+
+
+def test_explicit_model_is_announced_to_stderr(capsys) -> None:
+    from odessy.cli import _announce_model
+
+    _announce_model(LlamaCppLFMModel(model="odessy-lfm-q8:jetson"))
+    output = capsys.readouterr()
+    assert "odessy-lfm-q8:jetson" in output.err
+    assert "backend=lfm" in output.err
+    assert output.out == ""

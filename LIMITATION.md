@@ -1,5 +1,30 @@
 # Odessy Current Limitations
 
+Release baseline: **v0.3.0**, released privately as a prerelease on October 19,
+2026. Unfinished feature work belongs to the [v0.4.0 roadmap](docs/releases/v0.4.0.md).
+Historical measurements below retain their original dates and versions.
+
+Wake listening, automatic model selection, confirmation UX, and batch follow-ups
+are merged into `develop` for unreleased v0.4.0. Hardware wake detection,
+interruption latency, false activations, and model speed/memory benefits remain
+unqualified. [Jetson wake testing](docs/jetson-wake-testing.md) records the setup
+and acceptance procedure; the keyword-only download does not supply all detector
+assets needed by openWakeWord.
+
+October 20 user-reported Jetson smoke tests now reached transcription, model
+execution, and speaking with fake-model and auto wake listening, after a local
+Silero VAD `frame_size=512` correction. The repository adapter now includes that
+fix and a hardware-free regression test; synced Jetson verification is pending.
+Q8 with 15 GPU layers remains a test baseline with
+intermittent allocation failures. Auto voice using LFM after spoken `Hi` needs
+transcript, history, and escalation evidence before calling it a routing bug;
+see [model selection](docs/reference/model-selection.mdx). Hardware qualification
+and automatic-selection performance benefits remain open.
+
+Third-party MCP server support is v0.4.0 development work and is not part of the
+released v0.3.0 baseline. See `docs/reference/external-servers.mdx` for its
+transport, trust, schema, and policy boundaries.
+
 ## Voice Smoke Test Limitations
 
 The voice path is wired and runnable, but the first live smoke test exposed several limitations that should not be confused with wiring failure.
@@ -151,7 +176,7 @@ captured evidence and follow-up checks.
 
 ## LFM GPU / Offload Configuration Is Unexplored
 
-**Status: deferred to v0.3.0 (decided 2026-09-24). Not measured.**
+**Status: deferred to v0.4.0; originally assigned to v0.3.0 on 2026-09-24. Not measured.**
 
 The capability exists and has never been used:
 `benchmark/scenarios.py` defines `num_gpu`, `BenchmarkPartialGpuLFMModel` sends it
@@ -248,8 +273,9 @@ limitation set.
 
 ### Still absent
 
-- **Host pairing.** The host is a local subprocess; there is nothing remote to pair
-  with. A server must be explicitly marked an `ExecutionTarget` to be executable.
+- **Host pairing — v0.4.0.** Single mode starts a local subprocess; split mode can
+  reach a configured remote MCP URL without authenticated pairing. Pairing waits
+  on a concrete trust scenario and adversary model. `ExecutionTarget` remains required.
 - **Any device backend.** ESP32 / STM32 / RP2040 are declared and unbacked.
 - **A total wall-clock turn deadline.** Unchanged from the section above.
 
@@ -278,13 +304,14 @@ cloud tool call passes through the same validation functions the local adapter u
 What changes is where data goes, not who decides.
 
 ```text
-Local backend (default)   Nothing leaves the machine.
+Local backend (default)   No model-provider request; tools may perform network I/O.
 Cloud backend selected    The user's text and that turn's tool observations are sent to
                           the provider, after passing through redact_text.
 ```
 
 The redaction on that path is the same best-effort, name-based filter described above.
-It does widen coverage, because MCP tool results are otherwise unredacted — but it is
+Since v0.4.0 development every tool observation is redacted before it is logged or
+sent, so a cloud provider never sees a result the local path would not; but it is
 still a filter, not a policy.
 
 **What this does not establish:** no requirement states what may leave the host.
@@ -329,10 +356,11 @@ accept an answer, but cannot demand a tool call.
 
 **v0.2 shipped with this observed single-tool behaviour.** On October 18, both
 local LFM eval sweeps still passed 0/18 multi-step attempts, while the separate
-`deepseek-flash` reference passed 17/18. The continuation machinery can therefore
-work with a real cloud model in these fixtures. Keyword routing on also limits
-follow-ups to the selected tool, constraining sequences that need a different
-second tool. These results do not establish general multi-step reliability.
+`deepseek-flash` reference passed 16/18 (88.9%). The continuation machinery can
+therefore work with a real cloud model in these fixtures. Keyword routing on also
+limits follow-ups to the selected tool, constraining sequences that need a
+different second tool. These results do not establish general multi-step
+reliability.
 
 See [the eval guide](evals/README.md) for the saved artifacts and comparison limits.
 
@@ -353,6 +381,46 @@ and provider endpoint. Preserve non-secret settings separately for comparisons.
 The recording executor does not run proposed shell commands or writes. Zero
 forbidden calls reaching it is evidence about the tested authority path, not a
 test of kernel isolation or arbitrary real-world command safety.
+
+## A Killed Command Reports No Exit Code
+
+**Status: decided (2026-10-19). The current answer is kept; no replacement is needed.**
+
+`CommandBridge.run` returns `exit_code: None` when it terminated the process itself,
+with `timed_out: true` and `status: "timeout"` alongside it. Both platforms were
+reviewed and the answer holds, for a reason that is measurable rather than stylistic.
+
+Measured on Windows, through `powershell -NoProfile -NonInteractive -Command`:
+
+```text
+python -c "raise SystemExit(3)"            -> PowerShell process return code 1
+a process killed with taskkill /T /F       -> raw process return code 1
+```
+
+These are raw process measurements, not timeout results returned by the bridge.
+The bridge reports `None` after its own timeout; it does not expose the incidental
+kill code as the command's outcome. On POSIX, a process terminated directly by a
+signal can report `-15` or `-9`; a shell may translate a child's signal into a
+different exit status. The chosen cross-platform contract withholds the code when
+Odessy terminates execution and records the distinction in `timed_out` and `status`.
+
+```text
+Allowed       "a command Odessy terminated reports no exit code, with timed_out set"
+Not allowed   "exit_code tells you how the command ended" -- false for a killed one
+```
+
+### What this does not fix: exit codes are lossy on Windows
+
+The measurement above shows a second, separate limitation. `powershell -Command`
+reports **its own** status, not the child's: a command that exits 3 reaches Odessy as
+`exit_code: 1`. On POSIX, `/bin/sh -lc` propagates the child's status faithfully, so
+the same command reports 3.
+
+This is not corrected, because correcting it means wrapping every Windows command in
+`$LASTEXITCODE` handling inside `_shell_command`, which changes the shape of every
+command the model writes and is a behaviour change with no measured failure behind
+it. What it does mean is that a non-zero `exit_code` on Windows is a signal that
+*something* failed, not which code it was. Read `stderr` for the reason.
 
 ## Previously Failing Tests: Resolved
 

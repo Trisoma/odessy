@@ -1,0 +1,181 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+
+@dataclass(frozen=True)
+class ToolRequest:
+    """Provider-neutral request emitted by a model adapter."""
+
+    name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class FinalResponse:
+    text: str
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    call_id: str
+    request: ToolRequest
+
+
+@dataclass(frozen=True)
+class ToolBatch:
+    calls: tuple[ToolCall, ...]
+
+    def __post_init__(self) -> None:
+        ids = [call.call_id for call in self.calls]
+        if not ids or len(ids) > 16 or any(not isinstance(i, str) or not i for i in ids) or len(set(ids)) != len(ids):
+            raise ValueError("Tool batches require 1-16 calls with unique nonempty IDs")
+
+
+ModelAction = ToolRequest | ToolBatch | FinalResponse
+
+
+@dataclass(frozen=True)
+class ConversationTurn:
+    """One completed user/assistant exchange from earlier in a session."""
+
+    user: str
+    assistant: str
+
+
+@dataclass(frozen=True)
+class ConversationContext:
+    """Earlier exchanges to include in a request. Empty by default.
+
+    Defaulted to empty everywhere so text mode and the evaluation suite keep their
+    exact existing semantics: nothing about a turn changes unless a caller passes
+    history explicitly, and only the voice session does.
+
+    This carries *speech history only*. Prior approvals, tool-call identifiers, and
+    tool observations belong to the turn that produced them and are never replayed
+    from here.
+    """
+
+    turns: tuple[ConversationTurn, ...] = ()
+
+
+def conversation_messages(context: ConversationContext | None) -> list[dict[str, str]]:
+    """Render history as role-separated messages, oldest first."""
+
+    if context is None:
+        return []
+    messages: list[dict[str, str]] = []
+    for turn in context.turns:
+        if turn.user:
+            messages.append({"role": "user", "content": turn.user})
+        if turn.assistant:
+            messages.append({"role": "assistant", "content": turn.assistant})
+    return messages
+
+
+@dataclass(frozen=True)
+class ToolObservation:
+    request: ToolRequest
+    result: dict[str, Any]
+    call_id: str | None = None
+
+
+@dataclass(frozen=True)
+class LogEntry:
+    event: str
+    detail: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ModelTurnDiagnostics:
+    proposal_generation_ms: float | None = None
+    proposal_parsing_ms: float | None = None
+    repair_generation_ms: float | None = None
+    final_generation_ms: float | None = None
+    model_total_duration_ms: float | None = None
+    model_load_duration_ms: float | None = None
+    prompt_eval_duration_ms: float | None = None
+    prompt_eval_count: int | None = None
+    eval_duration_ms: float | None = None
+    eval_count: int | None = None
+    generation_tokens_per_sec: float | None = None
+    model_call_count: int = 0
+    thinking_exposed: bool = False
+    thinking_chars: int = 0
+    thinking_token_count: int | None = None
+    response_chars: int = 0
+    proposal_valid: bool = True
+    repair_triggered: bool = False
+    routing: dict[str, Any] | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    #: Part of ``prompt_tokens`` served from the provider's prompt cache (cloud only).
+    cached_prompt_tokens: int | None = None
+    #: Earlier tool results cut to keep the turn's context small (cloud only).
+    compacted_results: int = 0
+    compacted_chars: int = 0
+
+
+@dataclass
+class AgentTurnMetrics:
+    agent_turn_total_ms: float | None = None
+    proposal_generation_ms: float | None = None
+    proposal_parsing_ms: float | None = None
+    repair_generation_ms: float | None = None
+    policy_validation_ms: float | None = None
+    mcp_execution_ms: float | None = None
+    final_generation_ms: float | None = None
+    model_total_duration_ms: float | None = None
+    model_load_duration_ms: float | None = None
+    prompt_eval_duration_ms: float | None = None
+    prompt_eval_count: int | None = None
+    eval_duration_ms: float | None = None
+    eval_count: int | None = None
+    generation_tokens_per_sec: float | None = None
+    model_call_count: int = 0
+    thinking_exposed: bool = False
+    thinking_chars: int = 0
+    thinking_token_count: int | None = None
+    response_chars: int = 0
+    proposal_valid: bool = True
+    repair_triggered: bool = False
+    tool_called: bool = False
+    routing: dict[str, Any] | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    compacted_results: int = 0
+    compacted_chars: int = 0
+    #: The turn's last allowed model call was sent without tools, asking for an answer.
+    final_call: bool = False
+
+
+@dataclass(frozen=True)
+class PolicyDecision:
+    action: Literal["allow", "confirm", "deny"]
+    reason: str
+    risk: Literal["low", "medium", "high"] = "low"
+    #: Which rule decided, for third-party tools (see external-servers.mdx); recorded
+    #: in the audit log instead of the reason, which may quote arguments.
+    rule: str | None = None
+    #: A confirmation the user gave in advance (``commands.toml``): the call runs
+    #: without asking, still with the confirmed outcome's execution mode.
+    preapproved: bool = False
+
+    @property
+    def allowed(self) -> bool:
+        return self.action == "allow"
+
+    @property
+    def requires_confirmation(self) -> bool:
+        return self.action == "confirm"
+
+
+@dataclass(frozen=True)
+class AgentTurnResult:
+    final_text: str
+    log: list[LogEntry]
+    tool_request: ToolRequest | None = None
+    tool_result: dict[str, Any] | None = None
+    metrics: AgentTurnMetrics = field(default_factory=AgentTurnMetrics)
+    tool_observations: list[ToolObservation] = field(default_factory=list)

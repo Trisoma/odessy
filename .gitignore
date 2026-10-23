@@ -25,6 +25,10 @@ Thumbs.db
 .venv/
 venv/
 build/
+# `installer/build/` is a real source package, not build output.
+!installer/build/
+# Rust build output (cargo).
+target/
 benchmark/results/
 benchmark/tts/results/
 
@@ -61,3 +65,9 @@ token.json
 
 # Evaluation run output
 evals/results/
+
+# Local test/run logs (benchmark baselines under benchmark/base stay tracked)
+/*.log
+
+# Locally built standalone installer
+/OdessySetup.exe

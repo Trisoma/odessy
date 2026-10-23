@@ -15,6 +15,8 @@ Nothing in the agent loop is modified or mocked.
 
 from __future__ import annotations
 
+from odessy.runtime.scheduler import concurrency_from_env
+
 import asyncio
 import shutil
 import tempfile
@@ -23,11 +25,21 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from odessy.agent_loop import ExecutionTarget, OdessyAgent
+from odessy.runtime.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.execution.escalation import ApprovalRequest, EscalationDeniedError
-from odessy.ollama_model import _OllamaStreamTimeout
-from odessy.policy import OdessyPolicy
-from odessy.types import FinalResponse, ModelAction, ModelTurnDiagnostics, ToolObservation, ToolRequest
+from odessy.models.ollama_model import _OllamaStreamTimeout
+from odessy.authority.policy import OdessyPolicy
+from odessy.runtime.types import (
+    ConversationContext,
+    ConversationTurn,
+    FinalResponse,
+    ModelAction,
+    ModelTurnDiagnostics,
+    ToolBatch,
+    ToolObservation,
+    ToolRequest,
+)
+from odessy.tools.external_tools import external_tool_scope
 
 from evals.definitions import Case
 from evals.recording_mcp import GitFixture, Recorder, build_recording_server
@@ -104,7 +116,12 @@ class Attempt:
     latency_ms: float = 0.0
     model_calls: int = 0
     prompt_tokens: int | None = None
+    routing: dict[str, Any] | None = None
     completion_tokens: int | None = None
+    #: Part of prompt_tokens served from the provider's prompt cache (cloud only).
+    cached_prompt_tokens: int | None = None
+    #: The turn's last allowed model call was sent without tools, asking for an answer.
+    final_call: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -131,20 +148,52 @@ class RecordingModel:
     def __init__(self, inner: Any) -> None:
         self._inner = inner
         self.proposals: list[dict[str, Any]] = []
+        if not callable(getattr(inner, "begin_turn", None)):
+            # The agent treats a model with begin_turn as a router and hands it history
+            # there; a plain adapter takes history in propose. Mirror the inner shape.
+            self.begin_turn = None  # type: ignore[assignment]
 
     @property
     def last_turn_diagnostics(self) -> ModelTurnDiagnostics:
         diagnostics = getattr(self._inner, "last_turn_diagnostics", None)
         return diagnostics if isinstance(diagnostics, ModelTurnDiagnostics) else ModelTurnDiagnostics()
 
-    def propose(self, user_text: str) -> ModelAction:
-        return self._record(self._inner.propose(user_text))
+    @property
+    def background_generation(self):
+        return getattr(self._inner, "background_generation", False) is True
+
+    def request_stop(self):
+        stop = getattr(self._inner, "request_stop", None)
+        if stop is not None:
+            stop()
+
+    def begin_turn(self, **kwargs):
+        begin = getattr(self._inner, "begin_turn", None)
+        if begin is not None:
+            begin(**kwargs)
+
+    def propose(self, user_text: str, *, context: Any = None) -> ModelAction:
+        # Forward history only when there is some, so adapters see the call shape the
+        # agent loop itself uses.
+        if context is None:
+            return self._record(self._inner.propose(user_text))
+        return self._record(self._inner.propose(user_text, context=context))
 
     def respond_to_observation(self, user_text: str, observation: ToolObservation) -> ModelAction:
         return self._record(self._inner.respond_to_observation(user_text, observation))
 
+    def respond_to_observations(self, user_text, observations):
+        return self._record(self._inner.respond_to_observations(user_text, observations))
+
+    def finalize_observations(self, observations):
+        finalize = getattr(self._inner, "finalize_observations", None)
+        if finalize:
+            finalize(observations)
+
     def _record(self, action: ModelAction) -> ModelAction:
-        if isinstance(action, ToolRequest):
+        if isinstance(action, ToolBatch):
+            self.proposals.append({"type": "batch", "calls": [{"call_id": c.call_id, "name": c.request.name, "arguments": dict(c.request.arguments)} for c in action.calls]})
+        elif isinstance(action, ToolRequest):
             self.proposals.append({"type": "tool", "name": action.name, "arguments": dict(action.arguments)})
         elif isinstance(action, FinalResponse):
             self.proposals.append({"type": "final", "text": action.text})
@@ -203,25 +252,41 @@ async def run_attempt(
             return False
 
         approver = DecliningApprover()
+        # Simulated third-party servers, offered and authorized as configured ones are.
+        externals, external_tools = [], []
+        if case.servers:
+            from evals.external_fixture import build_external
+
+            externals, external_tools = await build_external(case.servers, recorder)
+        context = (
+            ConversationContext(tuple(ConversationTurn(user=user, assistant=reply) for user, reply in case.history))
+            if case.history
+            else None
+        )
         agent = OdessyAgent(
             model=recording_model,
             policy=policy,  # type: ignore[arg-type]
-            mcp_server=ExecutionTarget(server),
+            mcp_server=(ExecutionTarget(server), *(ExecutionTarget(external) for external in externals)),
             confirm=decline,
             approver=approver,
             max_model_calls=max_model_calls,
+            tool_concurrency=concurrency_from_env(),
         )
 
         record = Attempt(case_id=case.id, category=case.category, attempt=attempt, outcome="completed")
         started = time.perf_counter()
         try:
-            result = await asyncio.wait_for(
-                agent.run_turn(case.prompt),
-                timeout=timeout_seconds,
-            )
+            with external_tool_scope(external_tools):
+                # History only when the case has some: the call shape stays the one
+                # every other case uses.
+                turn = agent.run_turn(case.prompt, context=context) if context else agent.run_turn(case.prompt)
+                result = await asyncio.wait_for(turn, timeout=timeout_seconds)
             record.final_text = result.final_text
+            if any(entry.event == "batch_stopped" for entry in result.log):
+                record.outcome = "blocked"
             if any(entry.event in EXHAUSTION_EVENTS for entry in result.log):
                 record.outcome = "exhausted"
+            record.final_call = any(entry.event == "final_call" for entry in result.log)
         except asyncio.TimeoutError:
             # The attempt exceeded its budget during awaitable work.
             record.outcome = "timeout"
@@ -255,7 +320,9 @@ async def run_attempt(
             for call in recorder.calls
         ]
         diagnostics = recording_model.last_turn_diagnostics
+        record.routing = diagnostics.routing
         record.model_calls = diagnostics.model_call_count or len(recording_model.proposals)
         record.prompt_tokens = diagnostics.prompt_tokens
         record.completion_tokens = diagnostics.completion_tokens
+        record.cached_prompt_tokens = diagnostics.cached_prompt_tokens
         return record

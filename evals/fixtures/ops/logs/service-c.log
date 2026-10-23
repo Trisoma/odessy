@@ -1,0 +1,190 @@
+2026-10-20T09:00:00Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:00:17Z INFO  service-c worker heartbeat queue_depth=653
+2026-10-20T09:00:34Z INFO  service-c scheduled job finished job=rollup duration_ms=273
+2026-10-20T09:00:51Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:01:08Z INFO  service-c health probe ok latency_ms=275
+2026-10-20T09:01:25Z INFO  service-c scheduled job finished job=rollup duration_ms=407
+2026-10-20T09:01:42Z INFO  service-c health probe ok latency_ms=390
+2026-10-20T09:01:59Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:02:16Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:02:33Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:02:50Z INFO  service-c connection pool stats active=208 idle=8
+2026-10-20T09:03:07Z INFO  service-c connection pool stats active=659 idle=8
+2026-10-20T09:03:24Z INFO  service-c worker heartbeat queue_depth=241
+2026-10-20T09:03:41Z INFO  service-c worker heartbeat queue_depth=269
+2026-10-20T09:03:58Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:04:15Z INFO  service-c connection pool stats active=120 idle=8
+2026-10-20T09:04:32Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:04:49Z INFO  service-c health probe ok latency_ms=772
+2026-10-20T09:05:06Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:05:23Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:05:40Z INFO  service-c connection pool stats active=803 idle=8
+2026-10-20T09:05:57Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:06:14Z INFO  service-c scheduled job finished job=rollup duration_ms=371
+2026-10-20T09:06:31Z INFO  service-c connection pool stats active=332 idle=8
+2026-10-20T09:06:48Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:07:05Z INFO  service-c worker heartbeat queue_depth=895
+2026-10-20T09:07:22Z INFO  service-c connection pool stats active=106 idle=8
+2026-10-20T09:07:39Z INFO  service-c worker heartbeat queue_depth=698
+2026-10-20T09:07:56Z INFO  service-c health probe ok latency_ms=249
+2026-10-20T09:08:13Z INFO  service-c scheduled job finished job=rollup duration_ms=841
+2026-10-20T09:08:30Z INFO  service-c worker heartbeat queue_depth=837
+2026-10-20T09:08:47Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:09:04Z INFO  service-c worker heartbeat queue_depth=815
+2026-10-20T09:09:21Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:09:38Z INFO  service-c worker heartbeat queue_depth=569
+2026-10-20T09:09:55Z INFO  service-c worker heartbeat queue_depth=599
+2026-10-20T09:10:12Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:10:29Z INFO  service-c scheduled job finished job=rollup duration_ms=769
+2026-10-20T09:10:46Z INFO  service-c connection pool stats active=600 idle=8
+2026-10-20T09:11:03Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:11:20Z INFO  service-c scheduled job finished job=rollup duration_ms=224
+2026-10-20T09:11:37Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:11:54Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:12:11Z INFO  service-c worker heartbeat queue_depth=651
+2026-10-20T09:12:28Z INFO  service-c connection pool stats active=354 idle=8
+2026-10-20T09:12:45Z INFO  service-c scheduled job finished job=rollup duration_ms=349
+2026-10-20T09:13:02Z INFO  service-c health probe ok latency_ms=368
+2026-10-20T09:13:19Z INFO  service-c worker heartbeat queue_depth=468
+2026-10-20T09:13:36Z INFO  service-c worker heartbeat queue_depth=700
+2026-10-20T09:13:53Z INFO  service-c connection pool stats active=811 idle=8
+2026-10-20T09:14:10Z INFO  service-c worker heartbeat queue_depth=346
+2026-10-20T09:14:27Z INFO  service-c health probe ok latency_ms=545
+2026-10-20T09:14:44Z INFO  service-c worker heartbeat queue_depth=686
+2026-10-20T09:15:01Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:15:18Z INFO  service-c worker heartbeat queue_depth=562
+2026-10-20T09:15:35Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:15:52Z INFO  service-c scheduled job finished job=rollup duration_ms=716
+2026-10-20T09:16:09Z INFO  service-c scheduled job finished job=rollup duration_ms=410
+2026-10-20T09:16:26Z INFO  service-c connection pool stats active=672 idle=8
+2026-10-20T09:16:43Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:17:00Z INFO  service-c health probe ok latency_ms=288
+2026-10-20T09:17:17Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:17:34Z INFO  service-c health probe ok latency_ms=500
+2026-10-20T09:17:51Z INFO  service-c health probe ok latency_ms=669
+2026-10-20T09:18:08Z INFO  service-c scheduled job finished job=rollup duration_ms=83
+2026-10-20T09:18:25Z INFO  service-c health probe ok latency_ms=842
+2026-10-20T09:18:42Z INFO  service-c scheduled job finished job=rollup duration_ms=734
+2026-10-20T09:18:59Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:19:16Z INFO  service-c worker heartbeat queue_depth=141
+2026-10-20T09:19:33Z INFO  service-c connection pool stats active=262 idle=8
+2026-10-20T09:19:50Z INFO  service-c health probe ok latency_ms=68
+2026-10-20T09:20:07Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:20:24Z INFO  service-c health probe ok latency_ms=695
+2026-10-20T09:20:41Z INFO  service-c worker heartbeat queue_depth=607
+2026-10-20T09:20:58Z INFO  service-c health probe ok latency_ms=204
+2026-10-20T09:21:15Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:21:32Z INFO  service-c scheduled job finished job=rollup duration_ms=438
+2026-10-20T09:21:49Z INFO  service-c worker heartbeat queue_depth=272
+2026-10-20T09:22:06Z INFO  service-c connection pool stats active=583 idle=8
+2026-10-20T09:22:23Z INFO  service-c scheduled job finished job=rollup duration_ms=562
+2026-10-20T09:22:40Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:22:57Z INFO  service-c scheduled job finished job=rollup duration_ms=890
+2026-10-20T09:23:14Z INFO  service-c connection pool stats active=393 idle=8
+2026-10-20T09:23:31Z INFO  service-c scheduled job finished job=rollup duration_ms=888
+2026-10-20T09:23:48Z INFO  service-c worker heartbeat queue_depth=197
+2026-10-20T09:24:05Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:24:22Z INFO  service-c health probe ok latency_ms=857
+2026-10-20T09:24:39Z INFO  service-c scheduled job finished job=rollup duration_ms=339
+2026-10-20T09:24:56Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:25:13Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:25:30Z INFO  service-c worker heartbeat queue_depth=831
+2026-10-20T09:25:47Z INFO  service-c scheduled job finished job=rollup duration_ms=500
+2026-10-20T09:26:04Z INFO  service-c health probe ok latency_ms=348
+2026-10-20T09:26:21Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:26:38Z INFO  service-c worker heartbeat queue_depth=253
+2026-10-20T09:26:55Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:27:12Z INFO  service-c health probe ok latency_ms=755
+2026-10-20T09:27:29Z INFO  service-c scheduled job finished job=rollup duration_ms=495
+2026-10-20T09:27:46Z INFO  service-c scheduled job finished job=rollup duration_ms=23
+2026-10-20T09:28:03Z INFO  service-c health probe ok latency_ms=513
+2026-10-20T09:28:20Z INFO  service-c worker heartbeat queue_depth=859
+2026-10-20T09:28:37Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:28:54Z INFO  service-c scheduled job finished job=rollup duration_ms=377
+2026-10-20T09:29:11Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:29:28Z INFO  service-c connection pool stats active=50 idle=8
+2026-10-20T09:29:45Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:30:02Z INFO  service-c health probe ok latency_ms=132
+2026-10-20T09:30:19Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:30:36Z INFO  service-c scheduled job finished job=rollup duration_ms=206
+2026-10-20T09:30:53Z INFO  service-c worker heartbeat queue_depth=204
+2026-10-20T09:31:10Z INFO  service-c scheduled job finished job=rollup duration_ms=181
+2026-10-20T09:31:27Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:31:44Z INFO  service-c connection pool stats active=806 idle=8
+2026-10-20T09:32:01Z INFO  service-c connection pool stats active=163 idle=8
+2026-10-20T09:32:18Z INFO  service-c worker heartbeat queue_depth=639
+2026-10-20T09:32:35Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:32:52Z INFO  service-c worker heartbeat queue_depth=137
+2026-10-20T09:33:09Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:33:26Z INFO  service-c connection pool stats active=286 idle=8
+2026-10-20T09:33:43Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:34:00Z INFO  service-c worker heartbeat queue_depth=749
+2026-10-20T09:34:17Z INFO  service-c connection pool stats active=30 idle=8
+2026-10-20T09:34:34Z INFO  service-c connection pool stats active=726 idle=8
+2026-10-20T09:34:51Z INFO  service-c worker heartbeat queue_depth=308
+2026-10-20T09:35:08Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:35:25Z INFO  service-c worker heartbeat queue_depth=743
+2026-10-20T09:35:42Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:35:59Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:36:16Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:36:33Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:36:50Z INFO  service-c worker heartbeat queue_depth=752
+2026-10-20T09:37:07Z INFO  service-c scheduled job finished job=rollup duration_ms=766
+2026-10-20T09:37:24Z INFO  service-c worker heartbeat queue_depth=562
+2026-10-20T09:37:41Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:37:58Z INFO  service-c health probe ok latency_ms=72
+2026-10-20T09:38:15Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:38:32Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:38:49Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:39:06Z INFO  service-c scheduled job finished job=rollup duration_ms=898
+2026-10-20T09:39:23Z INFO  service-c worker heartbeat queue_depth=203
+2026-10-20T09:39:40Z INFO  service-c health probe ok latency_ms=803
+2026-10-20T09:39:57Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:40:14Z INFO  service-c scheduled job finished job=rollup duration_ms=857
+2026-10-20T09:40:31Z INFO  service-c connection pool stats active=384 idle=8
+2026-10-20T09:40:48Z INFO  service-c connection pool stats active=239 idle=8
+2026-10-20T09:41:05Z INFO  service-c connection pool stats active=225 idle=8
+2026-10-20T09:41:22Z INFO  service-c worker heartbeat queue_depth=824
+2026-10-20T09:41:39Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:41:56Z INFO  service-c worker heartbeat queue_depth=349
+2026-10-20T09:42:13Z INFO  service-c worker heartbeat queue_depth=155
+2026-10-20T09:42:30Z INFO  service-c connection pool stats active=36 idle=8
+2026-10-20T09:42:47Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:43:04Z INFO  service-c connection pool stats active=240 idle=8
+2026-10-20T09:43:21Z INFO  service-c worker heartbeat queue_depth=788
+2026-10-20T09:43:38Z INFO  service-c scheduled job finished job=rollup duration_ms=573
+2026-10-20T09:43:55Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:44:12Z INFO  service-c worker heartbeat queue_depth=473
+2026-10-20T09:44:29Z INFO  service-c scheduled job finished job=rollup duration_ms=235
+2026-10-20T09:44:46Z INFO  service-c health probe ok latency_ms=358
+2026-10-20T09:45:03Z INFO  service-c health probe ok latency_ms=382
+2026-10-20T09:45:20Z INFO  service-c scheduled job finished job=rollup duration_ms=489
+2026-10-20T09:45:37Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:45:54Z INFO  service-c health probe ok latency_ms=829
+2026-10-20T09:46:11Z INFO  service-c health probe ok latency_ms=280
+2026-10-20T09:46:28Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:46:45Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:47:02Z INFO  service-c connection pool stats active=452 idle=8
+2026-10-20T09:47:19Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:47:36Z INFO  service-c scheduled job finished job=rollup duration_ms=875
+2026-10-20T09:47:53Z INFO  service-c health probe ok latency_ms=662
+2026-10-20T09:48:10Z INFO  service-c scheduled job finished job=rollup duration_ms=675
+2026-10-20T09:48:27Z INFO  service-c connection pool stats active=320 idle=8
+2026-10-20T09:48:44Z INFO  service-c health probe ok latency_ms=365
+2026-10-20T09:49:01Z INFO  service-c cache refresh completed entries=512
+2026-10-20T09:49:18Z INFO  service-c request served path=/api/items status=200
+2026-10-20T09:49:35Z INFO  service-c worker heartbeat queue_depth=157
+2026-10-20T09:49:52Z INFO  service-c worker heartbeat queue_depth=325
+2026-10-20T09:50:09Z INFO  service-c connection pool stats active=208 idle=8
+2026-10-20T09:50:26Z INFO  service-c connection pool stats active=613 idle=8
+2026-10-20T09:50:43Z INFO  service-c connection pool stats active=183 idle=8
+2026-10-20T09:51:00Z INFO  service-c worker heartbeat queue_depth=310
+2026-10-20T09:51:17Z INFO  service-c health probe ok latency_ms=342
+2026-10-20T09:51:34Z INFO  service-c scheduled job finished job=rollup duration_ms=862
+2026-10-20T09:51:51Z INFO  service-c worker heartbeat queue_depth=856
+2026-10-20T09:52:08Z INFO  service-c scheduled job finished job=rollup duration_ms=674
+2026-10-20T09:52:25Z INFO  service-c worker heartbeat queue_depth=597
+2026-10-20T09:52:42Z INFO  service-c worker heartbeat queue_depth=477
+2026-10-20T09:52:59Z INFO  service-c scheduled job finished job=rollup duration_ms=130
+2026-10-20T09:53:16Z INFO  service-c scheduled job finished job=rollup duration_ms=825
+2026-10-20T09:53:33Z INFO  service-c request served path=/api/items status=200

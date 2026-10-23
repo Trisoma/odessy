@@ -9,11 +9,11 @@ from typing import Any
 
 import pytest
 
-import odessy.cloud_model as cloud
+import odessy.models.cloud_model as cloud
 from odessy.cli import _build_agent, default_max_model_calls
-from odessy.cloud_model import CloudModel, _TransientCloudError, build_cloud_model
-from odessy.fake_model import FakeModel
-from odessy.types import FinalResponse, ToolObservation, ToolRequest
+from odessy.models.cloud_model import CloudModel, _TransientCloudError, build_cloud_model
+from odessy.models.fake_model import FakeModel
+from odessy.runtime.types import FinalResponse, ToolObservation, ToolRequest
 
 
 def _reply(content: str = "", calls: list[tuple[str, str, dict[str, Any]]] | None = None) -> dict[str, Any]:

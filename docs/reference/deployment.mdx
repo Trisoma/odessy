@@ -7,7 +7,7 @@ With Node installed, the model has 13 tools, including files, search, Git,
 calculator, time, and `terminal.run` on this computer.
 
 Without the Node dependencies, only `time.now`, `calculator.eval`, and the Python
-`terminal.run` are mounted and advertised. Keyword routing and repair prompts use
+`terminal.run` are mounted and advertised. Model tool schemas and repair prompts use
 the same available set. The CLI warns that commands have no confinement backend;
 results report `enforcement: "none"`. Run `python -m odessy doctor` for setup steps.
 
@@ -16,6 +16,13 @@ Set `ODESSY_DEPLOYMENT=split` for the Jetson/laptop layout. Configure
 Here `terminal.run` runs locally and `laptop.terminal.run` runs on the remote laptop.
 When deployment is unset, a configured remote URL selects split; otherwise single
 is the default.
+
+For authenticated split execution, set `ODESSY_PAIRED_HOST=<enrolled-alias>` and,
+if needed, `ODESSY_LINK_BIN=<path-to-odessy-link>`. This selects split mode and
+replaces the raw remote URL. Explicit single mode or simultaneous remote-URL
+configuration is rejected; an unavailable paired host never falls back to a raw
+URL. Remote commands retain the name `laptop.terminal.run`. Enrollment and host-local
+workspace/capability grants are separate steps; see [host pairing](host-pairing.mdx).
 
 `ODESSY_LOCAL_OS` overrides local OS detection. `ODESSY_LAPTOP_OS` describes the
 remote laptop in split mode. Both accept `windows`, `linux`, or `macos`.

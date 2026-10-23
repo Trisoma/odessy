@@ -18,7 +18,8 @@ import type {
   TerminalRunResult,
 } from "../output/contracts.js";
 import { DEFAULT_MAX_BYTES, normalizeLimit, truncateUtf8 } from "../output/truncate.js";
-import { prepareOutput } from "../output/prepare.js";
+import { prepareOutput, redactResult } from "../output/prepare.js";
+import { redactText } from "../output/redaction.js";
 import { SpillStore } from "../output/spill.js";
 import { confineArgv, type Confinement, type SandboxReport } from "../execution/seam.js";
 import { ISOLATION_REQUIREMENTS, MODES } from "../execution/contract.js";
@@ -26,6 +27,9 @@ import type { WorkspaceGuard } from "../workspace/path-guard.js";
 
 const execFileAsync = promisify(execFile);
 const SKIP_DIRS = new Set([".git", "node_modules", "__pycache__", ".pytest_cache", "dist"]);
+
+/** Inline budget for one git text field; the remainder is spilled. */
+const GIT_TEXT_MAX_CHARS = 64 * 1024;
 
 export const readInputSchema = {
   path: z.string(),
@@ -107,14 +111,31 @@ export async function readFileTool(
     throw new Error(`filesystem.read requires a regular file: ${input.path}`);
   }
   const raw = await fs.promises.readFile(absolutePath, "utf8");
-  const truncated = truncateUtf8(raw, input.max_bytes ?? DEFAULT_MAX_BYTES);
+  const maxBytes = input.max_bytes ?? DEFAULT_MAX_BYTES;
+  // Redact -> retain -> spill, the same pipeline terminal output uses. A secret in
+  // a file must never reach the spill file, and a cut file must stay recoverable
+  // instead of being silently shortened at the head.
+  const prepared = prepareOutput(raw, {
+    label: "file content",
+    maxChars: maxBytes,
+    spill: new SpillStore(guard.root),
+  });
   return {
     path: guard.relative(absolutePath),
-    content: truncated.content,
+    content: prepared.text,
     size: stat.size,
     status: "ok",
-    truncated: truncated.truncated,
-    ...(truncated.truncation ? { truncation: truncated.truncation } : {}),
+    truncated: prepared.truncated,
+    ...(prepared.truncated
+      ? {
+          truncation: {
+            truncated: true,
+            maxBytes,
+            originalBytes: Buffer.byteLength(raw, "utf8"),
+          },
+        }
+      : {}),
+    ...(prepared.spill ? { spill: prepared.spill } : {}),
   };
 }
 
@@ -142,12 +163,12 @@ export async function listDirectoryTool(
       };
     }),
   );
-  return {
+  return redactResult({
     path: guard.relative(absolutePath),
     entries,
-    status: "ok",
+    status: "ok" as const,
     truncated: names.length > visible.length,
-  };
+  });
 }
 
 export async function findProjectTool(
@@ -165,14 +186,14 @@ export async function findProjectTool(
     }
   });
 
-  return {
+  return redactResult({
     pattern: input.pattern,
     path: guard.relative(root),
     matches,
     count: matches.length,
-    status: "ok",
+    status: "ok" as const,
     truncated: matches.length >= limit,
-  };
+  });
 }
 
 export async function grepProjectTool(
@@ -205,24 +226,30 @@ export async function grepProjectTool(
         matches.push({
           path: guard.relative(absolutePath),
           line: index + 1,
-          text: truncateUtf8(lines[index] ?? "", 500).content,
+          // Redact BEFORE bounding. A token cut in half no longer matches any
+          // pattern, so truncating first would let its prefix through.
+          text: truncateUtf8(redactText(lines[index] ?? ""), 500).content,
         });
       }
     }
   });
 
-  return {
+  return redactResult({
     pattern: input.pattern,
     path: guard.relative(root),
     matches,
     count: matches.length,
-    status: "ok",
+    status: "ok" as const,
     truncated: matches.length >= limit,
-  };
+  });
 }
 
 export async function gitStatus(guard: WorkspaceGuard): Promise<GitTextResult> {
-  return gitText(guard.root, ["status", "--porcelain=v1", "--branch"], "raw");
+  return prepareGitText(
+    await gitText(guard.root, ["status", "--porcelain=v1", "--branch"], "raw"),
+    "git.status",
+    guard.root,
+  );
 }
 
 export async function gitDiff(
@@ -233,7 +260,7 @@ export async function gitDiff(
     input.mode === "cached"
       ? ["diff", "--cached", "--no-ext-diff"]
       : ["diff", "--no-ext-diff"];
-  return gitText(guard.root, args, "diff");
+  return prepareGitText(await gitText(guard.root, args, "diff"), "git.diff", guard.root);
 }
 
 export async function gitChangedFiles(
@@ -246,13 +273,13 @@ export async function gitChangedFiles(
     const args = mode === "cached" ? ["diff", "--cached", "--name-only"] : ["diff", "--name-only"];
     const result = await gitText(guard.root, args, "raw");
     if (result.status !== "ok") {
-      return { status: "failed", files: [], error: result.error };
+      return redactResult({ status: "failed" as const, files: [], error: result.error });
     }
     for (const line of (result.raw ?? "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
       files.add(line.replaceAll("\\", "/"));
     }
   }
-  return { status: "ok", files: [...files].sort() };
+  return redactResult({ status: "ok" as const, files: [...files].sort() });
 }
 
 export async function gitLog(
@@ -262,13 +289,13 @@ export async function gitLog(
   const limit = Math.max(1, Math.min(Math.floor(input.limit ?? 20), 50));
   const result = await gitText(guard.root, ["log", "--oneline", "-n", String(limit)], "raw");
   if (result.status !== "ok") {
-    return { status: "failed", commits: [], limit, error: result.error };
+    return redactResult({ status: "failed" as const, commits: [], limit, error: result.error });
   }
-  return {
-    status: "ok",
+  return redactResult({
+    status: "ok" as const,
     commits: (result.raw ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
     limit,
-  };
+  });
 }
 
 export async function laptopTerminalRun(
@@ -302,12 +329,12 @@ export async function laptopTerminalRun(
     maxChars: 32 * 1024,
     spill,
   });
-  return {
+  return redactResult({
     stdout: stdout.text,
     stderr: stderr.text,
     exit_code: result.exitCode,
     duration,
-    status: result.timedOut ? "timeout" : result.exitCode === 0 ? "ok" : "failed",
+    status: result.timedOut ? ("timeout" as const) : result.exitCode === 0 ? ("ok" as const) : ("failed" as const),
     command: input.command,
     cwd: resolvedCwd,
     timed_out: result.timedOut,
@@ -316,7 +343,7 @@ export async function laptopTerminalRun(
     stdout_spill: stdout.spill,
     stderr_spill: stderr.spill,
     sandbox: result.sandbox,
-  };
+  });
 }
 
 export async function filesystemWriteTool(
@@ -326,11 +353,11 @@ export async function filesystemWriteTool(
   const absolutePath = guard.resolveCandidate(input.path);
   await fs.promises.mkdir(path.dirname(absolutePath), { recursive: true });
   await fs.promises.writeFile(absolutePath, input.content, "utf8");
-  return {
+  return redactResult({
     path: guard.relative(absolutePath),
     bytes_written: Buffer.byteLength(input.content, "utf8"),
-    status: "ok",
-  };
+    status: "ok" as const,
+  });
 }
 
 const LOG_DIR = path.join(".odessy", "logs");
@@ -345,10 +372,35 @@ export async function logAppendTool(
   const logPath = path.join(logDir, LOG_FILE);
   const line = `[${new Date().toISOString()}] ${input.content}\n`;
   await fs.promises.appendFile(logPath, line, "utf8");
-  return {
+  return redactResult({
     path: guard.relative(logPath),
     bytes_written: Buffer.byteLength(line, "utf8"),
-    status: "ok",
+    status: "ok" as const,
+  });
+}
+
+/**
+ * Redact, retain and spill one git text field.
+ *
+ * The same ordering as terminal output and file content: redact first (a secret
+ * must not reach the spill file), then keep both ends, then spill the rest. Git
+ * output is unbounded -- a diff of a generated file is megabytes -- so without
+ * this an enormous observation would be handed to the model unredacted and whole.
+ */
+function prepareGitText(result: GitTextResult, label: string, root: string): GitTextResult {
+  const field = result.diff !== undefined ? "diff" : result.raw !== undefined ? "raw" : null;
+  if (result.status !== "ok" || field === null) {
+    return redactResult(result);
+  }
+  const prepared = prepareOutput(result[field] ?? "", {
+    label,
+    maxChars: GIT_TEXT_MAX_CHARS,
+    spill: new SpillStore(root),
+  });
+  return {
+    ...result,
+    [field]: prepared.text,
+    ...(prepared.spill ? { spill: prepared.spill } : {}),
   };
 }
 
@@ -366,7 +418,7 @@ async function gitText(
     return field === "diff" ? { status: "ok", diff: stdout } : { status: "ok", raw: stdout };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { status: "failed", error: message };
+    return redactResult({ status: "failed" as const, error: message });
   }
 }
 
