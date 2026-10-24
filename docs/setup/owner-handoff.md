@@ -95,3 +95,29 @@ explicit post-cancellation inspection and fresh review; they do not silently res
 or remove partial directories. See [integration evidence](existing-installer-wiring.md).
 This supersedes earlier GUI-maintenance gaps, but does not discharge signatures,
 target-native service checks, Linux/macOS component support or physical acceptance.
+
+## October 24 installed-launch and management continuation
+
+The user-facing flow is now closed end to end: `OdessySetup.exe` → dedicated wizard
+→ install → Start-menu launch of the installed copy.
+
+- `--installed` is a real entrypoint. It validates the active version's executable
+  hashes and the recorded configuration, then starts the owned coordinator with a
+  per-launch bearer token on loopback and stops it when the application closes.
+  There is no demo fallback and no implicit model selection or download.
+- With no model configured (or on an execution node), the installed app opens
+  configuration and management instead of starting inference.
+- The wizard adds bounded existing-model discovery, the four optional voice asset
+  paths (voice stays unavailable until complete), a readable review with expandable
+  diagnostics, journal-derived progress, and Finish → Open / Manage / Close.
+- Installed management replaces the technical maintenance page in `--manage` mode:
+  check files, repair/update from the cached payload, roll back, change
+  configuration, service controls, repair the Start-menu entry and uninstall —
+  without typing any internal path.
+- Registration coordination: the shortcut targets the active owned version and is
+  rewritten after activation changes; a failed Installed-apps write leaves a
+  recorded partial state plus a working shortcut to repair from.
+- Uninstall runs only from the external maintenance cache; the installed app
+  delegates to that window. Only recorded owned files are removed.
+
+See [wizard and installed launch](wizard.md).

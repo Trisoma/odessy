@@ -74,6 +74,82 @@ app=root/'application';app.mkdir();(app/'odessy-application.json').write_text('{
           : false,
       timeout: const Timeout(Duration(seconds: 90)));
 
+  test(
+      'real bridge reports an installed spec and reviews a configuration change',
+      () async {
+    final repo = Directory.current.parent.parent.absolute.path;
+    final directory =
+        Directory.systemTemp.createTempSync('odessy-installed-bridge-');
+    final installation = '${directory.path}${Platform.pathSeparator}App';
+    const fixture = r'''import hashlib,json,sys
+from pathlib import Path
+root=Path(sys.argv[1]);version='a'*32;base=root/'versions'/version
+(base/'Scripts').mkdir(parents=True);(base/'desktop').mkdir()
+(base/'Scripts/python.exe').write_bytes(b'python')
+(base/'desktop/odessy_desktop.exe').write_bytes(b'desktop')
+(base/'selection.json').write_text(json.dumps({'schema_version':1,'selection':{'role':'combined'}}))
+files={p.relative_to(base).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in base.rglob('*') if p.is_file()}
+(root/'installation.json').write_text(json.dumps({'schema_version':1,'id':'b'*32,'root':str(root),'active':version,'versions':{version:files},'selection':{'role':'combined'}}))
+''';
+    final created = await Process.run(python!, ['-c', fixture, installation],
+        workingDirectory: repo,
+        environment: {
+          'PYTHONPATH':
+              '$repo${Platform.pathSeparator}src${Platform.isWindows ? ';' : ':'}$repo'
+        });
+    expect(created.exitCode, 0, reason: '${created.stderr}');
+    final backend = LocalSetupBackend(python: python, sourceRoot: repo);
+    var id = 0;
+    Future<SetupReply> request(String action,
+            [Map<String, dynamic> parameters = const {}]) =>
+        backend.execute(SetupRequest(
+            id: 'installed-${++id}',
+            operation: 'manage',
+            selection: const {},
+            parameters: {
+              'action': action,
+              'root': installation,
+              ...parameters
+            }));
+    try {
+      final spec = await request('installed-spec');
+      expect(spec.ok, isTrue, reason: spec.reason);
+      expect(spec.result['model_configured'], isFalse);
+      expect(spec.result['configuration_source'], 'version');
+      final status = await request('package-status');
+      expect(status.result['installation_format'], 'versioned');
+      expect(status.result['registration'], 'none');
+      final selection = {
+        'role': 'combined',
+        'model': {'provider': 'ollama', 'name': 'llama3'},
+      };
+      final reviewed = await request('package-configure-review', {
+        'selection': selection,
+        'workspace': '${directory.path}${Platform.pathSeparator}work',
+      });
+      expect(reviewed.ok, isTrue, reason: reviewed.reason);
+      final applied = await request('package-configure', {
+        'selection': selection,
+        'workspace': '${directory.path}${Platform.pathSeparator}work',
+        'confirm': reviewed.result['plan_id'],
+      });
+      expect(applied.result['model_configured'], isTrue);
+      final configured = await request('installed-spec');
+      expect(configured.result['model_configured'], isTrue);
+      expect(configured.result['configuration_source'], 'configuration');
+      final uninstall = await request('package-uninstall-review');
+      expect(uninstall.result['plan_id'], isA<String>());
+      expect(File('$installation/configuration.json').existsSync(), isTrue);
+    } finally {
+      await backend.close();
+      directory.deleteSync(recursive: true);
+    }
+  },
+      skip: python == null
+          ? 'Set ODESSY_TEST_PYTHON for real installed-bridge qualification.'
+          : false,
+      timeout: const Timeout(Duration(seconds: 90)));
+
   test('real Python bridge reviews, saves once and recovers without replay',
       () async {
     final root = Directory.current.parent.parent.absolute.path;

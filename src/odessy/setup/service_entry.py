@@ -9,19 +9,24 @@ from .configuration import environment_text
 from .planning import build_plan
 
 
+def run(selection,*,workspace,host='127.0.0.1',port=8765,token=None,watch_stdin=False):
+    if selection.role=='execution' or selection.model is None:
+        raise ValueError('coordinator service requires an explicitly configured model')
+    # Reuse the same validated export rules, without persisting credential contents.
+    plan=build_plan(selection)
+    environment_text(plan)
+    for key,value in plan.environment.items(): os.environ[key]=value
+    from odessy.application.serve import run_server
+    asyncio.run(run_server(host=host,port=port,workspace=Path(workspace),backend=selection.model.provider,
+                           token=token,watch_stdin=watch_stdin,print_token=token is None))
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser()
     parser.add_argument('--selection',required=True)
     parser.add_argument('--workspace',required=True)
     parser.add_argument('--port',type=int,default=8765)
     args=parser.parse_args(argv)
-    selection=_load(args.selection)
-    if selection.role=='execution' or selection.model is None:
-        raise ValueError('coordinator service requires an explicitly configured model')
-    # Reuse the same validated export rules, without persisting credential contents.
-    environment_text(build_plan(selection))
-    for key,value in build_plan(selection).environment.items(): os.environ[key]=value
-    from odessy.application.serve import run_server
-    asyncio.run(run_server(port=args.port,workspace=Path(args.workspace),backend=selection.model.provider))
+    run(_load(args.selection),workspace=args.workspace,port=args.port)
 
 if __name__=='__main__': main()

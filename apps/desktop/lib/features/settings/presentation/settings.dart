@@ -4,8 +4,10 @@ import '../../../app/session_controller.dart';
 import '../controllers/setting_field.dart';
 
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key, required this.controller});
+  const SettingsPage(
+      {super.key, required this.controller, this.onOpenManagement});
   final DesktopSession controller;
+  final VoidCallback? onOpenManagement;
   @override
   State<SettingsPage> createState() => _SettingsPageState();
 }
@@ -120,6 +122,28 @@ class _SettingsPageState extends State<SettingsPage> {
                               style:
                                   TextStyle(fontSize: 11, color: Colors.grey)),
                         ]))),
+            const SizedBox(height: 20),
+            if (widget.onOpenManagement != null)
+              Card(
+                  child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Installation',
+                                style: TextStyle(fontWeight: FontWeight.w600)),
+                            const SizedBox(height: 10),
+                            const Text(
+                                'Repair, update, roll back, change configuration or uninstall this installed copy. Maintenance runs outside the installation.',
+                                style: TextStyle(color: Colors.grey, fontSize: 12)),
+                            const SizedBox(height: 12),
+                            OutlinedButton.icon(
+                                onPressed: widget.onOpenManagement,
+                                icon: const Icon(Icons.settings_outlined,
+                                    size: 18),
+                                label:
+                                    const Text('Manage installation')),
+                          ]))),
             const SizedBox(height: 20),
             const Card(
                 child: Padding(

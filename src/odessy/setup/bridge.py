@@ -95,8 +95,13 @@ def run(stdin=None, stdout=None) -> int:
             raise ValueError('valid controller request id required')
         identifier = request['id']
         response = {'id': identifier, 'status': 'ok', 'result': execute(request)}
-    except (ValueError, TypeError, OSError, RecursionError, RuntimeError, KeyError, subprocess.SubprocessError, ImportError, KeyboardInterrupt):
-        response = {'id': identifier, 'status': 'error', 'error': 'Setup failed. Check selection, paths, existing files and review confirmation. No existing configuration was replaced.'}
+    except (ValueError, TypeError, OSError, RecursionError, RuntimeError, KeyError, subprocess.SubprocessError, ImportError, KeyboardInterrupt) as error:
+        # A bounded, sanitized reason lets the local UI explain a failure without
+        # returning raw installer stdout, environment values or secrets.
+        reason = re.sub(r'\s+', ' ', str(error)).strip()[:300]
+        response = {'id': identifier, 'status': 'error',
+                    'error': 'Setup failed. Check selection, paths, existing files and review confirmation. No existing configuration was replaced.',
+                    'reason': reason}
     stdout.write(json.dumps(response).encode('utf-8')+b'\n')
     stdout.flush()
     return 0 if response['status'] == 'ok' else 2

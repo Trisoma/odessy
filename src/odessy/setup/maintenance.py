@@ -39,13 +39,44 @@ def guard(path):
             raise ValueError('reparse points are not supported')
     return path
 
+def default_workspace():
+    """A user-facing default tool workspace, outside the owned installation."""
+    home=Path.home()
+    return home/'Documents'/'Odessy' if os.name=='nt' else home/'Odessy'
+
+
+def validated_workspace(value,root):
+    """The workspace is user data, not an owned path; only its shape is checked."""
+    if not isinstance(value,str) or not value.strip() or value!=value.strip():
+        raise ValueError('workspace must be a nonempty absolute directory path')
+    if any(ord(c)<32 or ord(c)==127 for c in value) or '$' in value:
+        raise ValueError('workspace contains unsupported characters')
+    path=Path(value)
+    if not path.is_absolute() or path==Path(path.anchor):
+        raise ValueError('workspace must be an absolute directory, not a drive root')
+    try: resolved=path.resolve()
+    except OSError: resolved=path
+    try: installation=Path(root).resolve()
+    except OSError: installation=Path(root)
+    if resolved==installation or resolved.is_relative_to(installation):
+        raise ValueError('workspace must be outside the installation directory')
+    return path
+
+
 def atomic(path,data):
     path=guard(path)
     fd,name=tempfile.mkstemp(prefix='.setup-',dir=path.parent)
     try:
         with os.fdopen(fd,'w',encoding='utf-8') as stream:
             json.dump(data,stream,indent=2);stream.flush();os.fsync(stream.fileno())
-        os.replace(name,path)
+        # A just-written file can be briefly locked by a scanner or indexer; a
+        # replace that fails is retried rather than leaving a torn journal.
+        for attempt in range(10):
+            try:
+                os.replace(name,path);break
+            except PermissionError:
+                if attempt==9:raise
+                time.sleep(.05)
     finally:
         Path(name).unlink(missing_ok=True)
 
@@ -158,12 +189,51 @@ class ManagedInstallation:
             data['python_runtime']=inventory(self.runtime_source)
             data['python_runtime_source']=str(self.runtime_source)
         if self.payload:
-            from .package_context import context
+            from .package_context import context,validate_components
             context(payload=self.payload,root=self.root)
             data['payload_manifest']=read_json(self.payload/'setup-context.json')
+            # A role that cannot be assembled is rejected at review, not after writes.
+            review=validate_components(data['payload_manifest'],selection.role,runtime=self.runtime_source is not None)
+            data['absent_components']=review['absent']
+            # What this payload actually ships, independent of what was requested.
+            shipped={name.split('/')[0] for name in data['payload_manifest']['files']}
+            data['components']=sorted(shipped & {'runtime','desktop','node','tools','link'})
             data['payload_root']=str(self.payload)
         data['plan_id']=hashlib.sha256(json.dumps(data,sort_keys=True,separators=(',',':')).encode()).hexdigest()
         return data
+
+    def configuration(self,selection,workspace=None):
+        """Mutable active configuration; the version snapshot stays immutable."""
+        existing={}
+        if (self.root/'configuration.json').exists():
+            existing=read_json(self.root/'configuration.json')
+            if set(existing)!={'schema_version','selection','workspace'} or existing['schema_version']!=1:
+                raise ValueError('invalid active configuration record')
+        value=workspace or existing.get('workspace') or str(default_workspace())
+        return {'schema_version':1,'selection':public(selection),'workspace':str(validated_workspace(value,self.root))}
+
+    def configuration_plan(self,selection,workspace=None):
+        record=self.record()
+        if not record['active']: raise ValueError('repair the installation before changing configuration')
+        configuration=self.configuration(selection,workspace)
+        payload={'installation_id':record['id'],'active':record['active'],'configuration':configuration}
+        payload['plan_id']=hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+        return payload
+
+    def configure(self,selection,workspace,confirm):
+        """Change the active model/workspace without touching owned version files."""
+        with self.lock():
+            record=self.record()
+            if not record['active']: raise ValueError('repair the installation before changing configuration')
+            configuration=self.configuration(selection,workspace)
+            payload={'installation_id':record['id'],'active':record['active'],'configuration':configuration}
+            token=hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+            if confirm!=token: raise ValueError('review the exact configuration change before applying it')
+            atomic(self.root/'configuration.json',configuration)
+            record['selection']=public(selection)
+            atomic(self.root/'installation.json',record)
+            return {'configured':True,'model_configured':selection.model is not None,'role':selection.role,
+                    'workspace':configuration['workspace'],'ready':False}
 
     def install(self,bundle,selection,confirm,*,cancelled=lambda:False):
         plan=self.plan(bundle,selection)
@@ -177,8 +247,13 @@ class ManagedInstallation:
             version=uuid.uuid4().hex
             target=guard(self.root/'versions'/version);target.mkdir(parents=True)
             atomic(self.root/'installation.json',record)
-            journal={'schema_version':1,'version':version,'status':'preparing','previous':record['active']}
+            journal={'schema_version':1,'version':version,'status':'preparing','stage':'preparing',
+                     'previous':record['active'],'steps_done':0,'steps_total':0}
             atomic(self.root/'operation.json',journal)
+            def stage(name,total=None):
+                journal['stage']=name
+                if total is not None: journal['steps_total']=total
+                atomic(self.root/'operation.json',journal)
             try:
                 python_builder=sys.executable
                 if self.runtime_source:
@@ -187,23 +262,25 @@ class ManagedInstallation:
                     python_builder=str(copy_owned(self.runtime_source,guard(self.root/'runtimes'/runtime_key),plan['python_runtime']))
                     record.setdefault('runtimes',{})[runtime_key]=plan['python_runtime']['files']
                     atomic(self.root/'installation.json',record)
+                stage('environment')
                 self.runner([python_builder,'-m','venv','--copies',str(target)],cancelled=cancelled)
                 python=target/('Scripts/python.exe' if os.name=='nt' else 'bin/python')
                 # Recheck artifacts immediately before pip; no index or dependency resolution.
                 if self.plan(bundle,selection)['manifest']!=plan['manifest']: raise ValueError('bundle changed after review')
                 wheels=[str(Path(bundle)/a['file']) for a in plan['manifest']['artifacts']]
+                stage('dependencies',len(wheels)+1)
                 for argv in ([str(python),'-I','-m','pip','install','--no-index','--no-deps',*wheels], [str(python),'-I','-m','pip','check'],[str(python),'-I','-m','odessy','setup','--role',selection.role,'--non-interactive'],[str(python),'-I','-m','odessy','--help']):
                     if cancelled(): raise Cancelled('operation cancelled')
                     self.runner(argv,cancelled=cancelled)
                 if self.payload:
                     import shutil
-                    from .package_context import context
+                    from .package_context import context,validate_components
                     context(payload=self.payload,root=self.root)
                     manifest=read_json(self.payload/'setup-context.json')
                     if manifest!=plan['payload_manifest']:raise ValueError('setup payload changed after review')
-                    selected={'link'}
-                    if selection.role!='execution':selected.add('desktop')
-                    if selection.role!='coordinator':selected.update(('node','tools'))
+                    # Role-required components must be present and complete before copying any.
+                    selected=validate_components(manifest,selection.role,runtime=self.runtime_source is not None)['copy']
+                    stage('components',sum(1 for name in manifest['files'] if name.split('/')[0] in selected))
                     for name,sha in manifest['files'].items():
                         if name.split('/')[0] not in selected:continue
                         if cancelled():raise Cancelled('operation cancelled')
@@ -212,6 +289,8 @@ class ManagedInstallation:
                         destination.parent.mkdir(parents=True,exist_ok=True)
                         shutil.copy2(source,destination)
                         if digest(destination)!=sha:raise ValueError('copied component checksum mismatch')
+                        journal['steps_done']+=1;atomic(self.root/'operation.json',journal)
+                stage('configuration')
                 if selection.model:
                     from .configuration import environment_text
                     from .planning import build_plan
@@ -219,14 +298,19 @@ class ManagedInstallation:
                 (target/'selection.json').write_text(json.dumps({'schema_version':1,'selection':public(selection)},indent=2),encoding='utf-8')
                 if cancelled(): raise Cancelled('operation cancelled')
                 files={p.relative_to(target).as_posix():digest(guard(p)) for p in target.rglob('*') if p.is_file()}
+                # The active, mutable configuration is not owned version content, so
+                # changing a model never invalidates the recorded file hashes.
+                atomic(self.root/'configuration.json',self.configuration(selection))
                 record['versions'][version]=files;record['active']=version;record['selection']=public(selection)
                 atomic(self.root/'installation.json',record)
-                journal['status']='completed';atomic(self.root/'operation.json',journal)
+                journal['status']='completed';journal['stage']='activated'
+                atomic(self.root/'operation.json',journal)
             except BaseException:
                 journal['status']='interrupted';atomic(self.root/'operation.json',journal)
                 # Do not recursively delete partial or changed files. Old active version stays selected.
                 raise
-            return {'installed':True,'active':version,'service_started':False,'ready':False,'role':selection.role}
+            return {'installed':True,'active':version,'service_started':False,'ready':False,'role':selection.role,
+                    'absent_components':plan.get('absent_components',[])}
 
     def verify(self):
         record=self.record();version=record['active']
@@ -235,11 +319,40 @@ class ManagedInstallation:
         for name,sha in record['versions'][version].items():
             path=guard(base/name)
             if not path.is_file() or digest(path)!=sha: issues.append(name)
-        return {'valid':not issues,'issues':issues,'ready':False,'active':version}
+        return {'valid':not issues,'issues':issues,'ready':False,'active':version,
+                'configuration_present':(self.root/'configuration.json').exists()}
 
     def repair(self,bundle,*,confirm,cancelled=lambda:False):
         selection=SetupSelection.from_dict(self.record()['selection'])
         return self.install(bundle,selection,confirm,cancelled=cancelled)
+
+    def status(self):
+        """Read-only progress from the durable journal; never mutates or locks."""
+        record=self.record()
+        operation=read_json(self.root/'operation.json') if (self.root/'operation.json').exists() else None
+        active=record.get('active')
+        written=0
+        if operation and operation.get('version') in record['versions']:
+            written=len(record['versions'][operation['version']])
+        elif operation and isinstance(operation.get('version'),str):
+            candidate=self.root/'versions'/operation['version']
+            if candidate.is_dir():
+                written=sum(1 for path in candidate.rglob('*') if path.is_file())
+        configuration=None
+        if (self.root/'configuration.json').exists():
+            value=read_json(self.root/'configuration.json')
+            configuration={'workspace':value.get('workspace'),
+                           'model_configured':(value.get('selection') or {}).get('model') is not None,
+                           'role':(value.get('selection') or {}).get('role')}
+        return {'installation_format':'versioned','installation_id':record['id'],'active':active,
+                'versions':list(record['versions']),'operation':operation,
+                'status':(operation or {}).get('status','idle'),
+                'stage':(operation or {}).get('stage'),
+                'steps_done':(operation or {}).get('steps_done',0),
+                'steps_total':(operation or {}).get('steps_total',0),
+                'files_written':written,'configuration':configuration,
+                'registration':record.get('windows_registration',{}).get('state','none'),
+                'service_recorded':(self.root/'service.json').exists(),'ready':False}
 
     def rollback(self,version,*,confirm,expected_state=None,expected_operation=...):
         with self.lock():
@@ -255,6 +368,8 @@ class ManagedInstallation:
             record['active']=version
             stored=read_json(self.root/'versions'/version/'selection.json')
             record['selection']=public(SetupSelection.from_dict(stored['selection']))
+            # The active configuration follows the version that is actually launched.
+            atomic(self.root/'configuration.json',self.configuration(SetupSelection.from_dict(stored['selection'])))
             atomic(self.root/'installation.json',record)
             return {'active':version,'service_started':False}
 

@@ -69,10 +69,20 @@ class SetupReply {
     error = ok
         ? ''
         : 'Setup failed. Check selection, destination and review confirmation.';
+    reason = ok ? '' : _boundedReason(value['reason']);
   }
   late final bool ok;
   late final Json result;
   late final String error;
+
+  /// A bounded, single-line helper reason; never raw stdout or a command line.
+  late final String reason;
+
+  static String _boundedReason(Object? value) {
+    if (value is! String) return '';
+    final cleaned = value.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ').trim();
+    return cleaned.length > 300 ? cleaned.substring(0, 300) : cleaned;
+  }
 }
 
 abstract interface class SetupBackend {

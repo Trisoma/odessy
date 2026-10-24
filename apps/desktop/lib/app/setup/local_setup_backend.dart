@@ -10,7 +10,7 @@ class LocalSetupBackend implements SetupBackend {
       String sourceRoot = const String.fromEnvironment('ODESSY_SETUP_ROOT'),
       this.payloadRoot = '',
       this.timeout = const Duration(seconds: 30)})
-      : python = python.isNotEmpty ? python : _bundledPython(),
+      : python = python.isNotEmpty ? python : (_bundledPython() ?? _installedPython() ?? 'python'),
         sourceRoot = sourceRoot.isNotEmpty ? sourceRoot : _bundledRoot();
   static String _bundledRoot() {
     var candidate = File(Platform.resolvedExecutable).parent;
@@ -27,12 +27,21 @@ class LocalSetupBackend implements SetupBackend {
     return '';
   }
 
-  static String _bundledPython() {
+  static String? _bundledPython() {
     final root = _bundledRoot();
-    if (root.isEmpty) return 'python';
+    if (root.isEmpty) return null;
     final relative =
         Platform.isWindows ? 'runtime/python.exe' : 'runtime/bin/python3';
     return '$root${Platform.pathSeparator}$relative';
+  }
+
+  /// An installed version keeps its owned interpreter beside the desktop build.
+  static String? _installedPython() {
+    final versionDirectory = File(Platform.resolvedExecutable).parent.parent;
+    final candidate = Platform.isWindows
+        ? File('${versionDirectory.path}${Platform.pathSeparator}Scripts${Platform.pathSeparator}python.exe')
+        : File('${versionDirectory.path}${Platform.pathSeparator}bin${Platform.pathSeparator}python3');
+    return candidate.existsSync() ? candidate.path : null;
   }
 
   final String python, sourceRoot, payloadRoot;

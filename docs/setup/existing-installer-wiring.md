@@ -71,3 +71,23 @@ redistribution/license acceptance and physical-device tests remain owner gates.
 Real Windows core installation, repair, rollback and uninstall passed using pinned Python/Node downloads,
 locked dependencies and the built Node bundle. External model/unrelated-file fixtures were retained. No inference,
 model download or service registration was performed. The qualification run exited successfully.
+
+## Packaged build inputs (Windows)
+
+The payload's portable runtime and the wheelhouse must share one CPython ABI. The
+repository `.venv` and the system `Python311` install are 3.11; the older
+`existing-installer-real/builder-runtime` is 3.12 and cannot install the cp311
+wheels. Build with a 3.11 runtime, or produce cp312 wheels; mixing them fails at
+`pip install` inside the installed environment.
+
+```text
+python -m pip wheel . --no-build-isolation --no-deps -w <wheelhouse>
+python tool/build_setup_bundle.py --wheelhouse <wheelhouse> --licenses <licenses.json> ^
+    --python-runtime <python-3.11-prefix> --desktop-bundle <flutter-release-dir> --output <payload.zip>
+python tool/audit_setup_artifact.py <payload.zip>
+python tool/package_native_setup.py --payload <payload.zip> --platform windows --output <OdessySetup.exe>
+```
+
+The license map must cover every wheel in the directory or the bundle is refused.
+The payload ships `python` and `desktop`; roles that also want the Node tool server
+or odessy-link report those as absent components rather than failing.

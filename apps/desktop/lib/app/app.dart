@@ -12,11 +12,18 @@ import '../features/setup/controllers/setup_controller.dart';
 import '../features/setup/presentation/setup_wizard.dart';
 import 'setup/local_setup_backend.dart';
 import '../features/setup/controllers/maintenance_controller.dart';
+import '../features/setup/controllers/installed_manage_controller.dart';
 import '../features/setup/presentation/maintenance_page.dart';
+import '../features/setup/presentation/manage_page.dart';
+import 'setup/installation_location.dart';
 
 class OdessyApp extends StatefulWidget {
-  const OdessyApp({super.key, this.api});
+  const OdessyApp({super.key, this.api, this.installed});
   final OdessyApi? api;
+
+  /// Recorded installed state when this process was started by the Windows
+  /// launcher; null for the development preview.
+  final Json? installed;
   @override
   State<OdessyApp> createState() => _OdessyAppState();
 }
@@ -25,6 +32,7 @@ class _OdessyAppState extends State<OdessyApp> {
   late final DesktopSession controller;
   late final SetupController setup;
   late final MaintenanceController maintenance, pairing, installerEngine;
+  InstalledManageController? installManagement;
   final CredentialStore credentials = MemoryCredentialStore();
   late final AppLifecycleListener lifecycle;
   ThemeMode mode = ThemeMode.dark;
@@ -37,12 +45,19 @@ class _OdessyAppState extends State<OdessyApp> {
     maintenance = MaintenanceController(LocalSetupBackend());
     installerEngine = MaintenanceController(LocalSetupBackend());
     pairing = MaintenanceController(LocalSetupBackend());
+    final installed = widget.installed;
+    if (installed != null) {
+      installManagement = InstalledManageController(LocalSetupBackend(),
+          spec: {...installed, 'root': installed['root']})
+        ..load();
+    }
     lifecycle = AppLifecycleListener(onExitRequested: () async {
       await controller.shutdown();
       await setup.shutdown();
       await maintenance.shutdown();
       await installerEngine.shutdown();
       await pairing.shutdown();
+      installManagement?.dispose();
       return AppExitResponse.exit;
     });
     controller.start();
@@ -56,6 +71,7 @@ class _OdessyAppState extends State<OdessyApp> {
     maintenance.dispose();
     installerEngine.dispose();
     pairing.dispose();
+    installManagement?.dispose();
     super.dispose();
   }
 
@@ -129,6 +145,12 @@ class _OdessyAppState extends State<OdessyApp> {
                         Expanded(
                             child: switch (page) {
                           'Setup' => SetupWizardPage(controller: setup),
+                          'Manage installation' => ManagePage(
+                              controller: installManagement!,
+                              external: runningOutsideInstallation(
+                                  widget.installed?['root'] as String? ?? ''),
+                              onOpenMaintenance: () =>
+                                  installManagement!.openMaintenance()),
                           'Installer' => MaintenancePage(
                               key: const ValueKey('installer-engine'),
                               controller: installerEngine,
@@ -143,7 +165,11 @@ class _OdessyAppState extends State<OdessyApp> {
                             DevicePage(device: device, controller: controller),
                           'Settings' => SettingsPage(
                               key: ValueKey(controller.api),
-                              controller: controller),
+                              controller: controller,
+                              onOpenManagement: widget.installed == null
+                                  ? null
+                                  : () => setState(
+                                      () => page = 'Manage installation')),
                           _ => ConversationPage(controller: controller),
                         }),
                       ])),
@@ -174,6 +200,15 @@ class _OdessyAppState extends State<OdessyApp> {
                 Icons.chat_bubble_outline,
                 page == 'Conversation',
                 () => setState(() => page = 'Conversation')),
+            if (widget.installed != null) ...[
+              const SizedBox(height: 6),
+              _nav(
+                  context,
+                  'Manage installation',
+                  Icons.settings_outlined,
+                  page == 'Manage installation',
+                  () => setState(() => page = 'Manage installation')),
+            ],
             const SizedBox(height: 28),
             const Text('  DEVICES',
                 style: TextStyle(

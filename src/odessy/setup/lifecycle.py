@@ -43,7 +43,10 @@ def dispatch(parameters,*,cancelled=lambda:False):
     manager=ManagedInstallation(root)
     if action=='inspect':
         record=manager.record()
-        return {'installation_format':kind,'installation_id':record['id'],'active':record['active'],'versions':list(record['versions']),'selection':record.get('selection'),'service_recorded':(root/'service.json').exists(),'operation':read_json(root/'operation.json') if (root/'operation.json').exists() else None,'ready':False}
+        configuration=None
+        if (root/'configuration.json').is_file():
+            configuration=read_json(root/'configuration.json')
+        return {'installation_format':kind,'installation_id':record['id'],'active':record['active'],'versions':list(record['versions']),'selection':(configuration or {}).get('selection') or record.get('selection'),'workspace':(configuration or {}).get('workspace'),'service_recorded':(root/'service.json').exists(),'registration':record.get('windows_registration',{}).get('state','none'),'operation':read_json(root/'operation.json') if (root/'operation.json').exists() else None,'ready':False}
     if action=='verify':return dict(manager.verify(),installation_format=kind)
     if action in ('rollback-plan','uninstall-plan','rollback','uninstall'):
         record=manager.record()
@@ -57,9 +60,20 @@ def dispatch(parameters,*,cancelled=lambda:False):
         if data.get('confirm')!=token:raise ValueError('review the exact operation and current installation first')
         if cancelled():raise KeyboardInterrupt()
         result=manager.rollback(data['version'],confirm=record['id'],expected_state=record,expected_operation=operation_state) if operation=='rollback' else manager.uninstall(confirm=record['id'],expected_state=record,expected_operation=operation_state,cancelled=cancelled)
+        if operation=='rollback':
+            # The launcher must follow the version that is actually active.
+            from .maintenance import atomic
+            from .windows_installation import refresh
+            updated=manager.record()
+            try:
+                refresh(root,updated)
+                atomic(root/'installation.json',updated)
+            except (ValueError,RuntimeError,OSError) as error:
+                result['registration_error']=str(error)
         if operation=='uninstall' and record.get('windows_registration'):
-            from .windows_installation import unregister
+            from .windows_installation import helper_cleanup, unregister
             result['retained_registration']=unregister(root,record)
+            result['helper_cleanup']=helper_cleanup(record)
         return dict(result,installation_format=kind)
     return None
 

@@ -13,32 +13,116 @@ from .contracts import fields
 from .maintenance import guard,digest
 
 MANAGE_ACTIONS={'plan','repair-plan','install','inspect','verify','repair','rollback','uninstall','service-plan','service-install','start','stop','status','service-remove'}
+PACKAGE_ACTIONS={'package-review','package-install','package-launch','package-status','package-verify',
+    'package-repair-review','package-repair','package-rollback-review','package-rollback',
+    'package-configure-review','package-configure','package-uninstall-review','package-uninstall',
+    'package-register','installed-spec'}
+
+
+def _versioned_root(parameters,name):
+    from .lifecycle import format_of
+    data=fields(parameters,{'action','root','payload','selection','confirm','version','workspace','mode'},name)
+    value=data.get('root')
+    if not isinstance(value,str) or not value.strip():raise ValueError('an existing installation root is required')
+    root=guard(value)
+    kind=format_of(root)
+    if kind is None:raise ValueError('no Odessy installation exists at this location')
+    if kind!='versioned':raise ValueError('this installation uses the legacy installer format; use legacy maintenance')
+    return data,root
+
+
+def _packaged(parameters,*,cancelled=lambda:False):
+    """Installed lifecycle operations; internal paths never come from the user."""
+    action=parameters.get('action')
+    if action=='installed-spec':
+        data=fields(parameters,{'action','root'},'installed launch')
+        value=data.get('root')
+        if not isinstance(value,str) or not value.strip():raise ValueError('an installation root is required')
+        from .installed import spec
+        return spec(value)
+    if action=='package-status':
+        from .maintenance import ManagedInstallation
+        data,root=_versioned_root(parameters,'packaged status')
+        return ManagedInstallation(root).status()
+    if action=='package-launch':
+        from .windows_installation import launch
+        data,root=_versioned_root(parameters,'packaged launch')
+        mode=data.get('mode') or 'app'
+        if mode not in ('app','manage'):raise ValueError('invalid launch mode')
+        process=launch(root,mode)
+        return {'launched':True,'pid':process.pid,'mode':mode}
+    if action=='package-verify':
+        from .maintenance import ManagedInstallation
+        data,root=_versioned_root(parameters,'packaged verify')
+        manager=ManagedInstallation(root)
+        record=manager.record()
+        return dict(manager.verify(),registration=record.get('windows_registration',{}).get('state','none'))
+    if action in ('package-configure-review','package-configure'):
+        from .contracts import SetupSelection
+        from .maintenance import ManagedInstallation
+        data,root=_versioned_root(parameters,'packaged configuration')
+        selection=SetupSelection.from_dict(data.get('selection'))
+        manager=ManagedInstallation(root)
+        plan=manager.configuration_plan(selection,data.get('workspace') or None)
+        if action.endswith('-review'):return plan
+        return manager.configure(selection,data.get('workspace') or None,data.get('confirm'))
+    if action in ('package-uninstall-review','package-uninstall'):
+        from .lifecycle import dispatch
+        data,root=_versioned_root(parameters,'packaged uninstall')
+        plan=dispatch({'action':'uninstall-plan','root':str(root)})
+        if action.endswith('-review'):return plan
+        if data.get('confirm')!=plan['plan_id']:raise ValueError('review the exact uninstall operation first')
+        return dispatch({'action':'uninstall','root':str(root),'confirm':plan['plan_id']},cancelled=cancelled)
+    if action=='package-register':
+        from .maintenance import ManagedInstallation, atomic
+        from .windows_installation import register
+        data,root=_versioned_root(parameters,'packaged registration')
+        manager=ManagedInstallation(root)
+        record=manager.record()
+        payload=data.get('payload') or (record.get('windows_registration') or {}).get('helper')
+        register(root,record,payload=payload or None)
+        atomic(root/'installation.json',record)
+        return {'registered':True,'state':record.get('windows_registration',{}).get('state','none')}
+    if action in ('package-rollback-review','package-rollback'):
+        from .lifecycle import dispatch
+        data,root=_versioned_root(parameters,'packaged rollback')
+        return dispatch({'action':'rollback-plan' if action.endswith('-review') else 'rollback',
+            'root':str(root),'version':data.get('version'),
+            **({'confirm':data.get('confirm')} if action=='package-rollback' else {})},cancelled=cancelled)
+    from .package_context import context
+    from .contracts import SetupSelection
+    from .maintenance import ManagedInstallation, atomic
+    from .windows_installation import register
+    data=fields(parameters,{'action','root','payload','selection','confirm'},'packaged operation')
+    package=context(payload=data.get('payload'),root=data.get('root'))
+    root=guard(package['root'])
+    from .lifecycle import format_of
+    if format_of(root)=='legacy':raise ValueError('use legacy maintenance for this installation')
+    manager=ManagedInstallation(root,runtime_source=Path(package['payload_root'])/'runtime',payload=package['payload_root'])
+    if action=='package-review':return manager.plan(package['bundle'],SetupSelection.from_dict(data.get('selection')))
+    if action in ('package-repair-review','package-repair'):
+        if action.endswith('-review'):
+            selection=SetupSelection.from_dict(manager.record()['selection'])
+            return manager.plan(package['bundle'],selection)
+        result=manager.repair(package['bundle'],confirm=data.get('confirm'),cancelled=cancelled)
+    else:
+        result=manager.install(package['bundle'],SetupSelection.from_dict(data.get('selection')),data.get('confirm'),cancelled=cancelled)
+    record=manager.record()
+    registration='skipped'
+    try:
+        registered=register(root,record,payload=package['payload_root'])
+        registration=registered.get('state','complete') if registered else 'unsupported'
+    except (RuntimeError,OSError,ValueError) as error:
+        # The installation is active; registration stays a recoverable, recorded step.
+        registration='incomplete'
+        result['registration_error']=str(error)
+    atomic(root/'installation.json',record)
+    return dict(result,installation_format='versioned',registration=registration)
 
 
 def manage(parameters,*,cancelled=lambda:False):
-    if parameters.get('action') in ('package-review','package-install','package-launch'):
-        data=fields(parameters,{'action','root','payload','selection','confirm'},'packaged operation')
-        if data['action']=='package-launch':
-            from .windows_installation import launch
-            process=launch(guard(data['root']))
-            return {'launched':True,'pid':process.pid}
-        from .package_context import context
-        from .contracts import SetupSelection
-        from .maintenance import ManagedInstallation
-        package=context(payload=data.get('payload'),root=data.get('root'))
-        selection=SetupSelection.from_dict(data.get('selection'))
-        root=guard(package['root'])
-        from .lifecycle import format_of
-        if format_of(root)=='legacy':raise ValueError('use legacy maintenance for this installation')
-        manager=ManagedInstallation(root,runtime_source=Path(package['payload_root'])/'runtime',payload=package['payload_root'])
-        if data['action']=='package-review':return manager.plan(package['bundle'],selection)
-        result=manager.install(package['bundle'],selection,data.get('confirm'),cancelled=cancelled)
-        from .windows_installation import register
-        record=manager.record()
-        register(root,record,payload=package['payload_root'])
-        from .maintenance import atomic
-        atomic(root/'installation.json',record)
-        return dict(result,installation_format='versioned')
+    if parameters.get('action') in PACKAGE_ACTIONS:
+        return _packaged(parameters,cancelled=cancelled)
     if parameters.get('action')=='context':
         fields(parameters,{'action','root','payload','selection'},'context')
         from .package_context import context
