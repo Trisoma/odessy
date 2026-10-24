@@ -64,6 +64,9 @@ def model_targets(root):
 
 
 def _health(root,new):
+    if new.get('engine')=='role-aware-existing-installer-v1':
+        from installer.operations.role_maintenance import health
+        return health(root,new)
     repairs=[];issues={}
     validators={step.name:step.validate for step in workflow.steps_for(new)}
     for name in ('runtime','dependencies','ollama_runtime'):
@@ -90,6 +93,7 @@ def _artifacts(preview):
     if 'runtime' in names:values.extend(runtime.load_release(runtime.DEFAULT_RESOURCES)[0].artifacts)
     if 'dependencies' in names:values.extend(load_resources(dependencies.DEFAULT_RESOURCES)[0].artifacts)
     if 'ollama-runtime' in names:values.extend(ollama_runtime.load_release()[0].artifacts)
+    if preview.get('new_plan',{}).get('engine')=='role-aware-existing-installer-v1':return values
     manifest,_,_=model.load_release()
     root=Path(preview['install_dir'])
     values.extend(a for a in manifest.artifacts if model.blob_path(root/'models',a).relative_to(root).as_posix() in names)
@@ -150,6 +154,9 @@ def repair(root,folder,preview,data,*,download=download_artifact):
             reports['runtime']=runtime.prepare_runtime(manifest,resources,root/name,cache,download=download)
         elif name=='dependencies':reports['dependencies']=dependencies.prepare_dependencies(root/'runtime',root/name,cache,download=download)
         elif name=='ollama-runtime':reports['ollama_runtime']=ollama_runtime.prepare_runtime(root/name,cache,download=download)
+    if preview['new_plan'].get('engine')=='role-aware-existing-installer-v1':
+        if 'dependencies' in preview['repair_components']:dependency_integrity(root)
+        data['base_results']=reports;maintenance._save(root,data);return
     manifest,resources,raw=model.load_release()
     for name in preview['repair_components']:
         if name.startswith('models/'):backup(name)

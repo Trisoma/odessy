@@ -11,7 +11,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+_PACKAGED_ROOT = Path(__file__).resolve().parents[1] / '_payload'
+REPO_ROOT = _PACKAGED_ROOT if (_PACKAGED_ROOT / 'pyproject.toml').is_file() else Path(__file__).resolve().parents[2]
 
 
 @dataclass(frozen=True)

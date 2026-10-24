@@ -8,6 +8,11 @@ import 'session_controller.dart';
 import 'theme.dart';
 import 'connections/connection_dialog.dart';
 import '../widgets/glass_surface.dart';
+import '../features/setup/controllers/setup_controller.dart';
+import '../features/setup/presentation/setup_wizard.dart';
+import 'setup/local_setup_backend.dart';
+import '../features/setup/controllers/maintenance_controller.dart';
+import '../features/setup/presentation/maintenance_page.dart';
 
 class OdessyApp extends StatefulWidget {
   const OdessyApp({super.key, this.api});
@@ -18,6 +23,8 @@ class OdessyApp extends StatefulWidget {
 
 class _OdessyAppState extends State<OdessyApp> {
   late final DesktopSession controller;
+  late final SetupController setup;
+  late final MaintenanceController maintenance, pairing, installerEngine;
   final CredentialStore credentials = MemoryCredentialStore();
   late final AppLifecycleListener lifecycle;
   ThemeMode mode = ThemeMode.dark;
@@ -26,8 +33,16 @@ class _OdessyAppState extends State<OdessyApp> {
   void initState() {
     super.initState();
     controller = DesktopSession(widget.api ?? DemoApi());
+    setup = SetupController(LocalSetupBackend());
+    maintenance = MaintenanceController(LocalSetupBackend());
+    installerEngine = MaintenanceController(LocalSetupBackend());
+    pairing = MaintenanceController(LocalSetupBackend());
     lifecycle = AppLifecycleListener(onExitRequested: () async {
       await controller.shutdown();
+      await setup.shutdown();
+      await maintenance.shutdown();
+      await installerEngine.shutdown();
+      await pairing.shutdown();
       return AppExitResponse.exit;
     });
     controller.start();
@@ -37,6 +52,10 @@ class _OdessyAppState extends State<OdessyApp> {
   void dispose() {
     lifecycle.dispose();
     controller.dispose();
+    setup.dispose();
+    maintenance.dispose();
+    installerEngine.dispose();
+    pairing.dispose();
     super.dispose();
   }
 
@@ -109,6 +128,17 @@ class _OdessyAppState extends State<OdessyApp> {
                               ]),
                         Expanded(
                             child: switch (page) {
+                          'Setup' => SetupWizardPage(controller: setup),
+                          'Installer' => MaintenancePage(
+                              key: const ValueKey('installer-engine'),
+                              controller: installerEngine,
+                              installer: true),
+                          'Maintenance' =>
+                            MaintenancePage(controller: maintenance),
+                          'Pairing' => MaintenancePage(
+                              key: const ValueKey('pairing'),
+                              controller: pairing,
+                              pairing: true),
                           'Devices' =>
                             DevicePage(device: device, controller: controller),
                           'Settings' => SettingsPage(
@@ -181,12 +211,29 @@ class _OdessyAppState extends State<OdessyApp> {
             const SizedBox(height: 12),
             TextButton.icon(
                 onPressed: () => setState(() {
-                      page = 'Devices';
-                      device = 'This computer';
+                      page = 'Pairing';
                     }),
                 icon: const Icon(Icons.add, size: 16),
                 label: const Text('Pair a device')),
             const Spacer(),
+            _nav(context, 'Set up this computer', Icons.build_outlined,
+                page == 'Setup', () {
+              if (controller.session?.running != true) {
+                setState(() => page = 'Setup');
+              }
+            }),
+            _nav(context, 'Install Odessy', Icons.download_outlined,
+                page == 'Installer', () {
+              if (controller.session?.running != true) {
+                setState(() => page = 'Installer');
+              }
+            }),
+            _nav(context, 'Runtime maintenance', Icons.handyman_outlined,
+                page == 'Maintenance', () {
+              if (controller.session?.running != true) {
+                setState(() => page = 'Maintenance');
+              }
+            }),
             const Divider(),
             const SizedBox(height: 10),
             _nav(context, 'Settings', Icons.tune, page == 'Settings',

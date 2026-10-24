@@ -83,6 +83,10 @@ def launcher_record(root,executable,*,folders=None):
 
 
 def plan(root,bundle,executable,*,probe=running_processes,folders=None,validate_base=True):
+    from installer.core.checkpoint import state_path
+    if state_path(root).exists() and read_state(root)['plan'].get('engine')=='role-aware-existing-installer-v1':
+        from installer.operations.role_maintenance import plan as role_plan
+        return role_plan(root,bundle,executable,probe=probe,folders=folders,validate_base=validate_base)
     for path in (root,bundle,executable):model.guard_path(path)
     root=root.resolve();bundle=bundle.resolve();executable=executable.resolve()
     if removal_started(root):raise ValueError('An uninstall has started for this installation; choose a new directory to install.')
@@ -187,13 +191,17 @@ def _restore(root,data):
     data['status']='rolled_back';_save(root,data);return data
 
 
-def recover(root,*,probe=running_processes):
+def recover(root,*,probe=running_processes,expected=None,cancelled=lambda:False):
     model.guard_path(root);root=root.resolve()
     if (root/'.git').exists() or (root/'pyproject.toml').exists():raise ValueError('A source checkout cannot be rolled back.')
     if removal_started(root):raise ValueError('An installation being uninstalled cannot be rolled back.')
     if root in Path(sys.executable).resolve().parents:raise ValueError('Run rollback from outside the installation directory.')
     if probe(root):raise ValueError('Close all windows and services for this installation first.')
     with writer_lock(root):
+        if expected is not None:
+            from installer.operations.role_maintenance import recovery_snapshot
+            if fingerprint(recovery_snapshot(root))!=expected:raise ValueError('Rollback state changed; review again')
+        if cancelled():raise KeyboardInterrupt()
         data=journal(root)
         if not data or data['status']=='rolled_back':raise ValueError('No maintenance record to roll back.')
         if data.get('rollback_discarded'):raise ValueError('The rollback backup for this maintenance was cleaned up; the previous version cannot be restored.')
@@ -203,38 +211,52 @@ def recover(root,*,probe=running_processes):
 
 
 def execute(root,bundle,executable,expected,*,probe=running_processes,folders=None,
-            planner=plan,assemble=application.assemble,verify=verify_staging,final_check=connection.inspect_application,repair=None):
+            planner=plan,assemble=application.assemble,verify=verify_staging,final_check=connection.inspect_application,repair=None,cancelled=lambda:False):
     preview=planner(root,bundle,executable,probe=probe,folders=folders)
     if preview['plan_sha256']!=expected:raise ValueError('Files or versions changed; check the maintenance plan again.')
     root=Path(preview['install_dir'])
     with writer_lock(root):
         preview=planner(root,bundle,executable,probe=probe,folders=folders)
         if preview['plan_sha256']!=expected:raise ValueError('Files or versions changed; check the maintenance plan again.')
+        if cancelled():raise KeyboardInterrupt()
+        activation=preview.get('activation_components',['application','launcher'])
+        if activation not in (['application'],['application','launcher']):raise ValueError('invalid activation scope')
+        core_only=activation==['application']
+        if core_only and preview['new_plan'].get('engine')!='role-aware-existing-installer-v1':raise ValueError('core-only proof requires role-aware plan')
         identity=uuid.uuid4().hex;folder=root/'.installer/updates'/identity;model.guard_path(folder);folder.mkdir(parents=True)
         data=dict(schema_version=1,id=identity,install_dir=str(root),status='preparing',error=None,
                   old_state=read_state(root),had_application=(root/'application').exists(),had_launcher=(root/'launcher').exists())
-        data['components']=['application','launcher',*reversed(preview.get('repair_components',[]))]
+        data['components']=[*activation,*reversed(preview.get('repair_components',[]))]
         for name in _components(data):data['had_'+name]=(root/name).exists()
         data['old_state_sha256']=fingerprint(data['old_state'])
         data['old_signatures']={name:_signature(root,root/name) for name in _components(data)}
         _save(root,data)
         try:
+            if cancelled():raise KeyboardInterrupt()
             if repair is not None:repair(root,folder,preview,data)
+            if cancelled():raise KeyboardInterrupt()
             settings=assemble(root/'runtime',root/'dependencies',bundle,folder/'new-application')
-            launch=folder/'new-launcher';launch.mkdir()
-            shutil.copyfile(executable,launch/'OdessyLauncher.exe')
-            if digest(launch/'OdessyLauncher.exe')!=preview['executable_sha256']:raise ValueError('The new EXE changed during copying.')
-            (launch/'odessy-shortcuts.json').write_text(json.dumps(preview['launcher'],indent=2),encoding='utf-8')
+            if not core_only:
+                launch=folder/'new-launcher';launch.mkdir()
+                shutil.copyfile(executable,launch/'OdessyLauncher.exe')
+                if digest(launch/'OdessyLauncher.exe')!=preview['executable_sha256']:raise ValueError('The new EXE changed during copying.')
+                (launch/'odessy-shortcuts.json').write_text(json.dumps(preview['launcher'],indent=2),encoding='utf-8')
+            if cancelled():raise KeyboardInterrupt()
             proof=verify(root,folder/'new-application',folder/'service',preview['new_plan'])
-            if not proof.get('inference_verified') or not proof.get('tool_round_trip_verified'):raise ValueError('Live model and tool checks failed for the new version; the previous version was preserved.')
+            if core_only:
+                if proof.get('core_verified') is not True:raise ValueError('Core startup verification failed')
+            elif not proof.get('inference_verified') or not proof.get('tool_round_trip_verified'):raise ValueError('Live model and tool checks failed for the new version; the previous version was preserved.')
             now=[]
-            for name in ('application','launcher'):now.extend(_tree(root,root/name))
+            for name in activation:now.extend(_tree(root,root/name))
             if now!=preview['inventory']:raise ValueError('Original application files changed while preparing the new version; check again.')
+            if cancelled():raise KeyboardInterrupt()
             data.update(status='activating',proof=proof);_save(root,data)
-            for name in ('application','launcher'):
+            for name in activation:
+                if cancelled():raise KeyboardInterrupt()
                 target=root/name
                 if target.exists():target.rename(folder/('backup-'+name))
                 (folder/('new-'+name)).rename(target)
+            if cancelled():raise KeyboardInterrupt()
             final_check(root/'application')
             new_state=copy.deepcopy(data['old_state']);new_state['plan']=preview['new_plan'];new_state['plan_sha256']=fingerprint(new_state['plan'])
             for step in new_state['steps']:
