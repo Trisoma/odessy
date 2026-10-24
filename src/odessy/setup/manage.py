@@ -13,9 +13,9 @@ from .maintenance import ManagedInstallation, Cancelled, guard
 from .services import ServiceManager, ServiceSpec
 
 
-def main(argv=None):
+def main(argv=None,*,cancel_check=lambda:False):
     parser=argparse.ArgumentParser(prog='odessy setup manage')
-    parser.add_argument('operation',choices=('plan','repair-plan','install','inspect','verify','repair','rollback','uninstall','service-plan','service-install','start','stop','status','service-remove'))
+    parser.add_argument('operation',choices=('plan','repair-plan','rollback-plan','uninstall-plan','install','inspect','verify','repair','rollback','uninstall','service-plan','service-install','start','stop','status','service-remove'))
     parser.add_argument('--root',required=True)
     parser.add_argument('--bundle')
     parser.add_argument('--python-runtime')
@@ -25,6 +25,9 @@ def main(argv=None):
     parser.add_argument('--version')
     parser.add_argument('--workspace')
     parser.add_argument('--port',type=int,default=8765)
+    parser.add_argument('--executable')
+    parser.add_argument('--allow-inference',action='store_true')
+    parser.add_argument('--allow-model-downloads',action='store_true')
     parser.add_argument('--node-link')
     parser.add_argument('--node-server')
     parser.add_argument('--listen',default='127.0.0.1:7443')
@@ -35,6 +38,16 @@ def main(argv=None):
         for sig in (signal.SIGINT,signal.SIGTERM):
             old[sig]=signal.signal(sig,lambda *_:cancelled.set())
     try:
+        from .lifecycle import dispatch,format_of
+        lifecycle_args={'action':args.operation,'root':args.root}
+        for name in ('bundle','config','role','confirm','version','workspace','port','node_link','node_server','listen','executable'):
+            value=getattr(args,name)
+            if value is not None:lifecycle_args[name]=value
+        if args.allow_inference:lifecycle_args['allow_inference']=True
+        if args.allow_model_downloads:lifecycle_args['allow_model_downloads']=True
+        routed=dispatch(lifecycle_args,cancelled=lambda:cancelled.is_set() or cancel_check())
+        if routed is not None:
+            print(json.dumps(routed,indent=2));return 0
         manager=ManagedInstallation(args.root,runtime_source=args.python_runtime)
         if args.config and args.role: raise ValueError('select config or role, not both')
         selection=_load(args.config) if args.config else SetupSelection(role=args.role) if args.role else None
@@ -43,10 +56,10 @@ def main(argv=None):
             if args.operation=='repair-plan':
                 result=manager.plan(args.bundle,SetupSelection.from_dict(manager.record()['selection']))
             elif args.operation=='repair':
-                result=manager.repair(args.bundle,confirm=args.confirm,cancelled=cancelled.is_set)
+                result=manager.repair(args.bundle,confirm=args.confirm,cancelled=lambda:cancelled.is_set() or cancel_check())
             else:
                 if selection is None: raise ValueError('explicit selection or role required')
-                result=manager.plan(args.bundle,selection) if args.operation=='plan' else manager.install(args.bundle,selection,args.confirm,cancelled=cancelled.is_set)
+                result=manager.plan(args.bundle,selection) if args.operation=='plan' else manager.install(args.bundle,selection,args.confirm,cancelled=lambda:cancelled.is_set() or cancel_check())
         elif args.operation=='inspect':
             record=manager.record()
             result={'installation_id':record['id'],'active':record['active'],'versions':list(record['versions']),'selection':record.get('selection'),'service_recorded':(manager.root/'service.json').exists(),'ready':False}
@@ -83,7 +96,10 @@ def main(argv=None):
             else:
                 if args.operation!='status' and args.confirm!=manager.identity(): raise ValueError('confirm exact installation identity')
                 with manager.lock(): result=services.action(services.load(), 'remove' if args.operation=='service-remove' else args.operation)
+        result.setdefault('installation_format',format_of(Path(args.root)) or 'new')
         print(json.dumps(result,indent=2));return 0
+    except KeyboardInterrupt:
+        print(json.dumps({'error':'Operation cancelled. Inspect checkpoints and journals before resuming.'}),file=sys.stderr);return 130
     except (ValueError,RuntimeError,OSError,KeyError,TypeError):
         print(json.dumps({'error':'Setup operation failed or was cancelled. Inspect ownership, inputs and native permissions; no automatic retry was performed.'}),file=sys.stderr)
         return 2

@@ -5,6 +5,47 @@ import 'package:odessy_desktop/features/setup/controllers/maintenance_controller
 import 'setup_controller_test.dart' show Backend;
 
 void main() {
+  test('rollback and uninstall require their exact operation plans', () async {
+    final backend = Backend();
+    final c = MaintenanceController(backend);
+    c.update({'root': '/tmp/runtime', 'version': 'old'});
+    await c.review('rollback');
+    expect(backend.requests.last.parameters['action'], 'rollback-plan');
+    c.update({'root': '/tmp/runtime'});
+    expect(c.canApply, false);
+    await c.review('uninstall');
+    expect(backend.requests.last.parameters['action'], 'uninstall-plan');
+    await c.apply();
+    expect(backend.requests.last.parameters['action'], 'uninstall');
+    expect(c.needsInspection, true);
+    c.dispose();
+  });
+
+  test('installer UI reviews and dispatches original engine operation',
+      () async {
+    final backend = Backend();
+    final c = MaintenanceController(backend);
+    c.update({'root': 'C:/Odessy', 'cache': 'C:/Cache', 'bundle': 'C:/Tools'});
+    await c.review('engine:install');
+    expect(backend.requests.last.operation, 'installer');
+    expect(backend.requests.last.parameters['action'], 'review');
+    await c.apply();
+    expect(backend.requests.last.parameters['action'], 'install');
+    expect(backend.requests.last.parameters['confirm'], 'review-id');
+    c.dispose();
+  });
+  test(
+      'installer resume review carries explicit resume without selection overrides',
+      () async {
+    final backend = Backend();
+    final c = MaintenanceController(backend);
+    c.update({'root': 'C:/Odessy', 'config': 'C:/selection.json'});
+    await c.review('engine:resume');
+    expect(backend.requests.last.parameters['resume'], true);
+    expect(backend.requests.last.parameters.containsKey('config'), false);
+    c.dispose();
+  });
+
   test('repair reviews stored selection using repair-plan', () async {
     final backend = Backend();
     final c = MaintenanceController(backend);

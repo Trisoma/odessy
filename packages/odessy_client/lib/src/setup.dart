@@ -33,6 +33,7 @@ class SetupRequest {
           'save',
           'recover',
           'manage',
+          'installer',
           'pair',
         }.contains(operation) ||
         !{'selection', 'env'}.contains(format)) {

@@ -18,7 +18,11 @@ class MaintenanceController extends ChangeNotifier {
       !busy &&
       !needsInspection &&
       reviewedAction != null &&
-      _confirmation != null;
+      _confirmation != null &&
+      (result['requires_inference'] != true ||
+          fields['allow_inference'] == true) &&
+      (result['requires_owned_model_download'] != true ||
+          fields['allow_model_downloads'] == true);
   void update(Json value) {
     if (busy || needsInspection) return;
     fields = Map.unmodifiable(value);
@@ -31,35 +35,55 @@ class MaintenanceController extends ChangeNotifier {
 
   Json _parameters(String action) {
     final pair = action.startsWith('pair:');
-    final actual = pair ? action.substring(5) : action;
-    final allowed = pair
-        ? {
-            'link',
-            'alias',
-            'certificate',
-            'fingerprint',
-            'address',
-            'workspace',
-            'output'
-          }
-        : {
-            'root',
-            'bundle',
-            'config',
-            'role',
-            'version',
-            'workspace',
-            'port',
-            'node_link',
-            'node_server',
-            'listen'
-          };
+    final engine = action.startsWith('engine:');
+    final actual =
+        (pair || engine) ? action.substring(action.indexOf(':') + 1) : action;
+    final allowed = engine
+        ? {'root', 'cache', 'bundle', 'config', 'role'}
+        : pair
+            ? {
+                'link',
+                'alias',
+                'certificate',
+                'fingerprint',
+                'address',
+                'workspace',
+                'output'
+              }
+            : {
+                'root',
+                'bundle',
+                'config',
+                'role',
+                'version',
+                'workspace',
+                'port',
+                'node_link',
+                'node_server',
+                'listen',
+                'executable',
+                'allow_inference',
+                'allow_model_downloads'
+              };
     final values = <String, dynamic>{
       'action': actual,
       for (final entry in fields.entries)
-        if (allowed.contains(entry.key) && entry.value != '')
+        if (allowed.contains(entry.key) &&
+            entry.value != '' &&
+            entry.value != false)
           entry.key: entry.value
     };
+    if (engine && action == 'engine:resume') {
+      values.remove('config');
+      values.remove('role');
+    }
+    if (engine &&
+        action == 'engine:review' &&
+        fields['engine_resume'] == true) {
+      values['resume'] = true;
+      values.remove('config');
+      values.remove('role');
+    }
     if (!pair && values.containsKey('config')) values.remove('role');
     return values;
   }
@@ -67,12 +91,17 @@ class MaintenanceController extends ChangeNotifier {
   Future<Json> _call(String action,
       {bool review = false, String? confirm}) async {
     final pair = action.startsWith('pair:');
+    final engine = action.startsWith('engine:');
     final parameters = _parameters(action);
     if (review && pair) parameters['review'] = true;
     if (confirm != null) parameters['confirm'] = confirm;
     final request = SetupRequest(
         id: 'native-${DateTime.now().microsecondsSinceEpoch}',
-        operation: pair ? 'pair' : 'manage',
+        operation: engine
+            ? 'installer'
+            : pair
+                ? 'pair'
+                : 'manage',
         selection: const {},
         parameters: parameters);
     final reply = await backend.execute(request);
@@ -85,7 +114,10 @@ class MaintenanceController extends ChangeNotifier {
   Future<void> _run(String action, bool reviewing) async {
     if (busy ||
         _disposed ||
-        (needsInspection && action != 'inspect' && action != 'pair:list')) {
+        (needsInspection &&
+            action != 'inspect' &&
+            action != 'pair:list' &&
+            action != 'engine:status')) {
       return;
     }
     final epoch = ++_epoch;
@@ -95,16 +127,27 @@ class MaintenanceController extends ChangeNotifier {
     _confirmation = null;
     notifyListeners();
     try {
+      if (action == 'engine:resume') {
+        fields = Map.unmodifiable({...fields, 'engine_resume': true});
+      } else if (action == 'engine:install') {
+        fields = Map.unmodifiable({...fields, 'engine_resume': false});
+      }
       final readAction = reviewing
-          ? (action.startsWith('pair:')
-              ? action
-              : action == 'service-install'
-                  ? 'service-plan'
-                  : action == 'repair'
-                      ? 'repair-plan'
-                      : action == 'install'
-                          ? 'plan'
-                          : 'inspect')
+          ? (action.startsWith('engine:')
+              ? 'engine:review'
+              : action.startsWith('pair:')
+                  ? action
+                  : action == 'service-install'
+                      ? 'service-plan'
+                      : action == 'rollback'
+                          ? 'rollback-plan'
+                          : action == 'uninstall'
+                              ? 'uninstall-plan'
+                              : action == 'repair'
+                                  ? 'repair-plan'
+                                  : action == 'install'
+                                      ? 'plan'
+                                      : 'inspect')
           : action;
       final value = await _call(readAction, review: reviewing);
       if (_disposed || epoch != _epoch) return;

@@ -86,8 +86,10 @@ reports. Review a fresh `plan` with the same selection and bundle; pass its ID t
 version and preserves modified old files. Inspect returns installation/version IDs.
 
 ```text
-python install.py rollback --root <root> --version <owned-version> --confirm <installation_id>
-python install.py uninstall --root <root> --confirm <installation_id>
+python install.py rollback-plan --root <root> --version <owned-version>
+python install.py rollback --root <root> --version <owned-version> --confirm <plan_id>
+python install.py uninstall-plan --root <root>
+python install.py uninstall --root <root> --confirm <plan_id>
 ```
 
 Rollback revalidates the target version's hashes and restores its selected role.
@@ -105,3 +107,21 @@ preserves an external fixture and unrelated settings. The script creates tempora
 state and does not register a service or contact a model/provider. Native service
 registration requires a separate opt-in check. Physical voice and cross-host
 pairing/revocation remain real-device checks, not consequences of wheel installation.
+
+## Unified maintenance review tokens
+
+For current bootstrap/CLI and desktop clients, rollback and uninstall require a
+fresh operation-specific preview, rather than reusing the installation ID:
+
+```text
+python install.py rollback-plan --root <root> --version <owned-version>
+python install.py rollback --root <root> --version <same-version> --confirm <plan_id>
+python install.py uninstall-plan --root <root>
+python install.py uninstall --root <root> --confirm <plan_id>
+```
+
+The same commands are available under `python -m odessy setup manage`. Legacy
+roots select their original engine; legacy rollback restores its recoverable
+maintenance journal and does not accept a version selector. Inspect first and
+review again after interruption or input/state changes. See
+[format-aware maintenance](existing-installer-wiring.md).

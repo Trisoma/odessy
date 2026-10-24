@@ -86,3 +86,12 @@ exact final release artifact/license acceptance and physical hardware tests rema
 owner gates. Source features are not substitutes for that evidence.
 
 Final focused lifecycle/pairing/version/eval regression check: **91 passed**. Final Flutter analysis is clean; protected desktop settings contract validates 89 settings.
+
+## October 24 maintenance integration update
+
+The desktop maintenance controls now handle both owned installation formats through
+their original engines, including legacy repair/recovery/uninstall. They support
+explicit post-cancellation inspection and fresh review; they do not silently resume
+or remove partial directories. See [integration evidence](existing-installer-wiring.md).
+This supersedes earlier GUI-maintenance gaps, but does not discharge signatures,
+target-native service checks, Linux/macOS component support or physical acceptance.

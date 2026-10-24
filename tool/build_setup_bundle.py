@@ -50,6 +50,10 @@ def build(wheels, licenses, output, *, runtime=None, desktop=None):
             if desktop is not None:
                 for file in Path(desktop).rglob('*'):
                     if file.is_file():archive.write(file,'desktop/'+file.relative_to(desktop).as_posix())
+            import sys
+            sys.path.insert(0,str(ROOT))
+            from installer.build.context import files as installer_files
+            for name,data in installer_files(ROOT).items():archive.writestr('bootstrap/'+name,data)
             archive.writestr('bootstrap/odessy/__init__.py','')
             for module in (ROOT/'src/odessy/setup').glob('*.py'):
                 archive.write(module,'bootstrap/odessy/setup/'+module.name)

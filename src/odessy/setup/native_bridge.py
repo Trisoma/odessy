@@ -15,22 +15,31 @@ from .maintenance import guard,digest
 MANAGE_ACTIONS={'plan','repair-plan','install','inspect','verify','repair','rollback','uninstall','service-plan','service-install','start','stop','status','service-remove'}
 
 
-def manage(parameters):
-    data=fields(parameters,{'action','root','bundle','config','role','confirm','version','workspace','port','node_link','node_server','listen'},'management')
+def manage(parameters,*,cancelled=lambda:False):
+    data=fields(parameters,{'action','root','bundle','config','role','confirm','version','workspace','port','node_link','node_server','listen','executable','allow_inference','allow_model_downloads'},'management')
+    from .lifecycle import dispatch
+    routed=dispatch(data,cancelled=cancelled)
+    if routed is not None:return routed
     if data.get('action') not in MANAGE_ACTIONS: raise ValueError('unsupported management operation')
     data=dict(data)
     if data['action'] in ('plan','install') and not data.get('config') and not data.get('role'):
         data['role']='combined'
     argv=[data['action']]
     for key,value in data.items():
-        if key=='action':continue
+        if key in ('action','allow_inference','allow_model_downloads'):continue
+        if key=='executable':
+            if value:raise ValueError('launcher EXE only applies to legacy maintenance')
+            continue
         if not isinstance(value,(str,int)) or isinstance(value,bool) or len(str(value))>4096 or any(c in str(value) for c in '\n\r\0'): raise ValueError('invalid management argument')
         if value!='': argv.extend(['--'+key.replace('_','-'),str(value)])
     from .manage import main
     output,error=io.StringIO(),io.StringIO()
-    with contextlib.redirect_stdout(output),contextlib.redirect_stderr(error): status=main(argv)
+    with contextlib.redirect_stdout(output),contextlib.redirect_stderr(error): status=main(argv,cancel_check=cancelled)
     if status: raise ValueError('management operation failed; inspect before retrying')
-    return json.loads(output.getvalue())
+    result=json.loads(output.getvalue())
+    from .lifecycle import format_of
+    result['installation_format']=format_of(Path(data['root'])) or 'new'
+    return result
 
 
 def bounded_native(argv,timeout=15):

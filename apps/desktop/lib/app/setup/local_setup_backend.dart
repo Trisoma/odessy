@@ -37,6 +37,7 @@ class LocalSetupBackend implements SetupBackend {
   final String python, sourceRoot;
   final Duration timeout;
   Process? _process;
+  Directory? _cancelDirectory;
   Completer<void>? _settled;
   bool _closed = false;
   int _epoch = 0;
@@ -57,15 +58,22 @@ class LocalSetupBackend implements SetupBackend {
     if (_closed || _settled != null) {
       throw StateError('Setup helper is unavailable or busy.');
     }
-    final payload = utf8.encode('${jsonEncode(request.toJson())}\n');
-    if (payload.length > 65536) {
-      throw const FormatException('Setup request exceeds 64 KiB.');
-    }
     final settled = Completer<void>();
     _settled = settled;
     final epoch = ++_epoch;
     Process? process;
     try {
+      final message = request.toJson();
+      if ({'installer', 'manage'}.contains(request.operation)) {
+        _cancelDirectory =
+            await Directory.systemTemp.createTemp('odessy-setup-');
+        message['cancel_file'] =
+            '${_cancelDirectory!.path}${Platform.pathSeparator}cancel';
+      }
+      final payload = utf8.encode('${jsonEncode(message)}\n');
+      if (payload.length > 65536) {
+        throw const FormatException('Setup request exceeds 64 KiB.');
+      }
       process = await Process.start(python, ['-m', 'odessy.setup.bridge'],
           workingDirectory: sourceRoot.isEmpty ? null : sourceRoot,
           environment: {
@@ -83,7 +91,7 @@ class LocalSetupBackend implements SetupBackend {
       await process.stdin.close();
       final results = await Future.wait<Object>(
               [stdout, stderr, process.exitCode], eagerError: true)
-          .timeout(request.operation == 'manage'
+          .timeout({'manage', 'installer'}.contains(request.operation)
               ? const Duration(minutes: 12)
               : timeout);
       if (_closed || epoch != _epoch) throw const SetupCancelled();
@@ -108,6 +116,13 @@ class LocalSetupBackend implements SetupBackend {
       }
       if (identical(_process, process)) _process = null;
       if (identical(_settled, settled)) _settled = null;
+      final directory = _cancelDirectory;
+      _cancelDirectory = null;
+      if (directory != null) {
+        final marker = File('${directory.path}${Platform.pathSeparator}cancel');
+        if (await marker.exists()) await marker.delete();
+        await directory.delete();
+      }
       if (!settled.isCompleted) settled.complete();
     }
   }
@@ -115,6 +130,15 @@ class LocalSetupBackend implements SetupBackend {
   @override
   Future<void> cancel() async {
     ++_epoch;
+    final directory = _cancelDirectory;
+    if (directory != null) {
+      await File('${directory.path}${Platform.pathSeparator}cancel')
+          .writeAsString('cancel');
+      try {
+        await _settled?.future.timeout(const Duration(seconds: 3));
+        return;
+      } on TimeoutException {/* Drain/kill the owned tree below. */}
+    }
     final process = _process;
     if (process != null) {
       if (Platform.isWindows) {

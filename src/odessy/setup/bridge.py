@@ -16,10 +16,24 @@ MAX_REQUEST = 65536
 
 
 def execute(request: dict) -> dict:
-    fields(request, {'id', 'operation', 'selection', 'output', 'format', 'confirm_plan', 'endpoint', 'parameters'}, 'request')
+    fields(request, {'id', 'operation', 'selection', 'output', 'format', 'confirm_plan', 'endpoint', 'parameters', 'cancel_file'}, 'request')
     operation = request.get('operation')
+    if operation == 'installer':
+        from installer.flutter_bridge import execute as installer_execute
+        cancel_file=request.get('cancel_file')
+        if cancel_file:
+            from pathlib import Path
+            path=Path(cancel_file)
+            if not path.is_absolute() or path.name!='cancel' or not path.parent.name.startswith('odessy-setup-'):raise ValueError('invalid cancellation marker')
+            return installer_execute(request.get('parameters'),cancelled=path.exists)
+        return installer_execute(request.get('parameters'))
     if operation in ('manage','pair'):
         from .native_bridge import manage,pair
+        if operation=='manage' and request.get('cancel_file'):
+            from pathlib import Path
+            path=Path(request['cancel_file'])
+            if not path.is_absolute() or path.name!='cancel' or not path.parent.name.startswith('odessy-setup-'):raise ValueError('invalid cancellation marker')
+            return manage(request.get('parameters'),cancelled=path.exists)
         return (manage if operation=='manage' else pair)(request.get('parameters'))
     if operation not in ('review', 'discover', 'verify', 'save', 'recover'):
         raise ValueError('unsupported setup operation')
@@ -81,7 +95,7 @@ def run(stdin=None, stdout=None) -> int:
             raise ValueError('valid controller request id required')
         identifier = request['id']
         response = {'id': identifier, 'status': 'ok', 'result': execute(request)}
-    except (ValueError, TypeError, OSError, RecursionError, RuntimeError, KeyError, subprocess.SubprocessError):
+    except (ValueError, TypeError, OSError, RecursionError, RuntimeError, KeyError, subprocess.SubprocessError, ImportError, KeyboardInterrupt):
         response = {'id': identifier, 'status': 'error', 'error': 'Setup failed. Check selection, paths, existing files and review confirmation. No existing configuration was replaced.'}
     stdout.write(json.dumps(response).encode('utf-8')+b'\n')
     stdout.flush()

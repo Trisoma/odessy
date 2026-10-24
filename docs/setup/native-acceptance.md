@@ -41,3 +41,12 @@ Final regression command: `pytest tests/test_setup*.py tests/test_installer*.py 
 (expanded as actual filenames in PowerShell): **430 passed, 1 skipped, 101 subtests
 passed**. Windows offline archive built, CRC verified and extracted bootstrap help
 passed. No commit, merge, push or automatic privilege escalation was performed.
+
+## October 24 scope correction
+
+GUI maintenance is now implemented for the supported owned formats; earlier lists
+in this file describe previous checkpoints. Cancellation/reopen and actual local
+Python bridge integration have regression coverage. See
+[existing installer wiring](existing-installer-wiring.md) for current evidence.
+Automatic partial-directory cleanup remains intentionally unsupported. Native OS,
+signing and physical-device acceptance gates above remain outstanding.

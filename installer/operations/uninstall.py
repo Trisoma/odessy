@@ -132,7 +132,7 @@ def _save(root,value):
     finally:temporary.unlink(missing_ok=True)
 
 
-def execute(root, expected, *, keep_models=True,keep_config=True,folders=None,probe=running_processes):
+def execute(root, expected, *, keep_models=True,keep_config=True,folders=None,probe=running_processes,cancelled=lambda:False):
     preview=plan(root,keep_models=keep_models,keep_config=keep_config,folders=folders,probe=probe)
     if preview['plan_sha256']!=expected: raise ValueError('Files or options changed; preview again before confirming.')
     root=Path(preview['install_dir'])
@@ -145,17 +145,21 @@ def execute(root, expected, *, keep_models=True,keep_config=True,folders=None,pr
         # From this point launching/resuming is blocked even after a partial failure.
         _save(root,result)
         try:
+            if cancelled():raise KeyboardInterrupt()
             for link in current['shortcuts']:
+                if cancelled():raise KeyboardInterrupt()
                 path=Path(link['path']);guard_path(path)
                 if digest(path)!=link['sha256']: raise ValueError('Shortcuts changed; preview again.')
                 path.unlink();result['removed_shortcuts']+=1
             files=[item for item in current['inventory'] if not item['directory']]
             directories=[item for item in current['inventory'] if item['directory']]
             for item in files:
+                if cancelled():raise KeyboardInterrupt()
                 path=root/item['path']
                 if _entry(root,path)!=item: raise ValueError('A file changed during cleanup; stopped: '+str(path))
                 path.unlink();result['removed_files']+=1
             for item in sorted(directories,key=lambda item:len(Path(item['path']).parts),reverse=True):
+                if cancelled():raise KeyboardInterrupt()
                 path=root/item['path'];guard_path(path)
                 if root not in path.parents or not pathing.link_free(path): raise ValueError('Directory is outside the uninstall scope.')
                 path.rmdir()  # New/unlisted files cause a stop; never recursively erase them.

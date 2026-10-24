@@ -150,7 +150,8 @@ class ManagedInstallation:
         local=SetupSelection(role=selection.role)
         if (local.platform,local.architecture)!=(selection.platform,selection.architecture): raise ValueError('bundle must be applied on its selected platform')
         state=self.record() if (self.root/'installation.json').exists() else None
-        data={'previous_state':state,'schema_version':1,'root':str(self.root),'bundle':str(bundle),'manifest':manifest,'selection':public(selection),'downloads':[],'service_changes':[]}
+        previous_operation=read_json(self.root/'operation.json') if (self.root/'operation.json').exists() else None
+        data={'previous_operation':previous_operation,'previous_state':state,'schema_version':1,'root':str(self.root),'bundle':str(bundle),'manifest':manifest,'selection':public(selection),'downloads':[],'service_changes':[]}
         if self.runtime_source:
             from .runtime import inventory
             data['python_runtime']=inventory(self.runtime_source)
@@ -213,9 +214,12 @@ class ManagedInstallation:
         selection=SetupSelection.from_dict(self.record()['selection'])
         return self.install(bundle,selection,confirm,cancelled=cancelled)
 
-    def rollback(self,version,*,confirm):
+    def rollback(self,version,*,confirm,expected_state=None,expected_operation=...):
         with self.lock():
             record=self.record()
+            if expected_state is not None and record!=expected_state:raise ValueError('installation state changed after review')
+            operation=read_json(self.root/'operation.json') if (self.root/'operation.json').exists() else None
+            if expected_operation is not ... and operation!=expected_operation:raise ValueError('operation journal changed after review')
             if (self.root/'service.json').exists(): raise ValueError('remove owned service before rollback')
             if confirm!=record['id'] or version not in record['versions']: raise ValueError('unknown owned version or confirmation')
             for name,sha in record['versions'][version].items():
@@ -227,26 +231,39 @@ class ManagedInstallation:
             atomic(self.root/'installation.json',record)
             return {'active':version,'service_started':False}
 
-    def uninstall(self,*,confirm):
+    def uninstall(self,*,confirm,expected_state=None,expected_operation=...,cancelled=lambda:False):
         if Path(sys.executable).resolve().is_relative_to(self.root): raise ValueError('run uninstall from the external setup bootstrap')
         with self.lock():
             record=self.record()
+            if expected_state is not None and record!=expected_state:raise ValueError('installation state changed after review')
             if confirm!=record['id']: raise ValueError('confirm exact installation identity')
             if (self.root/'service.json').exists(): raise ValueError('remove the owned service before uninstalling runtime files')
+            previous_operation=read_json(self.root/'operation.json') if (self.root/'operation.json').exists() else None
+            if expected_operation is not ... and previous_operation!=expected_operation:raise ValueError('operation journal changed after review')
+            journal={'schema_version':1,'operation':'uninstall','status':'running','id':uuid.uuid4().hex,'installation_id':record['id']}
+            atomic(self.root/'operation.json',journal)
             removed=[];retained=[]
-            for version,files in record['versions'].items():
-                base=self.root/'versions'/version
-                for name,sha in files.items():
-                    path=guard(base/name)
-                    if path.is_file() and digest(path)==sha: path.unlink();removed.append(f'{version}/{name}')
-                    elif path.exists(): retained.append(f'{version}/{name}')
-            for runtime_id,files in record.get('runtimes',{}).items():
-                if not re.fullmatch('[a-f0-9]{32}',runtime_id):raise ValueError('invalid runtime ownership identity')
-                for name,sha in files.items():
-                    relative=Path(name)
-                    if relative.is_absolute() or '..' in relative.parts or ':' in name or chr(92) in name or not re.fullmatch('[a-f0-9]{64}',str(sha)):raise ValueError('invalid runtime ownership path')
-                    path=guard(self.root/'runtimes'/runtime_id/name)
-                    if path.is_file() and digest(path)==sha:path.unlink();removed.append('runtimes/'+runtime_id+'/'+name)
-                    elif path.exists():retained.append('runtimes/'+runtime_id+'/'+name)
-            record['active']=None;atomic(self.root/'installation.json',record)
+            try:
+                for version,files in record['versions'].items():
+                    base=self.root/'versions'/version
+                    for name,sha in files.items():
+                        if cancelled():raise KeyboardInterrupt()
+                        path=guard(base/name)
+                        if path.is_file() and digest(path)==sha: path.unlink();removed.append(f'{version}/{name}')
+                        elif path.exists(): retained.append(f'{version}/{name}')
+                for runtime_id,files in record.get('runtimes',{}).items():
+                    if not re.fullmatch('[a-f0-9]{32}',runtime_id):raise ValueError('invalid runtime ownership identity')
+                    for name,sha in files.items():
+                        if cancelled():raise KeyboardInterrupt()
+                        relative=Path(name)
+                        if relative.is_absolute() or '..' in relative.parts or ':' in name or chr(92) in name or not re.fullmatch('[a-f0-9]{64}',str(sha)):raise ValueError('invalid runtime ownership path')
+                        path=guard(self.root/'runtimes'/runtime_id/name)
+                        if path.is_file() and digest(path)==sha:path.unlink();removed.append('runtimes/'+runtime_id+'/'+name)
+                        elif path.exists():retained.append('runtimes/'+runtime_id+'/'+name)
+                record['active']=None;atomic(self.root/'installation.json',record)
+                journal.update(status='completed',removed_files=len(removed),retained_files=len(retained));atomic(self.root/'operation.json',journal)
+            except BaseException as error:
+                journal.update(status='interrupted',removed_files=len(removed),retained_files=len(retained),error='cancelled' if isinstance(error,KeyboardInterrupt) else 'failed; inspect before retrying')
+                atomic(self.root/'operation.json',journal)
+                raise
             return {'removed':removed,'retained':retained,'models_removed':False,'settings_removed':False}

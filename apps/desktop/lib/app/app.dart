@@ -24,7 +24,7 @@ class OdessyApp extends StatefulWidget {
 class _OdessyAppState extends State<OdessyApp> {
   late final DesktopSession controller;
   late final SetupController setup;
-  late final MaintenanceController maintenance, pairing;
+  late final MaintenanceController maintenance, pairing, installerEngine;
   final CredentialStore credentials = MemoryCredentialStore();
   late final AppLifecycleListener lifecycle;
   ThemeMode mode = ThemeMode.dark;
@@ -35,11 +35,13 @@ class _OdessyAppState extends State<OdessyApp> {
     controller = DesktopSession(widget.api ?? DemoApi());
     setup = SetupController(LocalSetupBackend());
     maintenance = MaintenanceController(LocalSetupBackend());
+    installerEngine = MaintenanceController(LocalSetupBackend());
     pairing = MaintenanceController(LocalSetupBackend());
     lifecycle = AppLifecycleListener(onExitRequested: () async {
       await controller.shutdown();
       await setup.shutdown();
       await maintenance.shutdown();
+      await installerEngine.shutdown();
       await pairing.shutdown();
       return AppExitResponse.exit;
     });
@@ -52,6 +54,7 @@ class _OdessyAppState extends State<OdessyApp> {
     controller.dispose();
     setup.dispose();
     maintenance.dispose();
+    installerEngine.dispose();
     pairing.dispose();
     super.dispose();
   }
@@ -126,6 +129,10 @@ class _OdessyAppState extends State<OdessyApp> {
                         Expanded(
                             child: switch (page) {
                           'Setup' => SetupWizardPage(controller: setup),
+                          'Installer' => MaintenancePage(
+                              key: const ValueKey('installer-engine'),
+                              controller: installerEngine,
+                              installer: true),
                           'Maintenance' =>
                             MaintenancePage(controller: maintenance),
                           'Pairing' => MaintenancePage(
@@ -213,6 +220,12 @@ class _OdessyAppState extends State<OdessyApp> {
                 page == 'Setup', () {
               if (controller.session?.running != true) {
                 setState(() => page = 'Setup');
+              }
+            }),
+            _nav(context, 'Install Odessy', Icons.download_outlined,
+                page == 'Installer', () {
+              if (controller.session?.running != true) {
+                setState(() => page = 'Installer');
               }
             }),
             _nav(context, 'Runtime maintenance', Icons.handyman_outlined,

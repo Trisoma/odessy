@@ -5,6 +5,19 @@ import 'package:odessy_desktop/features/setup/presentation/maintenance_page.dart
 import 'setup_controller_test.dart' show Backend;
 
 void main() {
+  testWidgets(
+      'existing installer view exposes verified resources and review gate',
+      (tester) async {
+    final c = MaintenanceController(Backend());
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: MaintenancePage(controller: c, installer: true))));
+    expect(find.byKey(const ValueKey('native-cache')), findsOneWidget);
+    expect(find.textContaining('Windows x64 engine'), findsOneWidget);
+    final confirm =
+        find.widgetWithText(FilledButton, 'Confirm reviewed operation');
+    expect(tester.widget<FilledButton>(confirm).onPressed, isNull);
+  });
+
   testWidgets('maintenance shows review gate and real action details',
       (tester) async {
     final backend = Backend();

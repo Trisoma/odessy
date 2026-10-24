@@ -5,6 +5,75 @@ import 'package:odessy_desktop/app/setup/local_setup_backend.dart';
 
 void main() {
   final python = Platform.environment['ODESSY_TEST_PYTHON'];
+  test(
+      'real maintenance bridge detects legacy, uninstalls and reopens without replay',
+      () async {
+    final repo = Directory.current.parent.parent.absolute.path;
+    final directory =
+        Directory.systemTemp.createTempSync('odessy-maintenance-bridge-');
+    final installation = '${directory.path}${Platform.pathSeparator}owned';
+    const fixture = r'''import sys
+from pathlib import Path
+from installer.core.checkpoint import Step,run_steps
+root=Path(sys.argv[1])
+run_steps(root,{'install_dir':str(root),'engine':'role-aware-existing-installer-v1','selection':{'role':'execution'}},[Step('application',lambda:{},lambda:{})])
+app=root/'application';app.mkdir();(app/'odessy-application.json').write_text('{"schema_version":1}');(app/'owned.txt').write_text('owned')
+(root/'models').mkdir();(root/'models/external').write_text('preserve')
+(root/'note.txt').write_text('preserve')
+''';
+    final created = await Process.run(python!, ['-c', fixture, installation],
+        workingDirectory: repo,
+        environment: {
+          'PYTHONPATH':
+              '$repo${Platform.pathSeparator}src${Platform.isWindows ? ';' : ':'}$repo'
+        });
+    expect(created.exitCode, 0, reason: '${created.stderr}');
+    final backend = LocalSetupBackend(python: python, sourceRoot: repo);
+    var id = 0;
+    Future<SetupReply> request(String action, {String? confirm}) =>
+        backend.execute(SetupRequest(
+            id: 'maintenance-${++id}',
+            operation: 'manage',
+            selection: const {},
+            parameters: {
+              'action': action,
+              'root': installation,
+              if (confirm != null) 'confirm': confirm
+            }));
+    try {
+      expect(
+          (await request('inspect')).result['installation_format'], 'legacy');
+      final plan = await request('uninstall-plan');
+      expect(plan.ok, true);
+      final done =
+          await request('uninstall', confirm: plan.result['plan_id'] as String);
+      expect(done.ok, true);
+      expect(done.result['status'], 'completed');
+      expect(
+          File('$installation/models/external').readAsStringSync(), 'preserve');
+      expect(File('$installation/note.txt').readAsStringSync(), 'preserve');
+      await backend.close();
+      final reopened = LocalSetupBackend(python: python, sourceRoot: repo);
+      try {
+        final state = await reopened.execute(SetupRequest(
+            id: 'reopened',
+            operation: 'manage',
+            selection: const {},
+            parameters: {'action': 'inspect', 'root': installation}));
+        expect(state.result['uninstall']['status'], 'completed');
+      } finally {
+        await reopened.close();
+      }
+    } finally {
+      await backend.close();
+      directory.deleteSync(recursive: true);
+    }
+  },
+      skip: python == null
+          ? 'Set ODESSY_TEST_PYTHON for real lifecycle integration'
+          : false,
+      timeout: const Timeout(Duration(seconds: 90)));
+
   test('real Python bridge reviews, saves once and recovers without replay',
       () async {
     final root = Directory.current.parent.parent.absolute.path;
