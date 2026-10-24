@@ -16,7 +16,7 @@ MANAGE_ACTIONS={'plan','repair-plan','install','inspect','verify','repair','roll
 PACKAGE_ACTIONS={'package-review','package-install','package-launch','package-status','package-verify',
     'package-repair-review','package-repair','package-rollback-review','package-rollback',
     'package-configure-review','package-configure','package-uninstall-review','package-uninstall',
-    'package-register','installed-spec','package-launch-ack','package-launch-status'}
+    'package-register','installed-spec','package-launch-ack','package-launch-status','package-launch-pending'}
 
 
 def _versioned_root(parameters,name):
@@ -34,6 +34,10 @@ def _versioned_root(parameters,name):
 def _packaged(parameters,*,cancelled=lambda:False):
     """Installed lifecycle operations; internal paths never come from the user."""
     action=parameters.get('action')
+    if action=='package-launch-pending':
+        from .launch_receipts import pending
+        data=fields(parameters,{'action','root','version'},'pending launch handoffs')
+        return pending(data['root'],data.get('version'))
     if action in ('package-launch-ack','package-launch-status'):
         from . import launch_receipts
         data=fields(parameters,{'action','root','launch_id','state'},'launch handoff')

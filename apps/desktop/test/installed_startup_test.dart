@@ -87,6 +87,28 @@ class Backend implements SetupBackend {
   Future<void> close() async => closed = true;
 }
 
+class PendingBackend extends Backend {
+  PendingBackend() : super(specWith());
+  final acknowledged = <String>[];
+  @override
+  Future<SetupReply> execute(SetupRequest request) async {
+    if (request.parameters['action'] == 'package-launch-pending') {
+      expect(request.parameters['version'], 'a' * 32);
+      return SetupReply.fromJson({
+        'id': request.id,
+        'status': 'ok',
+        'result': {
+          'launch_ids': ['b' * 32]
+        }
+      }, request.id);
+    }
+    if (request.parameters['action'] == 'package-launch-ack') {
+      acknowledged.add(request.parameters['launch_id'] as String);
+    }
+    return super.execute(request);
+  }
+}
+
 class Coordinator implements InstalledCoordinatorHandle {
   Coordinator({this.failure});
   final Object? failure;
@@ -116,6 +138,39 @@ Json specWith({bool model = false, String role = 'combined'}) => {
     };
 
 void main() {
+  testWidgets('already open rendered window acknowledges new setup handoff',
+      (tester) async {
+    final backend = PendingBackend();
+    final startup = ControlledStartup(backend);
+    await tester.pumpWidget(InstalledApplication(
+        installRoot: 'C:/Odessy/App',
+        backend: backend,
+        startupFactory: (_) => startup));
+    expect(backend.acknowledged, isEmpty);
+    startup.resolve();
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(backend.acknowledged, ['b' * 32]);
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets('unconfigured installation opens real disconnected desktop',
+      (tester) async {
+    final backend = Backend(specWith());
+    final startup = ControlledStartup(backend);
+    await tester.pumpWidget(InstalledApplication(
+        installRoot: 'C:/Odessy/App',
+        backend: backend,
+        startupFactory: (_) => startup));
+    startup.resolve();
+    await tester.pump();
+    await tester.pump();
+    expect(find.textContaining('Model not configured'), findsWidgets);
+    expect(find.text('DEMO'), findsNothing);
+    expect(find.text('Conversation'), findsWidgets);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets('acknowledgement waits for concurrent management inspection',
       (tester) async {
     final backend = LoadingBackend();

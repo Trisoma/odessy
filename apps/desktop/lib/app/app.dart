@@ -17,9 +17,12 @@ import '../features/setup/presentation/maintenance_page.dart';
 import '../features/setup/presentation/manage_page.dart';
 import '../features/setup/presentation/get_started_page.dart';
 import 'setup/installation_location.dart';
+import 'setup/disconnected_api.dart';
+import 'setup/native_picker.dart';
 
 class OdessyApp extends StatefulWidget {
-  const OdessyApp({super.key, this.api, this.installed});
+  const OdessyApp({super.key, this.api, this.installed, this.onConfigured});
+  final VoidCallback? onConfigured;
   final OdessyApi? api;
 
   /// Recorded installed state when this process was started by the Windows
@@ -110,10 +113,16 @@ class _OdessyAppState extends State<OdessyApp> {
                               const Spacer(),
                               _badge(
                                   context,
-                                  controller.api.isDemo ? 'DEMO' : 'LOCAL API',
+                                  controller.api is DisconnectedApi
+                                      ? 'NOT CONFIGURED'
+                                      : controller.api.isDemo
+                                          ? 'DEMO'
+                                          : 'LOCAL API',
                                   controller.api.isDemo
                                       ? Colors.amber
-                                      : Colors.green),
+                                      : controller.connected
+                                          ? Colors.green
+                                          : Colors.grey),
                               const SizedBox(width: 10),
                               IconButton(
                                   tooltip: 'Connect local service',
@@ -135,6 +144,16 @@ class _OdessyAppState extends State<OdessyApp> {
                                           : ThemeMode.dark)),
                             ])),
                         const Divider(height: 1),
+                        if (controller.api is DisconnectedApi)
+                          MaterialBanner(
+                              content: const Text(
+                                  'Model not configured — configure a model to enable chat. No model is running.'),
+                              actions: [
+                                TextButton(
+                                    onPressed: () =>
+                                        setState(() => page = 'Get started'),
+                                    child: const Text('Configure model')),
+                              ]),
                         if (controller.error.isNotEmpty)
                           MaterialBanner(
                               content: Text(controller.error),
@@ -154,8 +173,18 @@ class _OdessyAppState extends State<OdessyApp> {
                                   installManagement!.openMaintenance()),
                           'Get started' => GetStartedPage(
                               controller: installManagement!,
-                              onStart: () => setState(() => page = 'Conversation'),
-                              onClose: () => setState(() => page = 'Conversation')),
+                              picker: const FileSelectorPicker(),
+                              onStart: widget.onConfigured ??
+                                  () => setState(() => page = 'Conversation'),
+                              onClose: () =>
+                                  setState(() => page = 'Conversation')),
+                          'Voice setup' => GetStartedPage(
+                              controller: installManagement!,
+                              picker: const FileSelectorPicker(),
+                              initialVoice: true,
+                              onStart: widget.onConfigured ?? () {},
+                              onClose: () =>
+                                  setState(() => page = 'Conversation')),
                           'Installer' => MaintenancePage(
                               key: const ValueKey('installer-engine'),
                               controller: installerEngine,
@@ -182,12 +211,15 @@ class _OdessyAppState extends State<OdessyApp> {
                                       ? ThemeMode.light
                                       : ThemeMode.dark),
                               onOpenDevices: () => setState(() {
-                                device = 'This computer';
-                                page = 'Devices';
-                              }),
+                                    device = 'This computer';
+                                    page = 'Devices';
+                                  }),
                               onOpenGetStarted: installManagement == null
                                   ? null
                                   : () => setState(() => page = 'Get started'),
+                              onOpenVoice: installManagement == null
+                                  ? null
+                                  : () => setState(() => page = 'Voice setup'),
                               onOpenManagement: widget.installed == null
                                   ? null
                                   : () => setState(

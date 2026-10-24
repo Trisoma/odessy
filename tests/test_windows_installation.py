@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from odessy.setup import windows_installation as w
@@ -217,3 +219,42 @@ def test_shortcut_helper_does_not_open_a_console(tmp_path,monkeypatch):
     monkeypatch.setattr(w.subprocess,'run',lambda *args,**kwargs:calls.append(kwargs))
     w._write_shortcut(tmp_path/'shortcut.lnk','target.exe','--installed')
     assert calls[0]['creationflags'] & w.subprocess.CREATE_NO_WINDOW
+def test_launch_helper_closes_output_while_desktop_remains_alive(tmp_path):
+    """A real grandchild must not hold the helper's protocol pipes open."""
+    code = '''
+import sys, subprocess
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from odessy.setup import windows_installation as w
+w.ManagedInstallation = lambda root: type('Manager', (), {'record': lambda self: {}})()
+w._active_desktop = lambda root, record: ('a'*32, Path(sys.executable))
+real_popen = subprocess.Popen
+def child(args, **kwargs):
+    return real_popen([sys.executable, '-c', 'import time; time.sleep(30)'], **kwargs)
+w.subprocess.Popen = child
+p = w.launch(Path(sys.argv[2]))
+print(p.pid, flush=True)
+'''
+    source = str(Path(__file__).resolve().parents[1] / 'src')
+    helper = subprocess.Popen([sys.executable, '-c', code, source, str(tmp_path)],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    pid = None
+    try:
+        # Read one protocol line, then require EOF without closing the desktop.
+        pid = int(helper.stdout.readline().strip())
+        try:
+            out, err = helper.communicate(timeout=3)
+        except subprocess.TimeoutExpired:
+            pytest.fail('desktop inherited helper output pipes; setup cannot finish its launch request')
+        assert helper.returncode == 0, err.decode(errors='replace')
+        assert out == b''
+    finally:
+        if pid is not None:
+            if sys.platform == 'win32':
+                subprocess.run(['taskkill.exe', '/PID', str(pid), '/T', '/F'],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                import os, signal
+                os.kill(pid, signal.SIGTERM)
+        if helper.poll() is None: helper.kill()
+        helper.communicate()

@@ -15,6 +15,7 @@ import 'installed_coordinator.dart';
 import 'launch_acknowledgement.dart';
 import 'local_setup_backend.dart';
 import 'native_picker.dart';
+import 'disconnected_api.dart';
 
 enum InstalledPhase { checking, configure, starting, ready, failed }
 
@@ -164,11 +165,19 @@ class _InstalledApplicationState extends State<InstalledApplication> {
   InstalledManageController? _manage;
   String _manageRoot = '';
   final Set<String> _acknowledged = {};
+  final _navigator = GlobalKey<NavigatorState>();
+  Timer? _handoffTimer;
+  late final SetupBackend _handoffBackend;
+  bool _rendered = false, _checkingHandoffs = false;
 
   @override
   void initState() {
     super.initState();
     _backend = widget.backend ?? LocalSetupBackend();
+    _handoffBackend = widget.backend ?? LocalSetupBackend();
+    _handoffTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      unawaited(_acceptPendingHandoffs());
+    });
     _startup = (widget.startupFactory ?? _defaultStartup)(_backend);
     _startup.addListener(_changed);
     _lifecycle = AppLifecycleListener(onExitRequested: () async {
@@ -183,6 +192,7 @@ class _InstalledApplicationState extends State<InstalledApplication> {
 
   void _changed() {
     if (!mounted) return;
+    _rendered = false;
     final root = (_startup.spec['root'] as String?) ?? '';
     if (root.isNotEmpty && root != _manageRoot) {
       _manageRoot = root;
@@ -201,8 +211,56 @@ class _InstalledApplicationState extends State<InstalledApplication> {
           _startup.spec['version'] != version) {
         return;
       }
+      _rendered = true;
       _acknowledge();
     });
+  }
+
+  Future<void> _acceptPendingHandoffs() async {
+    if (!mounted ||
+        !_rendered ||
+        _checkingHandoffs ||
+        _manage?.busy == true ||
+        !{InstalledPhase.configure, InstalledPhase.ready}
+            .contains(_startup.phase)) {
+      return;
+    }
+    final root = _startup.spec['root'];
+    if (root is! String || root.isEmpty) return;
+    _checkingHandoffs = true;
+    try {
+      final reply = await _handoffBackend.execute(SetupRequest(
+          id: 'pending-${DateTime.now().microsecondsSinceEpoch}',
+          operation: 'manage',
+          selection: const {},
+          parameters: {
+            'action': 'package-launch-pending',
+            'root': root,
+            'version': _startup.spec['version']
+          }));
+      if (!mounted || !_rendered || !reply.ok) return;
+      final ids = reply.result['launch_ids'];
+      if (ids is! List) return;
+      final phase = _startup.phase;
+      if (!{InstalledPhase.configure, InstalledPhase.ready}.contains(phase)) {
+        return;
+      }
+      final acknowledgement =
+          BackendLaunchAcknowledgement(_handoffBackend, root: root);
+      for (final id in ids.take(8)) {
+        if (!mounted || !_rendered || _startup.phase != phase) return;
+        if (id is String) {
+          await acknowledgement.acknowledge(id,
+              state: phase == InstalledPhase.ready
+                  ? launchReady
+                  : launchConfigurationRequired);
+        }
+      }
+    } catch (_) {
+      // Transient helper contention never becomes readiness; retry while rendered.
+    } finally {
+      _checkingHandoffs = false;
+    }
   }
 
   void _managementChanged() {
@@ -241,6 +299,10 @@ class _InstalledApplicationState extends State<InstalledApplication> {
 
   @override
   void dispose() {
+    _handoffTimer?.cancel();
+    if (!identical(_backend, _handoffBackend)) {
+      unawaited(_handoffBackend.close());
+    }
     _lifecycle.dispose();
     _startup.removeListener(_changed);
     _startup.dispose();
@@ -261,11 +323,19 @@ class _InstalledApplicationState extends State<InstalledApplication> {
 
   @override
   Widget build(BuildContext context) {
+    if (_startup.phase == InstalledPhase.configure &&
+        _startup.spec['role'] != 'execution') {
+      return OdessyApp(
+          api: DisconnectedApi(),
+          installed: _startup.spec,
+          onConfigured: () => _startup.begin());
+    }
     final api = _startup.api;
     if (_startup.phase == InstalledPhase.ready && api != null) {
       return OdessyApp(api: api, installed: _startup.spec);
     }
     return MaterialApp(
+        navigatorKey: _navigator,
         title: 'Odessy',
         theme: odessyTheme(Brightness.dark),
         home: Scaffold(
@@ -348,7 +418,7 @@ class _InstalledApplicationState extends State<InstalledApplication> {
   void _openManage() {
     final manage = _manage;
     if (manage == null) return;
-    Navigator.of(context).push(MaterialPageRoute<void>(
+    _navigator.currentState?.push(MaterialPageRoute<void>(
         builder: (context) => Scaffold(
             appBar: AppBar(title: const Text('Manage Odessy')),
             body: ManagePage(

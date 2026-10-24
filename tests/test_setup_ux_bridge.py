@@ -3,6 +3,21 @@ import pytest
 from odessy.setup.native_bridge import manage
 
 
+def test_pending_launches_only_include_current_installation_version(tmp_path):
+    from odessy.setup import launch_receipts
+    from odessy.setup.maintenance import atomic
+    record = {'schema_version': 1, 'root': str(tmp_path), 'id': 'b'*32,
+              'active': 'a'*32, 'versions': {'a'*32: {}, 'c'*32: {}}}
+    atomic(tmp_path/'installation.json', record)
+    launch_receipts.prepare(tmp_path, '1'*32)
+    launch_receipts.prepare(tmp_path, '2'*32)
+    launch_receipts.acknowledge(tmp_path, '2'*32, 'ready')
+    assert manage({'action': 'package-launch-pending', 'root': str(tmp_path)}) == {'launch_ids': ['1'*32]}
+    record['active'] = 'c'*32
+    atomic(tmp_path/'installation.json', record)
+    assert manage({'action': 'package-launch-pending', 'root': str(tmp_path)}) == {'launch_ids': []}
+
+
 def test_progress_cursor_is_forwarded(tmp_path, monkeypatch):
     from odessy.setup import lifecycle, maintenance
     monkeypatch.setattr(lifecycle, 'format_of', lambda root: 'versioned')

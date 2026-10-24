@@ -61,3 +61,11 @@ No downloaded EXE deletion, shell self-deletion or visible helper consoles.
 
 This is the agreed implementation interface, not a claim that all additions have
 already landed. Any necessary amendment must be communicated before changing it.
+
+## Already-open desktop handoff
+
+Additive manage action package-launch-pending accepts root and optional version, returning up to 64 current-installation/current-version pending launch_ids. A rendered desktop polls on a separate helper, acknowledges at most eight per pass, and cancels polling on disposal. It never equates process creation with readiness. Existing setup closes on ready/configuration_required and stays open on failure.
+
+## Launch helper stream isolation
+
+The launched desktop receives DEVNULL for stdin/stdout/stderr and close_fds=True. It must not inherit bridge response pipes: clients drain stdout/stderr before reading the launch result, so inherited pipes prevent setup from reaching its existing close-on-readiness path while the desktop is alive. An acknowledged receipt alone does not prove the launching helper finished.

@@ -48,8 +48,11 @@ class _ConversationPageState extends State<ConversationPage> {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  const Text('Your workspace, connected.',
-                      style: TextStyle(
+                  Text(
+                      c.connected
+                          ? 'Your workspace, connected.'
+                          : 'Your workspace, offline.',
+                      style: const TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.w600,
                           letterSpacing: -.4)),

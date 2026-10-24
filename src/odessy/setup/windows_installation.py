@@ -47,7 +47,11 @@ def launch(root, mode='app', launch_id=None):
         from . import launch_receipts
         launch_receipts.prepare(root, launch_id)
         args += ['--launch-id', launch_id]
-    return subprocess.Popen(args,cwd=tempfile.gettempdir(),stdin=subprocess.DEVNULL)
+    # The long-lived desktop must not inherit the stdio bridge's response pipes.
+    # Otherwise its helper exits but Flutter waits for EOF until the app closes.
+    return subprocess.Popen(args,cwd=tempfile.gettempdir(),stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+                            close_fds=True)
 
 
 # Parameters are carried by environment, never interpolated into PowerShell code.

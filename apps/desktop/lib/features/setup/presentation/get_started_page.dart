@@ -20,6 +20,7 @@ class GetStartedPage extends StatefulWidget {
     this.onClose,
     this.picker = const UnavailablePicker(),
     this.coordinatorReady = false,
+    this.initialVoice = false,
   });
 
   final InstalledManageController controller;
@@ -27,6 +28,7 @@ class GetStartedPage extends StatefulWidget {
   final VoidCallback? onClose;
   final NativePicker picker;
   final bool coordinatorReady;
+  final bool initialVoice;
 
   @override
   State<GetStartedPage> createState() => _GetStartedPageState();
@@ -40,6 +42,17 @@ class _GetStartedPageState extends State<GetStartedPage> {
   String choice = 'local', preset = 'openai';
   bool initialised = false;
   final _modelChoiceKey = GlobalKey();
+  final _voiceKey = GlobalKey();
+  bool showVoice = false, voiceEnabled = false;
+  final voicePaths = <String, TextEditingController>{
+    for (final name in [
+      'whisper_bin',
+      'whisper_model',
+      'kokoro_model',
+      'kokoro_voices'
+    ])
+      name: TextEditingController(),
+  };
 
   void _chooseModel() {
     setState(() => choice = choice == 'remote' ? 'remote' : 'local');
@@ -50,18 +63,11 @@ class _GetStartedPageState extends State<GetStartedPage> {
   }
 
   void _voiceHelp() {
-    showDialog<void>(
-        context: context,
-        builder: (context) => AlertDialog(
-              title: const Text('Optional voice setup'),
-              content: const Text(
-                  'Voice is optional. This first-run flow does not configure Whisper, Kokoro or wake-word assets. You can finish model setup and use text now; voice configuration remains available through Odessy setup. No audio models are downloaded here.'),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Close'))
-              ],
-            ));
+    setState(() => showVoice = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final target = _voiceKey.currentContext;
+      if (mounted && target != null) Scrollable.ensureVisible(target);
+    });
   }
 
   InstalledManageController get c => widget.controller;
@@ -69,6 +75,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
   @override
   void initState() {
     super.initState();
+    showVoice = widget.initialVoice;
     c.addListener(_refresh);
     if (c.status.isNotEmpty) _fromStatus();
   }
@@ -77,6 +84,14 @@ class _GetStartedPageState extends State<GetStartedPage> {
     if (initialised) return;
     initialised = true;
     workspace.text = c.workspace;
+    final selection = c.spec['selection'];
+    final audio = selection is Map ? selection['voice'] : null;
+    if (audio is Map) {
+      voiceEnabled = audio['enabled'] == true;
+      for (final entry in voicePaths.entries) {
+        entry.value.text = '${audio[entry.key] ?? ''}';
+      }
+    }
     if (c.modelConfigured) choice = 'done';
   }
 
@@ -93,11 +108,17 @@ class _GetStartedPageState extends State<GetStartedPage> {
     model.dispose();
     workspace.dispose();
     credential.dispose();
+    for (final controller in voicePaths.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
   Json get _selection => {
         'role': c.role,
+        if (c.spec['selection'] is Map &&
+            (c.spec['selection'] as Map)['voice'] is Map)
+          'voice': (c.spec['selection'] as Map)['voice'],
         if (choice == 'local')
           'model': {
             'provider': 'ollama',
@@ -222,6 +243,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
                     enabled: !c.busy,
                     onBrowse: _browseWorkspace)),
             _checklist(context, c),
+            if (showVoice) _voiceConfiguration(),
           ],
         ]));
   }
@@ -368,7 +390,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
         'endpoint',
         () {
           _chooseModel();
-          // Selecting a model is separate from an explicit local endpoint probe.
+          if (choice == 'local') c.discover(endpoint: endpoint.text.trim());
         }
       ),
       (
@@ -380,7 +402,13 @@ class _GetStartedPageState extends State<GetStartedPage> {
         'workspace',
         () => _browseWorkspace()
       ),
-      ('Voice', false, 'Optional — setup information', 'voice', _voiceHelp),
+      (
+        'Voice',
+        voiceEnabled,
+        'Configure existing voice assets',
+        'voice',
+        _voiceHelp
+      ),
     ];
     return SetupSection(
         title: 'Setup checklist',
@@ -404,4 +432,51 @@ class _GetStartedPageState extends State<GetStartedPage> {
                 trailing: const Icon(Icons.chevron_right)),
         ]));
   }
+
+  Widget _voiceConfiguration() => Container(
+      key: _voiceKey,
+      child: SetupSection(
+          title: 'Voice configuration',
+          description:
+              'Select existing Whisper and Kokoro files. Saving validates configuration; it does not download assets or start microphone capture.',
+          child: Column(children: [
+            SwitchListTile(
+                title: const Text('Enable existing voice assets'),
+                value: voiceEnabled,
+                onChanged: c.busy
+                    ? null
+                    : (value) => setState(() => voiceEnabled = value)),
+            for (final entry in voicePaths.entries)
+              PathField(
+                  controller: entry.value,
+                  label: entry.key.replaceAll('_', ' '),
+                  enabled: !c.busy,
+                  onBrowse: () async {
+                    final selected =
+                        await widget.picker.pickFile(initial: entry.value.text);
+                    if (mounted && selected != null) {
+                      setState(() => entry.value.text = selected);
+                    }
+                  }),
+            FilledButton(
+                onPressed: c.busy
+                    ? null
+                    : () async {
+                        final existing = c.spec['selection'];
+                        await c.reviewConfiguration({
+                          ...?existing is Json ? existing : null,
+                          'role': c.role,
+                          'voice': {
+                            'enabled': voiceEnabled,
+                            for (final entry in voicePaths.entries)
+                              entry.key: entry.value.text.trim()
+                          },
+                        }, workspace.text.trim());
+                        if (c.canConfirm &&
+                            c.reviewedAction == 'package-configure-review') {
+                          await c.confirm();
+                        }
+                      },
+                child: const Text('Save voice configuration')),
+          ])));
 }

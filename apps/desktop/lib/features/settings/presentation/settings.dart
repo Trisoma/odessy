@@ -25,6 +25,7 @@ class SettingsPage extends StatefulWidget {
     required this.controller,
     this.onOpenManagement,
     this.onOpenGetStarted,
+    this.onOpenVoice,
     this.onOpenDevices,
     this.installed = false,
     this.modelConfigured = false,
@@ -35,6 +36,7 @@ class SettingsPage extends StatefulWidget {
 
   final DesktopSession controller;
   final VoidCallback? onOpenManagement, onOpenGetStarted, onOpenDevices;
+  final VoidCallback? onOpenVoice;
   final bool installed, modelConfigured, voiceEnabled;
   final ThemeMode themeMode;
   final VoidCallback? onToggleTheme;
@@ -107,17 +109,15 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _narrowPicker(BuildContext context) => SizedBox(
       height: 44,
-      child: ListView(
-          scrollDirection: Axis.horizontal,
-          children: [
-            for (final name in SettingsSections.all)
-              Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: ChoiceChip(
-                      label: Text(name),
-                      selected: section == name,
-                      onSelected: (_) => setState(() => section = name))),
-          ]));
+      child: ListView(scrollDirection: Axis.horizontal, children: [
+        for (final name in SettingsSections.all)
+          Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: ChoiceChip(
+                  label: Text(name),
+                  selected: section == name,
+                  onSelected: (_) => setState(() => section = name))),
+      ]));
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -146,11 +146,8 @@ class _SettingsPageState extends State<SettingsPage> {
                       ])),
               if (narrow)
                 Padding(
-                    padding: const EdgeInsets.fromLTRB(
-                        OdessyTokens.spaceLarge,
-                        OdessyTokens.spaceMedium,
-                        OdessyTokens.spaceLarge,
-                        0),
+                    padding: const EdgeInsets.fromLTRB(OdessyTokens.spaceLarge,
+                        OdessyTokens.spaceMedium, OdessyTokens.spaceLarge, 0),
                     child: _narrowPicker(context)),
               Expanded(
                   child: narrow
@@ -167,13 +164,15 @@ class _SettingsPageState extends State<SettingsPage> {
             ]);
           }));
 
-  Widget _content(BuildContext context) => Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
+  Widget _content(BuildContext context) =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (section == SettingsSections.general) ...[
           _card(context, 'Connection', [
-            _row('Local service',
-                widget.controller.api.isDemo ? 'Demo (not installed)' : 'Installed'),
+            _row(
+                'Local service',
+                widget.controller.api.isDemo
+                    ? 'Demo (not installed)'
+                    : 'Installed'),
             _row('State', widget.controller.status),
             if (widget.onToggleTheme != null)
               Align(
@@ -208,7 +207,11 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
         if (section == SettingsSections.voice)
           _card(context, 'Voice', [
-            _row('State', widget.voiceEnabled ? 'Existing assets recorded' : 'Not configured'),
+            _row(
+                'State',
+                widget.voiceEnabled
+                    ? 'Existing assets recorded'
+                    : 'Not configured'),
             const Text(
                 'Voice is optional and uses components you already have. It is not downloaded or started here.',
                 style: TextStyle(fontSize: 12)),
@@ -216,7 +219,7 @@ class _SettingsPageState extends State<SettingsPage> {
               Align(
                   alignment: Alignment.centerLeft,
                   child: OutlinedButton(
-                      onPressed: widget.onOpenGetStarted,
+                      onPressed: widget.onOpenVoice ?? widget.onOpenGetStarted,
                       child: const Text('Open configuration'))),
           ]),
         if (section == SettingsSections.devices)
@@ -239,12 +242,14 @@ class _SettingsPageState extends State<SettingsPage> {
                 'They remain in the environment configuration and are never lost by this page.',
                 style: TextStyle(fontSize: 12)),
             const SizedBox(height: OdessyTokens.spaceCompact),
-            const Text('Read-only here: provider keys, MCP servers, usage limits, sandbox modes, service definitions.',
+            const Text(
+                'Read-only here: provider keys, MCP servers, usage limits, sandbox modes, service definitions.',
                 style: TextStyle(fontSize: 11, color: Colors.grey)),
           ]),
         if (section == SettingsSections.installation)
           _card(context, 'Installation', [
-            _row('Installed copy', widget.installed ? 'Yes' : 'Not managed by this app'),
+            _row('Installed copy',
+                widget.installed ? 'Yes' : 'Not managed by this app'),
             const Text(
                 'Repair, install a newer local package, roll back, change configuration or uninstall. '
                 'Maintenance runs outside the installation.',
@@ -276,49 +281,49 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget _row(String label, String value) => Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        SizedBox(width: 120, child: Text(label, style: const TextStyle(fontSize: 12))),
+        SizedBox(
+            width: 120,
+            child: Text(label, style: const TextStyle(fontSize: 12))),
         Expanded(child: Text(value, style: const TextStyle(fontSize: 12))),
       ]));
 
-  Widget _collaborationForm(BuildContext context) => Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Maximum consultations per turn',
-                style: TextStyle(fontSize: 13)),
-            const SizedBox(height: 8),
-            const Text(
-                'Source: user collaboration configuration via /v1/settings. Other fields and participant profiles are preserved. This does not enable consultation.',
-                style: TextStyle(fontSize: 11, color: Colors.grey)),
-            const SizedBox(height: 20),
-            SizedBox(
-                width: 240,
-                child: TextField(
-                    key: const Key('consultation-limit'),
-                    controller: count,
-                    onChanged: (value) => form.edit(value),
-                    enabled: !loading && form.loaded,
-                    keyboardType: TextInputType.number,
-                    decoration:
-                        const InputDecoration(labelText: 'Limit · 0–32'))),
-            const SizedBox(height: 18),
-            Wrap(spacing: 10, children: [
-              FilledButton(
-                  onPressed: form.canSave ? save : null,
-                  child: const Text('Save settings')),
-              OutlinedButton(
-                  onPressed: loading ? null : load, child: const Text('Reload'))
-            ]),
-            if (loading)
-              const Padding(
-                  padding: EdgeInsets.only(top: 16),
-                  child: LinearProgressIndicator()),
-            if (status.isNotEmpty)
-              Padding(
-                  padding: const EdgeInsets.only(top: 16),
-                  child: Text(status, style: const TextStyle(fontSize: 12))),
-            const SizedBox(height: 16),
-            const Text(
-                'Apply timing: new sessions. Existing active turns retain their configuration.',
-                style: TextStyle(fontSize: 11, color: Colors.grey)),
-          ]);
+  Widget _collaborationForm(BuildContext context) =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('Maximum consultations per turn',
+            style: TextStyle(fontSize: 13)),
+        const SizedBox(height: 8),
+        const Text(
+            'Source: user collaboration configuration via /v1/settings. Other fields and participant profiles are preserved. This does not enable consultation.',
+            style: TextStyle(fontSize: 11, color: Colors.grey)),
+        const SizedBox(height: 20),
+        SizedBox(
+            width: 240,
+            child: TextField(
+                key: const Key('consultation-limit'),
+                controller: count,
+                onChanged: (value) => form.edit(value),
+                enabled: !loading && form.loaded,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Limit · 0–32'))),
+        const SizedBox(height: 18),
+        Wrap(spacing: 10, children: [
+          FilledButton(
+              onPressed: form.canSave ? save : null,
+              child: const Text('Save settings')),
+          OutlinedButton(
+              onPressed: loading ? null : load, child: const Text('Reload'))
+        ]),
+        if (loading)
+          const Padding(
+              padding: EdgeInsets.only(top: 16),
+              child: LinearProgressIndicator()),
+        if (status.isNotEmpty)
+          Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: Text(status, style: const TextStyle(fontSize: 12))),
+        const SizedBox(height: 16),
+        const Text(
+            'Apply timing: new sessions. Existing active turns retain their configuration.',
+            style: TextStyle(fontSize: 11, color: Colors.grey)),
+      ]);
 }

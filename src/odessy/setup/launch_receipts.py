@@ -76,3 +76,20 @@ def acknowledge(root, launch_id, state):
 def status(root, launch_id):
     _, value = _receipt(root, launch_id)
     return {'launch_id': launch_id, 'state': value['state']}
+
+
+def pending(root, version=None):
+    root = guard(root)
+    record = ManagedInstallation(root).record()
+    if version is not None and version != record.get('active'):
+        return {'launch_ids': []}
+    identifiers = []
+    for path in sorted((root/'launch-receipts').glob('*.json')):
+        if len(identifiers) >= 64: break
+        if not _ID.fullmatch(path.stem): continue
+        try:
+            _, value = _receipt(root, path.stem)
+            if value['state'] == 'pending': identifiers.append(path.stem)
+        except (ValueError, OSError):
+            continue
+    return {'launch_ids': identifiers}
