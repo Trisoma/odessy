@@ -782,8 +782,11 @@ def _check_configuration(argv: list[str]) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    load_config_env()
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ['setup']:
+        from odessy.setup.cli import main as setup_main
+        raise SystemExit(setup_main(argv[1:]))
+    load_config_env()
     _check_configuration(argv)
     _quiet_transport_logs()
     if argv[:1] == ["coding-agent-server"]:
