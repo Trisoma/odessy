@@ -10,8 +10,9 @@ void main() {
  await c.run('package-review'); expect(c.review['plan_id'],'review-id');
  c.edit(destination:'C:/changed');expect(c.review,isEmpty);
  await c.run('package-review'); await c.run('package-install');
- expect(backend.requests.last.parameters['confirm'],'review-id');
- expect(backend.requests.last.parameters['payload'],'C:/payload');
- expect(backend.requests.last.parameters['root'],'C:/changed');
+ final install = backend.requests.singleWhere((r) => r.parameters['action'] == 'package-install');
+ expect(install.parameters['confirm'],'review-id');
+ expect(install.parameters['payload'],'C:/payload');
+ expect(install.parameters['root'],'C:/changed');
  });
 }

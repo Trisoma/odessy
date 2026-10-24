@@ -31,8 +31,7 @@ class SetupStage {
   SetupStage start(DateTime at) => SetupStage(
       id: id, label: label, state: SetupStageState.running, startedAt: at);
 
-  SetupStage finish(SetupStageState result, DateTime at,
-          {String? detail}) =>
+  SetupStage finish(SetupStageState result, DateTime at, {String? detail}) =>
       SetupStage(
           id: id,
           label: label,
@@ -52,7 +51,8 @@ class SetupStage {
 
 /// Engine journal stage -> user-facing stage.
 const Map<String, String> journalStageIds = {
-  'preparing': 'install',
+  'preparing': 'preparing',
+  'checking': 'checking',
   'environment': 'runtime',
   'dependencies': 'dependencies',
   'components': 'components',
@@ -106,7 +106,8 @@ List<SetupStage> advanceStages(
     target = packagedStageOrder.indexOf(known);
   } else {
     // No new engine stage: keep whichever stage is already running.
-    final running = stages.indexWhere((s) => s.state == SetupStageState.running);
+    final running =
+        stages.indexWhere((s) => s.state == SetupStageState.running);
     target = running >= 0 ? running : 0;
   }
   final next = <SetupStage>[];
@@ -116,20 +117,22 @@ List<SetupStage> advanceStages(
     if (index < target) {
       next.add(stage.state == SetupStageState.complete
           ? stage
-          : stage.finish(SetupStageState.complete,
-              stage.startedAt ?? now));
+          : stage.finish(SetupStageState.complete, now));
     } else if (index == target) {
       reached = true;
       if (stage.state == SetupStageState.complete) {
         next.add(stage);
       } else if (failed) {
-        next.add(stage.start(stage.startedAt ?? now)
+        next.add(stage
+            .start(stage.startedAt ?? now)
             .finish(SetupStageState.failed, now));
       } else if (cancelled) {
-        next.add(stage.start(stage.startedAt ?? now)
+        next.add(stage
+            .start(stage.startedAt ?? now)
             .finish(SetupStageState.cancelled, now));
       } else if (complete) {
-        next.add(stage.start(stage.startedAt ?? now)
+        next.add(stage
+            .start(stage.startedAt ?? now)
             .finish(SetupStageState.complete, now));
       } else {
         next.add(stage.start(stage.startedAt ?? now));
@@ -143,7 +146,7 @@ List<SetupStage> advanceStages(
       for (final stage in next)
         stage.state == SetupStageState.complete
             ? stage
-            : stage.finish(SetupStageState.complete, stage.startedAt ?? now)
+            : stage.finish(SetupStageState.complete, now)
     ];
   }
   if (!reached && busy) {

@@ -77,12 +77,32 @@ void main() {
     final backend = ConfigureBackend();
     final c = await controller(backend);
     await tester.pumpWidget(MaterialApp(
-        home: Scaffold(
-            body: GetStartedPage(controller: c, onStart: () {}))));
+        home: Scaffold(body: GetStartedPage(controller: c, onStart: () {}))));
     expect(find.text('On this computer'), findsWidgets);
     expect(find.text('Remote or cloud'), findsWidgets);
     expect(find.text('Configure later'), findsWidgets);
     expect(find.text('Get started with Odessy'), findsOneWidget);
+  });
+
+  testWidgets('checklist opens model selection and workspace picker',
+      (tester) async {
+    final c = await controller(ConfigureBackend());
+    final picker = FakePicker(directory: r'C:\chosen-workspace');
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: GetStartedPage(
+                controller: c, picker: picker, onStart: () {}))));
+    await tester.tap(find.text('Configure later').first);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('checklist-model')));
+    await tester.tap(find.byKey(const Key('checklist-model')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('get-started-model')), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('checklist-workspace')));
+    await tester.tap(find.byKey(const Key('checklist-workspace')));
+    await tester.pumpAndSettle();
+    expect(picker.directoryCalls, 1);
+    expect(c.modelConfigured, isFalse);
   });
 
   testWidgets('discovery is explicit and lists installed models',
@@ -96,8 +116,7 @@ void main() {
     expect(find.byKey(const Key('get-started-model-list')), findsNothing);
     await tester.tap(find.byKey(const Key('get-started-discover')));
     await tester.pumpAndSettle();
-    expect(
-        backend.requests.where((r) => r.operation == 'discover').length, 1);
+    expect(backend.requests.where((r) => r.operation == 'discover').length, 1);
     expect(find.byKey(const Key('get-started-model-list')), findsOneWidget);
     await tester.tap(find.byKey(const Key('get-started-model-list')));
     await tester.pumpAndSettle();
@@ -123,8 +142,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Save and continue'));
     await tester.pumpAndSettle();
-    final review = backend.requests
-        .firstWhere((r) => r.parameters['action'] == 'package-configure-review');
+    final review = backend.requests.firstWhere(
+        (r) => r.parameters['action'] == 'package-configure-review');
     expect((review.parameters['selection'] as Json)['model'], {
       'provider': 'ollama',
       'name': 'llama3.1:8b',
@@ -137,23 +156,26 @@ void main() {
     expect(started, 1);
   });
 
-  testWidgets('configure later closes without touching the backend',
+  testWidgets('footer configure later keeps the window open without mutations',
       (tester) async {
     final backend = ConfigureBackend();
     final c = await controller(backend);
     var closed = 0;
     await tester.pumpWidget(MaterialApp(
         home: Scaffold(
-            body: GetStartedPage(controller: c, onStart: () {}, onClose: () => closed++))));
-    await tester.tap(find.text('Configure later').first);
+            body: GetStartedPage(
+                controller: c, onStart: () {}, onClose: () => closed++))));
+    await tester.tap(find.widgetWithText(TextButton, 'Configure later').last);
     await tester.pumpAndSettle();
-    expect(find.textContaining('finish setup now'), findsOneWidget);
-    await tester.tap(find.text('Save and continue'));
+    expect(closed, 0);
+    expect(find.textContaining('Model setup is deferred'), findsOneWidget);
+    await tester.tap(find.text('Configure a model'));
     await tester.pumpAndSettle();
-    expect(closed, 1);
+    expect(closed, 0);
+    expect(find.byKey(const Key('get-started-model')), findsOneWidget);
     expect(
-        backend.requests.where(
-            (r) => r.parameters['action'] == 'package-configure-review'),
+        backend.requests
+            .where((r) => r.parameters['action'] == 'package-configure-review'),
         isEmpty);
   });
 

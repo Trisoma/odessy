@@ -28,7 +28,10 @@ class PackageSetupController extends ChangeNotifier {
   };
   Json discovery = const {};
   String root = '', error = '', reason = '', status = '', stage = '';
-  bool busy = false, interrupted = false, installed = false, discovering = false;
+  bool busy = false,
+      interrupted = false,
+      installed = false,
+      discovering = false;
   int revision = 0, stepsDone = 0, stepsTotal = 0;
   List<SetupStage> stages = newPackagedStages();
   final List<String> output = [];
@@ -64,10 +67,15 @@ class PackageSetupController extends ChangeNotifier {
       _logCursor = seq;
       final line = entry['line'];
       if (line is! String || line.trim().isEmpty) continue;
-      final stageName = entry['stage'] is String ? entry['stage'] as String : '';
+      final stageName =
+          entry['stage'] is String ? entry['stage'] as String : '';
       final id = journalStageIds[stageName] ?? stageName;
       final label = packagedStageLabels[id] ?? id;
       final stream = entry['stream'];
+      if (stream == 'stage') {
+        final at = DateTime.tryParse('${entry['timestamp']}');
+        if (at != null) stages = advanceStages(stages, stageName, at);
+      }
       final prefix = stream == 'stderr'
           ? (label.isEmpty ? 'error' : '$label error')
           : (label.isEmpty ? 'engine' : label);
@@ -126,9 +134,7 @@ class PackageSetupController extends ChangeNotifier {
   }
 
   void _log(String message) {
-    final stamp = DateTime.now()
-        .toIso8601String()
-        .substring(11, 19);
+    final stamp = DateTime.now().toIso8601String().substring(11, 19);
     output.add('$stamp  $message');
     while (output.length > maxOutputLines) {
       output.removeAt(0);
@@ -145,8 +151,7 @@ class PackageSetupController extends ChangeNotifier {
       bool failed = false,
       bool cancelled = false}) {
     final before = stages.map((s) => '${s.id}:${s.state.name}').join(',');
-    stages = advanceStages(stages, engineStage ?? stage,
-        DateTime.now(),
+    stages = advanceStages(stages, engineStage ?? stage, DateTime.now(),
         busy: !complete && !failed && !cancelled,
         complete: complete,
         failed: failed,
@@ -181,6 +186,14 @@ class PackageSetupController extends ChangeNotifier {
       return;
     }
     final epoch = ++_epoch;
+    final reviewedStage = action == 'context'
+        ? 0
+        : action == 'package-review'
+            ? 1
+            : null;
+    if (reviewedStage != null) {
+      stages[reviewedStage] = stages[reviewedStage].start(DateTime.now());
+    }
     busy = true;
     error = '';
     reason = '';
@@ -190,7 +203,13 @@ class PackageSetupController extends ChangeNotifier {
         : 'Inspecting installation';
     if (action == 'package-install') {
       attemptStartedAt = DateTime.now();
+      final reviewed = stages;
       stages = newPackagedStages();
+      for (var i = 0; i < 2; i++) {
+        if (reviewed[i].state == SetupStageState.complete) {
+          stages[i] = reviewed[i];
+        }
+      }
       output.clear();
       _logCursor = 0;
       _truncationNoted = false;
@@ -204,6 +223,11 @@ class PackageSetupController extends ChangeNotifier {
       final value = await call(action,
           confirm: action == 'package-install' ? planId : null);
       if (_disposed || epoch != _epoch) return;
+      if (reviewedStage != null) {
+        stages[reviewedStage] = stages[reviewedStage]
+            .finish(SetupStageState.complete, DateTime.now());
+      }
+      if (action == 'package-install') await readProgress();
       if (action == 'context') {
         context = value;
         root = (value['root'] as String?) ?? root;
@@ -361,4 +385,3 @@ class PackageSetupController extends ChangeNotifier {
     super.dispose();
   }
 }
-

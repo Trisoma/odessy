@@ -39,6 +39,30 @@ class _GetStartedPageState extends State<GetStartedPage> {
   final credential = TextEditingController();
   String choice = 'local', preset = 'openai';
   bool initialised = false;
+  final _modelChoiceKey = GlobalKey();
+
+  void _chooseModel() {
+    setState(() => choice = choice == 'remote' ? 'remote' : 'local');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final target = _modelChoiceKey.currentContext;
+      if (mounted && target != null) Scrollable.ensureVisible(target);
+    });
+  }
+
+  void _voiceHelp() {
+    showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+              title: const Text('Optional voice setup'),
+              content: const Text(
+                  'Voice is optional. This first-run flow does not configure Whisper, Kokoro or wake-word assets. You can finish model setup and use text now; voice configuration remains available through Odessy setup. No audio models are downloaded here.'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('Close'))
+              ],
+            ));
+  }
 
   InstalledManageController get c => widget.controller;
 
@@ -92,7 +116,8 @@ class _GetStartedPageState extends State<GetStartedPage> {
       };
 
   bool get _valid => switch (choice) {
-        'local' => model.text.trim().isNotEmpty && endpoint.text.trim().isNotEmpty,
+        'local' =>
+          model.text.trim().isNotEmpty && endpoint.text.trim().isNotEmpty,
         'remote' => model.text.trim().isNotEmpty,
         _ => true,
       };
@@ -107,7 +132,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
   Future<void> _save() async {
     if (!_valid || c.busy) return;
     if (choice == 'later') {
-      widget.onClose?.call();
+      _chooseModel();
       return;
     }
     await c.reviewConfiguration(_selection, workspace.text.trim());
@@ -126,14 +151,20 @@ class _GetStartedPageState extends State<GetStartedPage> {
             ? 'Review your setup and start chatting.'
             : 'Odessy is installed. Choose how it should reach a model.',
         footer: SetupFooter(
-            primaryLabel: configured ? 'Start chatting' : 'Save and continue',
+            primaryLabel: choice == 'later'
+                ? 'Configure a model'
+                : configured
+                    ? 'Start chatting'
+                    : 'Save and continue',
             onPrimary: c.busy
                 ? null
-                : configured
-                    ? widget.onStart
-                    : (_valid ? _save : null),
+                : choice == 'later'
+                    ? _chooseModel
+                    : configured
+                        ? widget.onStart
+                        : (_valid ? _save : null),
             secondaryLabel: 'Configure later',
-            onSecondary: c.busy ? null : widget.onClose,
+            onSecondary: c.busy ? null : () => setState(() => choice = 'later'),
             busy: c.busy,
             note: configured
                 ? 'Start chatting is available because a model is configured and the local coordinator is ready.'
@@ -154,6 +185,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
                 description:
                     'Choose an existing local model, a compatible remote endpoint, or finish later. Nothing is pulled automatically.',
                 child: SegmentedButton<String>(
+                    key: _modelChoiceKey,
                     segments: const [
                       ButtonSegment(
                           value: 'local',
@@ -177,7 +209,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
             if (choice == 'later')
               const SetupMessage(
                   text:
-                      'You can finish setup now. Odessy will start the first time a model is configured in Settings.'),
+                      'Model setup is deferred. Odessy stays open, and no model or service is started. Choose Configure a model whenever you are ready, use Maintenance and repair, or use Close to exit.'),
             SetupSection(
                 title: 'Workspace',
                 description:
@@ -195,32 +227,32 @@ class _GetStartedPageState extends State<GetStartedPage> {
   }
 
   Widget _local(BuildContext context) => SetupSection(
-          title: 'On this computer',
-          description:
-              'Odessy reads the model list from the endpoint you name. It does not install or download anything.',
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Expanded(
-                  child: PathField(
-                      fieldKey: const Key('get-started-endpoint'),
-                      controller: endpoint,
-                      label: 'Ollama endpoint',
-                      hint: 'http://127.0.0.1:11434',
-                      enabled: !c.busy,
-                      onChanged: (_) => setState(() {}))),
-            ]),
-            OutlinedButton.icon(
-                key: const Key('get-started-discover'),
-                onPressed: c.busy || c.discovering
-                    ? null
-                    : () => c.discover(endpoint: endpoint.text.trim()),
-                icon: const Icon(Icons.search, size: 18),
-                label: Text(c.discovering
-                    ? 'Reading the endpoint…'
-                    : 'Find installed models')),
-            const SizedBox(height: OdessyTokens.spaceMedium),
-            _models(context),
-          ]));
+      title: 'On this computer',
+      description:
+          'Odessy reads the model list from the endpoint you name. It does not install or download anything.',
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(
+              child: PathField(
+                  fieldKey: const Key('get-started-endpoint'),
+                  controller: endpoint,
+                  label: 'Ollama endpoint',
+                  hint: 'http://127.0.0.1:11434',
+                  enabled: !c.busy,
+                  onChanged: (_) => setState(() {}))),
+        ]),
+        OutlinedButton.icon(
+            key: const Key('get-started-discover'),
+            onPressed: c.busy || c.discovering
+                ? null
+                : () => c.discover(endpoint: endpoint.text.trim()),
+            icon: const Icon(Icons.search, size: 18),
+            label: Text(c.discovering
+                ? 'Reading the endpoint…'
+                : 'Find installed models')),
+        const SizedBox(height: OdessyTokens.spaceMedium),
+        _models(context),
+      ]));
 
   Widget _models(BuildContext context) {
     final list = c.discovery['models'];
@@ -232,7 +264,8 @@ class _GetStartedPageState extends State<GetStartedPage> {
     if (names.isNotEmpty) {
       return DropdownButtonFormField<String>(
           key: const Key('get-started-model-list'),
-          initialValue: names.contains(model.text.trim()) ? model.text.trim() : null,
+          initialValue:
+              names.contains(model.text.trim()) ? model.text.trim() : null,
           decoration: const InputDecoration(labelText: 'Installed model'),
           items: [
             for (final name in names)
@@ -258,55 +291,57 @@ class _GetStartedPageState extends State<GetStartedPage> {
   }
 
   Widget _remote(BuildContext context) => SetupSection(
-          title: 'Remote or cloud',
-          description:
-              'Choose a supported provider preset or a compatible endpoint, then name the model. Authentication is referenced by environment-variable name only; no key is entered here.',
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            DropdownButtonFormField<String>(
-                initialValue: preset,
-                decoration: const InputDecoration(labelText: 'Provider'),
-                items: const [
-                  DropdownMenuItem(value: 'openai', child: Text('OpenAI-compatible')),
-                  DropdownMenuItem(value: 'deepseek', child: Text('DeepSeek')),
-                  DropdownMenuItem(value: 'qwen', child: Text('Qwen')),
-                  DropdownMenuItem(value: 'custom', child: Text('Custom endpoint')),
-                ],
-                onChanged: c.busy
-                    ? null
-                    : (value) => setState(() => preset = value ?? 'openai')),
-            const SizedBox(height: OdessyTokens.spaceMedium),
-            TextField(
-                key: const Key('get-started-remote-model'),
-                controller: model,
-                enabled: !c.busy,
-                onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(
-                    labelText: 'Model name', hintText: 'For example gpt-4.1-mini')),
-            const SizedBox(height: OdessyTokens.spaceMedium),
-            TextField(
-                key: const Key('get-started-remote-endpoint'),
-                controller: endpoint,
-                enabled: !c.busy,
-                decoration: const InputDecoration(
-                    labelText: 'Endpoint (optional for presets)',
-                    hintText: 'https://…')),
-            const SizedBox(height: OdessyTokens.spaceMedium),
-            TextField(
-                key: const Key('get-started-credential'),
-                controller: credential,
-                enabled: !c.busy,
-                decoration: const InputDecoration(
-                    labelText: 'Credential environment variable (optional)',
-                    hintText: 'ODESSY_CLOUD_API_KEY',
-                    helperText:
-                        'The variable name only. Keys stay in the environment; they are never stored in settings.')),
-          ]));
+      title: 'Remote or cloud',
+      description:
+          'Choose a supported provider preset or a compatible endpoint, then name the model. Authentication is referenced by environment-variable name only; no key is entered here.',
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        DropdownButtonFormField<String>(
+            initialValue: preset,
+            decoration: const InputDecoration(labelText: 'Provider'),
+            items: const [
+              DropdownMenuItem(
+                  value: 'openai', child: Text('OpenAI-compatible')),
+              DropdownMenuItem(value: 'deepseek', child: Text('DeepSeek')),
+              DropdownMenuItem(value: 'qwen', child: Text('Qwen')),
+              DropdownMenuItem(value: 'custom', child: Text('Custom endpoint')),
+            ],
+            onChanged: c.busy
+                ? null
+                : (value) => setState(() => preset = value ?? 'openai')),
+        const SizedBox(height: OdessyTokens.spaceMedium),
+        TextField(
+            key: const Key('get-started-remote-model'),
+            controller: model,
+            enabled: !c.busy,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(
+                labelText: 'Model name', hintText: 'For example gpt-4.1-mini')),
+        const SizedBox(height: OdessyTokens.spaceMedium),
+        TextField(
+            key: const Key('get-started-remote-endpoint'),
+            controller: endpoint,
+            enabled: !c.busy,
+            decoration: const InputDecoration(
+                labelText: 'Endpoint (optional for presets)',
+                hintText: 'https://…')),
+        const SizedBox(height: OdessyTokens.spaceMedium),
+        TextField(
+            key: const Key('get-started-credential'),
+            controller: credential,
+            enabled: !c.busy,
+            decoration: const InputDecoration(
+                labelText: 'Credential environment variable (optional)',
+                hintText: 'ODESSY_CLOUD_API_KEY',
+                helperText:
+                    'The variable name only. Keys stay in the environment; they are never stored in settings.')),
+      ]));
 
   Widget _configured(BuildContext context, InstalledManageController c) =>
       SetupSection(
           title: 'Ready',
           description: 'This installation is configured.',
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             const Text(
                 'The local coordinator starts when you continue. If it cannot start, setup stays open and shows the reason.'),
             const SizedBox(height: OdessyTokens.spaceMedium),
@@ -316,14 +351,36 @@ class _GetStartedPageState extends State<GetStartedPage> {
           ]));
 
   Widget _checklist(BuildContext context, InstalledManageController c) {
-    final checked = <(String, bool, String)>[
-      ('Model configured', c.modelConfigured,
-          c.modelConfigured ? 'Configured' : 'Not configured yet'),
-      ('Endpoint reachable (when tested)', c.discovery['status'] == 'ok',
-          c.discovery['status'] == 'ok' ? 'Answered' : 'Not tested'),
-      ('Workspace selected', workspace.text.trim().isNotEmpty,
-          workspace.text.trim().isEmpty ? 'Not selected' : workspace.text.trim()),
-      ('Voice', false, 'Optional; not configured in this flow'),
+    final checked = <(String, bool, String, String, VoidCallback)>[
+      (
+        'Model configured',
+        c.modelConfigured,
+        c.modelConfigured ? 'Configured' : 'Choose a model',
+        'model',
+        _chooseModel
+      ),
+      (
+        'Endpoint reachable (when tested)',
+        c.discovery['status'] == 'ok',
+        c.discovery['status'] == 'ok'
+            ? 'Answered'
+            : 'Choose/test local endpoint',
+        'endpoint',
+        () {
+          _chooseModel();
+          // Selecting a model is separate from an explicit local endpoint probe.
+        }
+      ),
+      (
+        'Workspace selected',
+        workspace.text.trim().isNotEmpty,
+        workspace.text.trim().isEmpty
+            ? 'Choose a folder'
+            : workspace.text.trim(),
+        'workspace',
+        () => _browseWorkspace()
+      ),
+      ('Voice', false, 'Optional — setup information', 'voice', _voiceHelp),
     ];
     return SetupSection(
         title: 'Setup checklist',
@@ -331,25 +388,20 @@ class _GetStartedPageState extends State<GetStartedPage> {
             'This is configuration state, not a promise that a model reply will succeed.',
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           for (final item in checked)
-            Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Row(children: [
-                  Icon(
-                      item.$2
-                          ? Icons.check_circle
-                          : Icons.radio_button_unchecked,
-                      size: 16,
-                      color: item.$2 ? OdessyTokens.accent : Colors.grey),
-                  const SizedBox(width: OdessyTokens.spaceCompact),
-                  Expanded(child: Text(item.$1)),
-                  Flexible(
-                      child: Tooltip(
-                          message: item.$3,
-                          child: Text(middleEllipsis(item.$3, 28),
-                              maxLines: 1,
-                              overflow: TextOverflow.clip,
-                              style: Theme.of(context).textTheme.bodySmall))),
-                ])),
+            ListTile(
+                key: Key('checklist-${item.$4}'),
+                contentPadding: EdgeInsets.zero,
+                onTap: c.busy ? null : item.$5,
+                leading: Icon(
+                    item.$2 ? Icons.check_circle : Icons.radio_button_unchecked,
+                    size: 16,
+                    color: item.$2 ? OdessyTokens.accent : Colors.grey),
+                title: Text(item.$1),
+                subtitle: Tooltip(
+                    message: item.$3,
+                    child: Text(item.$3,
+                        maxLines: 1, overflow: TextOverflow.ellipsis)),
+                trailing: const Icon(Icons.chevron_right)),
         ]));
   }
 }

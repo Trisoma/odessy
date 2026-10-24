@@ -65,6 +65,36 @@ Measurement records are in `../.qualification/installer-ux-baseline/baseline.jso
 
 ## Checks still required after Flutter handoff
 
+October 24 deferred-configuration follow-up: preparation and package-review
+timings appear immediately on the install page because those calls already
+finished on earlier wizard pages; explanatory text now states this explicitly.
+The first-run footer's Configure later action defers model setup in place rather
+than closing the app. Configure a model returns to model selection; the separate
+Close action remains the exit path. Deferral performs no configuration mutation,
+provider contact or inference. A footer-specific regression covers staying open
+and returning to model selection.
+
+October 24 screenshot follow-up: completed UI stages retain their finish timestamp;
+engine stage-event timestamps reconstruct phases missed between polls, and the
+last snapshot is read before finishing. Preparation/review durations are retained
+from their actual controller calls. Runtime timing begins before portable-runtime
+copying. Checklist rows open model/endpoint controls, the workspace picker, or
+explicit optional-voice guidance (voice setup is not implemented by that page).
+Readiness acknowledgement waits for the shared helper's initial management
+inspection and a rendered frame. Verified with 97 Flutter tests (4 skipped),
+29 affected Python tests, clean Flutter analysis and a Windows release build.
+A real native Flutter window and Python bridge against an isolated no-model
+installation fixture produced `configuration_required`; this is not a complete
+mouse-driven install/uninstall acceptance run.
+
+October 24 bootstrap correction: progress logging imports the shared
+`odessy.authority.redaction` module before the application wheel is installed.
+The bundle builder now includes that module and its package initializer in the
+bootstrap. An isolated extracted-bundle subprocess regression reproduces the
+previous missing-module error and verifies stage logging and secret redaction
+without relying on the checkout or an installed application. Rebuild the payload
+and native EXE; repackaging an old payload does not include this correction.
+
 1. Confirm DeepSeek has stopped editing, then reconcile the typed contract and
    check uninstall/receipt intents and all UI states without default demo fallback.
 2. Run final Python, Dart, Flutter, architecture/static checks and Windows release

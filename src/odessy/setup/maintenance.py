@@ -277,13 +277,13 @@ class ManagedInstallation:
                 progress.stage(name)
             try:
                 python_builder=sys.executable
+                stage('environment')
                 if self.runtime_source:
                     from .runtime import copy_owned
                     runtime_key=hashlib.sha256(json.dumps(plan['python_runtime'],sort_keys=True).encode()).hexdigest()[:32]
                     python_builder=str(copy_owned(self.runtime_source,guard(self.root/'runtimes'/runtime_key),plan['python_runtime']))
                     record.setdefault('runtimes',{})[runtime_key]=plan['python_runtime']['files']
                     atomic(self.root/'installation.json',record)
-                stage('environment')
                 self.runner([python_builder,'-m','venv','--copies',str(target)],cancelled=cancelled,**({'output':progress.append} if self.runner is run else {}))
                 python=target/('Scripts/python.exe' if os.name=='nt' else 'bin/python')
                 # Recheck artifacts immediately before pip; no index or dependency resolution.
@@ -324,6 +324,7 @@ class ManagedInstallation:
                 atomic(self.root/'configuration.json',self.configuration(selection))
                 record['versions'][version]=files;record['active']=version;record['selection']=public(selection)
                 atomic(self.root/'installation.json',record)
+                stage('activated')
                 journal['finished_at']=time.time();journal['status']='completed';journal['stage']='activated'
                 journal['steps_done']=1;journal['steps_total']=1
                 atomic(self.root/'operation.json',journal)

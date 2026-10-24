@@ -59,6 +59,11 @@ def build(wheels, licenses, output, *, runtime=None, desktop=None, node=None, to
             archive.writestr('bootstrap/odessy/__init__.py','')
             for module in (ROOT/'src/odessy/setup').glob('*.py'):
                 archive.write(module,'bootstrap/odessy/setup/'+module.name)
+            # Progress runs before the application wheel is installed. Include
+            # its shared stdlib-only redactor in the standalone bootstrap too.
+            for name in ('__init__.py', 'redaction.py'):
+                archive.write(ROOT/'src/odessy/authority'/name,
+                              'bootstrap/odessy/authority/'+name)
             archive.write(ROOT/'LICENSE','LICENSE')
             archive.write(ROOT/'THIRD-PARTY-NOTICES.md','THIRD-PARTY-NOTICES.md')
             archive.writestr('wheelhouse/manifest.json',json.dumps({'schema_version':1,'artifacts':artifacts},indent=2))

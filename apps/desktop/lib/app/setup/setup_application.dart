@@ -585,7 +585,7 @@ class _SetupApplicationState extends State<SetupApplication> {
   Widget _progress() => SetupSection(
       title: c.interrupted && !c.busy ? 'Installation stopped' : 'Installing Odessy',
       description: c.busy
-          ? 'The stages below come from the installation journal.'
+          ? 'Preparation and package checks finished before this page opened; their recorded times are retained. The remaining stages follow the installation journal.'
           : c.interrupted
               ? 'A previous version, if any, stays active and no files were removed.'
               : 'Installation finished.',

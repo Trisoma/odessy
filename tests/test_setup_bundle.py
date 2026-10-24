@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import subprocess
+import sys
 from pathlib import Path
 import zipfile
 import pytest
@@ -41,3 +43,36 @@ def test_standalone_bundle_includes_runtime_and_native_launcher(tmp_path):
         assert 'runtime/python.exe' in archive.namelist()
         assert 'install.cmd' in archive.namelist()
         assert 'runtime-manifest.json' in archive.namelist()
+
+
+def test_extracted_bootstrap_progress_works_without_installed_odessy(tmp_path):
+    wheels = tmp_path / 'wheels'
+    wheels.mkdir()
+    name = 'odessy-0.5.0-py3-none-any.whl'
+    (wheels / name).write_bytes(b'wheel')
+    licenses = tmp_path / 'licenses.json'
+    licenses.write_text(json.dumps({name: 'Apache-2.0'}))
+    output = tmp_path / 'setup.zip'
+    builder().build(wheels, licenses, output)
+    extracted = tmp_path / 'extracted'
+    with zipfile.ZipFile(output) as archive:
+        archive.extractall(extracted)
+    # -I excludes the checkout, PYTHONPATH and user site-packages. Exercise the
+    # first runtime stage before pip has installed the actual Odessy wheel.
+    script = """
+import sys
+sys.path.insert(0, sys.argv[1])
+from odessy.setup.progress import Progress
+journal = {}
+progress = Progress(journal, lambda: None)
+progress.stage('creating-runtime')
+progress.append('stdout', 'password=bootstrap-test-secret')
+assert journal['logs'][0]['line'] == 'creating-runtime'
+assert 'bootstrap-test-secret' not in journal['logs'][1]['line']
+print('bootstrap progress passed')
+"""
+    result = subprocess.run(
+        [sys.executable, '-I', '-c', script, str(extracted / 'bootstrap')],
+        cwd=tmp_path, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

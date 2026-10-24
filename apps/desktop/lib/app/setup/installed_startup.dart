@@ -40,10 +40,11 @@ class InstalledStartup extends ChangeNotifier {
   bool _disposed = false;
   int _epoch = 0;
 
-  static InstalledCoordinator defaultCoordinator(Json spec) => InstalledCoordinator(
-      python: spec['python'] as String,
-      root: spec['root'] as String,
-      workspace: spec['workspace'] as String);
+  static InstalledCoordinator defaultCoordinator(Json spec) =>
+      InstalledCoordinator(
+          python: spec['python'] as String,
+          root: spec['root'] as String,
+          workspace: spec['workspace'] as String);
 
   Future<void> begin() async {
     if (_disposed) return;
@@ -185,14 +186,30 @@ class _InstalledApplicationState extends State<InstalledApplication> {
     final root = (_startup.spec['root'] as String?) ?? '';
     if (root.isNotEmpty && root != _manageRoot) {
       _manageRoot = root;
-      _manage = InstalledManageController(_backend, spec: _startup.spec)..load();
+      _manage?.removeListener(_managementChanged);
+      _manage?.dispose();
+      _manage = InstalledManageController(_backend, spec: _startup.spec)
+        ..addListener(_managementChanged)
+        ..load();
     }
     setState(() {});
     final phase = _startup.phase;
     final version = _startup.spec['version'];
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _startup.phase != phase || _startup.spec['version'] != version) return;
+      if (!mounted ||
+          _startup.phase != phase ||
+          _startup.spec['version'] != version) {
+        return;
+      }
       _acknowledge();
+    });
+  }
+
+  void _managementChanged() {
+    if (!mounted || _manage?.busy == true) return;
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _acknowledge();
     });
   }
 
@@ -201,6 +218,9 @@ class _InstalledApplicationState extends State<InstalledApplication> {
   /// alone is not readiness, so this is the only success signal. A failed start is
   /// reported as well, so setup stops waiting instead of showing a timeout.
   void _acknowledge() {
+    // The helper admits one request at a time. Do not lose the receipt while
+    // first-run management is still reading the installation on that helper.
+    if (_manage?.busy == true) return;
     final launchId = widget.launchId;
     final root = _startup.spec['root'];
     if (launchId.isEmpty || root is! String || root.isEmpty) return;
@@ -211,10 +231,11 @@ class _InstalledApplicationState extends State<InstalledApplication> {
       _ => null,
     };
     if (state == null || !_acknowledged.add('$launchId:$state')) return;
-    final acknowledgement =
-        widget.acknowledgement ?? BackendLaunchAcknowledgement(_backend, root: root);
-    unawaited(acknowledgement.acknowledge(launchId, state: state).catchError((_) {
-      // A rejected receipt only means setup keeps waiting; nothing is granted here.
+    final acknowledgement = widget.acknowledgement ??
+        BackendLaunchAcknowledgement(_backend, root: root);
+    unawaited(
+        acknowledgement.acknowledge(launchId, state: state).catchError((_) {
+      _acknowledged.remove('$launchId:$state');
     }));
   }
 
@@ -223,6 +244,7 @@ class _InstalledApplicationState extends State<InstalledApplication> {
     _lifecycle.dispose();
     _startup.removeListener(_changed);
     _startup.dispose();
+    _manage?.removeListener(_managementChanged);
     _manage?.dispose();
     super.dispose();
   }
@@ -313,7 +335,8 @@ class _InstalledApplicationState extends State<InstalledApplication> {
                     onPressed: () => _startup.begin(),
                     child: const Text('Retry')),
                 OutlinedButton(
-                    onPressed: _openManage, child: const Text('Manage installation')),
+                    onPressed: _openManage,
+                    child: const Text('Manage installation')),
                 TextButton(onPressed: _close, child: const Text('Close')),
               ]),
             ]));

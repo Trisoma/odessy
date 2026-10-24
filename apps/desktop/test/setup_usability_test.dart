@@ -22,14 +22,16 @@ class FakePicker implements NativePicker {
   }
 
   @override
-  Future<String?> pickFile({String? initial, List<String> extensions = const []}) async {
+  Future<String?> pickFile(
+      {String? initial, List<String> extensions = const []}) async {
     fileCalls++;
     return file;
   }
 
   @override
   Future<String?> pickSaveLocation(
-      {required String suggestedName, List<String> extensions = const []}) async {
+      {required String suggestedName,
+      List<String> extensions = const []}) async {
     return save;
   }
 }
@@ -63,9 +65,11 @@ class AckBackend implements SetupBackend {
     requests.add(request);
     final launchId = request.parameters['launch_id'];
     if (launchId == 'e' * 32) {
-      return SetupReply.fromJson(
-          {'id': request.id, 'status': 'error', 'reason': 'unknown launch identifier'},
-          request.id);
+      return SetupReply.fromJson({
+        'id': request.id,
+        'status': 'error',
+        'reason': 'unknown launch identifier'
+      }, request.id);
     }
     return SetupReply.fromJson({
       'id': request.id,
@@ -85,6 +89,18 @@ class AckBackend implements SetupBackend {
 }
 
 void main() {
+  test('completed stage retains its actual elapsed duration', () {
+    final start = DateTime.utc(2026, 10, 24);
+    var stages = advanceStages(newPackagedStages(), 'environment', start);
+    stages = advanceStages(
+        stages, 'dependencies', start.add(const Duration(seconds: 23)));
+    final runtime = stages.firstWhere((s) => s.id == 'runtime');
+    expect(runtime.elapsed, const Duration(seconds: 23));
+    stages = advanceStages(
+        stages, 'components', start.add(const Duration(seconds: 51)));
+    expect(stages.firstWhere((s) => s.id == 'runtime').elapsed,
+        const Duration(seconds: 23));
+  });
   group('shell', () {
     testWidgets('offers exactly one primary action and a secondary action',
         (tester) async {
@@ -141,7 +157,8 @@ void main() {
     testWidgets('shows one line, browses and reports inline errors',
         (tester) async {
       final controller = TextEditingController(
-          text: r'C:\Users\someone\OneDrive\Documents\A very long folder name that keeps going\Odessy');
+          text:
+              r'C:\Users\someone\OneDrive\Documents\A very long folder name that keeps going\Odessy');
       var browsed = 0;
       await tester.pumpWidget(MaterialApp(
           home: Scaffold(
@@ -171,7 +188,8 @@ void main() {
     });
 
     test('summary paths keep the head and the tail on one line', () {
-      final value = r'C:\Users\someone\AppData\Local\Odessy\App\versions\0123456789abcdef';
+      final value =
+          r'C:\Users\someone\AppData\Local\Odessy\App\versions\0123456789abcdef';
       final shortened = middleEllipsis(value, 30);
       expect(shortened.length, 30);
       expect(shortened.contains('…'), isTrue);
@@ -197,7 +215,8 @@ void main() {
       stages = advanceStages(stages, 'environment', DateTime.now());
       expect(stages.firstWhere((s) => s.id == 'dependencies').state,
           SetupStageState.running);
-      stages = advanceStages(stages, 'activated', DateTime.now(), complete: true);
+      stages =
+          advanceStages(stages, 'activated', DateTime.now(), complete: true);
       expect(stages.every((s) => s.state == SetupStageState.complete), isTrue);
     });
 
@@ -254,39 +273,38 @@ void main() {
       });
     });
 
-    test('launch acknowledgement never reads a rejection as readiness', () async {
+    test('launch acknowledgement never reads a rejection as readiness',
+        () async {
       final ack = BackendLaunchAcknowledgement(AckBackend(), root: r'C:\App');
       const quick = Duration(milliseconds: 60);
       const interval = Duration(milliseconds: 10);
       expect(await ack.waitFor('b' * 32, timeout: quick, interval: interval),
           launchReady);
       // Pending until the budget runs out is a timeout, not a failure state.
-      expect(
-          await ack.waitFor('d' * 32, timeout: quick, interval: interval),
+      expect(await ack.waitFor('d' * 32, timeout: quick, interval: interval),
           isNull);
       // Unknown or obsolete identifiers fail explicitly.
-      expect(
-          await ack.waitFor('e' * 32, timeout: quick, interval: interval),
+      expect(await ack.waitFor('e' * 32, timeout: quick, interval: interval),
           launchFailed);
     });
 
     test('instance guard refuses a second window for the same mode', () async {
       final directory = await Directory.systemTemp.createTemp('odessy-guard-');
       addTearDown(() => directory.delete(recursive: true));
-      final first =
-          await InstanceGuard.acquire('abc', directory: directory, mode: 'setup');
+      final first = await InstanceGuard.acquire('abc',
+          directory: directory, mode: 'setup');
       expect(first, isNotNull);
-      final second =
-          await InstanceGuard.acquire('abc', directory: directory, mode: 'setup');
+      final second = await InstanceGuard.acquire('abc',
+          directory: directory, mode: 'setup');
       expect(second, isNull);
-      final otherMode =
-          await InstanceGuard.acquire('abc', directory: directory, mode: 'manage');
+      final otherMode = await InstanceGuard.acquire('abc',
+          directory: directory, mode: 'manage');
       expect(otherMode, isNotNull);
       await second?.release();
       await first!.release();
       await otherMode!.release();
-      final third =
-          await InstanceGuard.acquire('abc', directory: directory, mode: 'setup');
+      final third = await InstanceGuard.acquire('abc',
+          directory: directory, mode: 'setup');
       expect(third, isNotNull);
       await third!.release();
     });
