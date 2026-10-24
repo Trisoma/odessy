@@ -2,6 +2,27 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/app/setup/installed_coordinator.dart';
 import 'package:odessy_desktop/app/setup/installed_startup.dart';
+import 'package:odessy_desktop/app/setup/launch_acknowledgement.dart';
+import 'package:flutter/material.dart';
+
+class ControlledStartup extends InstalledStartup {
+  ControlledStartup(SetupBackend backend) : super(backend:backend,installRoot: 'C:/Odessy/App');
+  @override
+  Future<void> begin() async {}
+  void resolve() {
+    spec = specWith();
+    phase = InstalledPhase.configure;
+    notifyListeners();
+  }
+}
+
+class RecordingAcknowledgement implements LaunchAcknowledgement {
+  final states = <String>[];
+  @override
+  Future<void> acknowledge(String launchId, {required String state}) async => states.add(state);
+  @override
+  Future<String?> waitFor(String launchId, {Duration timeout = const Duration(seconds:45), Duration interval = const Duration(milliseconds:250)}) async => null;
+}
 
 class Backend implements SetupBackend {
   Backend(this.spec);
@@ -61,6 +82,28 @@ Json specWith({bool model = false, String role = 'combined'}) => {
     };
 
 void main() {
+  testWidgets('readiness is acknowledged only after the configured frame', (tester) async {
+    final backend = Backend(specWith());
+    final startup = ControlledStartup(backend);
+    final ack = RecordingAcknowledgement();
+    await tester.pumpWidget(InstalledApplication(installRoot:'C:/Odessy/App',
+      launchId:'a'*32,backend:backend,startupFactory:(_)=>startup,acknowledgement:ack));
+    startup.resolve();
+    expect(ack.states,isEmpty);
+    await tester.pump();
+    expect(ack.states,[launchConfigurationRequired]);
+    await tester.pumpWidget(const SizedBox());
+  });
+  testWidgets('disposed window never acknowledges queued readiness', (tester) async {
+    final backend = Backend(specWith());
+    final startup = ControlledStartup(backend);
+    final ack = RecordingAcknowledgement();
+    await tester.pumpWidget(InstalledApplication(installRoot:'C:/Odessy/App',
+      launchId:'a'*32,backend:backend,startupFactory:(_)=>startup,acknowledgement:ack));
+    startup.resolve();
+    await tester.pumpWidget(const SizedBox());
+    expect(ack.states,isEmpty);
+  });
   test('an unconfigured installation opens management without a coordinator',
       () async {
     final backend = Backend(specWith());

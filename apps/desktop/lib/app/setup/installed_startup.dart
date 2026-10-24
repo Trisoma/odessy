@@ -187,8 +187,13 @@ class _InstalledApplicationState extends State<InstalledApplication> {
       _manageRoot = root;
       _manage = InstalledManageController(_backend, spec: _startup.spec)..load();
     }
-    _acknowledge();
     setState(() {});
+    final phase = _startup.phase;
+    final version = _startup.spec['version'];
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _startup.phase != phase || _startup.spec['version'] != version) return;
+      _acknowledge();
+    });
   }
 
   /// Tells setup that this window resolved its installation and either reached the

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:io' show Platform;
 
 import 'app/app.dart';
 import 'app/setup/installed_startup.dart';
@@ -11,6 +12,11 @@ Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
   final mode = installationMode(arguments);
   if (mode == null) {
+    runApp(applicationFor(arguments));
+    return;
+  }
+  // Windows activates the matching native window before creating Flutter.
+  if (Platform.isWindows) {
     runApp(applicationFor(arguments));
     return;
   }
