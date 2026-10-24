@@ -8,6 +8,7 @@ class LocalSetupBackend implements SetupBackend {
   LocalSetupBackend(
       {String python = const String.fromEnvironment('ODESSY_SETUP_PYTHON'),
       String sourceRoot = const String.fromEnvironment('ODESSY_SETUP_ROOT'),
+      this.payloadRoot = '',
       this.timeout = const Duration(seconds: 30)})
       : python = python.isNotEmpty ? python : _bundledPython(),
         sourceRoot = sourceRoot.isNotEmpty ? sourceRoot : _bundledRoot();
@@ -34,7 +35,7 @@ class LocalSetupBackend implements SetupBackend {
     return '$root${Platform.pathSeparator}$relative';
   }
 
-  final String python, sourceRoot;
+  final String python, sourceRoot, payloadRoot;
   final Duration timeout;
   Process? _process;
   Directory? _cancelDirectory;
@@ -78,6 +79,7 @@ class LocalSetupBackend implements SetupBackend {
           workingDirectory: sourceRoot.isEmpty ? null : sourceRoot,
           environment: {
             'PYTHONUNBUFFERED': '1',
+            if (payloadRoot.isNotEmpty) 'ODESSY_SETUP_PAYLOAD': payloadRoot,
             if (sourceRoot.isNotEmpty)
               'PYTHONPATH':
                   '$sourceRoot${Platform.pathSeparator}${Directory('$sourceRoot${Platform.pathSeparator}bootstrap').existsSync() ? 'bootstrap' : 'src'}'
@@ -158,3 +160,4 @@ class LocalSetupBackend implements SetupBackend {
     await cancel();
   }
 }
+

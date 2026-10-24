@@ -20,7 +20,7 @@ raise SystemExit(main(arguments))
 """
 
 
-def build(wheels, licenses, output, *, runtime=None, desktop=None):
+def build(wheels, licenses, output, *, runtime=None, desktop=None, node=None, toolserver=None, rust=None):
     wheels,licenses,output=Path(wheels),Path(licenses),Path(output)
     if output.exists() or output.is_symlink(): raise ValueError('output exists; choose a new artifact')
     license_map=json.loads(licenses.read_text(encoding='utf-8'))
@@ -47,9 +47,11 @@ def build(wheels, licenses, output, *, runtime=None, desktop=None):
                 for name in runtime_data['files']:archive.write((runtime/name).resolve(),'runtime/'+name)
                 archive.writestr('install.cmd','@echo off\r\n"%~dp0runtime\\python.exe" "%~dp0install.py" %*\r\n')
                 archive.writestr('install.sh','#!/bin/sh\nset -eu\nHERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nchmod u+x "$HERE/runtime/bin/python3"\nexec "$HERE/runtime/bin/python3" "$HERE/install.py" "$@"\n')
-            if desktop is not None:
-                for file in Path(desktop).rglob('*'):
-                    if file.is_file():archive.write(file,'desktop/'+file.relative_to(desktop).as_posix())
+            for prefix, source in (('desktop',desktop),('node',node),('tools',toolserver),('link',rust)):
+                if source is None: continue
+                for file in Path(source).rglob('*'):
+                    if file.is_symlink(): raise ValueError('component links forbidden')
+                    if file.is_file():archive.write(file,prefix+'/'+file.relative_to(source).as_posix())
             import sys
             sys.path.insert(0,str(ROOT))
             from installer.build.context import files as installer_files
@@ -61,6 +63,9 @@ def build(wheels, licenses, output, *, runtime=None, desktop=None):
             archive.write(ROOT/'THIRD-PARTY-NOTICES.md','THIRD-PARTY-NOTICES.md')
             archive.writestr('wheelhouse/manifest.json',json.dumps({'schema_version':1,'artifacts':artifacts},indent=2))
             for artifact in artifacts: archive.write(wheels/artifact['file'],'wheelhouse/'+artifact['file'])
+        with zipfile.ZipFile(temporary,'a') as archive:
+            inventory={name:hashlib.sha256(archive.read(name)).hexdigest() for name in archive.namelist() if not name.endswith('/')}
+            archive.writestr('setup-context.json',json.dumps({'schema_version':1,'components':['python']+[name for name,source in (('desktop',desktop),('node',node),('tools',toolserver),('link',rust)) if source is not None],'files':inventory},indent=2))
         os.link(temporary,output)
     finally: Path(temporary).unlink(missing_ok=True)
     return output
@@ -73,5 +78,11 @@ if __name__=='__main__':
     parser.add_argument('--output',required=True)
     parser.add_argument('--python-runtime')
     parser.add_argument('--desktop-bundle')
+    parser.add_argument('--node-runtime')
+    parser.add_argument('--toolserver')
+    parser.add_argument('--rust')
     args=parser.parse_args()
-    print(build(args.wheelhouse,args.licenses,args.output,runtime=args.python_runtime,desktop=args.desktop_bundle))
+    print(build(args.wheelhouse,args.licenses,args.output,runtime=args.python_runtime,desktop=args.desktop_bundle,node=args.node_runtime,toolserver=args.toolserver,rust=args.rust))
+
+
+

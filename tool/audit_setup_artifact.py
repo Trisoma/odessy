@@ -13,6 +13,15 @@ def audit(path):
     path=Path(path);unknown=[];wheels=[]
     with zipfile.ZipFile(path) as archive:
         names=archive.namelist()
+        import stat
+        if len(names)!=len(set(names)): raise ValueError('duplicate archive member')
+        for entry in archive.infolist():
+            name=entry.filename
+            if name.startswith('/') or ':' in name or '\\' in name or '..' in Path(name).parts or stat.S_ISLNK(entry.external_attr>>16): raise ValueError('unsafe archive member')
+        inventory=json.loads(archive.read('setup-context.json'))['files']
+        if set(inventory)!=set(n for n in names if not n.endswith('/') and n!='setup-context.json'): raise ValueError('payload inventory mismatch')
+        for name,sha in inventory.items():
+            if hashlib.sha256(archive.read(name)).hexdigest()!=sha: raise ValueError('payload checksum mismatch')
         manifest=json.loads(archive.read('wheelhouse/manifest.json'))
         for artifact in manifest['artifacts']:
             raw=archive.read('wheelhouse/'+artifact['file'])
@@ -31,3 +40,4 @@ def audit(path):
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('artifact');args=parser.parse_args()
     print(json.dumps(audit(args.artifact),indent=2))
+

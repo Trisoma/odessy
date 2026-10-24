@@ -16,6 +16,33 @@ MANAGE_ACTIONS={'plan','repair-plan','install','inspect','verify','repair','roll
 
 
 def manage(parameters,*,cancelled=lambda:False):
+    if parameters.get('action') in ('package-review','package-install','package-launch'):
+        data=fields(parameters,{'action','root','payload','selection','confirm'},'packaged operation')
+        if data['action']=='package-launch':
+            from .windows_installation import launch
+            process=launch(guard(data['root']))
+            return {'launched':True,'pid':process.pid}
+        from .package_context import context
+        from .contracts import SetupSelection
+        from .maintenance import ManagedInstallation
+        package=context(payload=data.get('payload'),root=data.get('root'))
+        selection=SetupSelection.from_dict(data.get('selection'))
+        root=guard(package['root'])
+        from .lifecycle import format_of
+        if format_of(root)=='legacy':raise ValueError('use legacy maintenance for this installation')
+        manager=ManagedInstallation(root,runtime_source=Path(package['payload_root'])/'runtime',payload=package['payload_root'])
+        if data['action']=='package-review':return manager.plan(package['bundle'],selection)
+        result=manager.install(package['bundle'],selection,data.get('confirm'),cancelled=cancelled)
+        from .windows_installation import register
+        record=manager.record()
+        register(root,record,payload=package['payload_root'])
+        from .maintenance import atomic
+        atomic(root/'installation.json',record)
+        return dict(result,installation_format='versioned')
+    if parameters.get('action')=='context':
+        fields(parameters,{'action','root','payload','selection'},'context')
+        from .package_context import context
+        return context(payload=parameters.get('payload'),root=parameters.get('root') or None)
     data=fields(parameters,{'action','root','bundle','config','role','confirm','version','workspace','port','node_link','node_server','listen','executable','allow_inference','allow_model_downloads'},'management')
     from .lifecycle import dispatch
     routed=dispatch(data,cancelled=cancelled)
@@ -110,3 +137,5 @@ def pair(parameters,*,runner=None):
         text=bounded_native(argv)
     else:text=runner(argv)
     return {'operation':action,'peers':json.loads(text) if action=='list' else None,'message':text if action!='list' else '', 'grants_changed':action in ('grant','revoke'),'node_local_only':True}
+
+

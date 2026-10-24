@@ -19,7 +19,7 @@ def package(payload,output,platform,*,script_signing_thumbprint=""):
             with zipfile.ZipFile(payload) as archive:
                 if 'desktop/odessy_desktop.exe' not in archive.namelist() or 'runtime/python.exe' not in archive.namelist():raise ValueError('Windows payload needs desktop release and bundled Python')
             shutil.copy2(payload,stage/'payload.zip')
-            command="$ErrorActionPreference='Stop'; $target=Join-Path $env:LOCALAPPDATA ('Odessy/Setup/'+[guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Path $target | Out-Null; Expand-Archive -LiteralPath (Join-Path $PSScriptRoot 'payload.zip') -DestinationPath $target; Start-Process -FilePath (Join-Path $target 'desktop/odessy_desktop.exe')"
+            command="$ErrorActionPreference='Stop'; $target=Join-Path $env:LOCALAPPDATA ('Odessy/Setup/'+[guid]::NewGuid().ToString('N')); New-Item -ItemType Directory -Path $target | Out-Null; Expand-Archive -LiteralPath (Join-Path $PSScriptRoot 'payload.zip') -DestinationPath $target; $env:ODESSY_SETUP_PAYLOAD=$target; Start-Process -FilePath (Join-Path $target 'desktop/odessy_desktop.exe') -ArgumentList '--setup'"
             # Use a script file with an ordinary signed-script policy. Do not bypass
             # the user's PowerShell execution policy: release signing is external.
             (stage/'launch.ps1').write_text(command,encoding='utf-8')

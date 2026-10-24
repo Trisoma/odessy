@@ -57,6 +57,9 @@ def dispatch(parameters,*,cancelled=lambda:False):
         if data.get('confirm')!=token:raise ValueError('review the exact operation and current installation first')
         if cancelled():raise KeyboardInterrupt()
         result=manager.rollback(data['version'],confirm=record['id'],expected_state=record,expected_operation=operation_state) if operation=='rollback' else manager.uninstall(confirm=record['id'],expected_state=record,expected_operation=operation_state,cancelled=cancelled)
+        if operation=='uninstall' and record.get('windows_registration'):
+            from .windows_installation import unregister
+            result['retained_registration']=unregister(root,record)
         return dict(result,installation_format=kind)
     return None
 

@@ -87,9 +87,10 @@ def run(argv,*,cancelled=lambda:False):
                 process.kill();process.wait()
 
 class ManagedInstallation:
-    def __init__(self,root,*,runner=run,runtime_source=None):
+    def __init__(self,root,*,runner=run,runtime_source=None,payload=None):
         self.root=guard(root)
         if self.root==Path(self.root.anchor) or self.root==Path.home(): raise ValueError('choose a dedicated installation directory')
+        self.payload=guard(payload) if payload else None
         self.runner=runner
         self.runtime_source=guard(runtime_source) if runtime_source else None
 
@@ -156,6 +157,11 @@ class ManagedInstallation:
             from .runtime import inventory
             data['python_runtime']=inventory(self.runtime_source)
             data['python_runtime_source']=str(self.runtime_source)
+        if self.payload:
+            from .package_context import context
+            context(payload=self.payload,root=self.root)
+            data['payload_manifest']=read_json(self.payload/'setup-context.json')
+            data['payload_root']=str(self.payload)
         data['plan_id']=hashlib.sha256(json.dumps(data,sort_keys=True,separators=(',',':')).encode()).hexdigest()
         return data
 
@@ -189,6 +195,27 @@ class ManagedInstallation:
                 for argv in ([str(python),'-I','-m','pip','install','--no-index','--no-deps',*wheels], [str(python),'-I','-m','pip','check'],[str(python),'-I','-m','odessy','setup','--role',selection.role,'--non-interactive'],[str(python),'-I','-m','odessy','--help']):
                     if cancelled(): raise Cancelled('operation cancelled')
                     self.runner(argv,cancelled=cancelled)
+                if self.payload:
+                    import shutil
+                    from .package_context import context
+                    context(payload=self.payload,root=self.root)
+                    manifest=read_json(self.payload/'setup-context.json')
+                    if manifest!=plan['payload_manifest']:raise ValueError('setup payload changed after review')
+                    selected={'link'}
+                    if selection.role!='execution':selected.add('desktop')
+                    if selection.role!='coordinator':selected.update(('node','tools'))
+                    for name,sha in manifest['files'].items():
+                        if name.split('/')[0] not in selected:continue
+                        if cancelled():raise Cancelled('operation cancelled')
+                        source=guard(self.payload/name);destination=guard(target/name)
+                        if destination.exists():raise ValueError('packaged component overlaps installed runtime')
+                        destination.parent.mkdir(parents=True,exist_ok=True)
+                        shutil.copy2(source,destination)
+                        if digest(destination)!=sha:raise ValueError('copied component checksum mismatch')
+                if selection.model:
+                    from .configuration import environment_text
+                    from .planning import build_plan
+                    (target/'runtime.env').write_text(environment_text(build_plan(selection)),encoding='utf-8')
                 (target/'selection.json').write_text(json.dumps({'schema_version':1,'selection':public(selection)},indent=2),encoding='utf-8')
                 if cancelled(): raise Cancelled('operation cancelled')
                 files={p.relative_to(target).as_posix():digest(guard(p)) for p in target.rglob('*') if p.is_file()}
