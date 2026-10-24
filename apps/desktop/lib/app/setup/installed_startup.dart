@@ -6,12 +6,15 @@ import 'package:flutter/material.dart';
 import 'package:odessy_client/odessy_client.dart';
 
 import '../../features/setup/controllers/installed_manage_controller.dart';
+import '../../features/setup/presentation/get_started_page.dart';
 import '../../features/setup/presentation/manage_page.dart';
 import '../app.dart';
 import '../theme.dart';
 import 'installation_location.dart';
 import 'installed_coordinator.dart';
+import 'launch_acknowledgement.dart';
 import 'local_setup_backend.dart';
+import 'native_picker.dart';
 
 enum InstalledPhase { checking, configure, starting, ready, failed }
 
@@ -131,14 +134,22 @@ class InstalledApplication extends StatefulWidget {
   const InstalledApplication({
     super.key,
     required this.installRoot,
+    this.launchId = '',
     this.backend,
     this.startupFactory,
+    this.picker = const UnavailablePicker(),
+    this.acknowledgement,
     this.onExit,
   });
 
   final String installRoot;
+
+  /// The identifier setup passed with `--launch-id`; empty when opened directly.
+  final String launchId;
   final SetupBackend? backend;
   final InstalledStartup Function(SetupBackend backend)? startupFactory;
+  final NativePicker picker;
+  final LaunchAcknowledgement? acknowledgement;
   final Future<void> Function()? onExit;
 
   @override
@@ -151,6 +162,7 @@ class _InstalledApplicationState extends State<InstalledApplication> {
   late final AppLifecycleListener _lifecycle;
   InstalledManageController? _manage;
   String _manageRoot = '';
+  final Set<String> _acknowledged = {};
 
   @override
   void initState() {
@@ -175,7 +187,30 @@ class _InstalledApplicationState extends State<InstalledApplication> {
       _manageRoot = root;
       _manage = InstalledManageController(_backend, spec: _startup.spec)..load();
     }
+    _acknowledge();
     setState(() {});
+  }
+
+  /// Tells setup that this window resolved its installation and either reached the
+  /// coordinator or is showing the configuration-required state. Process creation
+  /// alone is not readiness, so this is the only success signal. A failed start is
+  /// reported as well, so setup stops waiting instead of showing a timeout.
+  void _acknowledge() {
+    final launchId = widget.launchId;
+    final root = _startup.spec['root'];
+    if (launchId.isEmpty || root is! String || root.isEmpty) return;
+    final state = switch (_startup.phase) {
+      InstalledPhase.ready => launchReady,
+      InstalledPhase.configure => launchConfigurationRequired,
+      InstalledPhase.failed => launchFailed,
+      _ => null,
+    };
+    if (state == null || !_acknowledged.add('$launchId:$state')) return;
+    final acknowledgement =
+        widget.acknowledgement ?? BackendLaunchAcknowledgement(_backend, root: root);
+    unawaited(acknowledgement.acknowledge(launchId, state: state).catchError((_) {
+      // A rejected receipt only means setup keeps waiting; nothing is granted here.
+    }));
   }
 
   @override
@@ -234,40 +269,28 @@ class _InstalledApplicationState extends State<InstalledApplication> {
         ]);
       case InstalledPhase.configure:
         final manage = _manage;
-        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(28, 24, 28, 0),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Configuration needed',
-                      style: Theme.of(context).textTheme.headlineSmall),
-                  const SizedBox(height: 8),
-                  Text(_startup.message),
-                  const SizedBox(height: 12),
-                  Row(children: [
-                    FilledButton.icon(
-                        onPressed: manage?.busy == false
-                            ? () => _startup.begin()
-                            : null,
-                        icon: const Icon(Icons.play_arrow, size: 18),
-                        label: const Text('Start Odessy')),
-                    const SizedBox(width: 10),
-                    TextButton(
-                        onPressed: _close, child: const Text('Close')),
-                  ]),
-                ]),
-          ),
-          const Divider(height: 32),
+        if (manage == null) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        return Column(children: [
           Expanded(
-              child: manage == null
-                  ? const Center(child: CircularProgressIndicator())
-                  : ManagePage(
-                      controller: manage,
-                      external: runningOutsideInstallation(_manageRoot),
-                      onStart: () => _startup.begin(),
-                      onOpenMaintenance: () => manage.openMaintenance(),
-                    )),
+              child: GetStartedPage(
+            controller: manage,
+            picker: widget.picker,
+            onStart: () => _startup.begin(),
+            onClose: _close,
+            coordinatorReady: false,
+          )),
+          Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 28),
+              child: Row(children: [
+                TextButton(
+                    onPressed: _openManage,
+                    child: const Text('Maintenance and repair')),
+                const Spacer(),
+                TextButton(onPressed: _close, child: const Text('Close')),
+              ])),
+          const SizedBox(height: 12),
         ]);
       case InstalledPhase.failed:
         return Padding(

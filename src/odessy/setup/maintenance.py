@@ -16,6 +16,8 @@ import sys
 import tempfile
 import time
 import uuid
+import threading
+from .progress import Progress, snapshot
 from .contracts import SetupSelection, public
 
 class Cancelled(RuntimeError):
@@ -92,21 +94,40 @@ def read_json(path):
         return result
     return json.loads(raw,object_pairs_hook=unique)
 
-def run(argv,*,cancelled=lambda:False):
-    # No shell and no inherited stdin. Output is not persisted (may contain keys).
-    process=subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
-        **({'creationflags':subprocess.CREATE_NEW_PROCESS_GROUP} if os.name=='nt' else {'start_new_session':True}))
+def run(argv,*,cancelled=lambda:False,output=None):
+    # No shell and no inherited stdin; output is redacted by the progress sink.
+    process=subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+        **({'creationflags':subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {'start_new_session':True}))
+    def drain(pipe, stream):
+        pending=b'';discard=False
+        try:
+            while True:
+                block=pipe.readline(4096)
+                if not block:
+                    if output and pending and not discard:output(stream,pending.decode('utf-8',errors='replace'))
+                    if output and discard:output(stream,'[overlong output line omitted]')
+                    break
+                if not discard:
+                    pending+=block
+                    if len(pending)>4096:pending=b'';discard=True
+                if block.endswith(b'\n'):
+                    if output:output(stream,'[overlong output line omitted]' if discard else pending.decode('utf-8',errors='replace'))
+                    pending=b'';discard=False
+        finally:pipe.close()
+    drains=[threading.Thread(target=drain,args=(pipe,name),daemon=True) for pipe,name in ((process.stdout,"stdout"),(process.stderr,"stderr"))]
+    for thread in drains:thread.start()
     try:
         deadline=time.monotonic()+600
         while process.poll() is None:
             if cancelled(): raise Cancelled('operation cancelled')
             if time.monotonic()>deadline: raise RuntimeError('setup child timed out')
             time.sleep(.05)
+        for thread in drains:thread.join(timeout=1)
         if process.returncode: raise RuntimeError('setup child failed; previous installation remains active')
     finally:
         if process.poll() is None:
             if os.name=='nt':
-                subprocess.run(['taskkill.exe','/PID',str(process.pid),'/T','/F'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5)
+                subprocess.run(['taskkill.exe','/PID',str(process.pid),'/T','/F'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5,creationflags=subprocess.CREATE_NO_WINDOW)
             else:
                 try: os.killpg(process.pid,signal.SIGTERM)
                 except ProcessLookupError: pass
@@ -250,10 +271,10 @@ class ManagedInstallation:
             journal={'schema_version':1,'version':version,'status':'preparing','stage':'preparing',
                      'previous':record['active'],'steps_done':0,'steps_total':0}
             atomic(self.root/'operation.json',journal)
+            progress=Progress(journal,lambda:atomic(self.root/'operation.json',journal))
             def stage(name,total=None):
-                journal['stage']=name
-                if total is not None: journal['steps_total']=total
-                atomic(self.root/'operation.json',journal)
+                journal['steps_total']=total if total is not None else 0
+                progress.stage(name)
             try:
                 python_builder=sys.executable
                 if self.runtime_source:
@@ -263,7 +284,7 @@ class ManagedInstallation:
                     record.setdefault('runtimes',{})[runtime_key]=plan['python_runtime']['files']
                     atomic(self.root/'installation.json',record)
                 stage('environment')
-                self.runner([python_builder,'-m','venv','--copies',str(target)],cancelled=cancelled)
+                self.runner([python_builder,'-m','venv','--copies',str(target)],cancelled=cancelled,**({'output':progress.append} if self.runner is run else {}))
                 python=target/('Scripts/python.exe' if os.name=='nt' else 'bin/python')
                 # Recheck artifacts immediately before pip; no index or dependency resolution.
                 if self.plan(bundle,selection)['manifest']!=plan['manifest']: raise ValueError('bundle changed after review')
@@ -271,7 +292,7 @@ class ManagedInstallation:
                 stage('dependencies',len(wheels)+1)
                 for argv in ([str(python),'-I','-m','pip','install','--no-index','--no-deps',*wheels], [str(python),'-I','-m','pip','check'],[str(python),'-I','-m','odessy','setup','--role',selection.role,'--non-interactive'],[str(python),'-I','-m','odessy','--help']):
                     if cancelled(): raise Cancelled('operation cancelled')
-                    self.runner(argv,cancelled=cancelled)
+                    self.runner(argv,cancelled=cancelled,**({"output":progress.append} if self.runner is run else {}))
                 if self.payload:
                     import shutil
                     from .package_context import context,validate_components
@@ -289,7 +310,7 @@ class ManagedInstallation:
                         destination.parent.mkdir(parents=True,exist_ok=True)
                         shutil.copy2(source,destination)
                         if digest(destination)!=sha:raise ValueError('copied component checksum mismatch')
-                        journal['steps_done']+=1;atomic(self.root/'operation.json',journal)
+                        journal['steps_done']+=1;progress.flush()
                 stage('configuration')
                 if selection.model:
                     from .configuration import environment_text
@@ -303,10 +324,11 @@ class ManagedInstallation:
                 atomic(self.root/'configuration.json',self.configuration(selection))
                 record['versions'][version]=files;record['active']=version;record['selection']=public(selection)
                 atomic(self.root/'installation.json',record)
-                journal['status']='completed';journal['stage']='activated'
+                journal['finished_at']=time.time();journal['status']='completed';journal['stage']='activated'
+                journal['steps_done']=1;journal['steps_total']=1
                 atomic(self.root/'operation.json',journal)
             except BaseException:
-                journal['status']='interrupted';atomic(self.root/'operation.json',journal)
+                journal['finished_at']=time.time();journal['status']='interrupted';atomic(self.root/'operation.json',journal)
                 # Do not recursively delete partial or changed files. Old active version stays selected.
                 raise
             return {'installed':True,'active':version,'service_started':False,'ready':False,'role':selection.role,
@@ -326,8 +348,9 @@ class ManagedInstallation:
         selection=SetupSelection.from_dict(self.record()['selection'])
         return self.install(bundle,selection,confirm,cancelled=cancelled)
 
-    def status(self):
+    def status(self,log_cursor=0):
         """Read-only progress from the durable journal; never mutates or locks."""
+        if type(log_cursor) is not int or log_cursor<0:raise ValueError('invalid log cursor')
         record=self.record()
         operation=read_json(self.root/'operation.json') if (self.root/'operation.json').exists() else None
         active=record.get('active')
@@ -344,8 +367,8 @@ class ManagedInstallation:
             configuration={'workspace':value.get('workspace'),
                            'model_configured':(value.get('selection') or {}).get('model') is not None,
                            'role':(value.get('selection') or {}).get('role')}
-        return {'installation_format':'versioned','installation_id':record['id'],'active':active,
-                'versions':list(record['versions']),'operation':operation,
+        return {**snapshot(operation,log_cursor),'installation_format':'versioned','installation_id':record['id'],'active':active,
+                'versions':list(record['versions']),'operation':{key:value for key,value in operation.items() if key!='logs'} if operation else None,
                 'status':(operation or {}).get('status','idle'),
                 'stage':(operation or {}).get('stage'),
                 'steps_done':(operation or {}).get('steps_done',0),
@@ -383,6 +406,8 @@ class ManagedInstallation:
             previous_operation=read_json(self.root/'operation.json') if (self.root/'operation.json').exists() else None
             if expected_operation is not ... and previous_operation!=expected_operation:raise ValueError('operation journal changed after review')
             journal={'schema_version':1,'operation':'uninstall','status':'running','id':uuid.uuid4().hex,'installation_id':record['id']}
+            progress=Progress(journal,lambda:atomic(self.root/'operation.json',journal))
+            progress.stage('uninstall')
             atomic(self.root/'operation.json',journal)
             removed=[];retained=[]
             try:
@@ -403,8 +428,9 @@ class ManagedInstallation:
                         if path.is_file() and digest(path)==sha:path.unlink();removed.append('runtimes/'+runtime_id+'/'+name)
                         elif path.exists():retained.append('runtimes/'+runtime_id+'/'+name)
                 record['active']=None;atomic(self.root/'installation.json',record)
-                journal.update(status='completed',removed_files=len(removed),retained_files=len(retained));atomic(self.root/'operation.json',journal)
+                journal.update(finished_at=time.time(),status='completed',removed_files=len(removed),retained_files=len(retained));atomic(self.root/'operation.json',journal)
             except BaseException as error:
+                journal['finished_at']=time.time()
                 journal.update(status='interrupted',removed_files=len(removed),retained_files=len(retained),error='cancelled' if isinstance(error,KeyboardInterrupt) else 'failed; inspect before retrying')
                 atomic(self.root/'operation.json',journal)
                 raise

@@ -15,6 +15,7 @@ import '../features/setup/controllers/maintenance_controller.dart';
 import '../features/setup/controllers/installed_manage_controller.dart';
 import '../features/setup/presentation/maintenance_page.dart';
 import '../features/setup/presentation/manage_page.dart';
+import '../features/setup/presentation/get_started_page.dart';
 import 'setup/installation_location.dart';
 
 class OdessyApp extends StatefulWidget {
@@ -151,6 +152,10 @@ class _OdessyAppState extends State<OdessyApp> {
                                   widget.installed?['root'] as String? ?? ''),
                               onOpenMaintenance: () =>
                                   installManagement!.openMaintenance()),
+                          'Get started' => GetStartedPage(
+                              controller: installManagement!,
+                              onStart: () => setState(() => page = 'Conversation'),
+                              onClose: () => setState(() => page = 'Conversation')),
                           'Installer' => MaintenancePage(
                               key: const ValueKey('installer-engine'),
                               controller: installerEngine,
@@ -166,6 +171,23 @@ class _OdessyAppState extends State<OdessyApp> {
                           'Settings' => SettingsPage(
                               key: ValueKey(controller.api),
                               controller: controller,
+                              installed: widget.installed != null,
+                              modelConfigured:
+                                  widget.installed?['model_configured'] == true,
+                              voiceEnabled:
+                                  widget.installed?['voice_enabled'] == true,
+                              themeMode: mode,
+                              onToggleTheme: () => setState(() => mode =
+                                  mode == ThemeMode.dark
+                                      ? ThemeMode.light
+                                      : ThemeMode.dark),
+                              onOpenDevices: () => setState(() {
+                                device = 'This computer';
+                                page = 'Devices';
+                              }),
+                              onOpenGetStarted: installManagement == null
+                                  ? null
+                                  : () => setState(() => page = 'Get started'),
                               onOpenManagement: widget.installed == null
                                   ? null
                                   : () => setState(
@@ -208,6 +230,13 @@ class _OdessyAppState extends State<OdessyApp> {
                   Icons.settings_outlined,
                   page == 'Manage installation',
                   () => setState(() => page = 'Manage installation')),
+              if (widget.installed?['model_configured'] != true)
+                _nav(
+                    context,
+                    'Get started',
+                    Icons.rocket_launch_outlined,
+                    page == 'Get started',
+                    () => setState(() => page = 'Get started')),
             ],
             const SizedBox(height: 28),
             const Text('  DEVICES',

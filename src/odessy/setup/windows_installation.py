@@ -31,30 +31,34 @@ def _active_desktop(root,record):
     return version,desktop
 
 
-def launch(root, mode='app'):
-    if mode not in ('app','manage'): raise ValueError('invalid launch mode')
+def launch(root, mode='app', launch_id=None):
+    if mode not in ('app','manage','uninstall'): raise ValueError('invalid launch mode')
     root=guard(root)
     record=ManagedInstallation(root).record()
     version,executable=_active_desktop(root,record)
     args=[str(executable)]
-    if mode=='manage':
-        args+=['--manage','--install-root',str(root)]
+    if mode in ('manage','uninstall'):
+        args+=['--'+mode,'--install-root',str(root)]
         helper=(record.get('windows_registration') or {}).get('helper')
         if isinstance(helper,str) and helper:args+=['--payload',helper]
     else:
         args+=['--installed','--install-root',str(root)]
+    if launch_id is not None:
+        from . import launch_receipts
+        launch_receipts.prepare(root, launch_id)
+        args += ['--launch-id', launch_id]
     return subprocess.Popen(args,cwd=tempfile.gettempdir(),stdin=subprocess.DEVNULL)
 
 
 # Parameters are carried by environment, never interpolated into PowerShell code.
 _SHORTCUT="$s=(New-Object -ComObject WScript.Shell).CreateShortcut($env:ODESSY_SHORTCUT);$s.TargetPath=$env:ODESSY_POWERSHELL;$s.Arguments=$env:ODESSY_ARGUMENTS;$s.WorkingDirectory=$env:TEMP;$s.Description='Odessy';$s.Save()"
-_LAUNCHER='''param([switch]$Manage)
+_LAUNCHER='''param([switch]$Manage, [switch]$Uninstall)
 $ErrorActionPreference='Stop'
 $r=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'installation.json') -Raw | ConvertFrom-Json
 if ($r.active -notmatch '^[a-f0-9]{32}$') { throw 'Invalid active version' }
 $exe=Join-Path $PSScriptRoot ('versions/'+$r.active+'/desktop/odessy_desktop.exe')
 Set-Location -LiteralPath $env:TEMP
-if ($Manage) { & $exe --manage --install-root $PSScriptRoot } else { & $exe --installed --install-root $PSScriptRoot }
+if ($Uninstall) { & $exe --uninstall --install-root $PSScriptRoot } elseif ($Manage) { & $exe --manage --install-root $PSScriptRoot } else { & $exe --installed --install-root $PSScriptRoot }
 '''
 
 
@@ -126,7 +130,7 @@ def _write_shortcut(shortcut,target,arguments):
     powershell=_powershell()
     env=dict(os.environ,ODESSY_SHORTCUT=str(shortcut),ODESSY_POWERSHELL=target,ODESSY_ARGUMENTS=arguments)
     subprocess.run([powershell,'-NoProfile','-NonInteractive','-Command',_SHORTCUT],env=env,check=True,
-                   stdin=subprocess.DEVNULL,timeout=30)
+                   stdin=subprocess.DEVNULL,timeout=30,**({'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}))
 
 
 def register(root, record, payload=None):
@@ -169,11 +173,14 @@ def register(root, record, payload=None):
     if helper:
         manage_command=subprocess.list2cmdline([str(helper/'desktop/odessy_desktop.exe'),'--manage',
                                                 '--payload',str(helper),'--install-root',str(root)])
+        uninstall_command=subprocess.list2cmdline([str(helper/'desktop/odessy_desktop.exe'),'--uninstall',
+                                                '--payload',str(helper),'--install-root',str(root)])
     else:
         powershell=_powershell()
         manage_command=subprocess.list2cmdline([powershell,'-NoProfile','-NonInteractive','-File',str(launcher),'-Manage'])
+        uninstall_command=subprocess.list2cmdline([powershell,'-NoProfile','-NonInteractive','-File',str(launcher),'-Uninstall'])
     values={'DisplayName':'Odessy','DisplayVersion':DISPLAY_VERSION,'Publisher':'Trisoma',
-            'InstallLocation':str(root),'UninstallString':manage_command,'ModifyPath':manage_command,
+            'InstallLocation':str(root),'UninstallString':uninstall_command,'ModifyPath':manage_command,
             'NoModify':0,'NoRepair':1,'DisplayIcon':str(desktop)}
     resources={'schema_version':1,'installation_id':identity,'version':version,'files':{str(launcher):digest(launcher),
                str(shortcut):digest(shortcut)},'shortcut':str(shortcut),'shortcut_target':str(desktop),

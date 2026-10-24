@@ -5,6 +5,7 @@ version: 0.5.0+1
 environment:
   sdk: '>=3.4.0 <4.0.0'
 dependencies:
+  file_selector: ^1.1.0
   flutter:
     sdk: flutter
   odessy_client:

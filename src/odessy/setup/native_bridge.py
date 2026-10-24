@@ -16,7 +16,7 @@ MANAGE_ACTIONS={'plan','repair-plan','install','inspect','verify','repair','roll
 PACKAGE_ACTIONS={'package-review','package-install','package-launch','package-status','package-verify',
     'package-repair-review','package-repair','package-rollback-review','package-rollback',
     'package-configure-review','package-configure','package-uninstall-review','package-uninstall',
-    'package-register','installed-spec'}
+    'package-register','installed-spec','package-launch-ack','package-launch-status'}
 
 
 def _versioned_root(parameters,name):
@@ -34,6 +34,13 @@ def _versioned_root(parameters,name):
 def _packaged(parameters,*,cancelled=lambda:False):
     """Installed lifecycle operations; internal paths never come from the user."""
     action=parameters.get('action')
+    if action in ('package-launch-ack','package-launch-status'):
+        from . import launch_receipts
+        data=fields(parameters,{'action','root','launch_id','state'},'launch handoff')
+        root=guard(data['root'])
+        if action=='package-launch-ack':
+            return launch_receipts.acknowledge(root,data.get('launch_id'),data.get('state'))
+        return launch_receipts.status(root,data.get('launch_id'))
     if action=='installed-spec':
         data=fields(parameters,{'action','root'},'installed launch')
         value=data.get('root')
@@ -42,15 +49,18 @@ def _packaged(parameters,*,cancelled=lambda:False):
         return spec(value)
     if action=='package-status':
         from .maintenance import ManagedInstallation
-        data,root=_versioned_root(parameters,'packaged status')
-        return ManagedInstallation(root).status()
+        cursor=parameters.get('log_cursor',0)
+        if type(cursor) is not int or cursor<0:raise ValueError('invalid log cursor')
+        data,root=_versioned_root({key:value for key,value in parameters.items() if key!='log_cursor'},'packaged status')
+        return ManagedInstallation(root).status(log_cursor=cursor)
     if action=='package-launch':
         from .windows_installation import launch
-        data,root=_versioned_root(parameters,'packaged launch')
+        launch_id=parameters.get('launch_id')
+        data,root=_versioned_root({key:value for key,value in parameters.items() if key!='launch_id'},'packaged launch')
         mode=data.get('mode') or 'app'
-        if mode not in ('app','manage'):raise ValueError('invalid launch mode')
-        process=launch(root,mode)
-        return {'launched':True,'pid':process.pid,'mode':mode}
+        if mode not in ('app','manage','uninstall'):raise ValueError('invalid launch mode')
+        process=launch(root,mode,launch_id=launch_id) if launch_id is not None else launch(root,mode)
+        return {'launched':True,'pid':process.pid,'mode':mode,**({'launch_id':launch_id} if launch_id is not None else {})}
     if action=='package-verify':
         from .maintenance import ManagedInstallation
         data,root=_versioned_root(parameters,'packaged verify')
@@ -154,7 +164,8 @@ def manage(parameters,*,cancelled=lambda:False):
 
 
 def bounded_native(argv,timeout=15):
-    process=subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL)
+    process=subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
+        **({'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}))
     pool=concurrent.futures.ThreadPoolExecutor(max_workers=1)
     def read():
         chunks=[];size=0

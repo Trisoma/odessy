@@ -1,13 +1,44 @@
 import 'package:flutter/material.dart';
-import '../controllers/settings_form_controller.dart';
+
 import '../../../app/session_controller.dart';
+import '../../../app/theme.dart';
 import '../controllers/setting_field.dart';
+import '../controllers/settings_form_controller.dart';
+
+/// Settings grouped by what a person is trying to change.
+///
+/// Only capabilities with a reviewed backend operation are editable. Everything
+/// else is shown as read-only or unavailable instead of being silently dropped.
+class SettingsSections {
+  static const general = 'General';
+  static const models = 'Models and connections';
+  static const voice = 'Voice';
+  static const devices = 'Devices and tool access';
+  static const advanced = 'Advanced';
+  static const installation = 'Installation';
+  static const all = [general, models, voice, devices, advanced, installation];
+}
 
 class SettingsPage extends StatefulWidget {
-  const SettingsPage(
-      {super.key, required this.controller, this.onOpenManagement});
+  const SettingsPage({
+    super.key,
+    required this.controller,
+    this.onOpenManagement,
+    this.onOpenGetStarted,
+    this.onOpenDevices,
+    this.installed = false,
+    this.modelConfigured = false,
+    this.voiceEnabled = false,
+    this.themeMode = ThemeMode.dark,
+    this.onToggleTheme,
+  });
+
   final DesktopSession controller;
-  final VoidCallback? onOpenManagement;
+  final VoidCallback? onOpenManagement, onOpenGetStarted, onOpenDevices;
+  final bool installed, modelConfigured, voiceEnabled;
+  final ThemeMode themeMode;
+  final VoidCallback? onToggleTheme;
+
   @override
   State<SettingsPage> createState() => _SettingsPageState();
 }
@@ -21,12 +52,15 @@ class _SettingsPageState extends State<SettingsPage> {
       validate: (v) =>
           v < 0 || v > 32 ? 'Enter a whole number from 0 to 32.' : null);
   late final SettingsFormController<int> form;
+  String section = SettingsSections.general;
+
   bool get loading => form.loading;
   String get status => form.error ?? form.status;
+
   @override
   void initState() {
     super.initState();
-    form = SettingsFormController(
+    form = SettingsFormController<int>(
         field: field,
         read: () async {
           final transport = widget.controller.api;
@@ -50,6 +84,7 @@ class _SettingsPageState extends State<SettingsPage> {
       successMessage: widget.controller.api.isDemo
           ? 'Saved in demo memory only.'
           : 'Saved by the service. Applies to newly created sessions.');
+
   @override
   void dispose() {
     form.removeListener(syncText);
@@ -58,111 +93,232 @@ class _SettingsPageState extends State<SettingsPage> {
     super.dispose();
   }
 
+  Widget _rail(BuildContext context) => SizedBox(
+      width: 236,
+      child: ListView(shrinkWrap: true, children: [
+        for (final name in SettingsSections.all)
+          ListTile(
+              key: ValueKey('settings-section-$name'),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+              selected: section == name,
+              title: Text(name, style: const TextStyle(fontSize: 13)),
+              onTap: () => setState(() => section = name)),
+      ]));
+
+  Widget _narrowPicker(BuildContext context) => SizedBox(
+      height: 44,
+      child: ListView(
+          scrollDirection: Axis.horizontal,
+          children: [
+            for (final name in SettingsSections.all)
+              Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                      label: Text(name),
+                      selected: section == name,
+                      onSelected: (_) => setState(() => section = name))),
+          ]));
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
       listenable: form,
-      builder: (context, _) =>
-          ListView(padding: const EdgeInsets.all(32), children: [
-            Text('Keep it yours.',
-                style: Theme.of(context).textTheme.titleLarge),
+      builder: (context, _) => LayoutBuilder(builder: (context, box) {
+            final narrow = box.maxWidth < 760;
+            final content = SingleChildScrollView(
+                padding: const EdgeInsets.all(OdessyTokens.spaceLarge),
+                child: _content(context));
+            return Column(children: [
+              Padding(
+                  padding: const EdgeInsets.fromLTRB(OdessyTokens.spaceLarge,
+                      OdessyTokens.spaceLarge, OdessyTokens.spaceLarge, 0),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Keep it yours.',
+                            style: Theme.of(context).textTheme.titleLarge),
+                        const SizedBox(height: OdessyTokens.spaceSmall),
+                        Text(
+                            'Changing a setting here never downloads a model or starts inference.',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: Colors.grey)),
+                      ])),
+              if (narrow)
+                Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                        OdessyTokens.spaceLarge,
+                        OdessyTokens.spaceMedium,
+                        OdessyTokens.spaceLarge,
+                        0),
+                    child: _narrowPicker(context)),
+              Expanded(
+                  child: narrow
+                      ? content
+                      : Row(children: [
+                          Padding(
+                              padding: const EdgeInsets.only(
+                                  left: OdessyTokens.spaceCompact,
+                                  top: OdessyTokens.spaceMedium),
+                              child: _rail(context)),
+                          const VerticalDivider(width: 1),
+                          Expanded(child: content),
+                        ])),
+            ]);
+          }));
+
+  Widget _content(BuildContext context) => Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (section == SettingsSections.general) ...[
+          _card(context, 'Connection', [
+            _row('Local service',
+                widget.controller.api.isDemo ? 'Demo (not installed)' : 'Installed'),
+            _row('State', widget.controller.status),
+            if (widget.onToggleTheme != null)
+              Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                      onPressed: widget.onToggleTheme,
+                      icon: const Icon(Icons.contrast, size: 18),
+                      label: Text(widget.themeMode == ThemeMode.dark
+                          ? 'Use light theme'
+                          : 'Use dark theme'))),
+          ]),
+          _card(context, 'Collaboration', [_collaborationForm(context)]),
+        ],
+        if (section == SettingsSections.models) ...[
+          _card(context, 'Model', [
+            _row('State',
+                widget.modelConfigured ? 'Configured' : 'Not configured'),
+            const SizedBox(height: OdessyTokens.spaceCompact),
+            const Text(
+                'Choosing a model and endpoint is a reviewed configuration change. It does not start the model or contact a provider.',
+                style: TextStyle(fontSize: 12)),
+            if (widget.onOpenGetStarted != null)
+              Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton.tonal(
+                      onPressed: widget.onOpenGetStarted,
+                      child: Text(widget.modelConfigured
+                          ? 'Change model'
+                          : 'Configure a model'))),
+          ]),
+          _card(context, 'Collaboration', [_collaborationForm(context)]),
+        ],
+        if (section == SettingsSections.voice)
+          _card(context, 'Voice', [
+            _row('State', widget.voiceEnabled ? 'Existing assets recorded' : 'Not configured'),
+            const Text(
+                'Voice is optional and uses components you already have. It is not downloaded or started here.',
+                style: TextStyle(fontSize: 12)),
+            if (widget.onOpenGetStarted != null)
+              Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton(
+                      onPressed: widget.onOpenGetStarted,
+                      child: const Text('Open configuration'))),
+          ]),
+        if (section == SettingsSections.devices)
+          _card(context, 'Devices and tool access', [
+            const Text(
+                'Execution hosts, workspace grants and pairing are separate from model settings.',
+                style: TextStyle(fontSize: 12)),
+            if (widget.onOpenDevices != null)
+              Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                      onPressed: widget.onOpenDevices,
+                      icon: const Icon(Icons.devices_other, size: 18),
+                      label: const Text('Open devices'))),
+          ]),
+        if (section == SettingsSections.advanced)
+          _card(context, 'Advanced', [
+            const Text(
+                'Advanced fields are grouped and read-only until a reviewed editing contract exists. '
+                'They remain in the environment configuration and are never lost by this page.',
+                style: TextStyle(fontSize: 12)),
+            const SizedBox(height: OdessyTokens.spaceCompact),
+            const Text('Read-only here: provider keys, MCP servers, usage limits, sandbox modes, service definitions.',
+                style: TextStyle(fontSize: 11, color: Colors.grey)),
+          ]),
+        if (section == SettingsSections.installation)
+          _card(context, 'Installation', [
+            _row('Installed copy', widget.installed ? 'Yes' : 'Not managed by this app'),
+            const Text(
+                'Repair, install a newer local package, roll back, change configuration or uninstall. '
+                'Maintenance runs outside the installation.',
+                style: TextStyle(fontSize: 12)),
+            if (widget.onOpenManagement != null)
+              Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                      onPressed: widget.onOpenManagement,
+                      icon: const Icon(Icons.settings_outlined, size: 18),
+                      label: const Text('Manage installation'))),
+          ]),
+      ]);
+
+  Widget _card(BuildContext context, String title, List<Widget> children) =>
+      Card(
+          child: Padding(
+              padding: const EdgeInsets.all(OdessyTokens.spaceLarge),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: const TextStyle(
+                            fontSize: 15, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: OdessyTokens.spaceMedium),
+                    ...children,
+                  ])));
+
+  Widget _row(String label, String value) => Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        SizedBox(width: 120, child: Text(label, style: const TextStyle(fontSize: 12))),
+        Expanded(child: Text(value, style: const TextStyle(fontSize: 12))),
+      ]));
+
+  Widget _collaborationForm(BuildContext context) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Maximum consultations per turn',
+                style: TextStyle(fontSize: 13)),
             const SizedBox(height: 8),
             const Text(
-                'A small, real settings seam for the desktop foundation.',
-                style: TextStyle(color: Colors.grey)),
-            const SizedBox(height: 28),
-            Card(
-                child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Collaboration',
-                              style: TextStyle(
-                                  fontSize: 16, fontWeight: FontWeight.w600)),
-                          const SizedBox(height: 10),
-                          const Text('Maximum consultations per turn',
-                              style: TextStyle(fontSize: 13)),
-                          const SizedBox(height: 8),
-                          const Text(
-                              'Source: user collaboration configuration via /v1/settings. Other fields and participant profiles are preserved. This does not enable consultation.',
-                              style:
-                                  TextStyle(fontSize: 11, color: Colors.grey)),
-                          const SizedBox(height: 20),
-                          SizedBox(
-                              width: 240,
-                              child: TextField(
-                                  key: const Key('consultation-limit'),
-                                  controller: count,
-                                  onChanged: (value) => form.edit(value),
-                                  enabled: !loading && form.loaded,
-                                  keyboardType: TextInputType.number,
-                                  decoration: const InputDecoration(
-                                      labelText: 'Limit · 0–32'))),
-                          const SizedBox(height: 18),
-                          Wrap(spacing: 10, children: [
-                            FilledButton(
-                                onPressed: form.canSave ? save : null,
-                                child: const Text('Save settings')),
-                            OutlinedButton(
-                                onPressed: loading ? null : load,
-                                child: const Text('Reload'))
-                          ]),
-                          if (loading)
-                            const Padding(
-                                padding: EdgeInsets.only(top: 16),
-                                child: LinearProgressIndicator()),
-                          if (status.isNotEmpty)
-                            Padding(
-                                padding: const EdgeInsets.only(top: 16),
-                                child: Text(status,
-                                    style: const TextStyle(fontSize: 12))),
-                          const SizedBox(height: 16),
-                          const Text(
-                              'Apply timing: new sessions. Existing active turns retain their configuration.',
-                              style:
-                                  TextStyle(fontSize: 11, color: Colors.grey)),
-                        ]))),
+                'Source: user collaboration configuration via /v1/settings. Other fields and participant profiles are preserved. This does not enable consultation.',
+                style: TextStyle(fontSize: 11, color: Colors.grey)),
             const SizedBox(height: 20),
-            if (widget.onOpenManagement != null)
-              Card(
-                  child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Installation',
-                                style: TextStyle(fontWeight: FontWeight.w600)),
-                            const SizedBox(height: 10),
-                            const Text(
-                                'Repair, update, roll back, change configuration or uninstall this installed copy. Maintenance runs outside the installation.',
-                                style: TextStyle(color: Colors.grey, fontSize: 12)),
-                            const SizedBox(height: 12),
-                            OutlinedButton.icon(
-                                onPressed: widget.onOpenManagement,
-                                icon: const Icon(Icons.settings_outlined,
-                                    size: 18),
-                                label:
-                                    const Text('Manage installation')),
-                          ]))),
-            const SizedBox(height: 20),
-            const Card(
-                child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('More settings are coming',
-                              style: TextStyle(fontWeight: FontWeight.w600)),
-                          SizedBox(height: 10),
-                          Text(
-                              'Model/provider editing, audio devices, MCP servers, usage, jobs and host access need their dedicated management contracts. They remain configured through the existing CLI and user configuration.',
-                              style:
-                                  TextStyle(color: Colors.grey, fontSize: 12)),
-                          SizedBox(height: 10),
-                          Text(
-                              'Connection tokens stay in memory and are never written to a config file.',
-                              style:
-                                  TextStyle(color: Colors.grey, fontSize: 12))
-                        ]))),
-          ]));
+            SizedBox(
+                width: 240,
+                child: TextField(
+                    key: const Key('consultation-limit'),
+                    controller: count,
+                    onChanged: (value) => form.edit(value),
+                    enabled: !loading && form.loaded,
+                    keyboardType: TextInputType.number,
+                    decoration:
+                        const InputDecoration(labelText: 'Limit · 0–32'))),
+            const SizedBox(height: 18),
+            Wrap(spacing: 10, children: [
+              FilledButton(
+                  onPressed: form.canSave ? save : null,
+                  child: const Text('Save settings')),
+              OutlinedButton(
+                  onPressed: loading ? null : load, child: const Text('Reload'))
+            ]),
+            if (loading)
+              const Padding(
+                  padding: EdgeInsets.only(top: 16),
+                  child: LinearProgressIndicator()),
+            if (status.isNotEmpty)
+              Padding(
+                  padding: const EdgeInsets.only(top: 16),
+                  child: Text(status, style: const TextStyle(fontSize: 12))),
+            const SizedBox(height: 16),
+            const Text(
+                'Apply timing: new sessions. Existing active turns retain their configuration.',
+                style: TextStyle(fontSize: 11, color: Colors.grey)),
+          ]);
 }

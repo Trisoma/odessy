@@ -11,8 +11,9 @@ class InstalledManageController extends ChangeNotifier {
   final SetupBackend backend;
   Json spec;
   Json status = {}, result = {}, review = const {};
+  Json discovery = const {};
   String error = '', reason = '', notice = '';
-  bool busy = false, uninstalled = false;
+  bool busy = false, uninstalled = false, discovering = false;
   String? _reviewedAction, _confirmation;
   Json _reviewParameters = const {};
   int _epoch = 0;
@@ -36,6 +37,14 @@ class InstalledManageController extends ChangeNotifier {
   }
 
   String get activeVersion => (status['active'] as String?) ?? '';
+
+  String get role => (configuration['role'] as String?) ?? 'combined';
+
+  bool get modelConfigured => configuration['model_configured'] == true;
+
+  String get workspace => (configuration['workspace'] as String?) ??
+      (spec['workspace'] as String?) ??
+      '';
 
   Future<Json> _execute(String action, Json parameters) async {
     final reply = await backend.execute(SetupRequest(
@@ -157,6 +166,38 @@ class InstalledManageController extends ChangeNotifier {
           {'selection': selection, 'workspace': workspace});
 
   Future<void> reviewUninstall() => _review('package-uninstall-review', const {});
+
+  /// Explicit, bounded inventory of the configured local endpoint only.
+  Future<void> discover({String endpoint = 'http://127.0.0.1:11434'}) async {
+    if (busy || discovering || _disposed) return;
+    discovering = true;
+    error = '';
+    reason = '';
+    discovery = const {};
+    notifyListeners();
+    try {
+      final reply = await backend.execute(SetupRequest(
+          id: 'discover-${DateTime.now().microsecondsSinceEpoch}',
+          operation: 'discover',
+          selection: {'role': role},
+          endpoint: endpoint));
+      if (!reply.ok) {
+        throw StateError(reply.reason.isNotEmpty ? reply.reason : reply.error);
+      }
+      discovery = (reply.result['discovery'] as Json?) ?? const {};
+    } catch (failure) {
+      if (_disposed) return;
+      reason = failure.toString().replaceFirst('Bad state: ', '');
+      error = reason.isEmpty
+          ? 'No model inventory was read.'
+          : 'No model inventory was read: $reason';
+    } finally {
+      if (!_disposed) {
+        discovering = false;
+        notifyListeners();
+      }
+    }
+  }
 
   Future<void> reviewService(String workspace, int port) => _review(
       'service-plan', {'workspace': workspace, 'port': port});

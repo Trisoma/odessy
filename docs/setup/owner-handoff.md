@@ -44,13 +44,13 @@ license map; retain all wheel licenses and CPython/Flutter/native component noti
 ```text
 python tool/build_setup_bundle.py --wheelhouse <wheelhouse> --licenses <licenses.json> --python-runtime <portable-CPython-prefix> --desktop-bundle <Flutter-release-directory> --output <payload.zip>
 python tool/audit_setup_artifact.py <payload.zip>
-python tool/package_native_setup.py --payload <payload.zip> --platform windows --script-signing-thumbprint <certificate-thumbprint> --output <OdessySetup.exe>
+python tool/package_native_setup.py --payload <payload.zip> --platform windows --output <OdessySetup.exe>
 python tool/sign_setup_artifact.py --artifact <OdessySetup.exe> --platform windows --identity <certificate-thumbprint> --timestamp <HTTPS-timestamp-service>
 ```
 
-Windows needs a trusted code-signing certificate in the current user's certificate
-store and SignTool. Sign the internal PowerShell launcher during packaging, then
-sign/verify the final EXE. No execution-policy bypass is added. Developer unsigned
+Windows needs NSIS at build time and a trusted code-signing certificate plus SignTool
+for publication. The native wrapper has no PowerShell bootstrap to sign; sign/verify
+the final EXE. See [backend UX handoff](installer-ux-backend.md). Developer unsigned
 builds may be blocked by OS policy and must not be advertised as trusted releases.
 For macOS build on the target architecture, sign the app/runtime binaries using your
 Developer ID, package with `--platform macos`, and notarize/staple using your existing

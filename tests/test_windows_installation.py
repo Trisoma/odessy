@@ -53,7 +53,8 @@ def test_registration_targets_active_version_and_records_complete_state(tmp_path
     assert written['target']==str(root/'versions'/('a'*32)/'desktop'/'odessy_desktop.exe')
     assert '--installed' in written['arguments'] and '--manage' not in written['arguments']
     assert written['values']['InstallLocation']==str(root)
-    assert '-Manage' in written['values']['UninstallString']
+    assert '-Uninstall' in written['values']['UninstallString']
+    assert '-Manage' in written['values']['ModifyPath']
     assert record['windows_registration']['state']=='complete'
     assert resources['files'][str(root/'launch.ps1')]
 
@@ -194,3 +195,25 @@ def test_registration_records_helper_ownership_inventory(tmp_path,helper_cache,m
     resources=w.register(root,record,payload=helper)
     assert resources['helper_files']==dict(manifest['files'],**{
         'setup-context.json':w.digest(helper/'setup-context.json')})
+
+
+@pytest.mark.skipif(w.os.name!='nt',reason='Windows registration')
+def test_uninstall_intent_does_not_rewrite_installation_path(tmp_path,monkeypatch):
+    root=tmp_path/'folder--manage';root.mkdir()
+    record=installation(root)
+    shortcut=tmp_path/'shortcut.lnk'
+    monkeypatch.setattr(w,'_shortcut_path',lambda *args:shortcut)
+    monkeypatch.setattr(w,'_write_shortcut',lambda *args:shortcut.write_bytes(b'shortcut'))
+    monkeypatch.setattr(w,'_registry_owner',lambda *args:None)
+    monkeypatch.setattr(w,'_write_registry',lambda *args:None)
+    values=w.register(root,record)['registry_values']
+    assert str(root/'launch.ps1') in values['UninstallString']
+    assert '-Uninstall' in values['UninstallString']
+
+
+@pytest.mark.skipif(w.os.name!='nt',reason='Windows subprocess flags')
+def test_shortcut_helper_does_not_open_a_console(tmp_path,monkeypatch):
+    calls=[]
+    monkeypatch.setattr(w.subprocess,'run',lambda *args,**kwargs:calls.append(kwargs))
+    w._write_shortcut(tmp_path/'shortcut.lnk','target.exe','--installed')
+    assert calls[0]['creationflags'] & w.subprocess.CREATE_NO_WINDOW
