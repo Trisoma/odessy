@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "id": "boot-a:1",
+  "boot_id": "boot-a",
+  "sequence": 1,
+  "observed_at": "2026-10-25T06:00:00Z",
+  "interval_ms": 10000,
+  "scope": "host",
+  "cpu": {
+    "status": "warming_up",
+    "utilization_percent": null
+  },
+  "memory": {
+    "status": "ok",
+    "total_bytes": 3776970752,
+    "available_bytes": 1510000000
+  },
+  "network": {
+    "status": "ok",
+    "devices": []
+  },
+  "gpu": {
+    "status": "unsupported",
+    "reason": "collector_unavailable",
+    "devices": []
+  }
+}

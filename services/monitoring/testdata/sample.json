@@ -1,0 +1,75 @@
+{
+  "host_id": "host_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "generation": "g-peer-7",
+  "id": "obs-0001",
+  "boot_id": "boot-9f2c",
+  "sequence": 41,
+  "observed_at": "2026-01-01T00:00:10Z",
+  "received_at": "2026-01-01T00:00:10Z",
+  "interval_ms": 10000,
+  "scope": "host",
+  "cpu": {
+    "status": "ok",
+    "reason": "",
+    "observed_at": "2026-01-01T00:00:10Z",
+    "collection_duration_ms": 12,
+    "utilization_percent": 37.5,
+    "load_1": 1.25,
+    "load_5": 1.5,
+    "load_15": 1.75,
+    "core_count": 8
+  },
+  "memory": {
+    "status": "ok",
+    "observed_at": "2026-01-01T00:00:10Z",
+    "collection_duration_ms": 3,
+    "total_bytes": 8589934592,
+    "used_bytes": 4294967296,
+    "available_bytes": 4294967296,
+    "shared_bytes": null,
+    "utilization_percent": 50
+  },
+  "disk_io": {
+    "status": "permission_denied",
+    "reason": "device counters not readable",
+    "observed_at": null,
+    "collection_duration_ms": null,
+    "devices": []
+  },
+  "network": {
+    "status": "ok",
+    "observed_at": "2026-01-01T00:00:10Z",
+    "collection_duration_ms": 4,
+    "interfaces": [
+      {"id": "eth0", "receive_bytes_per_second": 1024, "transmit_bytes_per_second": 512, "receive_errors": 0, "transmit_errors": 0}
+    ]
+  },
+  "disks": {
+    "status": "ok",
+    "observed_at": "2026-01-01T00:00:10Z",
+    "collection_duration_ms": 6,
+    "disks": [
+      {"id": "/dev/nvme0n1p2", "total_bytes": 512110190592, "used_bytes": 128027547648, "free_bytes": 384082642944, "utilization_percent": 25}
+    ]
+  },
+  "gpu": {
+    "status": "unsupported",
+    "reason": "no supported GPU",
+    "observed_at": null,
+    "collection_duration_ms": null,
+    "gpus": []
+  },
+  "thermal": {
+    "status": "ok",
+    "observed_at": "2026-01-01T00:00:10Z",
+    "collection_duration_ms": 2,
+    "sensors": [{"id": "soc-thermal", "temperature_celsius": 48.5}]
+  },
+  "power": {
+    "status": "warming_up",
+    "reason": "rail reading unavailable",
+    "observed_at": null,
+    "collection_duration_ms": null,
+    "rails": [{"id": "vdd_in", "domain": "board_input", "watts": null}]
+  }
+}

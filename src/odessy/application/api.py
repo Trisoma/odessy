@@ -46,7 +46,7 @@ window.addEventListener('pagehide',()=>streamAbort?.abort());
 
 
 def create_app(controller_factory, *, config=None, settings=None, jobs=None, token=None,
-               config_path=None, profiles=None):
+               config_path=None, profiles=None, monitoring=None):
     """Build an app; the caller owns loopback-only binding and displaying its token."""
     try:
         from fastapi import FastAPI, Request, HTTPException
@@ -59,9 +59,26 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     static_profiles = {} if callable(profiles) else {
         name: value for name, value in (profiles or {}).items() if name not in configured_names}
 
+    if monitoring is None:
+        from odessy.monitoring.settings import MonitoringSettings
+        from odessy.monitoring.supervisor import MonitoringSupervisor
+        try:
+            monitor_settings = MonitoringSettings.from_env()
+        except ValueError:
+            monitor_settings = MonitoringSettings()
+        if monitor_settings.enabled:
+            monitoring = MonitoringSupervisor(monitor_settings)
+
     @asynccontextmanager
     async def lifespan(app):
+        if monitoring is not None and hasattr(monitoring, 'start'):
+            try:
+                await monitoring.start()
+            except Exception:
+                pass  # Optional monitoring failure must not disable agent sessions.
         yield
+        if monitoring is not None and hasattr(monitoring, 'close'):
+            await monitoring.close()
         for controller in tuple(sessions.values()):
             await controller.close()
         if jobs is not None:
@@ -71,6 +88,9 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     app.state.auth_token = token if token is not None else secrets.token_urlsafe(32)
     if not isinstance(app.state.auth_token, str) or not app.state.auth_token:
         raise ValueError('Bearer token must be a nonempty string')
+    from odessy.monitoring.api import register as register_monitoring
+    register_monitoring(app, monitoring)
+    app.state.monitoring = monitoring
     app.state.sessions, app.state.turn_tasks = sessions, tasks
     app.state.config = config
     app.state.settings = settings
@@ -112,6 +132,8 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         controller = controller_factory()
         if inspect.isawaitable(controller):
             controller = await controller
+        if monitoring is not None and hasattr(monitoring, 'attach'):
+            await monitoring.attach(controller)
         return controller
 
     @app.get('/', response_class=HTMLResponse)

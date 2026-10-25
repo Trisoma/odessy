@@ -1,0 +1,365 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "host_id": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "generation": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "source_id": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "observed_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "services": {
+      "type": "object",
+      "properties": {
+        "coordinator": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "enum": [
+                "healthy",
+                "unhealthy",
+                "unknown",
+                "unsupported",
+                "disabled"
+              ]
+            },
+            "observed_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "source": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "reason": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        "odessy_link": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "enum": [
+                "healthy",
+                "unhealthy",
+                "unknown",
+                "unsupported",
+                "disabled"
+              ]
+            },
+            "observed_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "source": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "reason": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        "mcp_server": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "enum": [
+                "healthy",
+                "unhealthy",
+                "unknown",
+                "unsupported",
+                "disabled"
+              ]
+            },
+            "observed_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "source": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "reason": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        "model_server": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "enum": [
+                "healthy",
+                "unhealthy",
+                "unknown",
+                "unsupported",
+                "disabled"
+              ]
+            },
+            "observed_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "source": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "reason": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        "stt": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "enum": [
+                "healthy",
+                "unhealthy",
+                "unknown",
+                "unsupported",
+                "disabled"
+              ]
+            },
+            "observed_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "source": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "reason": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "additionalProperties": false
+        },
+        "tts": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "enum": [
+                "healthy",
+                "unhealthy",
+                "unknown",
+                "unsupported",
+                "disabled"
+              ]
+            },
+            "observed_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "source": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "reason": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "ai": {
+      "type": "object",
+      "properties": {
+        "request_duration_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1e+18
+        },
+        "ttft_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1e+18
+        },
+        "generation_tokens_per_second": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1e+18
+        },
+        "estimated_cost": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1e+18
+        },
+        "prompt_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "completion_tokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "errors": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "timeouts": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "tool_failures": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "active_jobs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "provider": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "participant": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "selected_model": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "used_model": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "loaded_model": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "currency": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "price_status": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "host_id",
+    "generation",
+    "source_id",
+    "sequence",
+    "observed_at"
+  ],
+  "additionalProperties": false
+}

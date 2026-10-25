@@ -14,6 +14,21 @@ def builder():
     return module
 
 
+def test_optional_monitoring_component_is_hashed_and_selected_for_coordinator(tmp_path):
+    wheels=tmp_path/'wheels';wheels.mkdir();name='odessy-0.5.0-py3-none-any.whl';(wheels/name).write_bytes(b'wheel')
+    licenses=tmp_path/'licenses.json';licenses.write_text(json.dumps({name:'Apache-2.0'}))
+    monitor=tmp_path/'monitor';monitor.mkdir();(monitor/'odessy-monitor.exe').write_bytes(b'go-binary')
+    output=tmp_path/'preview.zip';builder().build(wheels,licenses,output,monitor=monitor)
+    with zipfile.ZipFile(output) as archive:
+        manifest=json.loads(archive.read('setup-context.json'))
+        assert 'monitor' in manifest['components']
+        assert 'monitor/odessy-monitor.exe' in manifest['files']
+    from odessy.setup.package_context import validate_components
+    # Execution-only nodes do not install the central Go service.
+    result=validate_components({'components':['monitor'],'files':{'monitor/odessy-monitor.exe':'a'*64}},'execution')
+    assert 'monitor' not in result['copy']
+
+
 def test_bundle_contains_offline_bootstrap_and_license_manifest(tmp_path):
     wheels=tmp_path/'wheels';wheels.mkdir();(wheels/'odessy-0.5.0-py3-none-any.whl').write_bytes(b'wheel')
     licenses=tmp_path/'licenses.json';licenses.write_text(json.dumps({'odessy-0.5.0-py3-none-any.whl':'Apache-2.0'}))

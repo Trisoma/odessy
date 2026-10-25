@@ -1,0 +1,142 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Odessy Monitoring",
+    "version": "1"
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  },
+  "paths": {
+    "/v1/monitoring": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "monitoring-v1 response"
+          },
+          "401": {
+            "description": "Bearer authentication required"
+          },
+          "503": {
+            "description": "Monitoring unavailable"
+          }
+        }
+      }
+    },
+    "/v1/monitoring/hosts": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "monitoring-v1 response"
+          },
+          "401": {
+            "description": "Bearer authentication required"
+          },
+          "503": {
+            "description": "Monitoring unavailable"
+          }
+        }
+      }
+    },
+    "/v1/monitoring/hosts/{id}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "monitoring-v1 response"
+          },
+          "401": {
+            "description": "Bearer authentication required"
+          },
+          "503": {
+            "description": "Monitoring unavailable"
+          }
+        }
+      },
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/v1/monitoring/hosts/{id}/metrics": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "monitoring-v1 response"
+          },
+          "401": {
+            "description": "Bearer authentication required"
+          },
+          "503": {
+            "description": "Monitoring unavailable"
+          }
+        }
+      },
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/v1/monitoring/hosts/{id}/history": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "monitoring-v1 response"
+          },
+          "401": {
+            "description": "Bearer authentication required"
+          },
+          "503": {
+            "description": "Monitoring unavailable"
+          }
+        }
+      },
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/v1/monitoring/events": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "monitoring-v1 response"
+          },
+          "401": {
+            "description": "Bearer authentication required"
+          },
+          "503": {
+            "description": "Monitoring unavailable"
+          }
+        }
+      }
+    }
+  }
+}

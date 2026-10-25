@@ -19,6 +19,8 @@ pub struct Peer {
     pub fingerprint_sha256: String,
     pub address: Option<String>,
     pub capability_mcp: bool,
+    pub capability_telemetry: bool,
+    pub revoked: bool,
     pub workspace: Option<String>,
     pub certificate_pem: String,
     pub ca_pem: String,
@@ -79,12 +81,25 @@ impl Registry {
             )
             .map_err(|error| format!("cannot create schema: {error}"))?;
 
+        // Additive migration: previously enrolled peers get NO telemetry grant.
+        let has_telemetry = self.connection.prepare("PRAGMA table_info(peers)")
+            .map_err(|e| e.to_string())?.query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?.iter().any(|name| name == "capability_telemetry");
+        if !has_telemetry {
+            self.connection.execute("ALTER TABLE peers ADD COLUMN capability_telemetry INTEGER NOT NULL DEFAULT 0", [])
+                .map_err(|e| format!("cannot migrate telemetry grant: {e}"))?;
+        }
         self.connection
             .execute(
                 "INSERT OR IGNORE INTO meta(key, value) VALUES('grant_revision', '0')",
                 [],
             )
             .map_err(|error| format!("cannot create schema: {error}"))?;
+        let has_revoked = self.connection.prepare("PRAGMA table_info(peers)").map_err(|e| e.to_string())?
+            .query_map([], |row| row.get::<_, String>(1)).map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?.iter().any(|name| name == "revoked");
+        if !has_revoked {self.connection.execute("ALTER TABLE peers ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0", []).map_err(|e|e.to_string())?;}
         Ok(())
     }
 
@@ -156,7 +171,7 @@ impl Registry {
                      certificate_pem=excluded.certificate_pem,
                      ca_pem=excluded.ca_pem,
                      address=excluded.address,
-                     capability_mcp=0,
+                     capability_mcp=0, capability_telemetry=0, revoked=0,
                      workspace=NULL",
                 params![
                     alias,
@@ -182,7 +197,7 @@ impl Registry {
         self.connection
             .query_row(
                 "SELECT alias, installation_id, fingerprint_sha256, address, capability_mcp, workspace,
-                        certificate_pem, ca_pem
+                        certificate_pem, ca_pem, capability_telemetry, revoked
                  FROM peers WHERE alias = ?1",
                 params![alias],
                 row_to_peer,
@@ -197,7 +212,7 @@ impl Registry {
         self.connection
             .query_row(
                 "SELECT alias, installation_id, fingerprint_sha256, address, capability_mcp, workspace,
-                        certificate_pem, ca_pem
+                        certificate_pem, ca_pem, capability_telemetry, revoked
                  FROM peers WHERE fingerprint_sha256 = ?1",
                 params![fingerprint],
                 row_to_peer,
@@ -229,7 +244,7 @@ impl Registry {
             .connection
             .prepare(
                 "SELECT alias, installation_id, fingerprint_sha256, address, capability_mcp, workspace,
-                        certificate_pem, ca_pem
+                        certificate_pem, ca_pem, capability_telemetry, revoked
                  FROM peers ORDER BY alias",
             )
             .map_err(|error| format!("cannot list peers: {error}"))?;
@@ -242,10 +257,10 @@ impl Registry {
 
     /// Grant a capability. Enrollment alone never implies execution access.
     pub fn grant(&self, alias: &str, capability: &str, workspace: &str) -> Result<Peer, String> {
-        if capability != CAPABILITY_MCP {
+        if capability != CAPABILITY_MCP && capability != "telemetry.read" {
             return Err(format!("unsupported capability: {capability}"));
         }
-        if workspace.trim().is_empty() {
+        if capability == CAPABILITY_MCP && workspace.trim().is_empty() {
             return Err("workspace must be a non-empty path".into());
         }
         let transaction = self
@@ -254,7 +269,11 @@ impl Registry {
             .map_err(|error| format!("cannot start trust transaction: {error}"))?;
         let changed = transaction
             .execute(
-                "UPDATE peers SET capability_mcp=1, workspace=?2 WHERE alias=?1",
+                if capability == CAPABILITY_MCP {
+                    "UPDATE peers SET capability_mcp=1, revoked=0, workspace=?2 WHERE alias=?1"
+                } else {
+                    "UPDATE peers SET capability_telemetry=1, revoked=0 WHERE alias=?1 AND ?2 IS NOT NULL"
+                },
                 params![alias, workspace],
             )
             .map_err(|error| format!("cannot grant capability: {error}"))?;
@@ -278,7 +297,7 @@ impl Registry {
             .map_err(|error| format!("cannot start trust transaction: {error}"))?;
         let changed = transaction
             .execute(
-                "UPDATE peers SET capability_mcp=0, workspace=NULL WHERE alias=?1",
+                "UPDATE peers SET capability_mcp=0, capability_telemetry=0, revoked=1, workspace=NULL WHERE alias=?1",
                 params![alias],
             )
             .map_err(|error| format!("cannot revoke peer: {error}"))?;
@@ -302,6 +321,8 @@ fn row_to_peer(row: &rusqlite::Row<'_>) -> rusqlite::Result<Peer> {
         workspace: row.get(5)?,
         certificate_pem: row.get(6)?,
         ca_pem: row.get(7)?,
+        capability_telemetry: row.get::<_, i64>(8)? != 0,
+        revoked: row.get::<_, i64>(9)? != 0,
     })
 }
 
@@ -455,6 +476,26 @@ mod tests {
         assert_eq!(peer.fingerprint_sha256, peer_identity.fingerprint());
         assert_eq!(peer.address.as_deref(), Some("10.0.0.5:7443"));
         assert!(!peer.has_execution_grant(), "enrollment grants nothing");
+    }
+
+    #[test]
+    fn telemetry_grant_is_independent_and_reenrollment_drops_it() {
+        let fixture = TempRegistry::new("telemetry");
+        let identity = Identity::generate("peertelemetry").unwrap();
+        fixture.registry.add_peer("peer", &bundle_json(&identity), &identity.fingerprint(), None).unwrap();
+        assert!(!fixture.registry.peer("peer").unwrap().unwrap().capability_telemetry);
+        let peer = fixture.registry.grant("peer", "telemetry.read", "").expect("telemetry without workspace");
+        assert!(peer.capability_telemetry);
+        assert!(!peer.has_execution_grant());
+        assert!(peer.workspace.is_none());
+        fixture.registry.grant("peer", CAPABILITY_MCP, "workspace").unwrap();
+        assert!(fixture.registry.peer("peer").unwrap().unwrap().capability_telemetry);
+        fixture.registry.revoke("peer").unwrap();
+        let peer = fixture.registry.peer("peer").unwrap().unwrap();
+        assert!(!peer.capability_telemetry && !peer.has_execution_grant());
+        fixture.registry.grant("peer", "telemetry.read", "").unwrap();
+        fixture.registry.add_peer("peer", &bundle_json(&identity), &identity.fingerprint(), None).unwrap();
+        assert!(!fixture.registry.peer("peer").unwrap().unwrap().capability_telemetry);
     }
 
     #[test]

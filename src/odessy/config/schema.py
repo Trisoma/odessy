@@ -156,6 +156,12 @@ def _wake_model_default(environ: Mapping[str, str]) -> str:
 
 
 SETTINGS: tuple[Setting, ...] = (
+    _s("ODESSY_MONITORING", "flag", "enable optional monitoring", choices=("on", "off", "true", "false", "1", "0")),
+    _s("ODESSY_MONITOR_LOCAL", "flag", "explicit local telemetry consent", choices=("on", "off", "true", "false", "1", "0")),
+    _s("ODESSY_MONITOR_HOSTS", "text", "comma-separated enrolled monitoring host IDs", allow_empty=True),
+    _s("ODESSY_MONITOR_PRESET", "enum", "monitoring cadence", choices=("default", "low-power")),
+    _s("ODESSY_MONITOR_BIN", "file", "packaged Go monitoring executable"),
+    _s("ODESSY_MONITOR_STATE_DIR", "path", "monitoring history directory"),
     # -- deployment ---------------------------------------------------------
     _s("ODESSY_DEPLOYMENT", "enum", "single or split", choices=DEPLOYMENTS,
        allow_empty=True),

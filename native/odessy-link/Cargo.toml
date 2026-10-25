@@ -11,6 +11,8 @@ name = "odessy-link"
 path = "src/main.rs"
 
 [dependencies]
+# OS metrics only; version supports the existing Rust 1.85 floor.
+sysinfo = { version = "=0.33.1", default-features = false, features = ["system", "disk", "network", "component"] }
 # Certificate generation. ECDSA P-256 per the pairing plan; ring is the installed
 # crypto provider, so no C toolchain beyond rusqlite's bundled build is needed.
 rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }

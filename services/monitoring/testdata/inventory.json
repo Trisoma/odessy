@@ -1,0 +1,38 @@
+{
+  "revision": "rev-2026-01-01",
+  "hosts": [
+    {
+      "host_id": "host_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "installation_id": "install-a",
+      "fingerprint_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "alias": "workstation",
+      "platform": {"os": "linux", "arch": "amd64"},
+      "trust_state": "local",
+      "monitoring_access": "allowed",
+      "generation": "g-local-1",
+      "certificate_expires_at": null
+    },
+    {
+      "host_id": "host_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "installation_id": "install-b",
+      "fingerprint_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "alias": "jetson",
+      "platform": {"os": "linux", "arch": "arm64"},
+      "trust_state": "paired",
+      "monitoring_access": "denied",
+      "generation": "g-peer-7",
+      "certificate_expires_at": "2027-01-01T00:00:00Z"
+    },
+    {
+      "host_id": "host_cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "installation_id": "install-c",
+      "fingerprint_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "alias": "retired-laptop",
+      "platform": null,
+      "trust_state": "revoked",
+      "monitoring_access": "disabled",
+      "generation": "g-peer-3#revoked-1",
+      "certificate_expires_at": null
+    }
+  ]
+}

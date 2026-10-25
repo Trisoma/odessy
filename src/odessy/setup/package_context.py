@@ -5,7 +5,7 @@ from pathlib import Path
 from .maintenance import guard,read_json,digest
 
 #: Payload top-level directories produced by tool/build_setup_bundle.py.
-COMPONENT_DIRECTORIES=('runtime','desktop','node','tools','link')
+COMPONENT_DIRECTORIES=('runtime','desktop','node','tools','link','monitor')
 KNOWN_DIRECTORIES=frozenset((*COMPONENT_DIRECTORIES,'bootstrap','wheelhouse'))
 KNOWN_FILES=frozenset(('install.py','install.cmd','install.sh','runtime-manifest.json',
                        'LICENSE','THIRD-PARTY-NOTICES.md'))
@@ -25,6 +25,7 @@ def optional_components(role):
     """Components that extend a role; absence is reported, never invented."""
     optional=set()
     if role!='coordinator':optional.update(('node','tools'))
+    if role!='execution':optional.add('monitor')
     if role!='combined':optional.add('link')
     return optional
 
@@ -77,7 +78,7 @@ def validate_components(manifest,role,*,runtime=False):
     empty=[name for name in sorted(set(listed)) if _prefix(name) not in present]
     if empty:raise ValueError('setup payload declares components with no files: '+', '.join(empty))
     selected={'link'}
-    if role!='execution':selected.add('desktop')
+    if role!='execution':selected.update(('desktop','monitor'))
     if role!='coordinator':selected.update(('node','tools'))
     absent=[name for name in sorted(optional_components(role)) if name not in listed]
     return {'copy':selected,'absent':absent}

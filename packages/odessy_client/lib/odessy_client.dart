@@ -7,6 +7,7 @@ import 'src/models.dart';
 export 'src/models.dart';
 export 'src/credentials.dart';
 export 'src/setup.dart';
+export 'src/monitoring/client.dart';
 
 /// Bounded SSE parsing. UTF-8 decoding belongs to the transport, before this parser.
 Stream<SessionEvent> decodeEvents(Stream<String> chunks) async* {

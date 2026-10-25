@@ -1,0 +1,6 @@
+# Build outputs and local state stay out of source control.
+/bin/
+/odessy-monitor
+/odessy-monitor.exe
+*.test
+*.out

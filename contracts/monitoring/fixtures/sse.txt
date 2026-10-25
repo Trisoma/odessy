@@ -1,0 +1,4 @@
+id: example:1
+event: monitor.health
+data: {"schema_version":1,"status":"healthy"}
+

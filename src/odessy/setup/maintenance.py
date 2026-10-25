@@ -218,7 +218,7 @@ class ManagedInstallation:
             data['absent_components']=review['absent']
             # What this payload actually ships, independent of what was requested.
             shipped={name.split('/')[0] for name in data['payload_manifest']['files']}
-            data['components']=sorted(shipped & {'runtime','desktop','node','tools','link'})
+            data['components']=sorted(shipped & {'runtime','desktop','node','tools','link','monitor'})
             data['payload_root']=str(self.payload)
         data['plan_id']=hashlib.sha256(json.dumps(data,sort_keys=True,separators=(',',':')).encode()).hexdigest()
         return data

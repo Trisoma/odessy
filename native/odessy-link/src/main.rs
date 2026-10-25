@@ -13,6 +13,7 @@ mod relay;
 mod store;
 mod tls;
 mod trust;
+mod telemetry;
 
 use identity::{display_fingerprint, random_installation_id, EnrollmentBundle, Identity};
 use std::path::{Path, PathBuf};
@@ -26,6 +27,9 @@ odessy-link — authenticated host pairing for Odessy
   odessy-link pair add --alias <name> --certificate <bundle> --expect-sha256 <fingerprint> [--address <host:port>]
   odessy-link peers list [--json]
   odessy-link peers grant <peer> --capability mcp --workspace <path>
+  odessy-link peers grant <peer> --capability telemetry.read
+  odessy-link telemetry worker
+  odessy-link serve --listen <address> --telemetry-only
   odessy-link peers revoke <peer>
   odessy-link serve --listen <address> --workspace <path> --node-server <entry> [--advertise]
   odessy-link connect --peer <alias> [--address <host:port>] [--discover]
@@ -114,6 +118,7 @@ fn run(arguments: Vec<String>) -> Result<(), Failure> {
             None => Err(Failure::Usage("peers requires list, grant or revoke".into())),
         },
         "serve" => commands::serve(&arguments[1..]),
+        "telemetry" => telemetry::run(&arguments[1..]),
         "connect" => commands::connect(&arguments[1..]),
         "discover" => discover_peers(&arguments[1..]),
         "--help" | "-h" | "help" => {
@@ -184,6 +189,7 @@ fn peers_list(arguments: &[String]) -> Result<(), Failure> {
                     "fingerprint_sha256": peer.fingerprint_sha256,
                     "address": peer.address,
                     "capability_mcp": peer.capability_mcp,
+                    "capability_telemetry": peer.capability_telemetry,
                     "workspace": peer.workspace,
                     "grant_revision": revision,
                 })
@@ -256,7 +262,7 @@ fn peers_grant(arguments: &[String]) -> Result<(), Failure> {    let Some(alias)
     };
     let options = parse(&arguments[1..], &["--capability", "--workspace"])?;
     let capability = required(&options, "--capability")?;
-    let workspace = required(&options, "--workspace")?;
+    let workspace = if capability == "telemetry.read" { "" } else { required(&options, "--workspace")? };
     let registry = open_registry()?;
     let peer = registry.grant(alias, capability, workspace)?;
     println!("granted {capability} to {} for {workspace}", peer.alias);

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "op": {
+      "enum": [
+        "inventory",
+        "heartbeat",
+        "sample",
+        "cancel"
+      ]
+    },
+    "host_id": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "generation": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "groups": {
+      "type": "array",
+      "maxItems": 9,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "cpu",
+          "memory",
+          "disk_io",
+          "network",
+          "disks",
+          "gpu",
+          "thermal",
+          "power",
+          "services"
+        ]
+      }
+    },
+    "target_id": {
+      "type": "string",
+      "maxLength": 256
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "op"
+  ],
+  "additionalProperties": false
+}

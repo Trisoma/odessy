@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "host_id": "host_example",
+  "generation": "1:example",
+  "source_id": "runtime-a",
+  "sequence": 1,
+  "observed_at": "2026-10-25T06:00:00Z",
+  "services": {
+    "coordinator": {
+      "status": "healthy"
+    }
+  },
+  "ai": {
+    "ttft_ms": null
+  }
+}

@@ -73,6 +73,7 @@ class SessionController:
         self._task = None
         self._stop = asyncio.Event()
         self._closed = False
+        self.monitoring_sink = None
         self._model = self._validate_model(self.selected_profile)
 
     def _validate_model(self, name):
@@ -129,6 +130,18 @@ class SessionController:
         return value
 
     def emit(self, event_type, data=None):
+        if self.monitoring_sink is not None and event_type == 'usage':
+            from odessy.monitoring.runtime import sanitize
+            values = asdict(data) if is_dataclass(data) else data if isinstance(data, dict) else {}
+            safe = sanitize(values)
+            rate = values.get('generation_tokens_per_sec')
+            safe.update(sanitize({'generation_tokens_per_second': rate}))
+            # Selected is not necessarily used or resident; never label it loaded.
+            safe['selected_model'] = self.selected_profile
+            try:
+                self.monitoring_sink.publish(safe)
+            except Exception:
+                pass
         self._sequence += 1
         event = {'id': self._sequence, 'type': event_type, 'time': time.time(), 'data': self._public(data or {})}
         self._events.append(event)

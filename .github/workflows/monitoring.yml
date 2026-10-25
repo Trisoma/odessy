@@ -1,0 +1,31 @@
+name: Monitoring contracts
+on:
+  pull_request:
+    paths:
+      - 'services/monitoring/**'
+      - 'native/odessy-link/**'
+      - 'src/odessy/monitoring/**'
+      - 'contracts/monitoring/**'
+      - 'tests/test_monitoring*'
+      - '.github/workflows/monitoring.yml'
+  workflow_dispatch:
+jobs:
+  contracts:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e ".[test,ui]"
+      - run: go test ./... -count=1
+        working-directory: services/monitoring
+      - run: go vet ./...
+        working-directory: services/monitoring
+      - run: cargo test --manifest-path native/odessy-link/Cargo.toml --locked
+      - run: python -m pytest tests/test_monitoring_contract.py tests/test_monitoring_runtime.py tests/test_monitoring_api.py tests/test_monitoring_supervisor.py -q

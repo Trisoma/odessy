@@ -35,20 +35,22 @@ fn relay_error_text(context: &str, error: relay::RelayError) -> String {
 
 pub fn serve(arguments: &[String]) -> Result<(), Failure> {
     let options = crate::parse_with_switches(
-        arguments, &["--listen", "--workspace", "--node-server"], &["--advertise"],
+        arguments, &["--listen", "--workspace", "--node-server"], &["--advertise", "--telemetry", "--telemetry-only"],
     )?;
     // `--advertise` is a bare switch: opt-in address discovery, never trust.
     let advertise = options.contains_key("--advertise");
     let listen = crate::required(&options, "--listen")?.to_string();
-    let workspace = PathBuf::from(crate::required(&options, "--workspace")?);
-    let node_server = PathBuf::from(crate::required(&options, "--node-server")?);
-    if !workspace.is_dir() {
+    let telemetry_only = options.contains_key("--telemetry-only");
+    let telemetry = telemetry_only || options.contains_key("--telemetry");
+    let workspace = PathBuf::from(if telemetry_only { "" } else { crate::required(&options, "--workspace")? });
+    let node_server = PathBuf::from(if telemetry_only { "" } else { crate::required(&options, "--node-server")? });
+    if !telemetry_only && !workspace.is_dir() {
         return Err(Failure::Runtime(format!(
             "workspace is not a directory: {}",
             workspace.display()
         )));
     }
-    if !node_server.is_file() {
+    if !telemetry_only && !node_server.is_file() {
         return Err(Failure::Runtime(format!(
             "node server entry does not exist: {}",
             node_server.display()
@@ -62,7 +64,8 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
             "no enrolled peers: enroll the other host before serving".into(),
         ));
     }
-    let config = tls::server_config(&identity, authorities)?;
+    let mut config = tls::server_config(&identity, authorities)?;
+    if telemetry { config.alpn_protocols = vec![crate::telemetry::ALPN.to_vec()]; }
     drop(registry);
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -133,6 +136,9 @@ async fn handle_connection(
         .map_err(|_| "handshake timed out".to_string())?
         .map_err(|error| format!("handshake failed: {error}"))?;
     // Exact leaf identity, checked before any Node process exists.
+    if stream.get_ref().1.alpn_protocol() == Some(crate::telemetry::ALPN) {
+        return crate::telemetry::transport::serve_session(stream, crate::telemetry::shared_collectors()).await;
+    }
     let fingerprint = tls::presented_fingerprint(stream.get_ref().1.peer_certificates())?;
     let admitted = admit_peer(&state_dir()?.join("trust.sqlite3"), &fingerprint, &workspace)
         .and_then(|enrolled| {
