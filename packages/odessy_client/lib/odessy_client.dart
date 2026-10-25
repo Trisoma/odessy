@@ -8,6 +8,7 @@ export 'src/models.dart';
 export 'src/credentials.dart';
 export 'src/setup.dart';
 export 'src/monitoring/client.dart';
+import 'src/monitoring/client.dart';
 
 /// Bounded SSE parsing. UTF-8 decoding belongs to the transport, before this parser.
 Stream<SessionEvent> decodeEvents(Stream<String> chunks) async* {
@@ -83,6 +84,9 @@ class LocalApi implements OdessyApi, ProfileMetadataApi {
     }
     _http.connectionTimeout = const Duration(seconds: 5);
   }
+
+  /// Shares authenticated origin without exposing the credential.
+  MonitoringClient createMonitoringClient() => MonitoringClient(base, _token);
   final Uri base;
   final String _token;
   final HttpClient _http = HttpClient()..autoUncompress = true;

@@ -1,3 +1,5 @@
+import '../features/monitoring/controllers/monitor_controller.dart';
+import '../features/monitoring/presentation/monitor_page.dart';
 import 'dart:ui' show AppExitResponse;
 import 'package:flutter/material.dart';
 import 'package:odessy_client/odessy_client.dart';
@@ -34,6 +36,7 @@ class OdessyApp extends StatefulWidget {
 
 class _OdessyAppState extends State<OdessyApp> {
   late final DesktopSession controller;
+  final monitoring = MonitorController();
   late final SetupController setup;
   late final MaintenanceController maintenance, pairing, installerEngine;
   InstalledManageController? installManagement;
@@ -70,6 +73,7 @@ class _OdessyAppState extends State<OdessyApp> {
   @override
   void dispose() {
     lifecycle.dispose();
+    monitoring.dispose();
     controller.dispose();
     setup.dispose();
     maintenance.dispose();
@@ -164,6 +168,7 @@ class _OdessyAppState extends State<OdessyApp> {
                               ]),
                         Expanded(
                             child: switch (page) {
+                          'Monitor' => MonitorPage(controller: monitoring),
                           'Setup' => SetupWizardPage(controller: setup),
                           'Manage installation' => ManagePage(
                               controller: installManagement!,
@@ -235,7 +240,7 @@ class _OdessyAppState extends State<OdessyApp> {
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
-              Icon(Icons.bubble_chart_outlined,
+              Icon(Icons.navigation_outlined,
                   color: Theme.of(context).colorScheme.primary, size: 30),
               const SizedBox(width: 10),
               const Text('Odessy',
@@ -254,6 +259,11 @@ class _OdessyAppState extends State<OdessyApp> {
                 Icons.chat_bubble_outline,
                 page == 'Conversation',
                 () => setState(() => page = 'Conversation')),
+            _nav(context, 'Monitor', Icons.monitor_heart_outlined,
+                page == 'Monitor', () {
+              setState(() => page = 'Monitor');
+              monitoring.bind(controller.api);
+            }),
             if (widget.installed != null) ...[
               const SizedBox(height: 6),
               _nav(
@@ -383,6 +393,9 @@ class _OdessyAppState extends State<OdessyApp> {
       result?.close();
       return;
     }
-    if (result != null) await controller.replace(result);
+    if (result != null) {
+      await controller.replace(result);
+      monitoring.bind(controller.api);
+    }
   }
 }

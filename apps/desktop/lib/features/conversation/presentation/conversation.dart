@@ -116,7 +116,7 @@ class _ConversationPageState extends State<ConversationPage> {
                             child: Icon(
                                 message.role == 'user'
                                     ? Icons.person_outline
-                                    : Icons.bubble_chart_outlined,
+                                    : Icons.navigation_outlined,
                                 size: 17)),
                         const SizedBox(width: 14),
                         Expanded(
@@ -240,7 +240,7 @@ class _ConversationPageState extends State<ConversationPage> {
   Widget _welcome(BuildContext context) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 45),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Icon(Icons.bubble_chart_outlined,
+        Icon(Icons.navigation_outlined,
             size: 38, color: Theme.of(context).colorScheme.primary),
         const SizedBox(height: 24),
         Text('A little less friction.\nA little more possibility.',
