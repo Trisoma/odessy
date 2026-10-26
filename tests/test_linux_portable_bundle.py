@@ -28,6 +28,7 @@ def test_linux_archive_has_relocatable_launchers_modes_and_hashes(tmp_path):
     with tarfile.open(out) as tar:
         members={m.name:m for m in tar.getmembers()}
         prefix='odessy-0.5.0.dev0-linux-x86_64/'
+        assert prefix+'src/odessy/execution/contract.json' in members
         assert members[prefix+'Odessy'].mode & 0o111
         assert members[prefix+'runtime/bin/python3'].mode & 0o111
         manifest=json.load(tar.extractfile(prefix+'portable-manifest.json'))
@@ -58,3 +59,17 @@ def test_public_ca_bundle_allowed_but_private_pem_refused(tmp_path):
     pem.write_text('-----BEGIN PRIVATE KEY-----\nsecret\n')
     with pytest.raises(ValueError,match='private'):
         build(output=tmp_path/'private.tar.gz',architecture='x86_64',**paths)
+
+def test_node_payload_is_runtime_only_and_excludes_npm_credentials(tmp_path):
+    paths=inputs(tmp_path)
+    vendor=paths['node']/'lib/node_modules/npm';vendor.mkdir(parents=True)
+    (vendor/'.npmrc').write_text('//registry.example/:_authToken=never-bundle')
+    (paths['node']/'bin/npm').write_text('development tool')
+    (paths['node']/'bin/npx').write_text('development tool')
+    (paths['node']/'LICENSE').write_text('Node license text')
+    out=tmp_path/'node-only.tar.gz';build(output=out,architecture='x86_64',**paths)
+    with tarfile.open(out) as tar:
+        names=tar.getnames();prefix='odessy-0.5.0.dev0-linux-x86_64/'
+        assert prefix+'node/bin/node' in names
+        assert prefix+'node/LICENSE' in names
+        assert not any(n.endswith(('.npmrc','/npm','/npx')) or '/node/lib/' in n for n in names)

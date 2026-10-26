@@ -25,6 +25,7 @@ cloud = [
   "anthropic>=1.15",
 ]
 ui = [
+  "httpx>=0.27,<1",
   "fastapi>=0.115,<1",
   "uvicorn>=0.30,<1",
 ]

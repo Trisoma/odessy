@@ -46,7 +46,7 @@ python="$build_dir/runtime/bin/python3"
 "$python" -m pip wheel --no-index --find-links "$wheelhouse" --no-build-isolation --no-deps --wheel-dir "$build_dir/wheels" "$repo"
 "$python" -m pip install --no-index --find-links "$wheelhouse" --find-links "$build_dir/wheels" 'odessy[ui,cloud]'
 "$python" -m pip check
-cp -a "$repo/apps/desktop/." "$build_dir/app/"
+(cd "$repo/apps/desktop"; tar --exclude=build --exclude=.dart_tool --exclude=.git --exclude=ephemeral -cf - .) | (cd "$build_dir/app"; tar -xf -)
 # Avoid copying any generated Windows state into a Linux compile.
 "$python" -c 'import pathlib,shutil,sys; p=pathlib.Path(sys.argv[1]); [shutil.rmtree(p/n,ignore_errors=True) for n in (".dart_tool","build","linux/flutter/ephemeral","windows/flutter/ephemeral")]' "$build_dir/app"
 # Preserve relative path dependency ../../packages/odessy_client.

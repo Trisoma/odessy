@@ -1,6 +1,6 @@
 # Odessy Linux portable preview — v0.5.0-unstable
 
-Status: packaging/launcher implementation; no accepted Linux release artifact yet.
+Status: Linux x64 development archive assembled and package checks passed; public release remains blocked.
 The current development machine has Ubuntu 24.04 x86_64 under WSL2, but no native
 Linux Flutter SDK, GTK development files, Rust/Go or Linux Node runtime available.
 SDK download attempts failed. This does not establish Linux or ARM64 acceptance.
@@ -138,3 +138,67 @@ from x86_64 checks. Signing and physical audio remain separate release gates.
 - **Artifact path: none.** No tester-ready Linux archive was fabricated from stub
   test executables. Full GUI/existing-model/approved-tool/cleanup acceptance is
   blocked until native build inputs are supplied; ARM64 is unqualified.
+
+## Local build continuation — October 26 (30-minute time box)
+
+Prepared native CPython 3.12.12 and Node 22.21.0; installed Linux wheels offline
+and verified API/monitoring imports and pip dependency consistency. Compiled the
+Node host and odessy-link with native Rust 1.92.0 (upstream checksum verified).
+Built the pure-Go monitor for linux/amd64 from the existing module. GTK development
+files were found installed; no system package change was required.
+
+Build cache: `/home/fanfan/.cache/odessy-linux-build` in Ubuntu WSL2. Downloads,
+offline wheels and preparation scripts are under outer `.qualification/linux-inputs/`.
+The task-owned Flutter build was stopped at the time limit; no desktop executable
+or final portable archive is claimed. Resume its cached native build rather than
+repeating completed downloads. Linux Flutter bootstrap needed a content-hash Dart
+SDK download; source line endings/SDK ownership were corrected only in build cache.
+
+The UI extra now explicitly includes httpx, required by the monitoring client.
+The portable builder skips generated desktop build/cache trees when staging source.
+
+Production `npm audit` reported eight findings: three moderate, four high and one
+critical. Raw report: outer `.qualification/linux-inputs/npm-production-audit.json`.
+Applicability and tested dependency remediation are required before public release;
+no broad automatic update was attempted. Complete notices, packaged GUI acceptance,
+model/tool behavior and ARM64 qualification remain open. No models were downloaded
+and no inference was performed. No commit/merge/push.
+
+## Native Flutter continuation
+
+Flutter 3.47.8 / Dart 3.13.7 compiled the desktop natively on Ubuntu 24.04 x64.
+GTK development dependencies were installed in WSL. The generated CMake prefix
+initially targeted /usr/local; explicit reconfiguration produced the correct bundle
+at /home/fanfan/.cache/odessy-linux-build/source/apps/desktop/build/linux/x64/release/bundle.
+The initial build also copied application files under /usr/local; review/cleanup
+of those task-created copies is pending rather than deleting unknown system files.
+
+Native installed Python → actual Node MCP → filesystem.read passed with a fake
+model and a temporary fixture (no inference). That check caught a missing shared
+execution contract; the assembler now includes src/odessy/execution/contract.json,
+with a failing-then-passing regression (three packaging tests passed).
+
+Full desktop package cache/hashes were restored after reduced copies caused hash
+warnings; the final successful dependency resolution emitted no such warning.
+Archive assembly remains blocked by the guard rejecting the official Node
+runtime's lib/node_modules/npm/.npmrc. Safely omit unnecessary npm development
+components or explicitly validate its vendor configuration; never weaken general
+credential-file protection. No distributable archive or extracted-package/GUI
+acceptance is claimed. Known production audit and license-review blockers remain.
+
+## Current artifact checkpoint
+
+The Node component now copies only bin/node and its license, excluding npm/npx and
+all package-manager configuration. Credential guards for other components remain
+unchanged. Four packaging regressions passed, including a token-bearing npm config
+fixture that is never bundled. Extracted runtime manifest verification covered
+17,018 files; diagnostics/imports/ldd passed. A real Node filesystem.read using
+FakeModel passed without npm. No inference was performed.
+
+A seven-second extracted desktop smoke remained alive; WSL graphics emitted EGL
+warnings. This is not rendered-screen or real-model acceptance. The short bundled
+quick start avoids development checkout paths; full development records stay here.
+The artifact is for Ubuntu 24.04 x86_64 development evaluation, not Jetson ARM64 or
+public release. Audit/license and clean-machine acceptance gates remain open.
+
+Final development artifact: outer `.qualification/linux-release/odessy-0.5.0.dev0-linux-x86_64.tar.gz`, with adjacent `.sha256`. Final archive checksum, 17,018-file manifest, diagnostics, isolated Python imports and library checks passed; Windows-side copied-file hash also matched.

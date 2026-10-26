@@ -70,6 +70,21 @@ def _copy_tree(source,target):
             else:raise ValueError('special component file refused: '+str(relative))
 
 
+
+def _copy_node_runtime(source, target):
+    """Ship the runtime, not npm/npx/corepack or user/package-manager config."""
+    source = Path(source).resolve()
+    binary = (source/'bin/node').resolve()
+    if not binary.is_file() or not binary.is_relative_to(source):
+        raise ValueError('Node runtime binary is missing or outside its distribution')
+    (target/'bin').mkdir(parents=True)
+    shutil.copy2(binary, target/'bin/node')
+    # The official Node LICENSE includes notices for bundled native components.
+    license_path = source/'LICENSE'
+    if license_path.is_file() and not license_path.is_symlink():
+        shutil.copy2(license_path, target/'LICENSE')
+
+
 def _elf(path,architecture):
     with path.open('rb') as stream:header=stream.read(20)
     machine={'x86_64':62,'arm64':183}[architecture]
@@ -99,7 +114,8 @@ def build(*,runtime,desktop,node,tools,link,monitor,notices,output,architecture,
     with tempfile.TemporaryDirectory(prefix='odessy-linux-build-',dir=output.parent) as temp:
         stage=Path(temp)/f'odessy-{version}-linux-{architecture}';stage.mkdir()
         for name,source in [('runtime',runtime),('desktop',desktop),('node',node),('tools',tools),('link',link),('monitor',monitor),('notices',notices)]:
-            _copy_tree(source,stage/name)
+            if name == "node":_copy_node_runtime(source,stage/name)
+            else:_copy_tree(source,stage/name)
         for name in ('runtime/bin/python3','desktop/odessy_desktop','node/bin/node','link/odessy-link','monitor/odessy-monitor'):
             executable=stage/name
             if not executable.is_file():raise ValueError('required binary missing: '+name)
@@ -108,11 +124,14 @@ def build(*,runtime,desktop,node,tools,link,monitor,notices,output,architecture,
         for directory in ('desktop/lib','desktop/data'):
             if not (stage/directory).is_dir():raise ValueError('Flutter release bundle is incomplete')
         if not (stage/'tools/dist/src/server.js').is_file():raise ValueError('compiled Node server missing')
+        contract=stage/'src/odessy/execution/contract.json'
+        contract.parent.mkdir(parents=True)
+        shutil.copy2(ROOT/'src/odessy/execution/contract.json',contract)
         (stage/'Odessy').write_text(LAUNCHER,encoding='utf-8',newline='\n');(stage/'Odessy').chmod(0o755)
         shutil.copy2(ROOT/'installer/assets/application_icon.png',stage/'application_icon.png')
         shutil.copy2(ROOT/'LICENSE',stage/'LICENSE')
         shutil.copy2(ROOT/'THIRD-PARTY-NOTICES.md',stage/'THIRD-PARTY-NOTICES.md')
-        shutil.copy2(ROOT/'docs/releases/linux-portable.md',stage/'README.md')
+        shutil.copy2(ROOT/'docs/releases/linux-portable-quickstart.md',stage/'README.md')
         executable_names={'Odessy','runtime/bin/python3','desktop/odessy_desktop','node/bin/node','link/odessy-link','monitor/odessy-monitor'}
         files={}
         for path in sorted(stage.rglob('*')):
