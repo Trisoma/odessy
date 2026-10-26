@@ -8,6 +8,15 @@ class DesktopSession extends ChangeNotifier {
   OdessyApi api;
   Session? session;
   List<String> profiles = [];
+  Map<String, Profile> profileDetails = {};
+  String profileLabel(String name) {
+    final detail = profileDetails[name];
+    final model = detail?.model;
+    if (model == null || model.isEmpty || model == name) return name;
+    final provider = detail?.provider;
+    return "$model${provider == null ? '' : ' · $provider'} ($name)";
+  }
+
   String status = 'Connecting', error = '', route = '';
   bool connected = false, busy = false, stopping = false, _disposed = false;
   int _epoch = 0;
@@ -28,9 +37,13 @@ class DesktopSession extends ChangeNotifier {
     _notify();
     try {
       final values = await api.profiles();
+      final details = api is ProfileMetadataApi
+          ? await (api as ProfileMetadataApi).profileMetadata()
+          : <Profile>[];
       final fresh = await api.createSession();
       if (_disposed || epoch != _epoch) return;
       profiles = values;
+      profileDetails = {for (final detail in details) detail.name: detail};
       session = fresh;
       connected = true;
       status = 'Ready';
@@ -59,9 +72,20 @@ class DesktopSession extends ChangeNotifier {
         status = 'Stopped · completed actions remain completed';
       }
       if (event.type == 'error') {
-        error = 'The turn failed. Inspect the local service diagnostics.';
+        final detail = event.data['message'];
+        final text = detail is String
+            ? detail.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ').trim()
+            : '';
+        error = text.isEmpty
+            ? 'The turn failed without an error detail.'
+            : text.substring(0, text.length > 600 ? 600 : text.length);
+        status = 'Failed';
       }
       await refresh(epoch: epoch);
+      if (event.type == 'error' && epoch == _epoch && !_disposed) {
+        status = 'Failed';
+        _notify();
+      }
     },
         onError: (Object e) => _disconnected(epoch, e),
         onDone: () => _disconnected(epoch, StateError('Closed')));
@@ -103,7 +127,7 @@ class DesktopSession extends ChangeNotifier {
       if (value.running) {
         status = value.pending.isNotEmpty ? 'Waiting for you' : 'Working';
       } else if (!status.startsWith('Stopped')) {
-        status = 'Ready';
+        status = error.isEmpty ? 'Ready' : 'Failed';
       }
       _notify();
     } catch (e) {

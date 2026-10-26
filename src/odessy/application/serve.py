@@ -43,7 +43,10 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
 
     def profiles():
         config = load_config()
-        return {'current': {'name': 'current', 'model': 'fake' if use_fake_model else backend or 'lfm'},
+        from odessy.models.cloud_model import CLOUD_PROVIDERS
+        chosen = backend or os.environ.get('ODESSY_MODEL_BACKEND', 'lfm')
+        model = (os.environ.get('ODESSY_CLOUD_MODEL') or CLOUD_PROVIDERS[chosen].default_model) if chosen in CLOUD_PROVIDERS else os.environ.get('ODESSY_MODEL_NAME') or os.environ.get('ODESSY_OLLAMA_MODEL') or chosen
+        return {'current': {'name': 'current', 'provider': chosen, 'model': 'fake' if use_fake_model else model},
                 'auto': {'name': 'auto', 'adapter': 'auto'},
                 'local': {'name': 'local', 'adapter': 'lfm'},
                 **{name: profile.public_dict() for name, profile in config.participants.items()}}

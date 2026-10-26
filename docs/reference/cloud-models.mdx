@@ -27,7 +27,7 @@ workspace authority, policy, and human confirmation in the local Python runtime.
 |---|---|---|---|---|
 | `claude` | Anthropic | Anthropic Messages API (official `anthropic` SDK) | `ANTHROPIC_API_KEY` | `claude-opus-5-5` |
 | `openai` | OpenAI | OpenAI Chat Completions | `OPENAI_API_KEY` | `gpt-5` |
-| `deepseek` | DeepSeek | OpenAI-compatible | `DEEPSEEK_API_KEY` | `deepseek-chat` |
+| `deepseek` | DeepSeek | OpenAI-compatible | `DEEPSEEK_API_KEY` | `deepseek-flash` |
 | `qwen` | Alibaba Cloud DashScope | OpenAI-compatible | `DASHSCOPE_API_KEY` | `qwen-plus` |
 | `kimi` | Moonshot AI | OpenAI-compatible | `MOONSHOT_API_KEY` | `kimi-k2-turbo-preview` |
 | `custom` | Any OpenAI-compatible endpoint | OpenAI-compatible | `ODESSY_CLOUD_API_KEY` | none, set `ODESSY_CLOUD_MODEL` |
@@ -102,8 +102,12 @@ including tool follow-ups and repair retries. It does not set a separate
 documents thinking enabled by default and effort levels `low`, `high`, and `max`.
 Use `low`, not `light`; the adapter forwards the configured value without
 validating provider-specific levels. An alternate endpoint or model may behave
-differently. The built-in model default remains `deepseek-chat`, so set
-`ODESSY_CLOUD_MODEL` explicitly for this example.
+differently. The built-in model default is `deepseek-flash`. Use the API model
+identifier, rather than a display name such as `Deepseek V4.1 Flash`.
+
+DeepSeek thinking mode rejects `tool_choice`; Odessy omits that parameter for
+DeepSeek. When a response must be text-only, it also omits tool definitions.
+Other OpenAI-compatible providers retain their existing tool-choice behavior.
 
 DeepSeek requires assistant `reasoning_content` to be sent back when tools are
 present. The adapter preserves that field whenever it appears in an

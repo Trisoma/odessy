@@ -27,6 +27,15 @@ from odessy.runtime.types import FinalResponse, ToolObservation, ToolRequest
 SECRET = "sk-" + "a" * 32
 
 
+@pytest.mark.parametrize("tools_allowed", [True, False])
+def test_deepseek_omits_unsupported_tool_choice(tools_allowed):
+    model = QueuedOpenAI([openai_reply(content="Hello")])
+    model._exchange_openai(tools_allowed=tools_allowed)
+    payload = model.payloads[0]
+    assert "tool_choice" not in payload
+    assert bool(payload.get("tools")) is tools_allowed
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
@@ -182,7 +191,7 @@ def test_cli_selects_cloud_backend_and_ignores_ollama_model_name(monkeypatch) ->
     model = _build_model(False, backend="deepseek", model_name="lfm2.5-thinking:1.2b-q8_0")
 
     assert isinstance(model, CloudModel)
-    assert model.model == "deepseek-chat"
+    assert model.model == "deepseek-flash"
 
 
 def test_cli_cloud_backend_from_env(monkeypatch) -> None:

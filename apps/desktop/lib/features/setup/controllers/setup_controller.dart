@@ -64,7 +64,8 @@ class SetupController extends ChangeNotifier {
         format: format,
         confirmPlan:
             operation == 'save' ? reviewResult!['plan_id'] as String : '',
-        endpoint: endpoint);
+        endpoint: endpoint,
+        parameters: operation == 'review' ? {'new_revision': true} : const {});
     busy = true;
     error = '';
     status = '$operation in progress';
@@ -85,6 +86,15 @@ class SetupController extends ChangeNotifier {
             throw const FormatException('Missing reviewed plan identity.');
           }
           reviewResult = reply.result;
+          if (reply.result['output'] is String &&
+              (reply.result['output'] as String).isNotEmpty) {
+            final revised = reply.result['output'] as String;
+            if (revised != output) {
+              output = revised;
+              status =
+                  'Previous configuration preserved; a new revision will be saved.';
+            }
+          }
         case 'voice-discover':
           voiceInventory = reply.result;
         case 'resume':

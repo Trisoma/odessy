@@ -111,6 +111,22 @@ void main() {
     controller.dispose();
   });
 
+  test('review adopts backend revision path before saving changed model',
+      () async {
+    final backend = RevisionBackend();
+    final c = SetupController(backend, onConnect: (_) async {});
+    c.update({
+      'role': 'combined',
+      'model': {'provider': 'deepseek', 'name': 'deepseek-flash'}
+    }, '/tmp/old.json');
+    await c.finish();
+    expect(c.output, '/tmp/new.json');
+    expect(backend.requests.first.parameters['new_revision'], isTrue);
+    expect(backend.requests.firstWhere((r) => r.operation == 'save').output,
+        '/tmp/new.json');
+    c.dispose();
+  });
+
   test('discovery works before choosing a model name', () async {
     final backend = Backend();
     final controller = SetupController(backend);
@@ -206,6 +222,19 @@ class RestoringBackend extends Backend {
           'voice': {'enabled': false}
         }
       }
+    }, request.id);
+  }
+}
+
+class RevisionBackend extends Backend {
+  @override
+  Future<SetupReply> execute(SetupRequest request) async {
+    if (request.operation != 'review') return super.execute(request);
+    requests.add(request);
+    return SetupReply.fromJson({
+      'id': request.id,
+      'status': 'ok',
+      'result': {'plan_id': 'revision-id', 'output': '/tmp/new.json'}
     }, request.id);
   }
 }

@@ -6,6 +6,8 @@ import '../../../app/theme.dart';
 import '../controllers/installed_manage_controller.dart';
 import 'path_field.dart';
 import 'setup_shell.dart';
+import '../controllers/model_catalog_controller.dart';
+import 'model_picker.dart';
 
 /// First-run configuration: installing files is done; this is getting ready to chat.
 ///
@@ -41,6 +43,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
   final credential = TextEditingController();
   String choice = 'local', preset = 'openai';
   bool initialised = false;
+  late final ModelCatalogController catalog;
   final _modelChoiceKey = GlobalKey();
   final _voiceKey = GlobalKey();
   bool showVoice = false, voiceEnabled = false;
@@ -75,6 +78,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
   @override
   void initState() {
     super.initState();
+    catalog = ModelCatalogController(c.backend);
     showVoice = widget.initialVoice;
     c.addListener(_refresh);
     if (c.status.isNotEmpty) _fromStatus();
@@ -104,6 +108,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
   @override
   void dispose() {
     c.removeListener(_refresh);
+    catalog.dispose();
     endpoint.dispose();
     model.dispose();
     workspace.dispose();
@@ -224,7 +229,16 @@ class _GetStartedPageState extends State<GetStartedPage> {
                     selected: {choice},
                     onSelectionChanged: c.busy
                         ? null
-                        : (value) => setState(() => choice = value.first))),
+                        : (value) => setState(() {
+                              choice = value.first;
+                              if (choice == 'remote' &&
+                                  endpoint.text == 'http://127.0.0.1:11434') {
+                                endpoint.clear();
+                              }
+                              if (choice == 'local' && endpoint.text.isEmpty) {
+                                endpoint.text = 'http://127.0.0.1:11434';
+                              }
+                            }))),
             if (choice == 'local') _local(context),
             if (choice == 'remote') _remote(context),
             if (choice == 'later')
@@ -234,7 +248,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
             SetupSection(
                 title: 'Workspace',
                 description:
-                    'The folder Odessy may work in for file and terminal tools. It is never inside the installation.',
+                    'Default: Documents/Odessy on Windows, or ~/Odessy on Linux/macOS. Use Browse to choose another project folder. It stays separate from installed application files.',
                 child: PathField(
                     fieldKey: const Key('get-started-workspace'),
                     controller: workspace,
@@ -329,19 +343,25 @@ class _GetStartedPageState extends State<GetStartedPage> {
             ],
             onChanged: c.busy
                 ? null
-                : (value) => setState(() => preset = value ?? 'openai')),
+                : (value) => setState(() {
+                      preset = value ?? 'openai';
+                      model.clear();
+                    })),
         const SizedBox(height: OdessyTokens.spaceMedium),
-        TextField(
-            key: const Key('get-started-remote-model'),
-            controller: model,
+        ModelPicker(
+            catalog: catalog,
+            provider: preset,
+            value: model,
+            endpoint: endpoint.text.trim(),
+            credential: credential.text.trim(),
             enabled: !c.busy,
-            onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(
-                labelText: 'Model name', hintText: 'For example gpt-4.1-mini')),
+            fieldKey: const Key('get-started-remote-model'),
+            onChanged: () => setState(() {})),
         const SizedBox(height: OdessyTokens.spaceMedium),
         TextField(
             key: const Key('get-started-remote-endpoint'),
             controller: endpoint,
+            onChanged: (_) => setState(() {}),
             enabled: !c.busy,
             decoration: const InputDecoration(
                 labelText: 'Endpoint (optional for presets)',
@@ -350,6 +370,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
         TextField(
             key: const Key('get-started-credential'),
             controller: credential,
+            onChanged: (_) => setState(() {}),
             enabled: !c.busy,
             decoration: const InputDecoration(
                 labelText: 'Credential environment variable (optional)',

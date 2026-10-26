@@ -154,3 +154,36 @@ real saved-configuration coordinator startup, authenticated API access and stdin
 shutdown without inference. Jetson/Linux ARM64 visual/audio acceptance was not run.
 Both Python source and Flutter executable must be updated for this change; a
 Python-only copy cannot update buttons already compiled into the old desktop.
+
+### Cloud configuration corrections (October 26)
+
+Changing a saved source configuration now reviews and saves a new sibling file
+when its content differs. The original remains intact; the reviewed revision is
+the one launched. Matching content reuses the existing file. Editing fields alone
+does not reconfigure a running coordinator: use **Save & connect**.
+
+The next-turn picker displays the configured model/provider beside its profile
+alias. `current`, `local`, and `auto` are profile names, not a list of cloud model
+IDs. Failed turns display the server-sanitized error instead of only a generic
+diagnostics instruction. DeepSeek uses API model ID `deepseek-flash`.
+
+Verification: 174 affected Python tests passed; full Flutter suite 111 passed,
+4 skipped; changed-file analysis and Windows release build passed. The HTTP
+roundtrip uses a real configured coordinator with a mock cloud endpoint; paid
+provider, Jetson and audio acceptance were not performed.
+
+### Model choices and conversation avatar
+
+Source setup and installed first-run cloud setup now offer a model picker.
+Provider-default suggestions come from the Python registry without network traffic.
+**Fetch available models** explicitly reads the selected provider's metadata using
+existing environment credentials. Display names are separate from saved API IDs.
+Custom IDs remain supported. Listing does not establish model/tool compatibility;
+missing credentials or unsupported endpoints leave an actionable message and the
+provider-default suggestion. No inference or model download occurs during listing.
+
+Metadata uses an independent helper so it cannot occupy an installation transaction.
+The original pixel boat from `installer/ui/brand.py` is drawn in conversation
+avatars; platform application icons are unchanged. Workspace defaults are
+`Documents/Odessy` on Windows and `~/Odessy` on Linux/macOS, outside installed files.
+Installed setup offers Browse to select a different project folder.

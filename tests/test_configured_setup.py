@@ -101,3 +101,18 @@ def test_resume_existing_environment_export_without_reentering_model(tmp_path, m
     restored=configured.resume()
     assert restored['selection']['model']['name']=='q8-profile'
     assert restored['format']=='env'
+
+
+def test_review_forks_changed_configuration_without_overwriting(tmp_path):
+    old={'role':'combined','model':{'provider':'deepseek','name':'Deepseek V4.1 Flash'}}
+    target=tmp_path/'setup.json'
+    export_selection(build_plan(SetupSelection.from_dict(old)),target)
+    original=target.read_bytes()
+    changed={'role':'combined','model':{'provider':'deepseek','name':'deepseek-flash'}}
+    reviewed=execute(dict(operation='review',selection=changed,output=str(target),parameters={'new_revision':True}))
+    assert reviewed['output']!=str(target)
+    new=Path(reviewed['output'])
+    execute(dict(operation='save',selection=changed,output=str(new),confirm_plan=reviewed['plan_id']))
+    assert target.read_bytes()==original
+    spec=execute(dict(operation='launch',selection=changed,output=str(new)))
+    assert spec['selection']['model']['name']=='deepseek-flash'

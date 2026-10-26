@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../../../app/session_controller.dart';
 import 'interaction_card.dart';
+import '../../../widgets/pixel_boat.dart';
 
 class ConversationPage extends StatefulWidget {
   const ConversationPage({super.key, required this.controller});
@@ -77,8 +78,10 @@ class _ConversationPageState extends State<ConversationPage> {
                         items: c.profiles
                             .map((p) => DropdownMenuItem(
                                 value: p,
-                                child:
-                                    Text(p, overflow: TextOverflow.ellipsis)))
+                                child: Tooltip(
+                                    message: c.profileLabel(p),
+                                    child: Text(c.profileLabel(p),
+                                        overflow: TextOverflow.ellipsis))))
                             .toList(),
                         onChanged: c.busy || !c.connected
                             ? null
@@ -113,11 +116,10 @@ class _ConversationPageState extends State<ConversationPage> {
                                     .primary
                                     .withValues(alpha: .12),
                                 borderRadius: BorderRadius.circular(9)),
-                            child: Icon(
-                                message.role == 'user'
-                                    ? Icons.person_outline
-                                    : Icons.navigation_outlined,
-                                size: 17)),
+                            child: Center(
+                                child: message.role == 'user'
+                                    ? const Icon(Icons.person_outline, size: 17)
+                                    : const PixelBoat())),
                         const SizedBox(width: 14),
                         Expanded(
                             child: Column(

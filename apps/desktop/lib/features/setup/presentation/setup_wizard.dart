@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import '../controllers/setup_controller.dart';
 import '../../../widgets/glass_surface.dart';
 import '../../../app/setup/native_picker.dart';
+import '../controllers/model_catalog_controller.dart';
+import 'model_picker.dart';
 
 /// A local coordinator-host configuration wizard, never a remote admin console.
 class SetupWizardPage extends StatefulWidget {
@@ -25,9 +27,11 @@ class _SetupWizardPageState extends State<SetupWizardPage> {
   late bool voice;
   final fields = <String, TextEditingController>{};
   SetupController get c => widget.controller;
+  late final ModelCatalogController catalog;
   @override
   void initState() {
     super.initState();
+    catalog = ModelCatalogController(c.backend);
     step = widget.initialStep;
     final selection = c.selection;
     final model = selection['model'] as Map?;
@@ -53,6 +57,7 @@ class _SetupWizardPageState extends State<SetupWizardPage> {
       };
       fields[name] = TextEditingController(text: value as String);
     }
+    c.addListener(_syncOutput);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (c.reviewResult == null && !c.saved) _update();
@@ -62,12 +67,24 @@ class _SetupWizardPageState extends State<SetupWizardPage> {
 
   @override
   void dispose() {
+    c.removeListener(_syncOutput);
+    catalog.dispose();
     // The application owns the controller and its coordinator. Navigation after
     // a successful handoff must not cancel that coordinator.
     for (final field in fields.values) {
       field.dispose();
     }
     super.dispose();
+  }
+
+  void _syncOutput() {
+    final output = fields['output'];
+    if (!c.busy &&
+        c.reviewResult?['output'] == c.output &&
+        output != null &&
+        output.text != c.output) {
+      output.text = c.output;
+    }
   }
 
   void _update() {
@@ -293,6 +310,8 @@ class _SetupWizardPageState extends State<SetupWizardPage> {
                                                         : (value) {
                                                             setState(() {
                                                               provider = value!;
+                                                              fields['name']!
+                                                                  .clear();
                                                               fields['endpoint']!
                                                                   .text = [
                                                                 'ollama',
@@ -340,8 +359,18 @@ class _SetupWizardPageState extends State<SetupWizardPage> {
                                                               model['name']
                                                                   as String)),
                                                   ],
-                                                  _field('name',
-                                                      'Existing model name'),
+                                                  ModelPicker(
+                                                      catalog: catalog,
+                                                      provider: provider,
+                                                      endpoint:
+                                                          fields['endpoint']!
+                                                              .text
+                                                              .trim(),
+                                                      value: fields['name']!,
+                                                      fieldKey: const ValueKey(
+                                                          'setup-name'),
+                                                      enabled: !locked,
+                                                      onChanged: _update),
                                                   if (!['ollama', 'lfm']
                                                       .contains(provider))
                                                     _note(

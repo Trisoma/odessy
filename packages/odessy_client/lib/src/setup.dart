@@ -36,6 +36,7 @@ class SetupRequest {
           'activate',
           'resume',
           'voice-discover',
+          'model-catalog',
           'manage',
           'installer',
           'pair',
@@ -93,6 +94,11 @@ abstract interface class SetupBackend {
   Future<SetupReply> execute(SetupRequest request);
   Future<void> cancel();
   Future<void> close();
+}
+
+/// Separate read-only metadata helpers from a foreground setup transaction.
+abstract interface class SetupMetadataBackend {
+  SetupBackend createMetadataReader();
 }
 
 class SetupCancelled implements Exception {

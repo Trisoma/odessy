@@ -420,7 +420,7 @@ def test_the_builder_wraps_only_when_fallbacks_are_configured() -> None:
     )
     assert isinstance(model, FailoverModel)
     assert [name for name, _ in model.candidates] == ["claude", "deepseek", "ollama"]
-    assert model.chain() == "claude/claude-opus-5-5 -> deepseek/deepseek-chat -> ollama/gemma3:1b"
+    assert model.chain() == "claude/claude-opus-5-5 -> deepseek/deepseek-flash -> ollama/gemma3:1b"
     assert built == ["ollama"]
 
 
@@ -700,7 +700,7 @@ def test_doctor_shows_the_failover_chain_and_the_egress_log() -> None:
         "ODESSY_EGRESS_FILE": "",
     }
     summaries = [check.summary for check in _model_checks("claude", env, probes=None)]
-    assert "failover: claude/claude-opus-5-5 -> deepseek/deepseek-chat -> lfm/local lfm (API keys found; not contacted)" in summaries
+    assert "failover: claude/claude-opus-5-5 -> deepseek/deepseek-flash -> lfm/local lfm (API keys found; not contacted)" in summaries
     assert summaries[-1].startswith("egress log off")
 
     broken = _model_checks("claude", {**env, "ODESSY_CLOUD_FAILOVER": "qwen"}, probes=None)

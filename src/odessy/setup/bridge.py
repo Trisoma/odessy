@@ -18,6 +18,9 @@ MAX_REQUEST = 65536
 def execute(request: dict) -> dict:
     fields(request, {'id', 'operation', 'selection', 'output', 'format', 'confirm_plan', 'endpoint', 'parameters', 'cancel_file'}, 'request')
     operation = request.get('operation')
+    if operation == 'model-catalog':
+        from .model_catalog import catalog
+        return catalog(request.get('parameters') or {})
     if operation == 'installer':
         from installer.flutter_bridge import execute as installer_execute
         cancel_file=request.get('cancel_file')
@@ -63,7 +66,20 @@ def execute(request: dict) -> dict:
             from .configured import remember
             remember(spec)
         return spec
+    review_parameters = fields(request.get('parameters') or {}, {'new_revision'}, 'review options') if operation == 'review' else {}
+    if operation == 'review' and review_parameters.get('new_revision') is True and output is not None and output.exists():
+        if not output.is_file():
+            raise ValueError('Choose a configuration filename, not a directory.')
+        expected = (json.dumps({'schema_version': plan.schema_version, 'selection': public(selection)}, indent=2)+'\n'
+                    if format_ == 'selection' else environment_text(plan)).encode('utf-8')
+        with output.open('rb') as stream:
+            matches = stream.read(MAX_REQUEST+1) == expected
+        if not matches:
+            import uuid
+            output = output.with_name(output.stem + '-' + uuid.uuid4().hex[:12] + output.suffix)
     result = public(plan)
+    result['output'] = str(output) if output else ''
+
     result['plan_id'] = consent_id(plan, output if format_ == 'selection' else None, output if format_ == 'env' else None)
     result['writes'] = [str(output)] if output else []
     result['format'] = format_

@@ -103,7 +103,7 @@ CLOUD_PROVIDERS: dict[str, CloudProvider] = {
         protocol="openai",
         base_url="https://api.deepseek.com/v1",
         api_key_env="DEEPSEEK_API_KEY",
-        default_model="deepseek-chat",
+        default_model="deepseek-flash",
     ),
     "qwen": CloudProvider(
         name="qwen",
@@ -815,6 +815,12 @@ class CloudModel:
             # the bill to match.
             "max_tokens": self.openai_max_tokens,
         }
+        if self.provider == "deepseek":
+            # DeepSeek thinking mode rejects tool_choice. With no tools allowed,
+            # omit their definitions too, preserving the text-only boundary.
+            payload.pop("tool_choice")
+            if not tools_allowed:
+                payload.pop("tools")
         if self.provider == "deepseek" and self.effort:
             payload["reasoning_effort"] = self.effort
         # The plain call shape when not streaming, which tests and wrappers replace.

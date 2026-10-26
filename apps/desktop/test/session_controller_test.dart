@@ -4,6 +4,28 @@ import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/app/session_controller.dart';
 
 void main() {
+  test('provider failure is shown from sanitized backend error event',
+      () async {
+    final api = ReconnectApi();
+    final c = DesktopSession(api);
+    await c.start();
+    api.first.add(SessionEvent(1, 'error', {
+      'message': 'deepseek API call failed (400): invalid model identifier'
+    }));
+    await Future<void>.delayed(Duration.zero);
+    expect(c.error, contains('invalid model identifier'));
+    expect(c.status, 'Failed');
+    c.dispose();
+  });
+
+  test('picker labels use actual provider and model metadata', () async {
+    final c = DesktopSession(MetadataApi());
+    await c.start();
+    expect(c.profileLabel('current'), contains('deepseek-flash'));
+    expect(c.profileLabel('current'), contains('deepseek'));
+    expect(c.profiles, contains('current'));
+    c.dispose();
+  });
   test('shutdown is awaitable and idempotent', () async {
     final api = LifecycleApi();
     final c = DesktopSession(api);
@@ -145,4 +167,13 @@ class LifecycleApi extends DemoApi {
     closes++;
     super.close();
   }
+}
+
+class MetadataApi extends DemoApi implements ProfileMetadataApi {
+  @override
+  Future<List<String>> profiles() async => ['current'];
+  @override
+  Future<List<Profile>> profileMetadata() async => [
+        Profile('current', {'provider': 'deepseek', 'model': 'deepseek-flash'})
+      ];
 }

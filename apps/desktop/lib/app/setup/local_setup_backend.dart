@@ -4,7 +4,13 @@ import 'dart:io';
 import 'package:odessy_client/odessy_client.dart';
 
 /// Launches only the configured Python interpreter and fixed setup module.
-class LocalSetupBackend implements SetupBackend {
+class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
+  @override
+  SetupBackend createMetadataReader() => LocalSetupBackend(
+      python: python,
+      sourceRoot: sourceRoot,
+      payloadRoot: payloadRoot,
+      timeout: timeout);
   LocalSetupBackend(
       {String python = const String.fromEnvironment('ODESSY_SETUP_PYTHON'),
       String sourceRoot = const String.fromEnvironment('ODESSY_SETUP_ROOT'),
