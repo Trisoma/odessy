@@ -3,10 +3,17 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../controllers/setup_controller.dart';
 import '../../../widgets/glass_surface.dart';
+import '../../../app/setup/native_picker.dart';
 
 /// A local coordinator-host configuration wizard, never a remote admin console.
 class SetupWizardPage extends StatefulWidget {
-  const SetupWizardPage({super.key, required this.controller});
+  const SetupWizardPage(
+      {super.key,
+      required this.controller,
+      this.initialStep = 0,
+      this.picker = const UnavailablePicker()});
+  final int initialStep;
+  final NativePicker picker;
   final SetupController controller;
   @override
   State<SetupWizardPage> createState() => _SetupWizardPageState();
@@ -21,6 +28,7 @@ class _SetupWizardPageState extends State<SetupWizardPage> {
   @override
   void initState() {
     super.initState();
+    step = widget.initialStep;
     final selection = c.selection;
     final model = selection['model'] as Map?;
     final audio = selection['voice'] as Map?;
@@ -45,12 +53,17 @@ class _SetupWizardPageState extends State<SetupWizardPage> {
       };
       fields[name] = TextEditingController(text: value as String);
     }
-    _update();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (c.reviewResult == null && !c.saved) _update();
+      if (step == 3 && voice) unawaited(_detectVoice());
+    });
   }
 
   @override
   void dispose() {
-    unawaited(c.cancel());
+    // The application owns the controller and its coordinator. Navigation after
+    // a successful handoff must not cancel that coordinator.
     for (final field in fields.values) {
       field.dispose();
     }
@@ -68,6 +81,8 @@ class _SetupWizardPageState extends State<SetupWizardPage> {
             'endpoint': fields['endpoint']!.text.trim()
         },
       'voice': {
+        if (voice && role != 'execution')
+          ...?c.selection['voice'] as Map<String, dynamic>?,
         'enabled': voice && role != 'execution',
         if (voice && role != 'execution')
           for (final key in [
@@ -86,17 +101,68 @@ class _SetupWizardPageState extends State<SetupWizardPage> {
       child: TextField(
           key: ValueKey('setup-$name'),
           controller: fields[name],
-          enabled: !c.busy && !c.recoveryRequired,
+          enabled: !c.busy,
           decoration: InputDecoration(
               labelText: label,
               hintText: hint,
-              border: const OutlineInputBorder()),
-          onChanged: (_) => _update()));
+              border: const OutlineInputBorder(),
+              suffixIcon: [
+                'whisper_bin',
+                'whisper_model',
+                'kokoro_model',
+                'kokoro_voices'
+              ].contains(name)
+                  ? IconButton(
+                      tooltip: 'Browse $label',
+                      icon: const Icon(Icons.folder_open),
+                      onPressed: c.busy
+                          ? null
+                          : () async {
+                              final path = await widget.picker.pickFile();
+                              if (!mounted || path == null) return;
+                              fields[name]!.text = path;
+                              if (c.recoveryRequired) await c.recover();
+                              if (mounted) _update();
+                            })
+                  : null),
+          onChanged: (_) async {
+            if (c.recoveryRequired) await c.recover();
+            if (mounted && !c.recoveryRequired) _update();
+          }));
   Widget _note(String value) =>
       Padding(padding: const EdgeInsets.only(bottom: 16), child: Text(value));
   Widget _json(Object value) =>
-      SelectableText(const JsonEncoder.withIndent('  ').convert(value),
-          style: const TextStyle(fontFamily: 'monospace', fontSize: 12));
+      ExpansionTile(title: const Text('Advanced details'), children: [
+        SelectableText(const JsonEncoder.withIndent('  ').convert(value),
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 12))
+      ]);
+
+  void _advance() {
+    setState(() => step++);
+    if (step == 5) unawaited(c.prepare());
+    if (step == 3 && voice) unawaited(_detectVoice());
+  }
+
+  Future<void> _detectVoice() async {
+    await c.detectVoice();
+    if (!mounted || c.error.isNotEmpty) return;
+    final candidates = c.voiceInventory?['candidates'] as Map? ?? {};
+    var changed = false;
+    for (final name in [
+      'whisper_bin',
+      'whisper_model',
+      'kokoro_model',
+      'kokoro_voices'
+    ]) {
+      final values = candidates[name] as List? ?? [];
+      if (values.length == 1 && fields[name]!.text != values.single) {
+        fields[name]!.text = values.single as String;
+        changed = true;
+      }
+    }
+    if (changed) _update();
+  }
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
       listenable: c,
@@ -300,10 +366,30 @@ class _SetupWizardPageState extends State<SetupWizardPage> {
                                                             setState(() =>
                                                                 voice = value);
                                                             _update();
+                                                            if (voice) {
+                                                              unawaited(
+                                                                  _detectVoice());
+                                                            }
                                                           }),
                                                 _note(
                                                     'Whisper.cpp and Kokoro are supported defaults. Missing assets remain unavailable; no download or microphone recording starts here.'),
                                                 if (voice) ...[
+                                                  OutlinedButton.icon(
+                                                      onPressed: locked
+                                                          ? null
+                                                          : _detectVoice,
+                                                      icon: const Icon(
+                                                          Icons.search),
+                                                      label: const Text(
+                                                          'Find existing voice files')),
+                                                  if (c.voiceInventory != null)
+                                                    Text((c.voiceInventory![
+                                                                        'missing']
+                                                                    as List? ??
+                                                                [])
+                                                            .isEmpty
+                                                        ? 'Existing voice files found. Review the selected paths.'
+                                                        : 'Some files were not found. Browse to select them; nothing was downloaded.'),
                                                   _field('whisper_bin',
                                                       'Whisper executable'),
                                                   _field('whisper_model',
@@ -326,26 +412,32 @@ class _SetupWizardPageState extends State<SetupWizardPage> {
                                                 'Pairing setup, grants, service installation and automatic remote deployment are not implemented in this wizard. Existing odessy-link CLI remains available.'),
                                           ],
                                         _ => [
-                                            _field('output',
-                                                'New export file — parent directory must exist',
+                                            Text(provider == 'later'
+                                                ? 'Model: configure later'
+                                                : 'Model: ${fields['name']!.text} ($provider)'),
+                                            const SizedBox(height: 12),
+                                            _note(voice
+                                                ? 'Voice: existing components selected'
+                                                : 'Voice: off'),
+                                            _field(
+                                                'output', 'Configuration file',
                                                 hint:
-                                                    'Absolute path to a new setup.json or odessy.env'),
+                                                    'Full path to a new configuration file'),
                                             DropdownButtonFormField<String>(
                                                 isExpanded: true,
                                                 initialValue: format,
-                                                decoration:
-                                                    const InputDecoration(
-                                                        labelText:
-                                                            'Export format'),
+                                                decoration: const InputDecoration(
+                                                    labelText:
+                                                        'Configuration format'),
                                                 items: const [
                                                   DropdownMenuItem(
                                                       value: 'selection',
                                                       child: Text(
-                                                          'Setup selection JSON')),
+                                                          'Setup configuration')),
                                                   DropdownMenuItem(
                                                       value: 'env',
                                                       child: Text(
-                                                          'Runtime env — requires a configured model'))
+                                                          'Runtime environment')),
                                                 ],
                                                 onChanged: locked
                                                     ? null
@@ -355,39 +447,21 @@ class _SetupWizardPageState extends State<SetupWizardPage> {
                                                         _update();
                                                       }),
                                             const SizedBox(height: 12),
-                                            Wrap(
-                                                spacing: 12,
-                                                runSpacing: 8,
-                                                children: [
-                                                  OutlinedButton(
-                                                      onPressed: locked
-                                                          ? null
-                                                          : c.review,
-                                                      child: const Text(
-                                                          'Review changes')),
-                                                  OutlinedButton(
-                                                      onPressed: locked
-                                                          ? null
-                                                          : c.verify,
-                                                      child: const Text(
-                                                          'Run diagnostics')),
-                                                  FilledButton(
-                                                      onPressed: c.canSave
-                                                          ? c.save
-                                                          : null,
-                                                      child: const Text(
-                                                          'Confirm & save configuration')),
-                                                ]),
-                                            if (c.reviewResult != null) ...[
-                                              const SizedBox(height: 16),
-                                              _json(c.reviewResult!)
-                                            ],
-                                            if (c.diagnostics != null) ...[
-                                              const SizedBox(height: 16),
-                                              _json(c.diagnostics!)
-                                            ],
                                             _note(
-                                                'Saved configuration is not a completed installation or a running service. Existing files are never overwritten.'),
+                                                'Save and connect checks your choices, saves the reviewed configuration, then opens a real conversation. Nothing is downloaded. Existing files are preserved.'),
+                                            if (c.diagnostics?['voice']
+                                                    is Map &&
+                                                (c.diagnostics!['voice']
+                                                        as Map)['status'] ==
+                                                    'missing')
+                                              Text(
+                                                  'Voice needs attention: ${((c.diagnostics!['voice'] as Map)['missing'] as List).join(', ')}. You can fix the paths or disable voice to use text.'),
+                                            if (c.reviewResult != null ||
+                                                c.diagnostics != null)
+                                              _json({
+                                                'review': c.reviewResult,
+                                                'diagnostics': c.diagnostics
+                                              }),
                                           ],
                                       }))),
                           const SizedBox(height: 16),
@@ -421,10 +495,14 @@ class _SetupWizardPageState extends State<SetupWizardPage> {
                                 child: const Text('Back')),
                             const Spacer(),
                             FilledButton(
-                                onPressed: step == 5 || c.busy
+                                onPressed: c.busy || c.completing
                                     ? null
-                                    : () => setState(() => step++),
-                                child: const Text('Continue')),
+                                    : step == 5
+                                        ? c.finish
+                                        : _advance,
+                                child: Text(step == 5
+                                    ? 'Save and connect'
+                                    : 'Continue')),
                           ]),
                         ]))));
       });

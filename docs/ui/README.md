@@ -106,3 +106,51 @@ package. No live provider tests or hardware tests run automatically.
 ## Verification
 
 See [verification](verification.md) for commands actually run on this revision.
+
+
+## Source-preview setup to a live session (October 26)
+
+The six-step **Set up this computer** flow now ends with **Save and connect**.
+Entering the final step runs read-only review/diagnostics automatically. The final
+button refreshes the exact review, saves once (or inspects a matching existing
+export), verifies the saved bytes, and starts an authenticated loopback coordinator
+through the existing service composition. JSON/environment exports both work;
+raw response JSON is collapsed under **Advanced details**. Execution-only and
+unconfigured selections save without inventing a running model.
+
+Fields remain editable after failure; uncertain saves inspect their original
+location before accepting edits. Existing directories or conflicting files are
+never overwritten. Connection failures leave a disconnected client, not fake
+responses. Retry does not repeat a successful save. Cancel/close stops the owned
+helper/coordinator; ordinary authorization and execution-target rules still apply.
+The source setup connection uses the existing default workspace (`~/Odessy` on
+Linux/macOS, `Documents/Odessy` on Windows), not the installation folder.
+
+Normal launches now start disconnected and restore the last successfully connected
+source configuration from `~/.config/odessy/desktop.json`. The pointer contains a
+validated selection, export location and checksum, never a bearer token. Modified
+exports require fresh review. Existing `~/odessy-setup.json` or the generated
+`~/odessy-runtime.env` can bootstrap older source previews. No tool/model request
+is replayed on reconnect. Demo data requires the explicit `--demo` launch flag.
+
+Settings uses this same source configuration instead of assuming every source
+preview is an unconfigured managed installation. Configured-but-offline and
+unconfigured are distinct states. Successful navigation never cancels the owned
+coordinator; application cancellation/shutdown still stops it.
+
+Voice setup checks known local model folders, configured paths and the executable
+PATH, with a two-second/4,000-entry/depth-three scan bound. A unique matching file
+fills its field; ambiguous/missing files remain selectable through Browse. No
+model download, inference or microphone access occurs during discovery. Detection
+is observational and does not prove engine compatibility or microphone readiness.
+
+Source builds still require Python with Odessy and its UI dependencies. This does
+not supply missing packaged runtimes; standalone distribution needs the complete
+runtime payload.
+
+Verification: full desktop suite **108 passed / 4 skipped**, changed-file Dart
+analysis clean, Windows release build passed. **39 Python tests passed**, including
+real saved-configuration coordinator startup, authenticated API access and stdin
+shutdown without inference. Jetson/Linux ARM64 visual/audio acceptance was not run.
+Both Python source and Flutter executable must be updated for this change; a
+Python-only copy cannot update buttons already compiled into the old desktop.

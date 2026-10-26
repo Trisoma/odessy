@@ -23,6 +23,8 @@ Thumbs.db
 *.py[cod]
 *.egg-info/
 .venv/
+# Named local environments, such as the desktop testing environment.
+.venv-*/
 venv/
 build/
 # `installer/build/` is a real source package, not build output.

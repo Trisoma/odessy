@@ -50,6 +50,13 @@ class LocalSetupBackend implements SetupBackend {
     return candidate.existsSync() ? candidate.path : null;
   }
 
+  static String defaultOutput() {
+    final home = Platform.environment['HOME'] ??
+        Platform.environment['USERPROFILE'] ??
+        Directory.current.path;
+    return '$home${Platform.pathSeparator}odessy-setup.json';
+  }
+
   final String python, sourceRoot, payloadRoot;
   final Duration timeout;
   Process? _process;

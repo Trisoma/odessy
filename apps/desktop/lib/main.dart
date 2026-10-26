@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'dart:io' show Platform;
 
 import 'app/app.dart';
+import 'app/setup/disconnected_api.dart';
+import 'package:odessy_client/odessy_client.dart';
 import 'app/setup/installed_startup.dart';
 import 'app/setup/instance_guard.dart';
 import 'app/setup/native_picker.dart';
@@ -25,8 +27,8 @@ Future<void> main(List<String> arguments) async {
   // runner concern; until then the second launch says so instead of opening a
   // second installer over the first.
   final key = launchArgument(arguments, '--install-root');
-  final guard = await InstanceGuard.acquire(key.isEmpty ? mode : key,
-      mode: mode);
+  final guard =
+      await InstanceGuard.acquire(key.isEmpty ? mode : key, mode: mode);
   if (guard == null) {
     runApp(_SecondInstance(
         arguments: arguments, mode: mode, onContinue: applicationFor));
@@ -50,7 +52,9 @@ Widget applicationFor(
         installRoot: installRoot, launchId: launchId, picker: picker);
   }
   return mode == null
-      ? const OdessyApp()
+      ? arguments.contains('--demo')
+          ? OdessyApp(api: DemoApi())
+          : OdessyApp(api: DisconnectedApi(), restoreConfiguration: true)
       : SetupApplication(
           mode: mode,
           payloadRoot: payload,
@@ -124,7 +128,9 @@ String launchArgument(List<String> arguments, String name) {
   final index = arguments.indexOf(name);
   if (index >= 0 && index + 1 < arguments.length) return arguments[index + 1];
   for (final argument in arguments) {
-    if (argument.startsWith('$name=')) return argument.substring(name.length + 1);
+    if (argument.startsWith('$name=')) {
+      return argument.substring(name.length + 1);
+    }
   }
   return '';
 }

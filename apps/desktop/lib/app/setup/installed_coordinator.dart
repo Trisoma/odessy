@@ -29,10 +29,13 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
     required this.python,
     required this.root,
     required this.workspace,
+    this.configuration,
     String? token,
     this.readyTimeout = const Duration(seconds: 45),
     Future<int> Function()? portPicker,
-    Future<Process> Function(String python, List<String> arguments, String? cwd, Map<String, String> environment)? launcher,
+    Future<Process> Function(String python, List<String> arguments, String? cwd,
+            Map<String, String> environment)?
+        launcher,
     Future<bool> Function(Uri base, String token)? probe,
   })  : token = token ?? newToken(),
         portPicker = portPicker ?? _freeLoopbackPort,
@@ -40,9 +43,11 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
         probe = probe ?? _probeLoopback;
 
   final String python, root, workspace, token;
+  final Json? configuration;
   final Duration readyTimeout;
   final Future<int> Function() portPicker;
-  final Future<Process> Function(String python, List<String> arguments, String? cwd, Map<String, String> environment) launcher;
+  final Future<Process> Function(String python, List<String> arguments,
+      String? cwd, Map<String, String> environment) launcher;
   final Future<bool> Function(Uri base, String token) probe;
 
   Process? _process;
@@ -73,8 +78,7 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
           workingDirectory: cwd, environment: environment, runInShell: false);
 
   static Future<bool> _probeLoopback(Uri base, String token) async {
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 2);
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
     try {
       final request = await client.getUrl(base.resolve('/v1/profiles'));
       request.followRedirects = false;
@@ -100,7 +104,9 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
   /// Starts the coordinator and waits until it answers an authenticated probe.
   @override
   Future<LocalApi> start() async {
-    if (_process != null) throw StateError('The coordinator is already running.');
+    if (_process != null) {
+      throw StateError('The coordinator is already running.');
+    }
     final chosen = await portPicker();
     final Process process;
     try {
@@ -108,9 +114,23 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
           python,
           [
             '-m',
-            'odessy.setup.installed',
-            '--root',
-            root,
+            if (configuration == null) ...[
+              'odessy.setup.installed',
+              '--root',
+              root
+            ] else ...[
+              'odessy.setup.configured',
+              '--config',
+              configuration!['config'] as String,
+              '--format',
+              configuration!['format'] as String,
+              '--selection-json',
+              jsonEncode(configuration!['selection']),
+              '--sha256',
+              configuration!['sha256'] as String,
+              '--workspace',
+              workspace,
+            ],
             '--port',
             '$chosen',
             '--exit-on-stdin-close'
@@ -119,6 +139,8 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
           {
             'ODESSY_API_TOKEN': token,
             'PYTHONUNBUFFERED': '1',
+            if (configuration?['pythonpath'] is String)
+              'PYTHONPATH': configuration!['pythonpath'] as String,
           });
     } on ProcessException catch (failure) {
       throw CoordinatorStartFailure(

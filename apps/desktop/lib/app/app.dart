@@ -21,9 +21,20 @@ import '../features/setup/presentation/get_started_page.dart';
 import 'setup/installation_location.dart';
 import 'setup/disconnected_api.dart';
 import 'setup/native_picker.dart';
+import 'setup/installed_coordinator.dart';
 
 class OdessyApp extends StatefulWidget {
-  const OdessyApp({super.key, this.api, this.installed, this.onConfigured});
+  const OdessyApp(
+      {super.key,
+      this.api,
+      this.installed,
+      this.onConfigured,
+      this.restoreConfiguration = false,
+      this.setupBackend,
+      this.coordinatorFactory});
+  final InstalledCoordinatorHandle Function(Json)? coordinatorFactory;
+  final bool restoreConfiguration;
+  final SetupBackend? setupBackend;
   final VoidCallback? onConfigured;
   final OdessyApi? api;
 
@@ -38,17 +49,25 @@ class _OdessyAppState extends State<OdessyApp> {
   late final DesktopSession controller;
   final monitoring = MonitorController();
   late final SetupController setup;
+  InstalledCoordinatorHandle? configuredCoordinator;
+  int configuredEpoch = 0;
   late final MaintenanceController maintenance, pairing, installerEngine;
   InstalledManageController? installManagement;
   final CredentialStore credentials = MemoryCredentialStore();
   late final AppLifecycleListener lifecycle;
   ThemeMode mode = ThemeMode.dark;
   String page = 'Conversation', device = 'This computer';
+  int setupStep = 0;
   @override
   void initState() {
     super.initState();
     controller = DesktopSession(widget.api ?? DemoApi());
-    setup = SetupController(LocalSetupBackend());
+    setup = SetupController(widget.setupBackend ?? LocalSetupBackend(),
+        onConnect: _connectConfigured, onCancelConnect: () async {
+      ++configuredEpoch;
+      await configuredCoordinator?.stop();
+    })
+      ..output = LocalSetupBackend.defaultOutput();
     maintenance = MaintenanceController(LocalSetupBackend());
     installerEngine = MaintenanceController(LocalSetupBackend());
     pairing = MaintenanceController(LocalSetupBackend());
@@ -61,13 +80,25 @@ class _OdessyAppState extends State<OdessyApp> {
     lifecycle = AppLifecycleListener(onExitRequested: () async {
       await controller.shutdown();
       await setup.shutdown();
+      await configuredCoordinator?.stop();
       await maintenance.shutdown();
       await installerEngine.shutdown();
       await pairing.shutdown();
       installManagement?.dispose();
       return AppExitResponse.exit;
     });
-    controller.start();
+    if (widget.restoreConfiguration && widget.installed == null) {
+      _restoreConfiguration();
+    } else {
+      controller.start();
+    }
+  }
+
+  Future<void> _restoreConfiguration() async {
+    await controller.start();
+    if (!mounted) return;
+    await setup.restore();
+    if (mounted && setup.error.isNotEmpty) setState(() => page = 'Setup');
   }
 
   @override
@@ -76,6 +107,7 @@ class _OdessyAppState extends State<OdessyApp> {
     monitoring.dispose();
     controller.dispose();
     setup.dispose();
+    configuredCoordinator?.stop();
     maintenance.dispose();
     installerEngine.dispose();
     pairing.dispose();
@@ -91,7 +123,7 @@ class _OdessyAppState extends State<OdessyApp> {
       darkTheme: odessyTheme(Brightness.dark),
       themeMode: mode,
       home: ListenableBuilder(
-          listenable: controller,
+          listenable: Listenable.merge([controller, setup]),
           builder: (context, _) =>
               LayoutBuilder(builder: (context, constraints) {
                 final narrow = constraints.maxWidth < 900;
@@ -118,7 +150,10 @@ class _OdessyAppState extends State<OdessyApp> {
                               _badge(
                                   context,
                                   controller.api is DisconnectedApi
-                                      ? 'NOT CONFIGURED'
+                                      ? (setup.saved ||
+                                              setup.activeSelection != null
+                                          ? 'OFFLINE'
+                                          : 'NOT CONFIGURED')
                                       : controller.api.isDemo
                                           ? 'DEMO'
                                           : 'LOCAL API',
@@ -150,12 +185,18 @@ class _OdessyAppState extends State<OdessyApp> {
                         const Divider(height: 1),
                         if (controller.api is DisconnectedApi)
                           MaterialBanner(
-                              content: const Text(
-                                  'Model not configured — configure a model to enable chat. No model is running.'),
+                              content: Text(setup.saved ||
+                                      setup.activeSelection != null
+                                  ? 'Your model is configured, but the local service is offline. Open setup to reconnect.'
+                                  : 'Model not configured — configure a model to enable chat. No model is running.'),
                               actions: [
                                 TextButton(
-                                    onPressed: () =>
-                                        setState(() => page = 'Get started'),
+                                    onPressed: () => setState(() {
+                                          setupStep = 2;
+                                          page = installManagement == null
+                                              ? 'Setup'
+                                              : 'Get started';
+                                        }),
                                     child: const Text('Configure model')),
                               ]),
                         if (controller.error.isNotEmpty)
@@ -169,7 +210,11 @@ class _OdessyAppState extends State<OdessyApp> {
                         Expanded(
                             child: switch (page) {
                           'Monitor' => MonitorPage(controller: monitoring),
-                          'Setup' => SetupWizardPage(controller: setup),
+                          'Setup' => SetupWizardPage(
+                              key: ValueKey(setupStep),
+                              controller: setup,
+                              initialStep: setupStep,
+                              picker: const FileSelectorPicker()),
                           'Manage installation' => ManagePage(
                               controller: installManagement!,
                               external: runningOutsideInstallation(
@@ -207,28 +252,40 @@ class _OdessyAppState extends State<OdessyApp> {
                               controller: controller,
                               installed: widget.installed != null,
                               modelConfigured:
-                                  widget.installed?['model_configured'] == true,
+                                  (widget.installed?['model_configured'] == true ||
+                                      (setup.activeSelection ??
+                                              (setup.saved
+                                                  ? setup.selection
+                                                  : const {}))['model'] !=
+                                          null),
                               voiceEnabled:
-                                  widget.installed?['voice_enabled'] == true,
+                                  (widget.installed?['voice_enabled'] == true ||
+                                      ((setup.activeSelection ??
+                                                  (setup.saved
+                                                      ? setup.selection
+                                                      : const {}))['voice']
+                                              as Map?)?['enabled'] ==
+                                          true),
                               themeMode: mode,
-                              onToggleTheme: () => setState(() => mode =
-                                  mode == ThemeMode.dark
-                                      ? ThemeMode.light
-                                      : ThemeMode.dark),
+                              onToggleTheme: () => setState(
+                                  () => mode = mode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark),
                               onOpenDevices: () => setState(() {
                                     device = 'This computer';
                                     page = 'Devices';
                                   }),
-                              onOpenGetStarted: installManagement == null
-                                  ? null
-                                  : () => setState(() => page = 'Get started'),
-                              onOpenVoice: installManagement == null
-                                  ? null
-                                  : () => setState(() => page = 'Voice setup'),
-                              onOpenManagement: widget.installed == null
-                                  ? null
-                                  : () => setState(
-                                      () => page = 'Manage installation')),
+                              onOpenGetStarted: () => setState(() {
+                                    setupStep = 2;
+                                    page = installManagement == null
+                                        ? 'Setup'
+                                        : 'Get started';
+                                  }),
+                              onOpenVoice: () => setState(() {
+                                    setupStep = 3;
+                                    page = installManagement == null
+                                        ? 'Setup'
+                                        : 'Voice setup';
+                                  }),
+                              onOpenManagement: widget.installed == null ? null : () => setState(() => page = 'Manage installation')),
                           _ => ConversationPage(controller: controller),
                         }),
                       ])),
@@ -237,8 +294,7 @@ class _OdessyAppState extends State<OdessyApp> {
   Widget _sidebar(BuildContext context) => SafeArea(
       child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 22, 16, 16),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child: ListView(children: [
             Row(children: [
               Icon(Icons.navigation_outlined,
                   color: Theme.of(context).colorScheme.primary, size: 30),
@@ -321,7 +377,7 @@ class _OdessyAppState extends State<OdessyApp> {
                     }),
                 icon: const Icon(Icons.add, size: 16),
                 label: const Text('Pair a device')),
-            const Spacer(),
+            const SizedBox(height: 24),
             _nav(context, 'Set up this computer', Icons.build_outlined,
                 page == 'Setup', () {
               if (controller.session?.running != true) {
@@ -387,6 +443,40 @@ class _OdessyAppState extends State<OdessyApp> {
               fontSize: 9,
               fontWeight: FontWeight.w600,
               letterSpacing: 1)));
+  Future<void> _connectConfigured(Json spec) async {
+    final epoch = ++configuredEpoch;
+    if (controller.busy || controller.session?.running == true) {
+      throw StateError(
+          'Stop the active conversation before changing configuration.');
+    }
+    await configuredCoordinator?.stop();
+    await controller.replace(DisconnectedApi());
+    if (!mounted || epoch != configuredEpoch) return;
+    final child = widget.coordinatorFactory?.call(spec) ??
+        InstalledCoordinator(
+          python: spec['python'] as String,
+          root: '',
+          workspace: spec['workspace'] as String,
+          configuration: spec,
+        );
+    configuredCoordinator = child;
+    try {
+      final api = await child.start();
+      if (!mounted || epoch != configuredEpoch) {
+        api.close();
+        await child.stop();
+        return;
+      }
+      await controller.replace(api);
+      if (!controller.connected) throw StateError(controller.error);
+      monitoring.bind(controller.api);
+      if (mounted) setState(() => page = 'Conversation');
+    } catch (_) {
+      await child.stop();
+      rethrow;
+    }
+  }
+
   Future<void> _connect(BuildContext context) async {
     final result = await showConnectionDialog(context, credentials);
     if (!mounted) {

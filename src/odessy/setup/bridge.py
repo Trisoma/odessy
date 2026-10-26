@@ -35,7 +35,13 @@ def execute(request: dict) -> dict:
             if not path.is_absolute() or path.name!='cancel' or not path.parent.name.startswith('odessy-setup-'):raise ValueError('invalid cancellation marker')
             return manage(request.get('parameters'),cancelled=path.exists)
         return (manage if operation=='manage' else pair)(request.get('parameters'))
-    if operation not in ('review', 'discover', 'verify', 'save', 'recover'):
+    if operation == 'resume':
+        from .configured import resume
+        return resume()
+    if operation == 'voice-discover':
+        from .voice_assets import discover_voice_assets
+        return discover_voice_assets(request.get('selection') or {})
+    if operation not in ('review', 'discover', 'verify', 'save', 'recover', 'launch', 'activate'):
         raise ValueError('unsupported setup operation')
     selection = SetupSelection.from_dict(request.get('selection'))
     model = selection.model
@@ -49,6 +55,14 @@ def execute(request: dict) -> dict:
     format_ = request.get('format', 'selection')
     if format_ not in ('selection', 'env'):
         raise ValueError('unsupported export format')
+    if operation in ('launch', 'activate'):
+        if output is None: raise ValueError('saved configuration required')
+        from .configured import saved_spec
+        spec = saved_spec(selection, output, format_)
+        if operation == 'activate':
+            from .configured import remember
+            remember(spec)
+        return spec
     result = public(plan)
     result['plan_id'] = consent_id(plan, output if format_ == 'selection' else None, output if format_ == 'env' else None)
     result['writes'] = [str(output)] if output else []
@@ -66,9 +80,15 @@ def execute(request: dict) -> dict:
             raise ValueError('recovery requires the reviewed export destination')
         if not output.exists():
             result['recovery'] = 'missing'
+        elif not output.is_file():
+            result['recovery'] = 'conflict'
         else:
-            expected = (json.dumps({'schema_version': plan.schema_version, 'selection': public(selection)}, indent=2)+'\n'
-                        if format_ == 'selection' else environment_text(plan))
+            try:
+                expected = (json.dumps({'schema_version': plan.schema_version, 'selection': public(selection)}, indent=2)+'\n'
+                            if format_ == 'selection' else environment_text(plan))
+            except ValueError:
+                result['recovery'] = 'conflict'
+                return result
             with output.open('rb') as stream:
                 actual = stream.read(MAX_REQUEST+1)
             result['recovery'] = 'matches' if actual == expected.encode('utf-8') else 'conflict'
