@@ -47,8 +47,10 @@ def main(argv: list[str] | None = None, *, input_stream=None, output_stream=None
     parser.add_argument('--model', help='Explicit existing model name; no default LFM.')
     parser.add_argument('--endpoint', help='Explicit model endpoint (discovery only when --discover is supplied).')
     parser.add_argument('--credential-env', default='', help='Credential environment-variable reference; never the key itself.')
-    parser.add_argument('--voice', action='store_true', help='Opt in to existing Whisper.cpp/Kokoro assets.')
-    for name in ('whisper-bin', 'whisper-model', 'kokoro-model', 'kokoro-voices'):
+    parser.add_argument('--voice', action='store_true', help='Opt in to configured speech providers (Whisper.cpp/Kokoro by default).')
+    parser.add_argument('--stt-provider', default='whisper.cpp')
+    parser.add_argument('--tts-provider', default='kokoro')
+    for name in ('whisper-bin', 'whisper-model', 'kokoro-model', 'kokoro-voices', 'stt-executable', 'stt-model', 'tts-executable', 'tts-model'):
         parser.add_argument('--' + name, default='')
     parser.add_argument('--discover', action='store_true', help='Read only the selected Ollama endpoint model inventory.')
     parser.add_argument('--timeout', type=float, default=3.0)
@@ -64,7 +66,9 @@ def main(argv: list[str] | None = None, *, input_stream=None, output_stream=None
     try:
         if args.config:
             if any((args.role, args.provider, args.model, args.endpoint, args.voice, args.credential_env,
-                    args.whisper_bin, args.whisper_model, args.kokoro_model, args.kokoro_voices)):
+                    args.whisper_bin, args.whisper_model, args.kokoro_model, args.kokoro_voices,
+                    args.stt_provider != 'whisper.cpp', args.tts_provider != 'kokoro',
+                    args.stt_executable, args.stt_model, args.tts_executable, args.tts_model)):
                 raise ValueError('--config cannot be combined with selection overrides')
             selection = _load(args.config)
         else:
@@ -78,7 +82,8 @@ def main(argv: list[str] | None = None, *, input_stream=None, output_stream=None
                 raise ValueError('--provider and --model must be supplied together')
             if args.credential_env and not args.model:
                 raise ValueError('--credential-env requires a model')
-            voice = VoiceSelection(args.voice, args.whisper_bin, args.whisper_model, args.kokoro_model, args.kokoro_voices)
+            voice = VoiceSelection(args.voice, args.whisper_bin, args.whisper_model, args.kokoro_model, args.kokoro_voices,
+                args.stt_provider, args.tts_provider, args.stt_executable, args.stt_model, args.tts_executable, args.tts_model)
             model = ModelSelection(args.provider, args.model, args.endpoint or '', args.credential_env) if args.model else None
             selection = SetupSelection(role=role, model=model, voice=voice)
         endpoint = selection.model.endpoint if selection.model and selection.model.provider in ('ollama', 'lfm') else args.endpoint

@@ -38,16 +38,18 @@ def verify(selection: SetupSelection, discovery: DiscoveryReport | None = None) 
     voice = {'status': 'disabled'}
     if selection.voice.enabled:
         missing = []
-        for name in ('whisper_bin', 'whisper_model', 'kokoro_model', 'kokoro_voices'):
+        names = (['whisper_bin', 'whisper_model'] if selection.voice.stt_provider == 'whisper.cpp' else []) + (['kokoro_model', 'kokoro_voices'] if selection.voice.tts_provider == 'kokoro' else [])
+        names += [name for name in ('stt_executable', 'stt_model', 'tts_executable', 'tts_model') if getattr(selection.voice, name)]
+        for name in names:
             value = getattr(selection.voice, name)
-            if name == 'whisper_bin':
+            if name == 'whisper_bin' or name.endswith('_executable'):
                 resolved = shutil.which(value) if value else None
                 exists = bool(resolved and Path(resolved).is_file())
             else:
                 exists = bool(value and Path(value).expanduser().is_file())
             if not exists:
                 missing.append(name)
-        for module in ('kokoro_onnx', 'onnxruntime'):
+        for module in (('kokoro_onnx', 'onnxruntime') if selection.voice.tts_provider == 'kokoro' else ()):
             if importlib.util.find_spec(module) is None:
                 missing.append(module)
         voice = {'status': 'missing' if missing else 'assets_present_unverified', 'missing': missing,

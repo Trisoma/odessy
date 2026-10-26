@@ -255,6 +255,12 @@ SETTINGS: tuple[Setting, ...] = (
        "the cloud egress log (empty turns it off)", allow_empty=True),
     _s("ODESSY_API_TOKEN", "secret", "the API server's bearer token", allow_empty=True),
     # -- voice --------------------------------------------------------------
+    _s("ODESSY_STT_PROVIDER", "text", "registered name or trusted module:factory"),
+    _s("ODESSY_TTS_PROVIDER", "text", "registered name or trusted module:factory"),
+    _s("ODESSY_STT_EXECUTABLE", "file", "custom STT executable", command=True, allow_empty=True),
+    _s("ODESSY_TTS_EXECUTABLE", "file", "custom TTS executable", command=True, allow_empty=True),
+    _s("ODESSY_STT_MODEL", "file", "custom STT model", allow_empty=True),
+    _s("ODESSY_TTS_MODEL", "file", "custom TTS model", allow_empty=True),
     _s("ODESSY_WHISPER_BIN", "file", "the whisper.cpp executable",
        required_in=("voice",), fallback="whisper-cli", command=True),
     _s("ODESSY_WHISPER_MODEL", "file", "the Whisper model file",
@@ -398,6 +404,15 @@ def setting(name: str) -> Setting | None:
 
 
 def _check_setting(setting: Setting, source: Mapping[str, str], active: frozenset[str]) -> list[Issue]:
+    if ((setting.name.startswith('ODESSY_WHISPER_') and source.get('ODESSY_STT_PROVIDER', 'whisper.cpp') != 'whisper.cpp') or
+        (setting.name in ('ODESSY_KOKORO_MODEL', 'ODESSY_KOKORO_VOICES') and source.get('ODESSY_TTS_PROVIDER', 'kokoro') != 'kokoro')) and setting.name not in source:
+        return []
+    if setting.name in ('ODESSY_STT_PROVIDER', 'ODESSY_TTS_PROVIDER') and source.get(setting.name):
+        from odessy.voice.providers import validate_selector
+        try:
+            validate_selector(source[setting.name])
+        except ValueError as error:
+            return [_issue('error', setting, str(error))]
     optional_audio = 'hybrid' in active and bool(set(setting.required_in) & {'voice', 'wake'})
     required = not optional_audio and bool(setting.required_in) and bool(active.intersection(setting.required_in))
     present = setting.name in source

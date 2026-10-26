@@ -575,13 +575,17 @@ def _voice_checks(env: Mapping[str, str], probes: Probes) -> list[Check]:
 
     checks: list[Check] = []
     whisper_bin = env.get("ODESSY_WHISPER_BIN") or "whisper-cli"
-    if probes.which(whisper_bin) is None and not probes.path_exists(whisper_bin):
+    if env.get("ODESSY_STT_PROVIDER", "whisper.cpp") == "whisper.cpp" and probes.which(whisper_bin) is None and not probes.path_exists(whisper_bin):
         checks.append(Check("Voice (optional)", "warn", f"speech-to-text program not found: {whisper_bin}", "Build whisper.cpp and set ODESSY_WHISPER_BIN."))
     for env_name, label, default in (
         ("ODESSY_WHISPER_MODEL", "Whisper model", "models/ggml-tiny.en.bin"),
         ("ODESSY_KOKORO_MODEL", "Kokoro model", "kokoro-v1.0.int8.onnx"),
         ("ODESSY_KOKORO_VOICES", "Kokoro voices", "voices-v1.0.bin"),
     ):
+        if env_name.startswith('ODESSY_WHISPER') and env.get('ODESSY_STT_PROVIDER', 'whisper.cpp') != 'whisper.cpp':
+            continue
+        if env_name.startswith('ODESSY_KOKORO') and env.get('ODESSY_TTS_PROVIDER', 'kokoro') != 'kokoro':
+            continue
         path = env.get(env_name) or default
         if not probes.path_exists(path):
             checks.append(Check("Voice (optional)", "warn", f"{label} not found: {path}", f"Download it and set {env_name}."))
@@ -589,6 +593,9 @@ def _voice_checks(env: Mapping[str, str], probes: Probes) -> list[Check]:
         command = env.get(env_name) or default
         if probes.which(command) is None:
             checks.append(Check("Voice (optional)", "warn", f"audio program not found: {command}", f"Set {env_name} (arecord/aplay are Linux-only)."))
+    for key, default in (('ODESSY_STT_PROVIDER', 'whisper.cpp'), ('ODESSY_TTS_PROVIDER', 'kokoro')):
+        if env.get(key, default) != default:
+            checks.append(Check('Voice (optional)', 'warn', f'{key}: custom trusted-code provider configured; not initialized or verified', 'Verify with a controlled voice test.'))
     if not checks:
         checks.append(Check("Voice (optional)", "ok", "speech-to-text, text-to-speech and audio programs found"))
     return checks

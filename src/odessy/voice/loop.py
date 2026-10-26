@@ -13,6 +13,9 @@ from odessy.runtime.agent_loop import OdessyAgent
 from odessy.voice.stt import blank_transcript_reason
 
 
+# Compatibility re-exports for existing integrations.
+from odessy.voice.providers import STT, TTS, cancel_provider
+
 class AudioIO(Protocol):
     def record(self, output_path: Path, seconds: int) -> None:
         ...
@@ -21,14 +24,6 @@ class AudioIO(Protocol):
         ...
 
 
-class STT(Protocol):
-    def transcribe(self, audio_path: Path):
-        ...
-
-
-class TTS(Protocol):
-    def synthesize(self, text: str, output_path: Path):
-        ...
 
 
 @dataclass(frozen=True)
@@ -67,6 +62,7 @@ class VoiceLoop:
             return await asyncio.shield(task)
         except asyncio.CancelledError:
             cancelled.set()
+            cancel_provider(getattr(function, "__self__", None))
             if owned_audio:
                 stop = getattr(self.audio_io, 'stop', None)
                 if stop is not None:

@@ -50,6 +50,7 @@ from odessy.voice.session import (
 )
 from odessy.voice.stt import WhisperCppSTT, blank_transcript_reason
 from odessy.voice.tts import KokoroTTS
+from odessy.voice.providers import create_stt, create_tts, close_providers, cancel_provider
 from odessy.voice.vad import SileroSpeechDetector
 from odessy.voice.wake import OpenWakeWordDetector, WakeGate
 
@@ -243,12 +244,16 @@ class HybridAudioAdapter:
         self._closing = True
         self._input_enabled = False
         self._output_enabled = False
+        cancel_provider(self._stt)
+        cancel_provider(self._tts)
         await self._stop_session()
         if self._stream_started:
             self._close_stream()
         self.stop_speaking()
         await self._drain_blocking()
         self.stop_speaking()
+        cleanup = asyncio.create_task(asyncio.to_thread(close_providers, self._stt, self._tts))
+        await asyncio.wait({cleanup}, timeout=self.drain_timeout)
         self._started = False
 
     # -- speech ------------------------------------------------------------------
@@ -256,6 +261,7 @@ class HybridAudioAdapter:
     def stop_speaking(self) -> None:
         """Stop playback now. Synchronous, matching the existing player seam."""
 
+        cancel_provider(self._tts)
         player = self._player
         if player is None:
             return
@@ -428,10 +434,7 @@ class HybridAudioAdapter:
                 if reason is not None:
                     self._fail_input(STT, reason)
                     return False
-                self._stt = WhisperCppSTT(
-                    whisper_bin=self.config.whisper_bin,
-                    model_path=self.config.whisper_model,
-                )
+                self._stt = await self._run_blocking(self._create_provider, create_stt, WhisperCppSTT)
         return True
 
     async def _open_stream(self) -> bool:
@@ -612,14 +615,16 @@ class HybridAudioAdapter:
                 if reason is not None:
                     self._fail_output(SYNTHESIS, reason)
                     return False
-                self._tts = KokoroTTS(
-                    model_path=self.config.kokoro_model,
-                    voices_path=self.config.kokoro_voices,
-                    provider=self.config.onnx_provider,
-                    cache_dir=self.config.onnx_cache_dir,
-                )
+                self._tts = await self._run_blocking(self._create_provider, create_tts, KokoroTTS)
         self._output_failure = None
         return True
+
+    def _create_provider(self, factory, builtin):
+        provider = factory(self.config, builtin_factory=builtin)
+        if self._closing:
+            close_providers(provider)
+            raise RuntimeError('audio closed during provider initialization')
+        return provider
 
     async def _run_blocking(self, function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """Run a device call off the loop, shield it, and track it for draining.
@@ -638,7 +643,11 @@ class HybridAudioAdapter:
                 done.exception()  # retrieved, so a failed drain is not a warning
 
         task.add_done_callback(finished)
-        return await asyncio.shield(task)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancel_provider(getattr(function, '__self__', None))
+            raise
 
     async def _drain_blocking(self) -> None:
         pending = [task for task in self._blocking if not task.done()]
@@ -670,6 +679,8 @@ class HybridAudioAdapter:
 def _synthesis_missing(config: VoiceConfig) -> str | None:
     """Why speech synthesis cannot work, or ``None``. Feature-aware, not fatal."""
 
+    if config.tts_provider != "kokoro":
+        return None
     for label, value in (
         ("model", config.kokoro_model),
         ("voice data", config.kokoro_voices),
@@ -686,6 +697,8 @@ def _synthesis_missing(config: VoiceConfig) -> str | None:
 
 
 def _recognition_missing(config: VoiceConfig) -> str | None:
+    if config.stt_provider != "whisper.cpp":
+        return None
     if shutil.which(config.whisper_bin) is None:
         return (
             "speech recognition is unavailable: "

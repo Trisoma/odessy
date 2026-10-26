@@ -45,8 +45,17 @@ class VoiceConfig:
     max_utterance_seconds: int = DEFAULT_MAX_UTTERANCE_SECONDS
     #: Speak a streaming (cloud) model's answer sentence by sentence as it arrives.
     stream_speech: bool = True
+    stt_provider: str = "whisper.cpp"
+    tts_provider: str = "kokoro"
+    stt_executable: str = ""
+    stt_model: str = ""
+    tts_executable: str = ""
+    tts_model: str = ""
 
     def __post_init__(self) -> None:
+        from .providers import validate_selector
+        validate_selector(self.stt_provider)
+        validate_selector(self.tts_provider)
         if not 0 <= self.settling_ms <= 10000:
             raise ValueError("ODESSY_VOICE_SETTLING_MS must be from 0 to 10000")
         if self.interaction not in INTERACTIONS:
@@ -64,6 +73,12 @@ class VoiceConfig:
         load_config_env()
         wake_model = os.environ.get("ODESSY_WAKE_MODEL", "").strip()
         return cls(
+            stt_provider=os.environ.get("ODESSY_STT_PROVIDER", "whisper.cpp"),
+            tts_provider=os.environ.get("ODESSY_TTS_PROVIDER", "kokoro"),
+            stt_executable=os.environ.get("ODESSY_STT_EXECUTABLE", ""),
+            stt_model=os.environ.get("ODESSY_STT_MODEL", ""),
+            tts_executable=os.environ.get("ODESSY_TTS_EXECUTABLE", ""),
+            tts_model=os.environ.get("ODESSY_TTS_MODEL", ""),
             whisper_bin=os.environ.get("ODESSY_WHISPER_BIN", "whisper-cli"),
             whisper_model=os.environ.get("ODESSY_WHISPER_MODEL", "models/ggml-tiny.en.bin"),
             kokoro_model=os.environ.get("ODESSY_KOKORO_MODEL", "kokoro-v1.0.int8.onnx"),

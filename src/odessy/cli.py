@@ -1,4 +1,5 @@
 from __future__ import annotations
+from odessy.voice.providers import create_stt, create_tts, close_providers, cancel_provider
 
 import argparse
 import asyncio
@@ -322,6 +323,12 @@ async def _hybrid_voice_async(use_fake_model: bool, backend: str | None = None, 
 async def _run_voice_turn(agent: OdessyAgent, config: VoiceConfig) -> None:
     controller = getattr(agent, 'controller', None)
     broker = controller.interactions if controller is not None else None
+    stt = create_stt(config, builtin_factory=WhisperCppSTT)
+    try:
+        tts = create_tts(config, builtin_factory=KokoroTTS)
+    except BaseException:
+        close_providers(stt)
+        raise
     loop = VoiceLoop(
         agent=agent,
         audio_io=CommandAudioIO(
@@ -330,16 +337,8 @@ async def _run_voice_turn(agent: OdessyAgent, config: VoiceConfig) -> None:
             input_device=config.audio_input_device,
             output_device=config.audio_output_device,
         ),
-        stt=WhisperCppSTT(
-            whisper_bin=config.whisper_bin,
-            model_path=config.whisper_model,
-        ),
-        tts=KokoroTTS(
-            model_path=config.kokoro_model,
-            voices_path=config.kokoro_voices,
-            provider=config.onnx_provider,
-            cache_dir=config.onnx_cache_dir,
-        ),
+        stt=stt,
+        tts=tts,
         tmp_dir=config.tmp_dir,
         seconds=config.voice_seconds,
         status_callback=print,
@@ -358,29 +357,35 @@ async def _run_voice_turn(agent: OdessyAgent, config: VoiceConfig) -> None:
         from odessy.interaction.terminal import TerminalInteractionHandler, race_handlers
         broker.handler = race_handlers(loop.handle_interaction,
             TerminalInteractionHandler(broker, stop_turn=controller.stop, mark_ready=False))
-    result = await loop.run_once()
-    attempts = 1 + config.blank_retries
-    attempt = 1
-    while result.status == "blank" and attempt < attempts:
-        attempt += 1
-        # The model was never called for the blank turn, so retrying costs a
-        # recording and nothing else. It is not a retry of a request.
-        print(
-            f"No usable speech in that recording ({result.error}). "
-            f"Recording again ({attempt}/{attempts})."
-        )
+    try:
         result = await loop.run_once()
-    if result.transcript:
-        print(f"Transcript: {result.transcript}")
-    if result.final_text:
-        print(f"Odessy: {result.final_text}")
-    if result.status == "blank":
-        raise SystemExit(
-            f"Heard no usable speech after {attempt} recording(s): {result.error}. "
-            "Nothing was sent to the model."
-        )
-    if result.status != "ok":
-        raise SystemExit(f"Voice turn failed with status {result.status}: {result.error}")
+        attempts = 1 + config.blank_retries
+        attempt = 1
+        while result.status == "blank" and attempt < attempts:
+            attempt += 1
+            # The model was never called for the blank turn, so retrying costs a
+            # recording and nothing else. It is not a retry of a request.
+            print(
+                f"No usable speech in that recording ({result.error}). "
+                f"Recording again ({attempt}/{attempts})."
+            )
+            result = await loop.run_once()
+        if result.transcript:
+            print(f"Transcript: {result.transcript}")
+        if result.final_text:
+            print(f"Odessy: {result.final_text}")
+        if result.status == "blank":
+            raise SystemExit(
+                f"Heard no usable speech after {attempt} recording(s): {result.error}. "
+                "Nothing was sent to the model."
+            )
+        if result.status != "ok":
+            raise SystemExit(f"Voice turn failed with status {result.status}: {result.error}")
+
+    finally:
+        cancel_provider(stt)
+        cancel_provider(tts)
+        await asyncio.to_thread(close_providers, stt, tts)
 
 
 async def _listen_async(
@@ -403,13 +408,12 @@ async def _listen_async(
     model = _build_model(use_fake_model, backend=backend, model_name=config.ollama_model)
     _announce_model(model)
 
-    stt = WhisperCppSTT(whisper_bin=config.whisper_bin, model_path=config.whisper_model)
-    tts = KokoroTTS(
-        model_path=config.kokoro_model,
-        voices_path=config.kokoro_voices,
-        provider=config.onnx_provider,
-        cache_dir=config.onnx_cache_dir,
-    )
+    stt = create_stt(config, builtin_factory=WhisperCppSTT)
+    try:
+        tts = create_tts(config, builtin_factory=KokoroTTS)
+    except BaseException:
+        close_providers(stt)
+        raise
     player = CommandPlayer(player=config.audio_player, output_device=config.audio_output_device)
     stream = CommandAudioStream(
         recorder=config.audio_recorder, input_device=config.audio_input_device
@@ -516,6 +520,9 @@ async def _listen_async(
                 player.stop()
             finally:
                 stream.close()
+            cancel_provider(stt)
+            cancel_provider(tts)
+            await asyncio.to_thread(close_providers, stt, tts)
 
 
 def _announce_model(model: object) -> None:
