@@ -300,6 +300,9 @@ SETTINGS: tuple[Setting, ...] = (
     _s("ODESSY_DEBUG_MODEL_REPAIR", "enum", "set to 1 to trace model repairs",
        choices=("0", "1"), allow_empty=True),
     # -- written by Odessy or by the installer ------------------------------
+    _s("ODESSY_PORTABLE_ROOT", "path", "verified portable payload root", internal=True),
+    _s("ODESSY_PORTABLE_STATE", "path", "external portable configuration directory", internal=True),
+    _s("ODESSY_NODE_TOOLS_DIR", "path", "bundled precompiled Node tool server", internal=True),
     _s("ODESSY_WORKSPACE_ROOT", "path", "the tool server's workspace", internal=True),
     _s("ODESSY_MCP_HOST", "text", "the tool server's bind address", internal=True),
     _s("ODESSY_MCP_PORT", "int", "the tool server's port",

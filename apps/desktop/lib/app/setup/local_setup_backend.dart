@@ -10,13 +10,17 @@ class LocalSetupBackend implements SetupBackend {
       String sourceRoot = const String.fromEnvironment('ODESSY_SETUP_ROOT'),
       this.payloadRoot = '',
       this.timeout = const Duration(seconds: 30)})
-      : python = python.isNotEmpty ? python : (_bundledPython() ?? _installedPython() ?? 'python'),
+      : python = python.isNotEmpty
+            ? python
+            : (_bundledPython() ?? _installedPython() ?? 'python'),
         sourceRoot = sourceRoot.isNotEmpty ? sourceRoot : _bundledRoot();
   static String _bundledRoot() {
     var candidate = File(Platform.resolvedExecutable).parent;
     for (var depth = 0; depth < 7; depth++) {
-      if (Directory('${candidate.path}${Platform.pathSeparator}bootstrap')
-              .existsSync() &&
+      if ((Directory('${candidate.path}${Platform.pathSeparator}bootstrap')
+                  .existsSync() ||
+              File('${candidate.path}${Platform.pathSeparator}portable-manifest.json')
+                  .existsSync()) &&
           Directory('${candidate.path}${Platform.pathSeparator}runtime')
               .existsSync()) {
         return candidate.path;
@@ -39,8 +43,10 @@ class LocalSetupBackend implements SetupBackend {
   static String? _installedPython() {
     final versionDirectory = File(Platform.resolvedExecutable).parent.parent;
     final candidate = Platform.isWindows
-        ? File('${versionDirectory.path}${Platform.pathSeparator}Scripts${Platform.pathSeparator}python.exe')
-        : File('${versionDirectory.path}${Platform.pathSeparator}bin${Platform.pathSeparator}python3');
+        ? File(
+            '${versionDirectory.path}${Platform.pathSeparator}Scripts${Platform.pathSeparator}python.exe')
+        : File(
+            '${versionDirectory.path}${Platform.pathSeparator}bin${Platform.pathSeparator}python3');
     return candidate.existsSync() ? candidate.path : null;
   }
 
@@ -169,4 +175,3 @@ class LocalSetupBackend implements SetupBackend {
     await cancel();
   }
 }
-

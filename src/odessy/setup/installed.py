@@ -34,6 +34,9 @@ def active_configuration(root):
 
 def spec(root):
     """Validate the installed version, executables and configuration before launch."""
+    if os.environ.get("ODESSY_PORTABLE_ROOT"):
+        from .portable import spec as portable_spec
+        return portable_spec(root)
     root=guard(root)
     kind=format_of(root)
     if kind!='versioned':

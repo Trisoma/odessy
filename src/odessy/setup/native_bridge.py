@@ -135,6 +135,9 @@ def _packaged(parameters,*,cancelled=lambda:False):
 
 
 def manage(parameters,*,cancelled=lambda:False):
+    if os.environ.get("ODESSY_PORTABLE_ROOT"):
+        from .portable import dispatch
+        return dispatch(parameters)
     if parameters.get('action') in PACKAGE_ACTIONS:
         return _packaged(parameters,cancelled=cancelled)
     if parameters.get('action')=='context':
