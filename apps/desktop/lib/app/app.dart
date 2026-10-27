@@ -4,6 +4,10 @@ import '../features/workspaces/presentation/workspace_page.dart';
 import '../widgets/component_state_banner.dart';
 import '../widgets/pixel_boat.dart';
 import 'navigation.dart';
+import '../features/settings/controllers/component_settings_controller.dart';
+import '../features/settings/presentation/settings_navigation.dart';
+import '../features/settings/controllers/settings_form_controller.dart';
+import '../features/settings/controllers/setting_field.dart';
 import 'ux_copy.dart';
 import 'dart:ui' show AppExitResponse;
 import 'package:flutter/material.dart';
@@ -53,6 +57,37 @@ class _OdessyAppState extends State<OdessyApp> {
   late final DesktopSession controller;
   final monitoring = MonitorController();
   late final SetupController setup;
+  late final ComponentSettingsController componentSettings;
+  final navigatorKey = GlobalKey<NavigatorState>();
+  bool _navigating = false;
+  final collaborationForms = <OdessyApi, SettingsFormController<int>>{};
+  SettingsFormController<int> _collaborationForm() =>
+      collaborationForms.putIfAbsent(controller.api, () {
+        final owner = controller.api;
+        return SettingsFormController<int>(
+            field: SettingField<int>(
+                source: 'service collaboration settings',
+                applyTiming: 'new sessions',
+                parse: int.tryParse,
+                validate: (v) => v < 0 || v > 32
+                    ? 'Enter a whole number from 0 to 32.'
+                    : null),
+            read: () async {
+              final result = await owner.settings();
+              if (!identical(owner, controller.api)) {
+                throw StateError('Connection changed');
+              }
+              return (result['settings'] as Map)['max_consultations'] as int;
+            },
+            write: (value) async {
+              if (!identical(owner, controller.api)) {
+                throw StateError('Connection changed');
+              }
+              await controller.updateConsultationLimit(value);
+            });
+      });
+  bool get _settingsBusy =>
+      componentSettings.busy || collaborationForms.values.any((f) => f.loading);
   InstalledCoordinatorHandle? configuredCoordinator;
   int configuredEpoch = 0;
   late final MaintenanceController maintenance, pairing, installerEngine;
@@ -66,6 +101,7 @@ class _OdessyAppState extends State<OdessyApp> {
   String connectionNotice = '';
   Future<void> _activateSaved() async {
     if (setup.busy ||
+        _settingsBusy ||
         setup.completing ||
         controller.busy ||
         controller.session?.running == true) {
@@ -85,15 +121,35 @@ class _OdessyAppState extends State<OdessyApp> {
             : 'No saved model is available. Choose a model in Settings first.');
   }
 
-  void _openSettings([String section = SettingsSections.general]) {
+  Future<void> _openSettings(
+      [String section = SettingsSections.general]) async {
+    if (!await _mayNavigate() || !mounted) return;
     setState(() {
       page = 'Settings';
       settingsSection = section;
     });
   }
 
-  void _navigate(String route) {
+  Future<void> _navigate(String route) async {
+    if (route == page || !await _mayNavigate() || !mounted) return;
     setState(() => page = route);
+  }
+
+  Future<bool> _mayNavigate() async {
+    if (_navigating) return false;
+    final context = navigatorKey.currentContext;
+    if (context == null) return true;
+    _navigating = true;
+    try {
+      if (!await confirmSettingsNavigation(context, componentSettings)) {
+        return false;
+      }
+      if (!mounted || !context.mounted) return false;
+      return await confirmFormNavigation(
+          context, collaborationForms[controller.api]);
+    } finally {
+      _navigating = false;
+    }
   }
 
   @override
@@ -106,6 +162,8 @@ class _OdessyAppState extends State<OdessyApp> {
       await configuredCoordinator?.stop();
     })
       ..output = LocalSetupBackend.defaultOutput();
+    componentSettings = ComponentSettingsController(setup.backend,
+        root: widget.installed?['root'] as String? ?? '');
     maintenance = MaintenanceController(LocalSetupBackend());
     installerEngine = MaintenanceController(LocalSetupBackend());
     pairing = MaintenanceController(LocalSetupBackend());
@@ -116,6 +174,11 @@ class _OdessyAppState extends State<OdessyApp> {
         ..load();
     }
     lifecycle = AppLifecycleListener(onExitRequested: () async {
+      if (!await _mayNavigate()) return AppExitResponse.cancel;
+      await componentSettings.shutdown();
+      for (final form in collaborationForms.values) {
+        await form.shutdown();
+      }
       await controller.shutdown();
       await setup.shutdown();
       await configuredCoordinator?.stop();
@@ -143,6 +206,10 @@ class _OdessyAppState extends State<OdessyApp> {
   void dispose() {
     lifecycle.dispose();
     monitoring.dispose();
+    componentSettings.dispose();
+    for (final form in collaborationForms.values) {
+      form.dispose();
+    }
     controller.dispose();
     setup.dispose();
     configuredCoordinator?.stop();
@@ -155,6 +222,7 @@ class _OdessyAppState extends State<OdessyApp> {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'Odessy · Desktop preview',
       debugShowCheckedModeBanner: false,
       theme: odessyTheme(Brightness.light),
@@ -272,6 +340,7 @@ class _OdessyAppState extends State<OdessyApp> {
                               initialPerformance: page == 'Monitor',
                               onConnect: () => _navigate('Pairing')),
                           'Workspaces' => WorkspacePage(
+                              componentController: componentSettings,
                               backend: setup.backend,
                               root: widget.installed?['root'] as String? ?? '',
                               picker: const FileSelectorPicker()),
@@ -314,7 +383,9 @@ class _OdessyAppState extends State<OdessyApp> {
                               key: ValueKey((controller.api, settingsSection)),
                               initialSection: settingsSection,
                               controller: controller,
+                              componentController: componentSettings,
                               configurationBackend: setup.backend,
+                              formController: _collaborationForm(),
                               installationRoot:
                                   widget.installed?['root'] as String? ?? '',
                               installed: widget.installed != null,
@@ -434,6 +505,10 @@ class _OdessyAppState extends State<OdessyApp> {
               fontWeight: FontWeight.w600,
               letterSpacing: 1)));
   Future<void> _connectConfigured(Json spec) async {
+    if (_settingsBusy) {
+      throw StateError(
+          'Wait for the current settings operation before changing connection.');
+    }
     final epoch = ++configuredEpoch;
     if (controller.busy || controller.session?.running == true) {
       throw StateError(
@@ -468,6 +543,21 @@ class _OdessyAppState extends State<OdessyApp> {
   }
 
   Future<void> _connect(BuildContext context) async {
+    if (_settingsBusy) {
+      await showDialog<void>(
+          context: context,
+          builder: (context) => AlertDialog(
+                  title: const Text('Settings operation in progress'),
+                  content: const Text(
+                      'Wait for the current save or inspection before changing the connection.'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('Close'))
+                  ]));
+      return;
+    }
+    if (!await _mayNavigate() || !context.mounted) return;
     final result = await showConnectionDialog(context, credentials);
     if (!mounted) {
       result?.close();

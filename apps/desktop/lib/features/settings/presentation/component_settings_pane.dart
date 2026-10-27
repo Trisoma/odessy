@@ -25,20 +25,22 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
   bool initialised = false, enabled = false;
   String provider = 'ollama', role = 'combined';
   ComponentSettingsController get c => widget.controller;
+  bool get locked => c.busy || c.inspectionRequired;
   @override
   void initState() {
     super.initState();
     catalog = ModelCatalogController(c.backend);
     c.addListener(_refresh);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await c.load();
+      c.activeSection = widget.section;
+      if (c.snapshot.isEmpty) await c.load();
       _refresh();
     });
   }
 
   void _refresh() {
     if (!mounted) return;
-    if (!initialised && !c.busy && c.snapshot['selection'] is Map) {
+    if (!c.busy && c.snapshot['selection'] is Map) {
       final selection = c.snapshot['selection'] as Map;
       final voice = selection['voice'] as Map? ?? {};
       final model = selection['model'] as Map? ?? {};
@@ -50,13 +52,22 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
                   'workspace': c.snapshot['workspace']
                 }
               : voice;
+      final draft = c.draft(widget.section, {
+        for (final key in _keys) key: '${data[key] ?? ''}',
+        if (widget.section == 'llm')
+          'provider': '${model['provider'] ?? 'ollama'}',
+        if (widget.section == 'host')
+          'role': '${selection['role'] ?? 'combined'}',
+        if (widget.section == 'voice') 'enabled': voice['enabled'] == true,
+      });
       for (final key in _keys) {
-        fields.putIfAbsent(key, () => TextEditingController()).text =
-            '${data[key] ?? ''}';
+        final field = fields.putIfAbsent(key, () => TextEditingController());
+        final value = '${draft.values[key] ?? ''}';
+        if (field.text != value) field.text = value;
       }
-      provider = '${model['provider'] ?? 'ollama'}';
-      role = '${selection['role'] ?? 'combined'}';
-      enabled = voice['enabled'] == true;
+      provider = '${draft.values['provider'] ?? 'ollama'}';
+      role = '${draft.values['role'] ?? 'combined'}';
+      enabled = draft.values['enabled'] == true;
       initialised = true;
     }
     setState(() {});
@@ -91,22 +102,25 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
     super.dispose();
   }
 
+  Json _patch() => widget.section == 'llm'
+      ? {
+          'provider': provider,
+          for (final key in _keys) key: fields[key]!.text.trim()
+        }
+      : widget.section == 'voice'
+          ? {'enabled': enabled}
+          : widget.section == 'host'
+              ? {
+                  'role': role,
+                  if (fields['workspace']!.text.trim().isNotEmpty)
+                    'workspace': fields['workspace']!.text.trim()
+                }
+              : {for (final key in _keys) key: fields[key]!.text};
+
+  void _remember() => c.edit(widget.section, _patch());
   Future<void> _save() async {
-    final Json patch = widget.section == 'llm'
-        ? {
-            'provider': provider,
-            for (final key in _keys) key: fields[key]!.text.trim()
-          }
-        : widget.section == 'voice'
-            ? {'enabled': enabled}
-            : widget.section == 'host'
-                ? {
-                    'role': role,
-                    if (fields['workspace']!.text.trim().isNotEmpty)
-                      'workspace': fields['workspace']!.text.trim()
-                  }
-                : {for (final key in _keys) key: fields[key]!.text.trim()};
-    await c.save(widget.section, patch);
+    _remember();
+    await c.save(widget.section, _patch());
   }
 
   Widget _field(String key, {bool browse = false}) => Padding(
@@ -114,13 +128,13 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
       child: TextField(
           key: ValueKey('component-$key'),
           controller: fields[key],
-          enabled: !c.busy,
+          enabled: !locked,
           decoration: InputDecoration(
               labelText: key.replaceAll('_', ' '),
               suffixIcon: browse
                   ? IconButton(
                       tooltip: 'Browse ${key.replaceAll('_', ' ')}',
-                      onPressed: c.busy
+                      onPressed: locked
                           ? null
                           : () async {
                               final path = widget.section == 'host'
@@ -129,12 +143,13 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
                                   : await widget.picker
                                       .pickFile(initial: fields[key]!.text);
                               if (mounted && path != null) {
-                                setState(() => fields[key]!.text = path);
+                                fields[key]!.text = path;
+                                _remember();
                               }
                             },
                       icon: const Icon(Icons.folder_open))
                   : null),
-          onChanged: (_) => setState(() {})));
+          onChanged: (_) => _remember()));
   @override
   Widget build(BuildContext context) =>
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -174,12 +189,13 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
                   ])
                     DropdownMenuItem(value: name, child: Text(name))
                 ],
-                onChanged: c.busy
+                onChanged: locked
                     ? null
                     : (value) => setState(() {
                           provider = value!;
                           fields['name']!.clear();
                           fields['endpoint']!.clear();
+                          _remember();
                         })),
             const SizedBox(height: 12),
             _field('endpoint'),
@@ -191,8 +207,8 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
                 credential: fields['credential_env']!.text.trim(),
                 value: fields['name']!,
                 fieldKey: const ValueKey('component-name'),
-                enabled: !c.busy,
-                onChanged: () => setState(() {})),
+                enabled: !locked,
+                onChanged: _remember),
             const Text(
                 'Credentials are environment-variable references only; never enter an API key.'),
           ] else if (widget.section == 'voice')
@@ -201,7 +217,12 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
                 subtitle: const Text(
                     'STT and TTS can be configured first, while voice remains disabled.'),
                 value: enabled,
-                onChanged: c.busy ? null : (v) => setState(() => enabled = v))
+                onChanged: locked
+                    ? null
+                    : (v) {
+                        enabled = v;
+                        _remember();
+                      })
           else if (widget.section == 'host') ...[
             DropdownButtonFormField<String>(
                 initialValue: role,
@@ -211,8 +232,12 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
                   for (final name in ['combined', 'coordinator', 'execution'])
                     DropdownMenuItem(value: name, child: Text(name))
                 ],
-                onChanged:
-                    c.busy ? null : (value) => setState(() => role = value!)),
+                onChanged: locked
+                    ? null
+                    : (value) {
+                        role = value!;
+                        _remember();
+                      }),
             const SizedBox(height: 12),
             _field('workspace', browse: true),
             const Text(
@@ -227,19 +252,46 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
                 'Saving paths does not enable voice or configure the other speech component.'),
           ],
           const SizedBox(height: 18),
+          if (!c.dirty && !c.busy && !c.inspectionRequired)
+            const Text('No unsaved changes in this section.'),
           Wrap(spacing: 12, children: [
             FilledButton(
-                onPressed: c.busy ? null : _save,
+                onPressed:
+                    c.busy || c.inspectionRequired || !c.dirty ? null : _save,
                 child: const Text('Save this section')),
             OutlinedButton(
                 onPressed: c.busy
                     ? null
                     : () async {
-                        initialised = false;
-                        await c.load();
+                        if (c.dirty) {
+                          final discard = await showDialog<bool>(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                      title: const Text(
+                                          'Discard this section’s draft?'),
+                                      content: const Text(
+                                          'Reload replaces only these edits with saved values.'),
+                                      actions: [
+                                        TextButton(
+                                            onPressed: () =>
+                                                Navigator.pop(context, false),
+                                            child: const Text('Keep editing')),
+                                        TextButton(
+                                            onPressed: () =>
+                                                Navigator.pop(context, true),
+                                            child: const Text(
+                                                'Discard and reload'))
+                                      ]));
+                          if (discard != true || !mounted) return;
+                        }
+                        await c.reloadSection(widget.section);
                       },
                 child: const Text('Reload saved values'))
           ]),
+          if (c.inspectionRequired)
+            OutlinedButton(
+                onPressed: c.busy ? null : c.load,
+                child: const Text('Inspect saved values')),
         ],
         if (c.status.isNotEmpty)
           Padding(

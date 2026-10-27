@@ -11,12 +11,15 @@ class SettingsFormController<T> extends ChangeNotifier {
   bool loading = false;
   bool loaded = false;
   bool _disposed = false;
+  bool inspectionRequired = false;
+  Future<void>? _write;
   String? error;
   String status = '';
   String get source => field.source;
   String get applyTiming => field.applyTiming;
   bool get dirty => field.dirty;
-  bool get canSave => loaded && !loading && dirty && field.error == null;
+  bool get canSave =>
+      loaded && !loading && !inspectionRequired && dirty && field.error == null;
   void edit(String value) {
     if (_disposed || loading) return;
     field.edit(value);
@@ -35,6 +38,7 @@ class SettingsFormController<T> extends ChangeNotifier {
       final next = await read();
       if (_disposed) return;
       field.load(next);
+      inspectionRequired = false;
       loaded = true;
     } catch (_) {
       if (!_disposed) {
@@ -52,6 +56,12 @@ class SettingsFormController<T> extends ChangeNotifier {
       {String successMessage =
           'Saved by the service. Applies to newly created sessions.'}) async {
     if (!canSave || _disposed) return;
+    final operation = _save(successMessage);
+    _write = operation;
+    await operation;
+  }
+
+  Future<void> _save(String successMessage) async {
     final value = field.value as T;
     loading = true;
     error = null;
@@ -67,6 +77,7 @@ class SettingsFormController<T> extends ChangeNotifier {
       status = successMessage;
     } catch (_) {
       if (!_disposed) {
+        inspectionRequired = true;
         error =
             'Save or reload failed. No success assumed; draft retained. Reload before retrying.';
       }
@@ -76,6 +87,10 @@ class SettingsFormController<T> extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  Future<void> shutdown() async {
+    await _write;
   }
 
   @override

@@ -85,8 +85,10 @@ real providers, microphone and Linux/macOS/ARM64 acceptance remain unverified.
 
 ## Next milestone
 
-M2: section draft ownership and save/recovery lifecycle. Verify TTS-only edits survive
-navigation, pending saves remain owned, unrelated values stay intact, and uncertain
-writes require inspection rather than replay. Then implement authoritative
-saved/active readiness, followed by desktop voice and real host/workspace journeys.
-Do not mark the broader Phase 1 or the full UX overhaul complete from M1 evidence.
+M2 component draft ownership and save/recovery is now implemented as described in
+[the lifecycle contract](settings-draft-lifecycle.md). App-owned component drafts,
+per-service collaboration forms, leave prompts and read-only unknown-outcome
+inspection reuse existing backends. Source/installed real-helper checks passed.
+The broader Phase 2 remains incomplete: authoritative saved/active readiness,
+hard-kill recovery and the remaining validation/merge acceptance are still open.
+Do not mark the full UX overhaul complete from these milestones.

@@ -11,9 +11,11 @@ class WorkspacePage extends StatefulWidget {
   const WorkspacePage(
       {super.key,
       required this.backend,
+      this.componentController,
       this.root = '',
       this.picker = const UnavailablePicker()});
   final SetupBackend backend;
+  final ComponentSettingsController? componentController;
   final String root;
   final NativePicker picker;
   @override
@@ -25,12 +27,13 @@ class _WorkspacePageState extends State<WorkspacePage> {
   @override
   void initState() {
     super.initState();
-    controller = ComponentSettingsController(widget.backend, root: widget.root);
+    controller = widget.componentController ??
+        ComponentSettingsController(widget.backend, root: widget.root);
   }
 
   @override
   void dispose() {
-    controller.dispose();
+    if (widget.componentController == null) controller.dispose();
     super.dispose();
   }
 

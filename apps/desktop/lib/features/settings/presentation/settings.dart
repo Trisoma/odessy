@@ -4,6 +4,7 @@ import 'package:odessy_client/odessy_client.dart';
 import '../../../app/setup/native_picker.dart';
 import '../controllers/component_settings_controller.dart';
 import 'component_settings_pane.dart';
+import 'settings_navigation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../app/session_controller.dart';
@@ -46,6 +47,8 @@ class SettingsPage extends StatefulWidget {
     this.onConnectSaved,
     this.maintenanceBlocked = false,
     this.configurationBackend,
+    this.componentController,
+    this.formController,
     this.installationRoot = '',
     this.initialSection = SettingsSections.general,
     this.onOpenGetStarted,
@@ -60,6 +63,8 @@ class SettingsPage extends StatefulWidget {
 
   final DesktopSession controller;
   final SetupBackend? configurationBackend;
+  final ComponentSettingsController? componentController;
+  final SettingsFormController<int>? formController;
   final String installationRoot, initialSection;
   final VoidCallback? onOpenManagement, onOpenGetStarted, onOpenDevices;
   final VoidCallback? onOpenVoice;
@@ -76,15 +81,17 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   final count = TextEditingController();
-  final field = SettingField<int>(
+  final fallbackField = SettingField<int>(
       source: 'user collaboration configuration',
       applyTiming: 'new sessions',
       parse: int.tryParse,
       validate: (v) =>
           v < 0 || v > 32 ? 'Enter a whole number from 0 to 32.' : null);
   late final SettingsFormController<int> form;
+  SettingField<int> get field => form.field;
   String section = SettingsSections.general;
   ComponentSettingsController? components;
+  bool changingSection = false;
 
   bool get loading => form.loading;
   String get status => form.error ?? form.status;
@@ -93,30 +100,53 @@ class _SettingsPageState extends State<SettingsPage> {
   void initState() {
     super.initState();
     section = widget.initialSection;
-    if (widget.configurationBackend != null) {
+    if (widget.componentController != null) {
+      components = widget.componentController;
+    } else if (widget.configurationBackend != null) {
       components = ComponentSettingsController(widget.configurationBackend!,
           root: widget.installationRoot);
     }
-    form = SettingsFormController<int>(
-        field: field,
-        read: () async {
-          final transport = widget.controller.api;
-          final value = await widget.controller.loadSettings();
-          if (!identical(transport, widget.controller.api)) {
-            throw StateError('Connection changed');
-          }
-          return (value['settings'] as Map)['max_consultations'] as int;
-        },
-        write: widget.controller.updateConsultationLimit);
+    form = widget.formController ??
+        SettingsFormController<int>(
+            field: fallbackField,
+            read: () async {
+              final transport = widget.controller.api;
+              final value = await widget.controller.loadSettings();
+              if (!identical(transport, widget.controller.api)) {
+                throw StateError('Connection changed');
+              }
+              return (value['settings'] as Map)['max_consultations'] as int;
+            },
+            write: widget.controller.updateConsultationLimit);
     form.addListener(syncText);
-    form.load();
+    if (!form.loaded && !form.loading) form.load();
+    syncText();
   }
 
   void syncText() {
     if (count.text != field.text) count.text = field.text;
   }
 
-  Future<void> load() => form.load();
+  Future<void> load() async {
+    if (form.dirty) {
+      final discard = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+                  title: const Text('Reload saved collaboration setting?'),
+                  content: const Text('Your current edit will be discarded.'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Keep editing')),
+                    TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('Discard and reload'))
+                  ]));
+      if (discard != true || !mounted) return;
+    }
+    await form.load();
+  }
+
   Future<void> save() => form.save(
       successMessage: widget.controller.api.isDemo
           ? 'Saved in demo memory only.'
@@ -125,8 +155,8 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void dispose() {
     form.removeListener(syncText);
-    form.dispose();
-    components?.dispose();
+    if (widget.formController == null) form.dispose();
+    if (widget.componentController == null) components?.dispose();
     count.dispose();
     super.dispose();
   }
@@ -140,7 +170,7 @@ class _SettingsPageState extends State<SettingsPage> {
               contentPadding: const EdgeInsets.symmetric(horizontal: 16),
               selected: section == name,
               title: Text(name, style: const TextStyle(fontSize: 13)),
-              onTap: () => setState(() => section = name)),
+              onTap: () => _selectSection(name)),
       ]));
 
   Widget _narrowPicker(BuildContext context) => DropdownButtonFormField<String>(
@@ -154,8 +184,22 @@ class _SettingsPageState extends State<SettingsPage> {
               value: name, child: Text(name, overflow: TextOverflow.ellipsis))
       ],
       onChanged: (name) {
-        if (name != null) setState(() => section = name);
+        if (name != null) _selectSection(name);
       });
+
+  Future<void> _selectSection(String name) async {
+    if (name == section || changingSection) return;
+    changingSection = true;
+    try {
+      if (!await confirmSettingsNavigation(context, components) || !mounted) {
+        return;
+      }
+      if (!await confirmFormNavigation(context, form) || !mounted) return;
+      setState(() => section = name);
+    } finally {
+      changingSection = false;
+    }
+  }
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -355,7 +399,9 @@ class _SettingsPageState extends State<SettingsPage> {
                 onChanged: (value) => form.edit(value),
                 enabled: !loading && form.loaded,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Limit · 0–32'))),
+                decoration: InputDecoration(labelText: 'Limit · 0–32',
+                    errorText: field.error,
+                    helperText: form.inspectionRequired ? 'Reload saved values before another save.' : null))),
         const SizedBox(height: 18),
         Wrap(spacing: 10, children: [
           FilledButton(
