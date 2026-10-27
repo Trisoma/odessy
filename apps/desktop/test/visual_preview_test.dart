@@ -44,11 +44,11 @@ void main() {
     await tester.tap(find.text('Settings'));
     await tester.pumpAndSettle();
     await tester.runAsync(() => capture('settings-light'));
-    await tester.tap(find.text('Set up this computer'));
+    await tester.tap(find.text('Text to speech (TTS)'));
     await tester.pumpAndSettle();
-    await tester.runAsync(() => capture('setup-welcome-light'));
+    await tester.runAsync(() => capture('settings-tts-light'));
     await tester.tap(find.byTooltip('Toggle light / dark theme'));
     await tester.pumpAndSettle();
-    await tester.runAsync(() => capture('setup-welcome-dark'));
+    await tester.runAsync(() => capture('settings-tts-dark'));
   });
 }

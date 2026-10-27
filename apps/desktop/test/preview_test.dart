@@ -12,6 +12,8 @@ void main() {
     await tester.pumpWidget(OdessyApp(api: DemoApi()));
     await tester.pumpAndSettle();
     expect(find.text('DEMO'), findsWidgets);
+    expect(find.text('Set up this computer'), findsNothing);
+    expect(find.widgetWithText(ListTile, 'Settings'), findsOneWidget);
     await tester.enterText(find.byKey(const Key('composer')), 'Hello Odessy');
     await tester.tap(find.byTooltip('Send message'));
     await tester.pump(const Duration(milliseconds: 100));

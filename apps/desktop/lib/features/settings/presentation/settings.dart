@@ -1,3 +1,7 @@
+import 'package:odessy_client/odessy_client.dart';
+import '../../../app/setup/native_picker.dart';
+import '../controllers/component_settings_controller.dart';
+import 'component_settings_pane.dart';
 import 'package:flutter/material.dart';
 
 import '../../../app/session_controller.dart';
@@ -13,10 +17,21 @@ class SettingsSections {
   static const general = 'General';
   static const models = 'Models and connections';
   static const voice = 'Voice';
+  static const stt = 'Speech to text (STT)';
+  static const tts = 'Text to speech (TTS)';
   static const devices = 'Devices and tool access';
   static const advanced = 'Advanced';
   static const installation = 'Installation';
-  static const all = [general, models, voice, devices, advanced, installation];
+  static const all = [
+    general,
+    models,
+    stt,
+    tts,
+    voice,
+    devices,
+    advanced,
+    installation
+  ];
 }
 
 class SettingsPage extends StatefulWidget {
@@ -24,6 +39,9 @@ class SettingsPage extends StatefulWidget {
     super.key,
     required this.controller,
     this.onOpenManagement,
+    this.configurationBackend,
+    this.installationRoot = '',
+    this.initialSection = SettingsSections.general,
     this.onOpenGetStarted,
     this.onOpenVoice,
     this.onOpenDevices,
@@ -35,6 +53,8 @@ class SettingsPage extends StatefulWidget {
   });
 
   final DesktopSession controller;
+  final SetupBackend? configurationBackend;
+  final String installationRoot, initialSection;
   final VoidCallback? onOpenManagement, onOpenGetStarted, onOpenDevices;
   final VoidCallback? onOpenVoice;
   final bool installed, modelConfigured, voiceEnabled;
@@ -55,6 +75,7 @@ class _SettingsPageState extends State<SettingsPage> {
           v < 0 || v > 32 ? 'Enter a whole number from 0 to 32.' : null);
   late final SettingsFormController<int> form;
   String section = SettingsSections.general;
+  ComponentSettingsController? components;
 
   bool get loading => form.loading;
   String get status => form.error ?? form.status;
@@ -62,6 +83,11 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void initState() {
     super.initState();
+    section = widget.initialSection;
+    if (widget.configurationBackend != null) {
+      components = ComponentSettingsController(widget.configurationBackend!,
+          root: widget.installationRoot);
+    }
     form = SettingsFormController<int>(
         field: field,
         read: () async {
@@ -91,6 +117,7 @@ class _SettingsPageState extends State<SettingsPage> {
   void dispose() {
     form.removeListener(syncText);
     form.dispose();
+    components?.dispose();
     count.dispose();
     super.dispose();
   }
@@ -164,6 +191,14 @@ class _SettingsPageState extends State<SettingsPage> {
             ]);
           }));
 
+  Widget _component(String name) => components == null
+      ? const Text('Local configuration is unavailable for this connection.')
+      : ComponentSettingsPane(
+          key: ValueKey(name),
+          controller: components!,
+          section: name,
+          picker: const FileSelectorPicker());
+
   Widget _content(BuildContext context) =>
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         if (section == SettingsSections.general) ...[
@@ -187,41 +222,52 @@ class _SettingsPageState extends State<SettingsPage> {
           _card(context, 'Collaboration', [_collaborationForm(context)]),
         ],
         if (section == SettingsSections.models) ...[
-          _card(context, 'Model', [
-            _row('State',
-                widget.modelConfigured ? 'Configured' : 'Not configured'),
-            const SizedBox(height: OdessyTokens.spaceCompact),
-            const Text(
-                'Choosing a model and endpoint is a reviewed configuration change. It does not start the model or contact a provider.',
-                style: TextStyle(fontSize: 12)),
-            if (widget.onOpenGetStarted != null)
-              Align(
-                  alignment: Alignment.centerLeft,
-                  child: FilledButton.tonal(
-                      onPressed: widget.onOpenGetStarted,
-                      child: Text(widget.modelConfigured
-                          ? 'Change model'
-                          : 'Configure a model'))),
-          ]),
+          if (components != null)
+            _component('llm')
+          else
+            _card(context, 'Model', [
+              _row('State',
+                  widget.modelConfigured ? 'Configured' : 'Not configured'),
+              const SizedBox(height: OdessyTokens.spaceCompact),
+              const Text(
+                  'Choosing a model and endpoint is a reviewed configuration change. It does not start the model or contact a provider.',
+                  style: TextStyle(fontSize: 12)),
+              if (widget.onOpenGetStarted != null)
+                Align(
+                    alignment: Alignment.centerLeft,
+                    child: FilledButton.tonal(
+                        onPressed: widget.onOpenGetStarted,
+                        child: Text(widget.modelConfigured
+                            ? 'Change model'
+                            : 'Configure a model'))),
+            ]),
           _card(context, 'Collaboration', [_collaborationForm(context)]),
         ],
+        if (section == SettingsSections.stt) _component('stt'),
+        if (section == SettingsSections.tts) _component('tts'),
         if (section == SettingsSections.voice)
-          _card(context, 'Voice', [
-            _row(
-                'State',
-                widget.voiceEnabled
-                    ? 'Existing assets recorded'
-                    : 'Not configured'),
-            const Text(
-                'Voice is optional and uses components you already have. It is not downloaded or started here.',
-                style: TextStyle(fontSize: 12)),
-            if (widget.onOpenGetStarted != null)
-              Align(
-                  alignment: Alignment.centerLeft,
-                  child: OutlinedButton(
-                      onPressed: widget.onOpenVoice ?? widget.onOpenGetStarted,
-                      child: const Text('Open configuration'))),
-          ]),
+          if (components != null)
+            _component('voice')
+          else
+            _card(context, 'Voice', [
+              _row(
+                  'State',
+                  widget.voiceEnabled
+                      ? 'Existing assets recorded'
+                      : 'Not configured'),
+              const Text(
+                  'Voice is optional and uses components you already have. It is not downloaded or started here.',
+                  style: TextStyle(fontSize: 12)),
+              if (widget.onOpenGetStarted != null)
+                Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton(
+                        onPressed:
+                            widget.onOpenVoice ?? widget.onOpenGetStarted,
+                        child: const Text('Open configuration'))),
+            ]),
+        if (section == SettingsSections.devices && components != null)
+          _component('host'),
         if (section == SettingsSections.devices)
           _card(context, 'Devices and tool access', [
             const Text(

@@ -30,21 +30,18 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('DEMO'), findsNothing);
     expect(find.textContaining('This is a preview response'), findsNothing);
-    await tester.tap(find.text('Settings'));
+    await tester.tap(find.widgetWithText(ListTile, 'Settings'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Models and connections'));
     await tester.pumpAndSettle();
-    expect(find.text('Configured'), findsOneWidget);
-    expect(find.text('Not configured'), findsNothing);
-    await tester.tap(find.text('Change model'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('setup-name')), findsOneWidget);
+    expect(find.byKey(const ValueKey('component-name')), findsOneWidget);
     expect(
         tester
-            .widget<TextField>(find.byKey(const ValueKey('setup-name')))
+            .widget<TextField>(find.byKey(const ValueKey('component-name')))
             .controller!
             .text,
         'saved-q8');
+    expect(find.text('Continue'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
 }

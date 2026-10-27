@@ -13,8 +13,6 @@ from .maintenance import default_workspace
 
 
 def saved_spec(selection, output, format_):
-    if selection.role == 'execution' or selection.model is None:
-        raise ValueError('Choose a model before opening a live conversation.')
     plan = build_plan(selection)
     if format_ not in ('selection', 'env'):
         raise ValueError('unsupported export format')
@@ -26,7 +24,7 @@ def saved_spec(selection, output, format_):
     raw = path.read_bytes()
     if raw != expected:
         raise ValueError('Saved configuration does not match the reviewed selection; review again.')
-    return {'python': sys.executable, 'pythonpath': str(Path(__file__).resolve().parents[2]), 'config': str(path), 'format': format_,
+    return {'configured': selection.model is not None and selection.role != 'execution', 'python': sys.executable, 'pythonpath': str(Path(__file__).resolve().parents[2]), 'config': str(path), 'format': format_,
             'selection': public(selection), 'sha256': hashlib.sha256(raw).hexdigest(),
             'workspace': str(default_workspace())}
 
@@ -45,7 +43,7 @@ def remember(spec):
     if path.exists():
         if path.stat().st_size > 65536 or json.loads(path.read_text()).get('owner') != 'odessy-desktop-v1':
             raise ValueError('Existing desktop state is not owned by Odessy.')
-    data = {key: spec[key] for key in ('config', 'format', 'selection', 'sha256')}
+    data = {key: spec[key] for key in ('config', 'format', 'selection', 'sha256', 'workspace')}
     data.update(owner='odessy-desktop-v1', schema_version=1)
     fd, name = tempfile.mkstemp(prefix='.desktop-', dir=path.parent)
     try:
@@ -96,6 +94,7 @@ def resume():
     spec = saved_spec(SetupSelection.from_dict(data['selection']), data['config'], data['format'])
     if spec['sha256'] != data['sha256']:
         raise ValueError('Saved configuration changed; review it before reconnecting.')
+    if data.get('workspace'): spec['workspace'] = data['workspace']
     return spec
 
 

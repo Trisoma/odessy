@@ -224,7 +224,14 @@ class SetupController extends ChangeNotifier {
 
   Future<void> restore() async {
     await _run('resume');
-    if (_disposed || launchSpec == null || error.isNotEmpty || !saved) return;
+    if (_disposed ||
+        launchSpec == null ||
+        error.isNotEmpty ||
+        !saved ||
+        _selection['model'] == null ||
+        _selection['role'] == 'execution') {
+      return;
+    }
     busy = true;
     status = 'Reconnecting to your saved model…';
     notifyListeners();

@@ -206,6 +206,20 @@ void main() {
 class RestoringBackend extends Backend {
   @override
   Future<SetupReply> execute(SetupRequest request) async {
+    if (request.operation == 'component-settings') {
+      return SetupReply.fromJson({
+        'id': request.id,
+        'status': 'ok',
+        'result': {
+          'revision': 'saved',
+          'selection': {
+            'role': 'combined',
+            'model': {'provider': 'lfm', 'name': 'saved-q8'},
+            'voice': {'enabled': false}
+          }
+        }
+      }, request.id);
+    }
     if (request.operation != 'resume') return super.execute(request);
     requests.add(request);
     return SetupReply.fromJson({

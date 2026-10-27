@@ -93,8 +93,8 @@ class VoiceSelection:
         from odessy.voice.providers import validate_selector
         validate_selector(self.stt_provider)
         validate_selector(self.tts_provider)
-        if not self.enabled and any((self.stt_executable, self.stt_model, self.tts_executable, self.tts_model, self.whisper_bin, self.whisper_model, self.kokoro_model, self.kokoro_voices)):
-            raise ValueError('enable voice before supplying voice paths')
+        # Disabled voice may retain independently configured component paths.
+
 
 
 @dataclass(frozen=True)

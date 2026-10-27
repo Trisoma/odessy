@@ -37,6 +37,7 @@ class SetupRequest {
           'resume',
           'voice-discover',
           'model-catalog',
+          'component-settings',
           'manage',
           'installer',
           'pair',

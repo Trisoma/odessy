@@ -98,7 +98,7 @@ class _OdessyAppState extends State<OdessyApp> {
     await controller.start();
     if (!mounted) return;
     await setup.restore();
-    if (mounted && setup.error.isNotEmpty) setState(() => page = 'Setup');
+    if (mounted && setup.error.isNotEmpty) setState(() => page = 'Settings');
   }
 
   @override
@@ -250,9 +250,13 @@ class _OdessyAppState extends State<OdessyApp> {
                           'Settings' => SettingsPage(
                               key: ValueKey(controller.api),
                               controller: controller,
+                              configurationBackend: setup.backend,
+                              installationRoot:
+                                  widget.installed?['root'] as String? ?? '',
                               installed: widget.installed != null,
                               modelConfigured:
-                                  (widget.installed?['model_configured'] == true ||
+                                  (widget.installed?['model_configured'] ==
+                                          true ||
                                       (setup.activeSelection ??
                                               (setup.saved
                                                   ? setup.selection
@@ -267,23 +271,17 @@ class _OdessyAppState extends State<OdessyApp> {
                                               as Map?)?['enabled'] ==
                                           true),
                               themeMode: mode,
-                              onToggleTheme: () => setState(
-                                  () => mode = mode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark),
+                              onToggleTheme: () =>
+                                  setState(() => mode = mode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark),
                               onOpenDevices: () => setState(() {
                                     device = 'This computer';
                                     page = 'Devices';
                                   }),
                               onOpenGetStarted: () => setState(() {
-                                    setupStep = 2;
-                                    page = installManagement == null
-                                        ? 'Setup'
-                                        : 'Get started';
+                                    page = 'Settings';
                                   }),
                               onOpenVoice: () => setState(() {
-                                    setupStep = 3;
-                                    page = installManagement == null
-                                        ? 'Setup'
-                                        : 'Voice setup';
+                                    page = 'Settings';
                                   }),
                               onOpenManagement: widget.installed == null ? null : () => setState(() => page = 'Manage installation')),
                           _ => ConversationPage(controller: controller),
@@ -378,12 +376,6 @@ class _OdessyAppState extends State<OdessyApp> {
                 icon: const Icon(Icons.add, size: 16),
                 label: const Text('Pair a device')),
             const SizedBox(height: 24),
-            _nav(context, 'Set up this computer', Icons.build_outlined,
-                page == 'Setup', () {
-              if (controller.session?.running != true) {
-                setState(() => page = 'Setup');
-              }
-            }),
             _nav(context, 'Install Odessy', Icons.download_outlined,
                 page == 'Installer', () {
               if (controller.session?.running != true) {

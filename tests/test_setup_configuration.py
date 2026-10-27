@@ -97,6 +97,7 @@ def test_foreign_machine_selection_is_not_activated_locally(tmp_path):
         export_environment(build_plan(selection), tmp_path / 'foreign.env')
 
 
-def test_disabled_voice_assets_are_not_silently_ignored():
-    with pytest.raises(ValueError, match='enable voice'):
-        SetupSelection.from_dict({'role': 'combined', 'voice': {'enabled': False, 'whisper_model': '/some/file'}})
+def test_disabled_voice_assets_are_staged_without_enabling_runtime():
+    selection = SetupSelection.from_dict({'role': 'combined', 'voice': {'enabled': False, 'whisper_model': '/some/file'}})
+    assert selection.voice.whisper_model == '/some/file'
+    assert 'ODESSY_WHISPER_MODEL' not in build_plan(selection).environment

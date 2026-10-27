@@ -49,3 +49,29 @@ OpenAI-compatible providers use `/models`; local providers reuse Ollama `/api/ta
 `SetupMetadataBackend.createMetadataReader()` optionally supplies an independent
 read-only helper; existing backend implementations remain compatible. The model
 catalog controller suppresses stale replies after provider changes or disposal.
+
+## Independent local component settings
+
+The local fixed-operation helper accepts `operation: component-settings` and
+`parameters: {action, root?, section?, patch?, revision?, confirm?}`. Actions are
+`load`, `review`, `save`. Load returns the current full selection, workspace and
+opaque revision. Section keys are allowlisted: `llm`, `stt`, `tts`, `voice`, `host`.
+Review validates and merges only the selected section and returns a `plan_id`.
+Save requires that exact section patch, revision and confirmation. Inputs changing
+between review/save or another persisted edit invalidate confirmation.
+
+No HTTP configuration endpoint or remote administration capability is introduced.
+Flutter calls typed controllers through the existing local stdio setup bridge.
+The existing Python session/settings API retains its behavior. Managed installations
+reuse the configuration engine; its approval now also binds the previous active
+configuration, preventing a concurrent edit from being silently overwritten.
+Source settings use create-only JSON exports and the existing owned desktop pointer
+with a writer lock; interrupted source writer locks require inspection, never blind
+replay/removal. JSON exports remain schema version 1. No old export is overwritten.
+
+Save returns `saved: true, restart_required: true` and the updated snapshot. Speech
+components can be staged with `voice.enabled: false`; this does not activate them.
+Authentication references remain names of environment variables, never key values.
+A section update cannot include another section's fields. Path checks do not execute
+providers. Portable role/platform restrictions and execution-host authority remain
+in force. A legacy or ambiguous installation is rejected rather than migrated.

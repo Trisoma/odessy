@@ -18,6 +18,9 @@ MAX_REQUEST = 65536
 def execute(request: dict) -> dict:
     fields(request, {'id', 'operation', 'selection', 'output', 'format', 'confirm_plan', 'endpoint', 'parameters', 'cancel_file'}, 'request')
     operation = request.get('operation')
+    if operation == 'component-settings':
+        from .component_settings import dispatch
+        return dispatch(request.get('parameters') or {})
     if operation == 'model-catalog':
         from .model_catalog import catalog
         return catalog(request.get('parameters') or {})
@@ -59,6 +62,8 @@ def execute(request: dict) -> dict:
     if format_ not in ('selection', 'env'):
         raise ValueError('unsupported export format')
     if operation in ('launch', 'activate'):
+        if selection.role == 'execution' or selection.model is None:
+            raise ValueError('Choose a model before opening a live conversation.')
         if output is None: raise ValueError('saved configuration required')
         from .configured import saved_spec
         spec = saved_spec(selection, output, format_)

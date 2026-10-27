@@ -187,3 +187,41 @@ The original pixel boat from `installer/ui/brand.py` is drawn in conversation
 avatars; platform application icons are unchanged. Workspace defaults are
 `Documents/Odessy` on Windows and `~/Odessy` on Linux/macOS, outside installed files.
 Installed setup offers Browse to select a different project folder.
+
+## Independent component settings (October 27)
+
+Computer configuration now lives in Settings: Models and connections (LLM),
+Speech to text (STT), Text to speech (TTS), Voice, and Devices and tool access.
+Each editor loads the saved selection and saves only its own fields. Leaving one
+editor does not require completing another. Model metadata choices and native path
+pickers are reused. Host role/workspace changes remain separate from pairing and
+execution authorization; existing pairing controls are retained.
+
+Source previews save create-only JSON revisions and update the existing desktop
+pointer. A TTS-only selection can be persisted with no LLM and voice disabled;
+startup retains it without attempting to start an unconfigured coordinator.
+Versioned and portable installations reuse their existing reviewed configuration
+operations, identities and writer locks. Legacy installer records are not silently
+migrated. A malformed or changed configuration fails explicitly for reload/review.
+
+VoiceSelection now permits disabled voice to retain staged STT/TTS paths. Disabled
+voice still emits no voice runtime environment settings. Saving one component does
+not enable voice, run inference, import custom provider code or download assets.
+Only the edited component's nonempty file paths are checked. Provider dependencies,
+model compatibility and microphone/synthesis operation remain runtime acceptance.
+
+Runtime configuration saves display **Saved. Restart Odessy to apply**. The active
+turn/service retains its existing configuration; no automatic restart or request
+replay occurs. Existing theme changes still apply immediately. Restart the rebuilt
+app after saving to load new runtime values.
+
+Verification: 63 focused Python tests passed (including source helper subprocess
+persistence, TTS-only saving, installed engine composition and stale revision
+rejection); full Flutter 115 passed / 5 skipped; analysis clean. The independent
+TTS view was rendered with application fonts/theme and inspected as a screenshot.
+This is not a native packaged-app or hardware acceptance claim. A broader Python
+run also exposed existing missing-Tkinter and outdated monitoring-component test
+expectation issues; those unrelated files were not changed.
+
+The redundant **Set up this computer** sidebar button has been removed. Open
+**Settings** directly for independent component configuration.
