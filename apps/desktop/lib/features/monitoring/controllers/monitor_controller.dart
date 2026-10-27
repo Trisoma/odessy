@@ -68,8 +68,9 @@ class MonitorController extends ChangeNotifier {
       }
       if (_disposed || epoch != _epoch) return;
       hosts = all;
-      if (!all.any((h) => h.id == selected))
+      if (!all.any((h) => h.id == selected)) {
         selected = all.isEmpty ? null : all.first.id;
+      }
       final id = selected;
       final detail = id == null ? null : await client.getMetrics(id);
       Json? past;

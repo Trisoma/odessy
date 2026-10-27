@@ -1,3 +1,5 @@
+import '../../../widgets/settings_scaffold.dart';
+import '../../../app/ux_copy.dart';
 import 'package:odessy_client/odessy_client.dart';
 import '../../../app/setup/native_picker.dart';
 import '../controllers/component_settings_controller.dart';
@@ -39,6 +41,10 @@ class SettingsPage extends StatefulWidget {
     super.key,
     required this.controller,
     this.onOpenManagement,
+    this.onOpenInstaller,
+    this.onOpenMaintenance,
+    this.onConnectSaved,
+    this.maintenanceBlocked = false,
     this.configurationBackend,
     this.installationRoot = '',
     this.initialSection = SettingsSections.general,
@@ -57,6 +63,9 @@ class SettingsPage extends StatefulWidget {
   final String installationRoot, initialSection;
   final VoidCallback? onOpenManagement, onOpenGetStarted, onOpenDevices;
   final VoidCallback? onOpenVoice;
+  final VoidCallback? onOpenInstaller, onOpenMaintenance;
+  final bool maintenanceBlocked;
+  final VoidCallback? onConnectSaved;
   final bool installed, modelConfigured, voiceEnabled;
   final ThemeMode themeMode;
   final VoidCallback? onToggleTheme;
@@ -134,62 +143,29 @@ class _SettingsPageState extends State<SettingsPage> {
               onTap: () => setState(() => section = name)),
       ]));
 
-  Widget _narrowPicker(BuildContext context) => SizedBox(
-      height: 44,
-      child: ListView(scrollDirection: Axis.horizontal, children: [
+  Widget _narrowPicker(BuildContext context) => DropdownButtonFormField<String>(
+      key: ValueKey('settings-section-picker-$section'),
+      initialValue: section,
+      isExpanded: true,
+      decoration: const InputDecoration(labelText: 'Settings section'),
+      items: [
         for (final name in SettingsSections.all)
-          Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: ChoiceChip(
-                  label: Text(name),
-                  selected: section == name,
-                  onSelected: (_) => setState(() => section = name))),
-      ]));
+          DropdownMenuItem(
+              value: name, child: Text(name, overflow: TextOverflow.ellipsis))
+      ],
+      onChanged: (name) {
+        if (name != null) setState(() => section = name);
+      });
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
       listenable: form,
-      builder: (context, _) => LayoutBuilder(builder: (context, box) {
-            final narrow = box.maxWidth < 760;
-            final content = SingleChildScrollView(
-                padding: const EdgeInsets.all(OdessyTokens.spaceLarge),
-                child: _content(context));
-            return Column(children: [
-              Padding(
-                  padding: const EdgeInsets.fromLTRB(OdessyTokens.spaceLarge,
-                      OdessyTokens.spaceLarge, OdessyTokens.spaceLarge, 0),
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Keep it yours.',
-                            style: Theme.of(context).textTheme.titleLarge),
-                        const SizedBox(height: OdessyTokens.spaceSmall),
-                        Text(
-                            'Changing a setting here never downloads a model or starts inference.',
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(color: Colors.grey)),
-                      ])),
-              if (narrow)
-                Padding(
-                    padding: const EdgeInsets.fromLTRB(OdessyTokens.spaceLarge,
-                        OdessyTokens.spaceMedium, OdessyTokens.spaceLarge, 0),
-                    child: _narrowPicker(context)),
-              Expanded(
-                  child: narrow
-                      ? content
-                      : Row(children: [
-                          Padding(
-                              padding: const EdgeInsets.only(
-                                  left: OdessyTokens.spaceCompact,
-                                  top: OdessyTokens.spaceMedium),
-                              child: _rail(context)),
-                          const VerticalDivider(width: 1),
-                          Expanded(child: content),
-                        ])),
-            ]);
-          }));
+      builder: (context, _) => SettingsScaffold(
+          title: DesktopCopy.settingsTitle,
+          description: DesktopCopy.settingsDescription,
+          navigation: _rail(context),
+          compactNavigation: _narrowPicker(context),
+          child: _content(context)));
 
   Widget _component(String name) => components == null
       ? const Text('Local configuration is unavailable for this connection.')
@@ -200,14 +176,16 @@ class _SettingsPageState extends State<SettingsPage> {
           picker: const FileSelectorPicker());
 
   Widget _content(BuildContext context) =>
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         if (section == SettingsSections.general) ...[
           _card(context, 'Connection', [
             _row(
                 'Local service',
                 widget.controller.api.isDemo
                     ? 'Demo (not installed)'
-                    : 'Installed'),
+                    : widget.controller.connected
+                        ? 'Connected'
+                        : 'Not connected'),
             _row('State', widget.controller.status),
             if (widget.onToggleTheme != null)
               Align(
@@ -241,6 +219,15 @@ class _SettingsPageState extends State<SettingsPage> {
                             ? 'Change model'
                             : 'Configure a model'))),
             ]),
+          if (widget.onConnectSaved != null)
+            Padding(
+                padding: const EdgeInsets.only(bottom: 24),
+                child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                        onPressed: widget.onConnectSaved,
+                        icon: const Icon(Icons.play_arrow_outlined),
+                        label: const Text('Connect saved configuration')))),
           _card(context, 'Collaboration', [_collaborationForm(context)]),
         ],
         if (section == SettingsSections.stt) _component('stt'),
@@ -294,6 +281,22 @@ class _SettingsPageState extends State<SettingsPage> {
           ]),
         if (section == SettingsSections.installation)
           _card(context, 'Installation', [
+            if (widget.maintenanceBlocked)
+              const Text(
+                  'Finish or stop the current task before starting installation or maintenance.'),
+            if (widget.onOpenInstaller != null)
+              OutlinedButton.icon(
+                  onPressed:
+                      widget.maintenanceBlocked ? null : widget.onOpenInstaller,
+                  icon: const Icon(Icons.download_outlined, size: 18),
+                  label: const Text('Install Odessy')),
+            if (widget.onOpenMaintenance != null)
+              OutlinedButton.icon(
+                  onPressed: widget.maintenanceBlocked
+                      ? null
+                      : widget.onOpenMaintenance,
+                  icon: const Icon(Icons.handyman_outlined, size: 18),
+                  label: const Text('Runtime maintenance')),
             _row('Installed copy',
                 widget.installed ? 'Yes' : 'Not managed by this app'),
             const Text(
@@ -311,18 +314,20 @@ class _SettingsPageState extends State<SettingsPage> {
       ]);
 
   Widget _card(BuildContext context, String title, List<Widget> children) =>
-      Card(
-          child: Padding(
-              padding: const EdgeInsets.all(OdessyTokens.spaceLarge),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title,
-                        style: const TextStyle(
-                            fontSize: 15, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: OdessyTokens.spaceMedium),
-                    ...children,
-                  ])));
+      Padding(
+          padding: const EdgeInsets.only(bottom: OdessyTokens.spaceLarge),
+          child: Card(
+              child: Padding(
+                  padding: const EdgeInsets.all(OdessyTokens.spaceLarge),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title,
+                            style: const TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: OdessyTokens.spaceMedium),
+                        ...children,
+                      ]))));
 
   Widget _row(String label, String value) => Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -339,7 +344,7 @@ class _SettingsPageState extends State<SettingsPage> {
             style: TextStyle(fontSize: 13)),
         const SizedBox(height: 8),
         const Text(
-            'Source: user collaboration configuration via /v1/settings. Other fields and participant profiles are preserved. This does not enable consultation.',
+            'Choose how often Odessy may consult another configured model. This limit does not enable collaboration by itself.',
             style: TextStyle(fontSize: 11, color: Colors.grey)),
         const SizedBox(height: 20),
         SizedBox(
@@ -369,7 +374,7 @@ class _SettingsPageState extends State<SettingsPage> {
               child: Text(status, style: const TextStyle(fontSize: 12))),
         const SizedBox(height: 16),
         const Text(
-            'Apply timing: new sessions. Existing active turns retain their configuration.',
+            'Applies to new conversations. Current tasks keep their existing settings.',
             style: TextStyle(fontSize: 11, color: Colors.grey)),
       ]);
 }

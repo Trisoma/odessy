@@ -38,7 +38,7 @@ void main() {
     await tester.tap(find.byTooltip('Toggle light / dark theme'));
     await tester.pumpAndSettle();
     await tester.runAsync(() => capture('conversation-light'));
-    await tester.tap(find.text('Jetson'));
+    await tester.tap(find.widgetWithText(ListTile, 'Devices'));
     await tester.pumpAndSettle();
     await tester.runAsync(() => capture('device-light'));
     await tester.tap(find.text('Settings'));

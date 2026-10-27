@@ -92,10 +92,12 @@ class _GroupCard extends StatelessWidget {
   final dynamic value;
   String describe(dynamic v) {
     if (v == null) return 'Unknown / unsupported';
-    if (v is Map)
+    if (v is Map) {
       return v.entries.map((e) => '${e.key}: ${describe(e.value)}').join(' · ');
-    if (v is List)
+    }
+    if (v is List) {
       return v.isEmpty ? 'No reported devices' : v.map(describe).join('\n');
+    }
     if (v is num) return v is int ? '$v' : v.toStringAsFixed(2);
     return '$v';
   }
@@ -142,7 +144,9 @@ class _HistoryPainter extends CustomPainter {
           size.height * (1 - value.clamp(0, 100) / 100));
       if (previous != null &&
           previousTime != null &&
-          time - previousTime <= 90000) canvas.drawLine(previous, here, paint);
+          time - previousTime <= 90000) {
+        canvas.drawLine(previous, here, paint);
+      }
       canvas.drawCircle(here, 2, paint);
       previous = here;
       previousTime = time;

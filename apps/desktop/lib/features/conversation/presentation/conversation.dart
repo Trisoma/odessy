@@ -41,60 +41,64 @@ class _ConversationPageState extends State<ConversationPage> {
   Widget build(BuildContext context) {
     final c = widget.controller, session = c.session;
     return Column(children: [
-      Padding(
-          padding: const EdgeInsets.fromLTRB(32, 22, 32, 18),
-          child: Wrap(
-              spacing: 20,
-              runSpacing: 12,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(
-                      c.connected
-                          ? 'Your workspace, connected.'
-                          : 'Your workspace, offline.',
-                      style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w600,
-                          letterSpacing: -.4)),
-                  const SizedBox(height: 5),
-                  Text(
-                      'Coordinator: ${c.api.identity}  ·  Execution: backend policy',
-                      style: const TextStyle(fontSize: 11, color: Colors.grey))
-                ]),
-                SizedBox(
-                    width: 190,
-                    child: DropdownButtonFormField<String>(
-                        key: ValueKey(session?.selectedProfile),
-                        initialValue:
-                            c.profiles.contains(session?.selectedProfile)
-                                ? session?.selectedProfile
-                                : null,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                            labelText: 'Next-turn model',
-                            contentPadding: EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 8)),
-                        items: c.profiles
-                            .map((p) => DropdownMenuItem(
-                                value: p,
-                                child: Tooltip(
-                                    message: c.profileLabel(p),
-                                    child: Text(c.profileLabel(p),
-                                        overflow: TextOverflow.ellipsis))))
-                            .toList(),
-                        onChanged: c.busy || !c.connected
-                            ? null
-                            : (value) {
-                                if (value != null) c.select(value);
-                              })),
-              ])),
       Expanded(
           child: SelectionArea(
               child: ListView(
                   controller: scroll,
                   padding: const EdgeInsets.fromLTRB(32, 12, 32, 24),
                   children: [
+            Padding(
+                padding: const EdgeInsets.fromLTRB(0, 10, 0, 18),
+                child: Wrap(
+                    spacing: 20,
+                    runSpacing: 12,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                                c.connected
+                                    ? 'Your workspace, connected.'
+                                    : 'Your workspace, offline.',
+                                style: const TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: -.4)),
+                            const SizedBox(height: 5),
+                            Text(
+                                'Coordinator: ${c.api.identity}  ·  Execution: backend policy',
+                                style: const TextStyle(
+                                    fontSize: 11, color: Colors.grey))
+                          ]),
+                      SizedBox(
+                          width: 190,
+                          child: DropdownButtonFormField<String>(
+                              key: ValueKey(session?.selectedProfile),
+                              initialValue:
+                                  c.profiles.contains(session?.selectedProfile)
+                                      ? session?.selectedProfile
+                                      : null,
+                              isExpanded: true,
+                              decoration: const InputDecoration(
+                                  labelText: 'Next-turn model',
+                                  contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 8)),
+                              items: c.profiles
+                                  .map((p) => DropdownMenuItem(
+                                      value: p,
+                                      child: Tooltip(
+                                          message: c.profileLabel(p),
+                                          child: Text(c.profileLabel(p),
+                                              overflow:
+                                                  TextOverflow.ellipsis))))
+                                  .toList(),
+                              onChanged: c.busy || !c.connected
+                                  ? null
+                                  : (value) {
+                                      if (value != null) c.select(value);
+                                    })),
+                    ])),
             if (c.busy && session == null)
               const Center(
                   child: Padding(

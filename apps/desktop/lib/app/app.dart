@@ -1,10 +1,14 @@
 import '../features/monitoring/controllers/monitor_controller.dart';
-import '../features/monitoring/presentation/monitor_page.dart';
+import '../features/devices/presentation/devices_hub.dart';
+import '../features/workspaces/presentation/workspace_page.dart';
+import '../widgets/component_state_banner.dart';
+import '../widgets/pixel_boat.dart';
+import 'navigation.dart';
+import 'ux_copy.dart';
 import 'dart:ui' show AppExitResponse;
 import 'package:flutter/material.dart';
 import 'package:odessy_client/odessy_client.dart';
 import '../features/conversation/presentation/conversation.dart';
-import '../features/devices/presentation/devices.dart';
 import '../features/settings/presentation/settings.dart';
 import 'session_controller.dart';
 import 'theme.dart';
@@ -56,8 +60,42 @@ class _OdessyAppState extends State<OdessyApp> {
   final CredentialStore credentials = MemoryCredentialStore();
   late final AppLifecycleListener lifecycle;
   ThemeMode mode = ThemeMode.dark;
-  String page = 'Conversation', device = 'This computer';
+  String page = 'Conversation';
   int setupStep = 0;
+  String settingsSection = SettingsSections.general;
+  String connectionNotice = '';
+  Future<void> _activateSaved() async {
+    if (setup.busy ||
+        setup.completing ||
+        controller.busy ||
+        controller.session?.running == true) {
+      return;
+    }
+    setState(() => connectionNotice = '');
+    if (widget.installed != null) {
+      widget.onConfigured?.call();
+      return;
+    }
+    await setup.restore();
+    if (!mounted) return;
+    setState(() => connectionNotice = setup.error.isNotEmpty
+        ? setup.error
+        : controller.connected
+            ? ''
+            : 'No saved model is available. Choose a model in Settings first.');
+  }
+
+  void _openSettings([String section = SettingsSections.general]) {
+    setState(() {
+      page = 'Settings';
+      settingsSection = section;
+    });
+  }
+
+  void _navigate(String route) {
+    setState(() => page = route);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -143,7 +181,15 @@ class _OdessyAppState extends State<OdessyApp> {
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 30, vertical: 18),
                             child: Row(children: [
-                              Text(page,
+                              if (DesktopNavigation.parent(page) != page)
+                                IconButton(
+                                    tooltip:
+                                        'Back to ${DesktopNavigation.title(DesktopNavigation.parent(page))}',
+                                    onPressed: () => _navigate(
+                                        DesktopNavigation.parent(page)),
+                                    icon:
+                                        const Icon(Icons.arrow_back, size: 20)),
+                              Text(DesktopNavigation.title(page),
                                   style:
                                       Theme.of(context).textTheme.titleMedium),
                               const Spacer(),
@@ -156,7 +202,9 @@ class _OdessyAppState extends State<OdessyApp> {
                                           : 'NOT CONFIGURED')
                                       : controller.api.isDemo
                                           ? 'DEMO'
-                                          : 'LOCAL API',
+                                          : controller.connected
+                                              ? 'CONNECTED'
+                                              : 'DISCONNECTED',
                                   controller.api.isDemo
                                       ? Colors.amber
                                       : controller.connected
@@ -184,24 +232,33 @@ class _OdessyAppState extends State<OdessyApp> {
                             ])),
                         const Divider(height: 1),
                         if (controller.api is DisconnectedApi)
-                          MaterialBanner(
-                              content: Text(setup.saved ||
-                                      setup.activeSelection != null
-                                  ? 'Your model is configured, but the local service is offline. Open setup to reconnect.'
-                                  : 'Model not configured — configure a model to enable chat. No model is running.'),
+                          ComponentStateBanner(
+                              message: connectionNotice.isNotEmpty
+                                  ? connectionNotice
+                                  : setup.saved || setup.activeSelection != null
+                                      ? DesktopCopy.offline
+                                      : DesktopCopy.unconfigured,
                               actions: [
                                 TextButton(
-                                    onPressed: () => setState(() {
-                                          setupStep = 2;
-                                          page = installManagement == null
-                                              ? 'Setup'
-                                              : 'Get started';
-                                        }),
+                                    onPressed: () =>
+                                        _openSettings(SettingsSections.models),
                                     child: const Text('Configure model')),
+                                TextButton(
+                                    onPressed: setup.busy ||
+                                            setup.completing ||
+                                            controller.session?.running ==
+                                                true ||
+                                            (widget.installed != null &&
+                                                widget.onConfigured == null)
+                                        ? null
+                                        : _activateSaved,
+                                    child: const Text(
+                                        'Connect saved configuration')),
                               ]),
                         if (controller.error.isNotEmpty)
-                          MaterialBanner(
-                              content: Text(controller.error),
+                          ComponentStateBanner(
+                              message: controller.error,
+                              tone: BannerTone.error,
                               actions: [
                                 TextButton(
                                     onPressed: controller.refresh,
@@ -209,7 +266,15 @@ class _OdessyAppState extends State<OdessyApp> {
                               ]),
                         Expanded(
                             child: switch (page) {
-                          'Monitor' => MonitorPage(controller: monitoring),
+                          'Monitor' || 'Devices' => DevicesHub(
+                              session: controller,
+                              monitoring: monitoring,
+                              initialPerformance: page == 'Monitor',
+                              onConnect: () => _navigate('Pairing')),
+                          'Workspaces' => WorkspacePage(
+                              backend: setup.backend,
+                              root: widget.installed?['root'] as String? ?? '',
+                              picker: const FileSelectorPicker()),
                           'Setup' => SetupWizardPage(
                               key: ValueKey(setupStep),
                               controller: setup,
@@ -245,38 +310,34 @@ class _OdessyAppState extends State<OdessyApp> {
                               key: const ValueKey('pairing'),
                               controller: pairing,
                               pairing: true),
-                          'Devices' =>
-                            DevicePage(device: device, controller: controller),
                           'Settings' => SettingsPage(
-                              key: ValueKey(controller.api),
+                              key: ValueKey((controller.api, settingsSection)),
+                              initialSection: settingsSection,
                               controller: controller,
                               configurationBackend: setup.backend,
                               installationRoot:
                                   widget.installed?['root'] as String? ?? '',
                               installed: widget.installed != null,
-                              modelConfigured:
-                                  (widget.installed?['model_configured'] ==
-                                          true ||
-                                      (setup.activeSelection ??
-                                              (setup.saved
-                                                  ? setup.selection
-                                                  : const {}))['model'] !=
-                                          null),
-                              voiceEnabled:
-                                  (widget.installed?['voice_enabled'] == true ||
-                                      ((setup.activeSelection ??
-                                                  (setup.saved
-                                                      ? setup.selection
-                                                      : const {}))['voice']
-                                              as Map?)?['enabled'] ==
-                                          true),
+                              modelConfigured: (widget.installed?['model_configured'] == true ||
+                                  (setup.activeSelection ?? (setup.saved ? setup.selection : const {}))['model'] !=
+                                      null),
+                              voiceEnabled: (widget.installed?['voice_enabled'] == true ||
+                                  ((setup.activeSelection ?? (setup.saved ? setup.selection : const {}))['voice'] as Map?)?['enabled'] ==
+                                      true),
                               themeMode: mode,
-                              onToggleTheme: () =>
-                                  setState(() => mode = mode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark),
-                              onOpenDevices: () => setState(() {
-                                    device = 'This computer';
-                                    page = 'Devices';
-                                  }),
+                              onToggleTheme: () => setState(() => mode = mode == ThemeMode.dark
+                                  ? ThemeMode.light
+                                  : ThemeMode.dark),
+                              onOpenDevices: () => _navigate('Devices'),
+                              onConnectSaved: setup.busy ||
+                                      setup.completing ||
+                                      controller.session?.running == true ||
+                                      (widget.installed != null && widget.onConfigured == null)
+                                  ? null
+                                  : _activateSaved,
+                              onOpenInstaller: () => _navigate('Installer'),
+                              onOpenMaintenance: () => _navigate('Maintenance'),
+                              maintenanceBlocked: controller.session?.running == true,
                               onOpenGetStarted: () => setState(() {
                                     page = 'Settings';
                                   }),
@@ -294,104 +355,34 @@ class _OdessyAppState extends State<OdessyApp> {
           padding: const EdgeInsets.fromLTRB(16, 22, 16, 16),
           child: ListView(children: [
             Row(children: [
-              Icon(Icons.navigation_outlined,
-                  color: Theme.of(context).colorScheme.primary, size: 30),
+              const PixelBoat(size: 30),
               const SizedBox(width: 10),
-              const Text('Odessy',
-                  style: TextStyle(
-                      fontSize: 23,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: -.7))
+              const Expanded(
+                  child: Text('Odessy',
+                      style: TextStyle(
+                          fontSize: 23,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: -.7)))
             ]),
             const Padding(
                 padding: EdgeInsets.only(left: 40, top: 2, bottom: 34),
                 child: Text('DESKTOP PREVIEW · 0.5',
                     style: TextStyle(fontSize: 9, letterSpacing: 1.3))),
-            _nav(
-                context,
-                'Conversation',
-                Icons.chat_bubble_outline,
-                page == 'Conversation',
-                () => setState(() => page = 'Conversation')),
-            _nav(context, 'Monitor', Icons.monitor_heart_outlined,
-                page == 'Monitor', () {
-              setState(() => page = 'Monitor');
-              monitoring.bind(controller.api);
-            }),
-            if (widget.installed != null) ...[
-              const SizedBox(height: 6),
+            for (final destination in DesktopNavigation.primary)
               _nav(
                   context,
-                  'Manage installation',
-                  Icons.settings_outlined,
-                  page == 'Manage installation',
-                  () => setState(() => page = 'Manage installation')),
-              if (widget.installed?['model_configured'] != true)
-                _nav(
-                    context,
-                    'Get started',
-                    Icons.rocket_launch_outlined,
-                    page == 'Get started',
-                    () => setState(() => page = 'Get started')),
-            ],
-            const SizedBox(height: 28),
-            const Text('  DEVICES',
-                style: TextStyle(
-                    fontSize: 10, letterSpacing: 1.6, color: Colors.grey)),
-            const SizedBox(height: 10),
-            _nav(
-                context,
-                'This computer',
-                Icons.desktop_windows_outlined,
-                page == 'Devices' && device == 'This computer',
-                () => setState(() {
-                      device = 'This computer';
-                      page = 'Devices';
-                    })),
-            if (controller.api.isDemo) ...[
-              _nav(
-                  context,
-                  'Jetson',
-                  Icons.memory_outlined,
-                  page == 'Devices' && device == 'Jetson',
-                  () => setState(() {
-                        device = 'Jetson';
-                        page = 'Devices';
-                      })),
-              _nav(
-                  context,
-                  'Laptop host',
-                  Icons.laptop_outlined,
-                  page == 'Devices' && device == 'Laptop host',
-                  () => setState(() {
-                        device = 'Laptop host';
-                        page = 'Devices';
-                      })),
-            ],
-            const SizedBox(height: 12),
-            TextButton.icon(
-                onPressed: () => setState(() {
-                      page = 'Pairing';
-                    }),
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('Pair a device')),
+                  destination.label,
+                  destination.icon,
+                  DesktopNavigation.parent(page) == destination.route,
+                  () => _navigate(destination.route)),
             const SizedBox(height: 24),
-            _nav(context, 'Install Odessy', Icons.download_outlined,
-                page == 'Installer', () {
-              if (controller.session?.running != true) {
-                setState(() => page = 'Installer');
-              }
-            }),
-            _nav(context, 'Runtime maintenance', Icons.handyman_outlined,
-                page == 'Maintenance', () {
-              if (controller.session?.running != true) {
-                setState(() => page = 'Maintenance');
-              }
-            }),
             const Divider(),
-            const SizedBox(height: 10),
-            _nav(context, 'Settings', Icons.tune, page == 'Settings',
-                () => setState(() => page = 'Settings')),
+            _nav(
+                context,
+                DesktopNavigation.settings.label,
+                DesktopNavigation.settings.icon,
+                DesktopNavigation.parent(page) == 'Settings',
+                () => _openSettings()),
             const SizedBox(height: 18),
             Row(children: [
               Icon(Icons.circle,
@@ -411,19 +402,26 @@ class _OdessyAppState extends State<OdessyApp> {
           ])));
   Widget _nav(BuildContext context, String label, IconData icon, bool selected,
           VoidCallback tap) =>
-      Padding(
-          padding: const EdgeInsets.only(bottom: 5),
-          child: ListTile(
-              dense: true,
-              selected: selected,
-              selectedTileColor:
-                  Theme.of(context).colorScheme.primary.withValues(alpha: .12),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10)),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-              leading: Icon(icon, size: 19),
-              title: Text(label, style: const TextStyle(fontSize: 13)),
-              onTap: tap));
+      Builder(
+          builder: (tileContext) => Padding(
+              padding: const EdgeInsets.only(bottom: 5),
+              child: ListTile(
+                  key: ValueKey('nav-$label'),
+                  dense: true,
+                  selected: selected,
+                  selectedTileColor: Theme.of(context)
+                      .colorScheme
+                      .primary
+                      .withValues(alpha: .12),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                  leading: Icon(icon, size: 19),
+                  title: Text(label, style: const TextStyle(fontSize: 13)),
+                  onTap: () {
+                    Scaffold.maybeOf(tileContext)?.closeDrawer();
+                    tap();
+                  })));
   Widget _badge(BuildContext context, String text, Color color) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(

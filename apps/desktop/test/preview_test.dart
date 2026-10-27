@@ -21,11 +21,14 @@ void main() {
     await tester.tap(find.byTooltip('Stop current turn'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Stopped'), findsWidgets);
-    await tester.tap(find.text('Jetson'));
+    await tester.tap(find.widgetWithText(ListTile, 'Devices'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(DropdownButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Jetson').last);
     await tester.pumpAndSettle();
     expect(find.textContaining('does not change'), findsOneWidget);
-    expect(find.text('Pairing management API is not available yet.'),
-        findsOneWidget);
+    expect(find.text('Open connection tools'), findsOneWidget);
   });
   testWidgets('approval is explicit and distinct from a question',
       (tester) async {

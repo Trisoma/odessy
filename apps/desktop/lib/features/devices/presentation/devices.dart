@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import '../../../app/session_controller.dart';
 
 class DevicePage extends StatelessWidget {
-  const DevicePage({super.key, required this.device, required this.controller});
+  const DevicePage(
+      {super.key, required this.device, required this.controller, this.onPair});
   final String device;
   final DesktopSession controller;
+  final VoidCallback? onPair;
   @override
   Widget build(BuildContext context) =>
       ListView(padding: const EdgeInsets.all(32), children: [
@@ -44,13 +46,16 @@ class DevicePage extends StatelessWidget {
                           'Python coordinator',
                           controller.api.isDemo
                               ? 'Demo fixture'
-                              : 'Connected through session API'),
+                              : controller.connected
+                                  ? 'Connected to Odessy service'
+                                  : 'Not connected'),
                       _row('Node tool host',
                           'Controlled by backend configuration'),
-                      _row('Rust secure transport', 'Management API pending'),
+                      _row('Secure host connections',
+                          'Manage identity and access in connection tools'),
                     ]))),
         const SizedBox(height: 18),
-        const Card(
+        Card(
             child: Padding(
                 padding: EdgeInsets.all(22),
                 child: Column(
@@ -59,14 +64,16 @@ class DevicePage extends StatelessWidget {
                       Text('Pairing & access',
                           style: TextStyle(fontWeight: FontWeight.w600)),
                       SizedBox(height: 12),
-                      Text('Pairing management API is not available yet.'),
+                      const Text(
+                          'Connection tools provide identity verification, pairing and workspace grants.'),
                       SizedBox(height: 8),
                       Text(
-                          'Existing CLI pairing remains available. This preview never edits trust databases, host grants, or identity keys.',
+                          'Connecting and granting access are explicit reviewed actions. Viewing this page does not enroll or authorize a computer.',
                           style: TextStyle(color: Colors.grey, fontSize: 12)),
                       SizedBox(height: 18),
                       OutlinedButton(
-                          onPressed: null, child: Text('Pair device'))
+                          onPressed: onPair,
+                          child: const Text('Open connection tools'))
                     ]))),
         const SizedBox(height: 18),
         const Card(

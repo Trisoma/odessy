@@ -1,5 +1,11 @@
 # Desktop preview and handoff backbone · v0.5.0
 
+October 27 navigation milestone: see [the current UX foundation contract](desktop-ux-contract.md)
+for implemented routes, current limitations and verification. Everyday navigation
+is Assistant / Workspaces / Devices / Settings; Performance is under Devices and
+installation actions are under Settings. The older preview record below describes
+its original delivery, not the current complete feature inventory or branch state.
+
 Start with [the teammate handoff](handoff.md) and [architecture](architecture.md).
 Protected foundation now includes immutable client contracts, lifecycle cleanup,
 an ephemeral credential-store seam, reusable async settings forms, a checked
