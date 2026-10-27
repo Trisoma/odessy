@@ -46,6 +46,7 @@ from odessy.models.ollama_model import OllamaModel
 from odessy.authority.audit import AuditLogError, ExternalAuditLog, audit_scope
 from odessy.authority.policy import OdessyPolicy
 from odessy.config.commands import CommandsConfigError, load_preapproved_commands
+from odessy.runtime.hooks import HookConfigError, load_hooks
 from odessy.runtime.confirmation import TerminalConfirmer, printable
 from odessy.runtime.types import PolicyDecision, ToolRequest
 from odessy.voice.audio_io import CommandAudioIO
@@ -131,6 +132,10 @@ def _build_agent(
         preapproved = load_preapproved_commands(workspace_root)
     except CommandsConfigError as error:
         raise SystemExit(str(error)) from error
+    try:
+        hooks = load_hooks(workspace_root)
+    except HookConfigError as error:
+        raise SystemExit(str(error)) from error
     confirmer = TerminalConfirmer(workspace_root)
     return OdessyAgent(
         tool_concurrency=concurrency_from_env(),
@@ -149,6 +154,7 @@ def _build_agent(
         confirm_batch=confirmer.batch,
         approver=TerminalEscalationApprover(),
         max_model_calls=_max_model_calls_from_env(cloud=model_uses_cloud(model), mode=mode),
+        hooks=hooks,
     )
 
 

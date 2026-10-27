@@ -18,6 +18,7 @@ MODEL
   -> Python Odessy Runtime
      -> schema validation
      -> policy
+     -> pre-tool hooks (stricter only; docs/reference/hooks.mdx)
      -> execution target authorization
      -> workspace authority
      -> process authority
@@ -43,6 +44,7 @@ MODEL
 | DENY means no execution | A denied request must not reach `tools/call`. |
 | CONFIRM means human approval | The model cannot approve its own action. |
 | Only authorized targets execute | A server must be explicitly marked an `ExecutionTarget` before any tool call reaches it. Holding one *is* the authorization; there is no default target set. |
+| Hooks only tighten | A pre-tool hook can deny a call or require confirmation; it cannot allow a denied call, skip a required confirmation, or widen a command's sandbox mode. |
 | Requesting a wider mode is not self-granting | A denied `danger-full-access` request does not fall back to a wider mode, and can never satisfy a `required` isolation requirement. |
 
 ## Current Tool Surface

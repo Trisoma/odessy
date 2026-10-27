@@ -194,6 +194,11 @@ per-tool config may allow or deny them, and trusted read-only annotations may
 allow them under the documented rules. Each call is recorded in an audit log, and
 `python -m odessy doctor` checks the servers. See `docs/reference/external-servers.mdx`.
 
+Hooks are programs you list in `~/.config/odessy/hooks.toml` to run before a tool
+call, after one, or when a turn ends. A pre-tool hook can deny a call or ask for
+confirmation, never allow more than the policy does; a post-tool hook's output is
+added to the result as a note for the model. See [hooks](docs/reference/hooks.mdx).
+
 `ODESSY_MAX_MODEL_CALLS` caps the model calls in one turn, counting corrections and
 follow-up steps. With a cloud backend (about 2 s a call) the default is 8 for a spoken
 turn and 20 for a typed turn or the session API; with a local one (about 30 s a call

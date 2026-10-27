@@ -134,6 +134,7 @@ def run_checks(
         checks.extend(_remote_checks(source, probes))
     checks.extend(_server_checks(backend or source.get("ODESSY_MODEL_BACKEND") or "lfm", source, probes))
     checks.extend(_commands_checks(source))
+    checks.extend(_hooks_checks(source))
     checks.extend(_voice_checks(source, probes))
     if voice:
         checks.extend(_wake_checks(source, probes))
@@ -154,6 +155,35 @@ def _commands_checks(env: Mapping[str, str]) -> list[Check]:
         return [Check("Approved commands", "fail", str(error), f"Correct {path}; see policy/README.md.")]
     listed = ", ".join(" ".join(words) for words in approved) or "none"
     return [Check("Approved commands", "ok", f"for this folder, local terminal.run only, without asking: {listed}; laptop.terminal.run still requires confirmation")]
+
+
+def _hooks_checks(env: Mapping[str, str]) -> list[Check]:
+    """Hooks (hooks.toml). Silent when there is no file."""
+
+    from odessy.runtime.hooks import EVENTS, HookConfigError, hooks_file, load_hooks
+
+    path = hooks_file(env)
+    if not path.is_file():
+        return []
+    try:
+        hooks = load_hooks(Path.cwd(), path, env)
+    except HookConfigError as error:
+        return [Check("Hooks", "fail", str(error), f"Correct {path}; see docs/reference/hooks.mdx.")]
+    if hooks is None:
+        return [Check("Hooks", "ok", f"none apply to this folder ({path})")]
+    missing = sorted({hook.command[0] for hook in hooks.hooks if _missing_program(hook.command[0])})
+    listed = "; ".join(
+        f"{event}: {', '.join(hook.name for hook in hooks.for_event(event))}" for event in EVENTS if hooks.for_event(event)
+    )
+    detail = f"{listed}. They run as you, outside the sandbox"
+    if missing:
+        return [Check("Hooks", "warn", f"{detail}; program not found: {', '.join(missing)}",
+                      "Use the program's full path in command; a pre_tool hook that cannot start denies the call.")]
+    return [Check("Hooks", "ok", detail)]
+
+
+def _missing_program(program: str) -> bool:
+    return shutil.which(program) is None and not Path(program).expanduser().is_file()
 
 
 def _python_check() -> Check:

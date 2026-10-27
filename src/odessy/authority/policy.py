@@ -351,7 +351,9 @@ class OdessyPolicy:
 
         if request.name not in _PROCESS_TOOL_NAMES:
             return None
-        return _MODE_BY_OUTCOME.get(decision.action)
+        if decision.action == "deny":
+            return None
+        return _MODE_BY_OUTCOME.get(decision.mode_outcome or decision.action)
 
     def requirement_for(
         self, request: ToolRequest, decision: PolicyDecision
