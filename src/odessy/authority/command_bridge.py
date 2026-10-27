@@ -14,10 +14,12 @@ from odessy.execution.contract import (
     ExecutionProvider,
     IsolationRequirement,
     Mode,
+    ProviderContractError,
     ProviderUnavailableError,
     Requirement,
 )
 from odessy.execution.providers import UnconfinedProvider
+from odessy.execution.registry import ProviderRegistry
 from odessy.authority.output_retention import TextRetainer, format_retention_notice
 from odessy.authority.redaction import looks_like_secret_name, redact_text
 from odessy.authority.spill import SpillStore
@@ -85,6 +87,11 @@ class CommandBridge:
     #: resolves to is the authority layer's decision, not this bridge's, so this is
     #: supplied rather than derived here.
     policy: ExecutionPolicy | None = None
+    #: The backends this host offers, selected per call by the mode and isolation the
+    #: authority layer sent (the same rule as the Node server's
+    #: `resolveHostConfinement`). The composition root passes the shipped backends
+    #: with an unconfined fallback; `required` can never select the fallback.
+    registry: ProviderRegistry | None = None
 
     def __post_init__(self) -> None:
         if (self.provider is None) != (self.policy is None):
@@ -92,6 +99,11 @@ class CommandBridge:
                 "CommandBridge requires provider and policy together: a policy "
                 "without a backend confines nothing, and a backend without a "
                 "policy has no mode to confine under"
+            )
+        if self.registry is not None and self.provider is not None:
+            raise ValueError(
+                "CommandBridge takes a fixed provider or a registry, not both: two "
+                "sources of confinement would leave it unclear which one ran"
             )
 
     def run(
@@ -216,12 +228,24 @@ class CommandBridge:
         fail closed rather than over-grant.
         """
 
+        if self.registry is not None:
+            return self._confine_selected(argv, mode, isolation)
+
         if self.provider is None:
             # `__post_init__` pairs the two fields, so the policy is None here too.
-            result = _UNCONFINED.confine(
-                argv,
-                ExecutionPolicy(mode="read-only", workspace_root=str(self.workspace_root)),
-            )
+            inert = ExecutionPolicy(mode="read-only", workspace_root=str(self.workspace_root))
+            if isolation == "required":
+                # No backend is configured, so nothing here can meet a `required`
+                # demand. Running unconfined would be the silent downgrade `required`
+                # exists to rule out -- by omission, the one path the contract names.
+                evaluation = _UNCONFINED.evaluate(
+                    Requirement(policy=replace(inert, mode=mode or "read-only"), isolation="required")
+                )
+                raise ProviderUnavailableError(
+                    mode or "read-only",
+                    f"required isolation is not met: no confinement backend is configured ({evaluation.reason})",
+                )
+            result = _UNCONFINED.confine(argv, inert)
             return list(result.argv), _sandbox_report(result)
 
         assert self.policy is not None  # `__post_init__` pairs the two fields.
@@ -243,6 +267,42 @@ class CommandBridge:
                 )
 
         result = self.provider.confine(argv, policy)
+        return list(result.argv), _sandbox_report(result)
+
+    def _confine_selected(
+        self,
+        argv: list[str],
+        mode: Mode | None,
+        isolation: IsolationRequirement | None,
+    ) -> tuple[list[str], dict[str, Any]]:
+        """Select a backend from the registry for this call's mode and isolation.
+
+        No mode and no isolation is a caller that expressed no requirement: the run is
+        unconfined and says so. One without the other is refused rather than
+        completed with a default, because a default would be this side guessing how
+        strict the authority layer is. When nothing satisfies the request the
+        registry raises, so `required` never falls back to the unconfined provider.
+        """
+
+        if mode is None and isolation is None:
+            result = _UNCONFINED.confine(
+                argv,
+                ExecutionPolicy(mode="read-only", workspace_root=str(self.workspace_root)),
+            )
+            return list(result.argv), _sandbox_report(result)
+        if mode is None or isolation is None:
+            raise ProviderContractError(
+                "confinement requires mode and isolation together: a mode alone would "
+                "leave this side to infer how strict the caller is"
+            )
+        assert self.registry is not None
+        selection = self.registry.select(
+            Requirement(
+                policy=ExecutionPolicy(mode=mode, workspace_root=str(self.workspace_root)),
+                isolation=isolation,
+            )
+        )
+        result = selection.provider.confine(argv, selection.requirement.policy)
         return list(result.argv), _sandbox_report(result)
 
     def _spill_store(self) -> SpillStore:
