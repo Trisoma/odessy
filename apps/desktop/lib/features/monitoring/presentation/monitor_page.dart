@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../controllers/monitor_controller.dart';
+import 'metric_presentation.dart';
 
 class MonitorPage extends StatelessWidget {
   const MonitorPage({super.key, required this.controller});
@@ -10,6 +11,9 @@ class MonitorPage extends StatelessWidget {
       builder: (context, _) {
         final c = controller;
         final sample = c.metrics?['sample'] as Map?;
+        final staleGroups = ((c.metrics?['stale_groups'] as List?) ?? const [])
+            .map((g) => '$g')
+            .toSet();
         final series = c.history?['series'] as List? ?? [];
         final points = series.isEmpty
             ? <dynamic>[]
@@ -47,10 +51,12 @@ class MonitorPage extends StatelessWidget {
                 child: SelectableText(
                     'Trust: ${h.trust}   •   Connection: ${h.connectivity}   •   Telemetry: ${h.access}\n${h.id}')),
           if (c.selected != null) ...[
-            Text('Latest observation: ${sample?['observed_at'] ?? 'Unknown'}'),
-            if ((c.metrics?['stale_groups'] as List? ?? []).isNotEmpty)
-              Text(
-                  'Stale groups: ${(c.metrics!['stale_groups'] as List).join(', ')}'),
+            Text('Latest observation: ${_observedLabel(sample)}'),
+            if (staleGroups.isNotEmpty)
+              Text('Stale: ${staleGroups.map((g) => groupTitles[g] ?? g).join(', ')}',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant)),
             const SizedBox(height: 12),
             for (final group in [
               'cpu',
@@ -62,7 +68,12 @@ class MonitorPage extends StatelessWidget {
               'power',
               'disk_io'
             ])
-              _GroupCard(name: group, value: sample?[group]),
+              MetricCard(
+                  key: ValueKey('metric-$group'),
+                  summary: summariseSampleGroup(
+                      sample == null ? null : <String, dynamic>{...sample},
+                      group,
+                      stale: staleGroups.contains(group))),
             const SizedBox(height: 20),
             Text('CPU history · past hour · 60-second buckets',
                 style: Theme.of(context).textTheme.titleMedium),
@@ -86,33 +97,11 @@ class MonitorPage extends StatelessWidget {
       });
 }
 
-class _GroupCard extends StatelessWidget {
-  const _GroupCard({required this.name, this.value});
-  final String name;
-  final dynamic value;
-  String describe(dynamic v) {
-    if (v == null) return 'Unknown / unsupported';
-    if (v is Map) {
-      return v.entries.map((e) => '${e.key}: ${describe(e.value)}').join(' · ');
-    }
-    if (v is List) {
-      return v.isEmpty ? 'No reported devices' : v.map(describe).join('\n');
-    }
-    if (v is num) return v is int ? '$v' : v.toStringAsFixed(2);
-    return '$v';
-  }
-
-  @override
-  Widget build(BuildContext context) => Card(
-      child: Padding(
-          padding: const EdgeInsets.all(14),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(name.toUpperCase(),
-                style: Theme.of(context).textTheme.labelLarge),
-            const SizedBox(height: 6),
-            SelectableText(describe(value)),
-          ])));
+/// Local time for the sample observation, or an explicit unknown.
+String _observedLabel(Map? sample) {
+  final raw = sample?['observed_at'];
+  final parsed = raw is String ? DateTime.tryParse(raw) : null;
+  return parsed == null ? 'Unknown time' : parsed.toLocal().toString();
 }
 
 class _HistoryPainter extends CustomPainter {

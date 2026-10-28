@@ -1,0 +1,127 @@
+---
+title: Hooks
+---
+
+A hook is a program you configure to run at a fixed point of a turn: before a
+tool call, after one, or when the turn has its answer. Use one to block a
+command your policy would allow, to ask before a call outside office hours, to
+run a linter after the model writes a file, or to get a desktop notification.
+
+Hooks never widen what the model may do. A pre-tool hook can deny a call or ask
+for confirmation of one; it cannot allow a call the policy denies, skip a
+confirmation the policy requires, or change the sandbox mode a command runs in.
+
+## Where the file lives
+
+`~/.config/odessy/hooks.toml`, or the path in `ODESSY_HOOKS_FILE`. It is never
+read from the workspace: a repository must not be able to run programs of its
+own choosing on your machine. `python -m odessy doctor` lists the hooks that
+apply to the current folder and warns when a hook's program cannot be found.
+
+```toml
+[[pre_tool]]
+name = "no-force-push"
+match = ["terminal.run", "laptop.terminal.run"]
+command = ["python", "C:/Users/me/hooks/no_force_push.py"]
+
+[[pre_tool]]
+name = "office-hours"
+risk = ["medium", "high"]
+command = ["python", "C:/Users/me/hooks/office_hours.py"]
+on_error = "confirm"
+
+[[post_tool]]
+name = "lint"
+match = "filesystem.write*"
+workspace = "D:/projects/odessy"
+command = ["ruff", "check", "--quiet", "."]
+timeout = 20
+
+[[turn_end]]
+name = "notify"
+command = ["notify-send", "Odessy finished a turn"]
+```
+
+| Key | Events | Meaning |
+|---|---|---|
+| `name` | all | 1-32 lowercase letters, digits, `-` or `_`; unique in the file |
+| `command` | all | The program and its arguments, as a list. No shell is involved |
+| `match` | `pre_tool`, `post_tool` | Tool-name patterns (`*`, `?`), default `"*"` |
+| `risk` | `pre_tool`, `post_tool` | Policy risk levels to run for (`low`, `medium`, `high`); default all |
+| `workspace` | all | Run only when Odessy works in this folder |
+| `timeout` | all | Seconds, at most 60. Default 5 for `pre_tool`, 10 otherwise |
+| `on_error` | `pre_tool` | `deny` (default) or `confirm` when the hook fails |
+
+Each event allows at most 8 hooks. Hooks of one event run in file order.
+
+## How a hook runs
+
+A hook runs as you, outside Odessy's sandbox, with the workspace as its working
+directory. It reads one JSON object on stdin. Its environment is a short
+allowlist (`PATH`, `HOME`/`USERPROFILE`, temp and locale variables, and on
+Windows `SYSTEMROOT` and friends) plus `ODESSY_HOOK_EVENT` and
+`ODESSY_WORKSPACE`. API keys and tokens are not passed on. Arguments and
+results are redacted the same way the turn log redacts them.
+
+Stdout and stderr are each limited to 64 KiB while being read. Exceeding either
+limit fails the hook under its existing `on_error` policy. Timeouts, cancellation
+and output overflow terminate the owned process tree (a Windows Job Object or
+POSIX process group), with bounded pipe cleanup. Hooks must not start persistent
+background services; Windows also closes descendants when the hook exits.
+
+### pre_tool
+
+Runs after the policy has decided, before anyone is asked, for calls the policy
+did not deny. Input:
+
+```json
+{"event": "pre_tool", "tool": "terminal.run", "arguments": {"command": "git push -f"},
+ "policy": {"decision": "allow", "risk": "low"}, "workspace": "D:/projects/odessy"}
+```
+
+The answer:
+
+- exit 0 and print nothing: no objection;
+- exit 0 and print `{"decision": "allow" | "confirm" | "deny", "reason": "..."}`;
+- exit 2: deny, with what the hook wrote to stderr as the reason;
+- anything else (another exit code, output that is not a decision, a timeout,
+  a program that cannot start) is a failure, decided by `on_error`. A failing
+  hook never allows a call.
+
+The strictest answer of all matching hooks wins, and a deny stops the
+remaining hooks. A denied call ends the turn like a policy denial. A call a hook
+wants confirmed is asked about through the usual channel, and the approval
+prompt names the hook; a command the policy would have run read-only stays
+read-only after you confirm it. Each call is screened once: a single call, a
+call in a batch, and a call approved through the session's approval broker all
+pass through the same check, and a call that reaches execution unscreened while
+a hook matches it is denied.
+
+### post_tool
+
+Runs after a call, whether it succeeded or failed. Input adds `"result"`, the
+tool's structured result. What the hook prints (or `{"note": "..."}`; stderr
+when it printed nothing and exited non-zero) is added to the result the model
+sees, under `hook_notes`, with its exit code and a marker saying it came from
+your hooks and not the tool. Notes are capped at 2000 characters each; the tool's
+own fields are never changed. A hook that fails or times out adds nothing and is
+recorded in the turn log.
+
+### turn_end
+
+Runs in the background once the turn has its answer, so the answer is not held
+up. Input: `outcome` (`answered`, `stopped` or `error`), the `request`, the
+`final_text` (each up to 2000 characters) and the `tools` that ran. Output is
+ignored.
+
+## Events and logs
+
+Every hook decision, note and failure is in the turn log (`hook_decision`,
+`hook_note`, `hook_failed`). A third-party tool's audit record carries the
+deciding rule, `hook:<name>`, when a hook decided.
+
+The session API also streams what happens inside a turn as it happens:
+`tool` events (`started`, `finished` with its status), `policy` events (the
+outcome and risk of each call), `hook` events, and `final_call`. These carry
+names, call ids and outcomes only; arguments, results and reasons stay in the
+turn log because a reason can quote an argument.

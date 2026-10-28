@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import re
 import threading
@@ -12,6 +13,7 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from odessy.authority.redaction import redact_text, looks_like_secret_name
+from odessy.runtime.hooks import public_event
 from odessy.runtime.types import ToolObservation, ToolRequest
 from odessy.voice.memory import ConversationMemory
 from odessy.collaboration.context import collaboration_scope
@@ -323,6 +325,14 @@ class SessionController:
             if reset:
                 reset()
             agent = self.agent_factory(model, confirm=self.confirm)
+            if _accepts(agent.run_turn, 'observer'):
+                # Tool, policy and hook events as they happen, with names and
+                # outcomes only (public_event); the full entries stay in the turn log.
+                def observe(entry):
+                    event = public_event(entry)
+                    if event is not None:
+                        self.emit(*event)
+                kwargs['observer'] = observe
             with collaboration_scope(self.collaboration), interaction_scope(self.interactions):
                 result = await agent.run_turn(text, **kwargs)
             # Routing notes and peer results were raised on a worker thread, so they
@@ -393,3 +403,11 @@ class SessionController:
             if queue.full():
                 queue.get_nowait()
             queue.put_nowait(None)
+
+
+def _accepts(function, name):
+    try:
+        parameters = inspect.signature(function).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(p.name == name or p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters)

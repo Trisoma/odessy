@@ -119,6 +119,8 @@ def build_action_approval(request, decision, policy, *, call_id: str, execution_
     for key, value in sorted(display_paths.items()):
         prompt += f' {key}: {_display(value)}.'
     prompt += ' Scopes: ' + (', '.join(scopes) if scopes else 'none') + '.'
+    if isinstance(decision.rule, str) and decision.rule.startswith('hook:') and 'authorization' in scopes:
+        prompt += f' Confirmation asked for by your {_display(decision.rule[5:])} hook.'
     if 'escalation' in scopes:
         prompt += f' Includes sandbox escalation to {_display(args.get("sandbox_permissions"))}.'
     public = {'authoritative_prompt': prompt, 'risk': decision.risk, 'allowed_channels': list(channels), 'scopes': scopes, 'call_id': call_id, 'operation': request.name, 'host': host, 'arguments': _display(args), 'resolved_paths': _display(paths), 'target_identity': _display(target), 'policy_binding': policy_binding, 'fingerprint': fingerprint}
