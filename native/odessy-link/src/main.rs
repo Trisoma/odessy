@@ -33,7 +33,7 @@ odessy-link — authenticated host pairing for Odessy
   odessy-link peers revoke <peer>
   odessy-link serve --listen <address> --workspace <path> --node-server <entry> [--advertise]
   odessy-link connect --peer <alias> [--address <host:port>] [--discover]
-  odessy-link discover [--seconds <n>]
+  odessy-link discover [--seconds <n>] [--json]
 
 State directory: $ODESSY_LINK_STATE_DIR or the per-user data directory.
 ";
@@ -227,19 +227,27 @@ fn peers_list(arguments: &[String]) -> Result<(), Failure> {
 }
 
 fn discover_peers(arguments: &[String]) -> Result<(), Failure> {
-    let options = parse(arguments, &["--seconds"])?;
+    let options = parse_with_switches(arguments, &["--seconds"], &["--json"])?;
     let seconds = options
         .get("--seconds")
         .map(|raw| raw.parse::<u64>())
         .transpose()
         .map_err(|_| Failure::Usage("--seconds must be a whole number".into()))?
         .unwrap_or(discover::BROWSE_WINDOW.as_secs());
-    println!(
+    if !options.contains_key("--json") { println!(
         "discovering {SERVICE} for {seconds}s (bindings are not affected: advertisements \
          are only an address aid and never enroll a peer)",
         SERVICE = discover::SERVICE_TYPE
-    );
+    ); }
     let found = discover::browse(std::time::Duration::from_secs(seconds.max(1)))?;
+    if options.contains_key("--json") {
+        println!("{}", serde_json::json!({"schema_version":1,"devices":found.iter().map(|peer| {
+            let address=peer.address().ok();
+            serde_json::json!({"name":peer.alias,"address":address,"advertised_fingerprint":peer.fingerprint,
+                "usable":address.is_some(),"trusted":false})
+        }).collect::<Vec<_>>()}));
+        return Ok(());
+    }
     if found.is_empty() {
         println!("no advertisements found; use the address saved by `pair add --address`");
         return Ok(());

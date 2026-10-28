@@ -80,7 +80,7 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
             .local_addr()
             .map_err(|error| Failure::Runtime(format!("cannot read listen address: {error}")))?;
         eprintln!("listening on {local} (mTLS, enrolled peers only)");
-        if advertise {
+        let _advertisement = if advertise {
             let ip = local.ip();
             match crate::discover::advertise(
                 &identity.installation_id,
@@ -92,15 +92,15 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
                 Ok((daemon, _info)) => {
                     // Held for the lifetime of the listener so the advertisement
                     // disappears when this process stops.
-                    let _daemon = daemon;
                     eprintln!(
                         "advertising {} as an address aid only",
                         crate::discover::SERVICE_TYPE
                     );
+                    Some((daemon, _info))
                 }
-                Err(error) => eprintln!("mDNS advertisement unavailable: {error}"),
+                Err(error) => { eprintln!("mDNS advertisement unavailable: {error}"); None },
             }
-        }
+        } else { None };
         let acceptor = TlsAcceptor::from(Arc::new(config));
         loop {
             let (stream, address) = match listener.accept().await {

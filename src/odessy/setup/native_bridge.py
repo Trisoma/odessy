@@ -206,7 +206,7 @@ def pair(parameters,*,runner=None):
     if action in ('enroll','grant','revoke') and not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_-]{0,63}',alias): raise ValueError('invalid peer alias')
     certificate_hash=None
     if action=='list': argv+=['peers','list','--json']
-    elif action=='discover': argv+=['discover','--seconds','2']
+    elif action=='discover': argv+=['discover','--seconds','2','--json']
     elif action=='init':argv+=['init']
     elif action=='export':
         output=guard(data.get('output',''))
@@ -246,6 +246,13 @@ def pair(parameters,*,runner=None):
     if runner is None:
         text=bounded_native(argv)
     else:text=runner(argv)
-    return {'operation':action,'link':str(link),'peers':json.loads(text) if action=='list' else None,'message':text if action!='list' else '', 'grants_changed':action in ('grant','revoke'),'node_local_only':True}
+    result={'operation':action,'link':str(link),'peers':json.loads(text) if action=='list' else None,'message':text if action not in ('list','discover') else '', 'grants_changed':action in ('grant','revoke'),'node_local_only':True}
+    if action=='discover':
+        discovery=json.loads(text)
+        if not isinstance(discovery,dict) or discovery.get('schema_version')!=1 or not isinstance(discovery.get('devices'),list) or len(discovery['devices'])>256:
+            raise ValueError('Unsupported discovery response; update odessy-link.')
+        result['devices']=discovery['devices']
+        result['message']='Nearby advertisements are unverified. Selecting a device never enrolls it or grants access.'
+    return result
 
 

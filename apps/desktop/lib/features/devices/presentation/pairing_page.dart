@@ -19,6 +19,9 @@ class _PairingPageState extends State<PairingPage> {
   final editors = <String, TextEditingController>{};
   String action = 'enroll', capability = 'mcp';
   bool compared = false;
+  List<Map> nearby = [];
+  Map? savedPeers;
+  bool scanned = false;
   MaintenanceController get c => widget.controller;
   @override
   void initState() {
@@ -42,6 +45,37 @@ class _PairingPageState extends State<PairingPage> {
     c.update({
       for (final e in editors.entries) e.key: e.value.text.trim(),
       'capability': capability
+    });
+  }
+
+  Future<void> findNearby() async {
+    if (c.result['peers'] is Map) savedPeers = c.result['peers'] as Map;
+    await c.inspect('pair:discover');
+    if (!mounted) return;
+    setState(() {
+      scanned = true;
+      nearby = (c.result['devices'] as List? ?? []).whereType<Map>().toList();
+    });
+  }
+
+  void selectNearby(Map device) {
+    final address = device['address'];
+    if (address is! String || address.isEmpty || device['usable'] != true) {
+      return;
+    }
+    editors.putIfAbsent('address', () => TextEditingController()).text =
+        address;
+    final peers = savedPeers?['peers'] as List? ?? [];
+    for (final peer in peers.whereType<Map>()) {
+      if (peer['fingerprint_sha256'] == device['advertised_fingerprint']) {
+        editors.putIfAbsent('alias', () => TextEditingController()).text =
+            '${peer['alias']}';
+        break;
+      }
+    }
+    setState(() {
+      action = 'enroll';
+      update();
     });
   }
 
@@ -99,11 +133,28 @@ class _PairingPageState extends State<PairingPage> {
                   onPressed: c.busy ? null : () => c.inspect('pair:list'),
                   child: const Text('Refresh paired devices')),
               OutlinedButton(
-                  onPressed: c.busy || c.needsInspection
-                      ? null
-                      : () => c.inspect('pair:discover'),
+                  onPressed: c.busy || c.needsInspection ? null : findNearby,
                   child: const Text('Find nearby devices · unverified')),
             ]),
+            if (!scanned)
+              const Text(
+                  'On the same Wi-Fi or LAN: start the other computer’s headless Odessy service with discovery enabled, then find nearby devices.'),
+            if (scanned && nearby.isEmpty && !c.busy)
+              const Text(
+                  'No nearby devices found. Check that both computers are on the same network, the headless service advertises discovery, and the firewall allows local discovery. Discovery does not search the public internet.'),
+            for (final device in nearby)
+              Card(
+                  child: ListTile(
+                title: Text('${device['name'] ?? 'Nearby computer'}'),
+                subtitle: Text(
+                    '${device['address'] ?? 'No usable address'}\nUnverified advertisement — selecting fills the address only.'),
+                trailing: TextButton(
+                    onPressed:
+                        c.busy || c.needsInspection || device['usable'] != true
+                            ? null
+                            : () => selectNearby(device),
+                    child: const Text('Use this device')),
+              )),
             const SizedBox(height: 16),
             if (c.result['peers'] is Map) ...[
               Text(

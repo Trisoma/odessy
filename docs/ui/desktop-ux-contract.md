@@ -149,3 +149,20 @@ channels, origin-bound authentication and no-replay behavior remain unchanged.
 - An explicitly selected `credential_env` is authoritative: a missing referenced
   key cannot silently fall back to another provider/global key. The value is
   resolved only inside the diagnostic/runtime process, never in saved settings.
+
+## October 28: selectable LAN discovery
+
+`pair:discover` now returns additive `devices` entries with `name`, `address`,
+`advertised_fingerprint`, `usable` and `trusted: false`. It runs the matching
+odessy-link `discover --seconds 2 --json` (schema_version 1). Existing discovery
+text output remains available without --json; older link binaries need updating.
+Names and advertised fingerprints are unverified metadata. Selecting a result
+fills the address and invalidates review; it never enrolls or grants access.
+First enrollment still requires independently verified identity and exact review.
+The headless executor must advertise on the same Wi-Fi/LAN. This is not public
+internet discovery; network multicast/firewall restrictions may prevent results.
+Wildcard listeners advertise available interface addresses rather than 0.0.0.0.
+
+Verification: Rust 76 passed; Python discovery/native bridge 6 passed; Flutter
+nearby selection and desktop acceptance 5 passed. No live two-device discovery,
+ARM64 build/deployment or native GUI acceptance was performed in this change.
