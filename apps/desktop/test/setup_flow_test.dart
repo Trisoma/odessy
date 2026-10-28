@@ -124,6 +124,22 @@ void main() {
     expect(find.text('Open Odessy again'), findsOneWidget);
   });
 
+  testWidgets('compact 900x680 keeps the finish error and retry reachable',
+      (tester) async {
+    final backend = FlowBackend();
+    await pumpSetup(tester, backend, ack: FakeAck(false), onExit: () async {});
+    // The installer window default; the retry must stay visible without
+    // scrolling the error out of the fixed footer's reach.
+    tester.view.physicalSize = const Size(900, 680);
+    await tester.pump();
+    await advanceToReview(tester);
+    await install(tester);
+    await tester.tap(find.text('Open Odessy and finish'));
+    await settle(tester);
+    expect(tester.takeException(), isNull);
+    expect(find.text('Open Odessy again').hitTestable(), findsOneWidget);
+  });
+
   testWidgets('acknowledged hand-off closes setup', (tester) async {
     final backend = FlowBackend();
     var exited = false;

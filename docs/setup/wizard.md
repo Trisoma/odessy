@@ -48,6 +48,23 @@ OdessySetup.exe
   configuration and management directly. Nothing is inferred or downloaded until
   the user selects an existing model.
 
+## Window sizing
+
+The native runner chooses the window from the flags it was started with, not from
+the window title or the first screen drawn:
+
+- `--setup`, `--manage`, `--uninstall`: one compact installer surface, 900 × 680
+  logical pixels, resizable down to 720 × 540.
+- `--installed` and the developer entry point without a mode flag: the main
+  application keeps 1200 × 850 logical pixels.
+
+The initial compact size is reduced to the primary monitor's work area when the
+display is small or scaled to 150–200%, so the fixed footer and its primary
+action stay on screen. The minimum is reduced with it and never exceeds the
+initial size; the wizard body scrolls, so no control is clipped at the minimum.
+Windows only in v0.5.0; Linux and macOS runners change with their own platform
+PRs.
+
 ## Management
 
 `--manage` (and **Settings → Manage installation** in the installed app) shows the
