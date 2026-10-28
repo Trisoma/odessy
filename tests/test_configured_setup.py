@@ -6,6 +6,36 @@ from odessy.setup.contracts import SetupSelection
 from odessy.setup.planning import build_plan
 from odessy.setup.configuration import export_selection, export_environment
 
+
+def test_saved_legacy_voice_defaults_restore_without_rewriting(tmp_path, monkeypatch):
+    import hashlib
+    from odessy.setup import configured
+    from odessy.setup.contracts import SetupSelection, public
+    monkeypatch.setattr(configured, 'desktop_state_file', lambda: tmp_path / 'desktop.json')
+    chosen = SetupSelection.from_dict({'role':'combined', 'model':{'provider':'ollama','name':'existing'}})
+    legacy = public(chosen)
+    for key in ('audio_backend','audio_input_device','audio_output_device','wake_model'):
+        legacy['voice'].pop(key)
+    raw = (json.dumps({'schema_version':1,'selection':legacy},indent=2)+'\n').encode()
+    path = tmp_path / 'old-selection.json'
+    path.write_bytes(raw)
+    original_hash = hashlib.sha256(raw).hexdigest()
+    configured.remember({'config':str(path),'format':'selection','selection':legacy,
+        'sha256':original_hash,'workspace':str(tmp_path)})
+    restored = configured.resume()
+    assert restored['configured'] is True
+    assert restored['selection']['voice']['audio_backend'] == 'auto'
+    assert path.read_bytes() == raw and restored['sha256'] == original_hash
+    # Old missing fields cannot authorize a newly selected nondefault device.
+    changed = public(chosen)
+    changed['voice']['audio_input_device'] = 'different microphone'
+    with pytest.raises(ValueError, match='does not match'):
+        configured.saved_spec(SetupSelection.from_dict(changed),path,'selection')
+    # A changed export still fails the remembered hash, even if parseable.
+    path.write_bytes(raw.replace(b'existing', b'changed'))
+    with pytest.raises(ValueError):
+        configured.resume()
+
 @pytest.mark.parametrize('format', ['selection', 'env'])
 def test_saved_setup_launch_spec_is_bound_to_exact_file(tmp_path, format):
     selection = {'role': 'combined', 'model': {'provider': 'ollama', 'name': 'existing', 'endpoint': 'http://127.0.0.1:11434'}}

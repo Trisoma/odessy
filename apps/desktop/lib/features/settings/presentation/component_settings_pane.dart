@@ -122,8 +122,7 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
           : widget.section == 'host'
               ? {
                   'role': role,
-                  if (fields['workspace']!.text.trim().isNotEmpty)
-                    'workspace': fields['workspace']!.text.trim()
+                  'workspace': fields['workspace']!.text.trim()
                 }
               : {for (final key in _keys) key: fields[key]!.text};
 
@@ -156,8 +155,16 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
               errorText: c.fieldErrors[key],
               labelText: key.replaceAll('_', ' '),
               suffixIcon: browse
-                  ? IconButton(
-                      tooltip: 'Browse ${key.replaceAll('_', ' ')}',
+                  ? Tooltip(
+                      message: 'Browse ${key.replaceAll('_', ' ')}',
+                      child: TextButton(
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(96, 44),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        foregroundColor: Theme.of(context).colorScheme.primary,
+                        side: BorderSide(color: Theme.of(context).colorScheme.outline),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
                       onPressed: locked
                           ? null
                           : () async {
@@ -171,7 +178,7 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
                                 _remember();
                               }
                             },
-                      icon: const Icon(Icons.folder_open))
+                      child: const Text('Browse…')))
                   : null),
           onChanged: (_) => _remember()));
   @override

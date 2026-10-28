@@ -244,7 +244,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     onPressed: components!.busy ? null : widget.onRestartSaved,
                     child: const Text('Apply saved settings · restart')),
             ]),
-            if (widget.onRestartSaved == null)
+            if (widget.onRestartSaved == null && widget.controller.connected)
               const Text(
                   'Restart through the service owner to apply saved settings. This desktop cannot restart an unowned or unverified service.'),
           ],

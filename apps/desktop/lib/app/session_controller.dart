@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:odessy_client/odessy_client.dart';
+import 'setup/disconnected_api.dart';
 
 /// Owns transport identity and admission. Presentation never constructs requests.
 class DesktopSession extends ChangeNotifier {
@@ -31,6 +32,13 @@ class DesktopSession extends ChangeNotifier {
 
   Future<void> start() async {
     if (_disposed || busy) return;
+    if (api is DisconnectedApi) {
+      error = '';
+      connected = false;
+      status = 'Not connected';
+      _notify();
+      return;
+    }
     final epoch = ++_epoch;
     busy = true;
     error = '';

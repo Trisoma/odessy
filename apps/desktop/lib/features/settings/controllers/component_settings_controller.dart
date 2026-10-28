@@ -75,12 +75,15 @@ class ComponentSettingsController extends ChangeNotifier {
     drafts[section]?.edit(value);
     error = '';
     fieldErrors = {};
-    if (!inspectionRequired) status = 'Unsaved changes.';
+    if (!inspectionRequired) {
+      status = drafts[section]?.dirty == true ? 'Unsaved changes.' : '';
+    }
     _notify();
   }
 
   void discard(String section) {
     drafts[section]?.discard();
+    if (status == 'Unsaved changes.') status = '';
     _notify();
   }
 

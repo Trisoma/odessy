@@ -97,3 +97,28 @@ Independent read-only review found the explicit-key mismatch and rechecked its f
 without further blockers. Durable vault support remains unimplemented; inherited
 provider references and session-only connection tokens are the supported behavior.
 Native, physical, accessibility and external-user gates above remain unchanged.
+
+## Direct checkout launch regression
+
+The maintainer's release-EXE screenshot exposed two previously untested paths:
+raw Flutter builds did not locate the checkout's source/virtual environment, and
+saved schema-v1 JSON from before four additive voice fields was rejected by the
+new byte-for-byte serializer. Read-only diagnosis confirmed the real export's
+remembered hash matched and its normalized selection was unchanged.
+
+Checkout builds now discover a validated ancestor Odessy project and its `.venv`,
+after packaged/installed runtime selection; explicit build settings still win.
+This is not portable packaging and does not search arbitrary working directories.
+Historical JSON is accepted only in its exact previous serialization with omitted
+new fields at their defaults; hash binding remains unchanged. No saved file is
+rewritten and nondefault/changed selections remain rejected.
+
+Intentionally disconnected startup no longer manufactures a connection error.
+Unowned-service restart instructions appear only for an actual connected service.
+Fresh checks: Python configuration/recovery suite **26 passed**; full Flutter
+**161 passed / 7 skipped**; analysis clean; Windows release rebuild passed (83.4 s).
+The actual saved configuration now loads read-only with its model present.
+The real Dart-to-auto-detected-Python bridge check also passed against that saved
+configuration. Independent read-only review found no security/compatibility blocker.
+Native screenshot inspection was attempted but the Computer Use pipe was unavailable
+(OS error 2); no fresh native GUI or paid-provider acceptance is claimed.

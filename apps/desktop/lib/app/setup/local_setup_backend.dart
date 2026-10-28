@@ -14,14 +14,45 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
   LocalSetupBackend(
       {String python = const String.fromEnvironment('ODESSY_SETUP_PYTHON'),
       String sourceRoot = const String.fromEnvironment('ODESSY_SETUP_ROOT'),
+      String? executablePath,
       this.payloadRoot = '',
       this.timeout = const Duration(seconds: 30)})
       : python = python.isNotEmpty
             ? python
-            : (_bundledPython() ?? _installedPython() ?? 'python'),
-        sourceRoot = sourceRoot.isNotEmpty ? sourceRoot : _bundledRoot();
-  static String _bundledRoot() {
-    var candidate = File(Platform.resolvedExecutable).parent;
+            : (_bundledPython(executablePath) ?? _installedPython(executablePath) ??
+                _sourcePython(sourceRoot.isNotEmpty ? sourceRoot : _sourceRoot(executablePath)) ?? 'python'),
+        sourceRoot = sourceRoot.isNotEmpty ? sourceRoot :
+            (_bundledRoot(executablePath).isNotEmpty ? _bundledRoot(executablePath) : _sourceRoot(executablePath));
+
+  // A raw Flutter release remains a checkout build, not a portable distribution.
+  // Locate only a verified ancestor project, never an arbitrary working folder.
+  static String _sourceRoot(String? executablePath) {
+    var candidate = File(executablePath ?? Platform.resolvedExecutable).parent;
+    for (var depth = 0; depth < 12; depth++) {
+      final project = File('${candidate.path}/pyproject.toml');
+      try {
+        if (project.existsSync() && project.lengthSync() <= 65536 &&
+            RegExp(r'''^\s*name\s*=\s*["']odessy["']\s*$''', multiLine: true).hasMatch(project.readAsStringSync()) &&
+            File('${candidate.path}/src/odessy/setup/bridge.py').existsSync()) {
+          return candidate.path;
+        }
+      } on FileSystemException {
+        return '';
+      }
+      if (candidate.parent.path == candidate.path) break;
+      candidate = candidate.parent;
+    }
+    return '';
+  }
+
+  static String? _sourcePython(String root) {
+    if (root.isEmpty) return null;
+    final candidate = File('$root/.venv/${Platform.isWindows ? 'Scripts/python.exe' : 'bin/python3'}');
+    return candidate.existsSync() ? candidate.path : null;
+  }
+
+  static String _bundledRoot([String? executablePath]) {
+    var candidate = File(executablePath ?? Platform.resolvedExecutable).parent;
     for (var depth = 0; depth < 7; depth++) {
       if ((Directory('${candidate.path}${Platform.pathSeparator}bootstrap')
                   .existsSync() ||
@@ -37,8 +68,8 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
     return '';
   }
 
-  static String? _bundledPython() {
-    final root = _bundledRoot();
+  static String? _bundledPython([String? executablePath]) {
+    final root = _bundledRoot(executablePath);
     if (root.isEmpty) return null;
     final relative =
         Platform.isWindows ? 'runtime/python.exe' : 'runtime/bin/python3';
@@ -46,8 +77,8 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
   }
 
   /// An installed version keeps its owned interpreter beside the desktop build.
-  static String? _installedPython() {
-    final versionDirectory = File(Platform.resolvedExecutable).parent.parent;
+  static String? _installedPython([String? executablePath]) {
+    final versionDirectory = File(executablePath ?? Platform.resolvedExecutable).parent.parent;
     final candidate = Platform.isWindows
         ? File(
             '${versionDirectory.path}${Platform.pathSeparator}Scripts${Platform.pathSeparator}python.exe')

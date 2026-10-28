@@ -22,7 +22,22 @@ def saved_spec(selection, output, format_):
     if not path.is_file() or path.stat().st_size > 65536:
         raise ValueError('Save the reviewed configuration file before connecting.')
     raw = path.read_bytes()
-    if raw != expected:
+    compatible = False
+    if raw != expected and format_ == 'selection':
+        # Older schema-v1 exports predate these additive voice defaults. Accept
+        # only the exact historical serialization, not arbitrary edited JSON.
+        try:
+            original = json.loads(raw)
+            original_voice = original['selection']['voice']
+            candidate = json.loads(expected)
+            for key, default in {'audio_backend':'auto','audio_input_device':'',
+                                 'audio_output_device':'','wake_model':''}.items():
+                if key not in original_voice and candidate['selection']['voice'][key] == default:
+                    candidate['selection']['voice'].pop(key)
+            compatible = raw == (json.dumps(candidate, indent=2)+'\n').encode()
+        except (ValueError, KeyError, TypeError):
+            pass
+    if raw != expected and not compatible:
         raise ValueError('Saved configuration does not match the reviewed selection; review again.')
     return {'configured': selection.model is not None and selection.role != 'execution', 'python': sys.executable, 'pythonpath': str(Path(__file__).resolve().parents[2]), 'config': str(path), 'format': format_,
             'selection': public(selection), 'sha256': hashlib.sha256(raw).hexdigest(),

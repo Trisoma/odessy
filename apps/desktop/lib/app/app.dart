@@ -160,6 +160,7 @@ class _OdessyAppState extends State<OdessyApp> {
   }
 
   final navigatorKey = GlobalKey<NavigatorState>();
+  final navigationFocus = <String, FocusNode>{};
   bool _navigating = false;
   final collaborationForms = <OdessyApi, SettingsFormController<int>>{};
   SettingsFormController<int> _collaborationForm() =>
@@ -314,6 +315,9 @@ class _OdessyAppState extends State<OdessyApp> {
 
   @override
   void dispose() {
+    for (final node in navigationFocus.values) {
+      node.dispose();
+    }
     lifecycle.dispose();
     monitoring.dispose();
     controller.removeListener(_observeConnection);
@@ -619,12 +623,14 @@ class _OdessyAppState extends State<OdessyApp> {
             ]),
           ])));
   Widget _nav(BuildContext context, String label, IconData icon, bool selected,
-          VoidCallback tap) =>
+          Future<void> Function() tap) =>
       Builder(
           builder: (tileContext) => Padding(
               padding: const EdgeInsets.only(bottom: 5),
               child: ListTile(
                   key: ValueKey('nav-$label'),
+                  focusNode: navigationFocus.putIfAbsent(label,
+                      () => FocusNode(debugLabel: 'Navigation: $label')),
                   dense: true,
                   selected: selected,
                   selectedTileColor: Theme.of(context)
@@ -636,9 +642,16 @@ class _OdessyAppState extends State<OdessyApp> {
                   contentPadding: const EdgeInsets.symmetric(horizontal: 12),
                   leading: Icon(icon, size: 19),
                   title: Text(label, style: const TextStyle(fontSize: 13)),
-                  onTap: () {
-                    Scaffold.maybeOf(tileContext)?.closeDrawer();
-                    tap();
+                  onTap: () async {
+                    // Pointer activation must retain the same return target as
+                    // keyboard activation before opening a guarded dialog.
+                    navigationFocus[label]!.requestFocus();
+                    FocusManager.instance.applyFocusChangesIfNeeded();
+                    final previousPage = page;
+                    await tap();
+                    if (tileContext.mounted && (page != previousPage || selected)) {
+                      Scaffold.maybeOf(tileContext)?.closeDrawer();
+                    }
                   })));
   Widget _badge(BuildContext context, String text, Color color) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
