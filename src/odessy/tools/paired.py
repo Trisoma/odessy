@@ -184,6 +184,10 @@ def paired_host(env: Mapping[str, str] | None = None, *, prober=None) -> PairedH
         raise PairedConfigError(
             f"{alias} is not enrolled on this machine; run `odessy-link pair add` first"
         )
+    if details.get("revoked") is True:
+        raise PairedConfigError(
+            f"{alias} is revoked; review and enroll a verified identity in Devices before reconnecting"
+        )
     fingerprint = details.get("fingerprint_sha256")
     revision = details.get("grant_revision")
     if not isinstance(fingerprint, str) or not isinstance(revision, int):
@@ -308,6 +312,7 @@ def probe(host: PairedHost, *, timeout: float = PROBE_SECONDS) -> dict[str, obje
         configured_alias_present=enrolled is not None,
     )
     if enrolled is not None:
+        result["revoked"] = enrolled.get("revoked")
         result["fingerprint_sha256"] = enrolled.get("fingerprint_sha256")
         result["capability_mcp"] = bool(enrolled.get("capability_mcp"))
         result["workspace"] = enrolled.get("workspace")

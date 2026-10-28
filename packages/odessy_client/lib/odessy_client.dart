@@ -64,6 +64,7 @@ class ApiFailure implements Exception {
   @override
   String toString() => switch (status) {
         401 => 'Authentication failed. Check the bearer token.',
+        503 => 'Cannot start a conversation. Check the configured model and execution host in Settings or Devices. Configuration remains available.',
         404 ||
         409 ||
         410 =>

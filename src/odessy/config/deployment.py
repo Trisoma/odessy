@@ -187,6 +187,8 @@ def environment_prompt(
     not given invites it to call that tool anyway.
     """
 
+    if _available_tools.get() == frozenset():
+        return 'Text-only conversation: no tools, commands, file access or delegated jobs are available. Never claim to have executed an action.'
     source = os.environ if env is None else env
     mode = deployment_mode(source)
     tools = set(offered) if offered is not None else set(model_tool_names(mode))

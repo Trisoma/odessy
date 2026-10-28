@@ -186,3 +186,23 @@ Automated checks: `cargo test` and `cargo clippy --all-targets -- -D warnings` i
 `native/odessy-link`; `tests/test_paired_host.py` and `tests/test_paired_agent.py` run
 always; `tests/test_paired_transport.py` and `tests/test_paired_integration.py` run with
 `ODESSY_LINK_E2E=1` and a built crate (the `pairing` CI job).
+
+## Recovering from a conversation startup failure
+
+A saved peer marked **Revoked** remains visible as a trust record; it is not a
+corrupt database. Do not delete identity keys or the trust database to hide it.
+A revoked peer cannot be used as the execution target until explicit verified
+enrollment/authorization succeeds. Discovery never reverses revocation. Text chat
+can continue with the selected model in explicitly labelled chat-only mode.
+
+The desktop now keeps an already-started management API alive if conversation
+initialization fails. The error offers **Open Settings** and **Open Devices**;
+no tool work is retried or redirected to another host. Unavailable paired execution
+starts a chat-only session with all tools, hooks and delegated jobs detached.
+Unrecoverable model/session failures return a safe HTTP 503. Correct the
+model/host configuration or re-enroll through an exact reviewed operation, then
+explicitly reconnect to restore execution. Saving configuration alone is not activation.
+
+Deploy both the rebuilt desktop and matching Python source update, then close
+and reopen the existing application/coordinator. Replacing only the Flutter
+bundle cannot update an already-running Python process.

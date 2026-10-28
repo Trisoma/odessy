@@ -18,7 +18,8 @@ class DesktopSession extends ChangeNotifier {
     return "$model${provider == null ? '' : ' · $provider'} ($name)";
   }
 
-  String status = 'Connecting', error = '', route = '';
+  String status = 'Connecting', error = '', route = '', executionNotice = '';
+  static const chatOnlyNotice = 'Chat-only: the execution host is unavailable. Tools and delegated jobs are blocked. Reconnect after restoring verified access.';
   bool connected = false, busy = false, stopping = false, _disposed = false;
   int _epoch = 0;
   Future<void>? _shutdown;
@@ -53,6 +54,7 @@ class DesktopSession extends ChangeNotifier {
       profiles = values;
       profileDetails = {for (final detail in details) detail.name: detail};
       session = fresh;
+      executionNotice = fresh.events.any((event) => event.type == 'execution_unavailable') ? chatOnlyNotice : '';
       connected = true;
       status = 'Ready';
       _listen(epoch);
@@ -73,6 +75,7 @@ class DesktopSession extends ChangeNotifier {
     final sid = session!.id;
     _subscription = api.events(sid, lastEvent).listen((event) async {
       if (_disposed || epoch != _epoch) return;
+      if (event.type == 'execution_unavailable') executionNotice = chatOnlyNotice;
       if (event.type == 'selection') {
         route = '${event.data['profile']} · ${event.data['reason'] ?? ''}';
       }
@@ -283,6 +286,7 @@ class DesktopSession extends ChangeNotifier {
     }
     api = next;
     session = null;
+    executionNotice = '';
     route = '';
     connected = false;
     busy = false;

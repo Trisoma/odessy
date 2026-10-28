@@ -459,11 +459,25 @@ class _OdessyAppState extends State<OdessyApp> {
                                     child: const Text(
                                         'Connect saved configuration')),
                               ]),
+                        if (controller.executionNotice.isNotEmpty)
+                          ComponentStateBanner(
+                              message: controller.executionNotice,
+                              actions: [TextButton(onPressed: () => _navigate('Devices'), child: const Text('Open Devices'))]),
                         if (controller.error.isNotEmpty)
                           ComponentStateBanner(
                               message: controller.error,
                               tone: BannerTone.error,
                               actions: [
+                                if (!controller.connected) ...[
+                                  TextButton(
+                                      key: const ValueKey('startup-recovery-settings'),
+                                      onPressed: () => _openSettings(SettingsSections.models),
+                                      child: const Text('Open Settings')),
+                                  TextButton(
+                                      key: const ValueKey('startup-recovery-devices'),
+                                      onPressed: () => _navigate('Devices'),
+                                      child: const Text('Open Devices')),
+                                ],
                                 TextButton(
                                     onPressed: controller.refresh,
                                     child: const Text('Refresh'))
@@ -686,6 +700,7 @@ class _OdessyAppState extends State<OdessyApp> {
           expectedFingerprint: spec['expected_fingerprint'] as String?,
         );
     configuredCoordinator = child;
+    var serviceReady = false;
     try {
       final api = await child.start();
       if (!mounted || epoch != configuredEpoch) {
@@ -693,12 +708,15 @@ class _OdessyAppState extends State<OdessyApp> {
         await child.stop();
         return;
       }
+      serviceReady = true;
       await controller.replace(api);
       if (!controller.connected) throw StateError(controller.error);
       monitoring.bind(controller.api);
       if (mounted) setState(() => page = 'Conversation');
     } catch (_) {
-      await child.stop();
+      // A failed conversation (for example a revoked executor) must not
+      // shut down the healthy API needed to inspect and recover configuration.
+      if (!serviceReady) await child.stop();
       rethrow;
     }
   }

@@ -166,3 +166,35 @@ Wildcard listeners advertise available interface addresses rather than 0.0.0.0.
 Verification: Rust 76 passed; Python discovery/native bridge 6 passed; Flutter
 nearby selection and desktop acceptance 5 passed. No live two-device discovery,
 ARM64 build/deployment or native GUI acceptance was performed in this change.
+
+## Startup recovery (October 28)
+
+A failed session initialization returns HTTP 503 with detail.code
+`session_unavailable` and a fixed safe message; raw provider/transport exceptions
+are never returned. No replacement model, transport or tool session is created.
+Settings, runtime inspection and native pairing operations remain independent of
+conversation startup. Existing status-only clients remain compatible; new clients
+label 503 as conversation unavailable and offer Settings/Devices navigation.
+Revoked peers remain in inventory and must not be connected or silently trusted.
+
+Verified on Jetson (October 28): the actual revoked laptop registry was readable;
+no-inference session initialization returned 503 and settings/profiles/capabilities
+returned 200. ARM64 build and Python 3.10 compilation passed; source and desktop
+were deployed after backups. This is not a successful re-pairing or tool-execution
+qualification. Trust and permissions were not changed.
+
+## Chat-only recovery when the configured executor is unavailable
+
+When paired execution cannot initialize, a composed session may start with the
+same selected model in chat-only mode. It emits additive event
+`execution_unavailable` with a fixed safe `message`. Existing clients ignore
+unknown events; new clients display a persistent nonfatal notice. No tools,
+workspace hooks, collaboration/delegation jobs or substitute local executor are
+attached. Model/provider failure still fails the request. Execution is enabled
+only by a fresh explicit reconnect/session after verified host recovery.
+
+Chat-only follow-up verification on Jetson: actual revoked registry now permits
+session creation (201), fake-model chat, and settings inspection while rejecting
+tool execution and delegated jobs. This supersedes the earlier 503-only recovery
+behavior for unavailable paired execution. Healthy sessions retain existing policy
+and trust revalidation; unavailable model/provider initialization still fails.

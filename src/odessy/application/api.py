@@ -184,6 +184,13 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             if monitoring is not None and hasattr(monitoring, 'attach'):
                 await monitoring.attach(controller)
             return controller
+        except (Exception, SystemExit) as exc:
+            # Startup failure does not make independent configuration and
+            # native pairing management unavailable. Never expose raw errors.
+            raise HTTPException(503, detail={
+                'code': 'session_unavailable',
+                'message': 'Cannot start a conversation. Check the configured model and execution host in Settings or Devices. No alternative host was selected.',
+            }) from exc
         finally:
             pending_admissions -= 1
 

@@ -362,3 +362,9 @@ def test_an_unreachable_paired_host_never_falls_back(monkeypatch, tmp_path):
     assert "Paired host 'jetson' is unavailable" in message
     assert "No legacy transport is used instead" in message
 
+
+
+def test_revoked_peer_is_rejected_before_connect(fake_binary):
+    env = {PAIRED_HOST_ENV: 'laptop', LINK_BIN_ENV: str(fake_binary)}
+    with pytest.raises(PairedConfigError, match='revoked'):
+        paired_host(env, prober=lambda host: enrolled(revoked=True))
