@@ -7,6 +7,7 @@ import 'src/models.dart';
 export 'src/models.dart';
 export 'src/credentials.dart';
 export 'src/setup.dart';
+export 'src/pairing.dart';
 export 'src/monitoring/client.dart';
 export 'src/capabilities.dart';
 import 'src/capabilities.dart';

@@ -53,6 +53,11 @@ void main() {
     expect(find.text('My laptop'), findsOneWidget);
     await tester.tap(find.text('Use this device'));
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+        find.text('Advanced manual enrollment'), 400,
+        scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.text('Advanced manual enrollment'));
+    await tester.pumpAndSettle();
     expect(
         tester
             .widget<TextField>(find.byKey(const ValueKey('pair-address')))
@@ -63,8 +68,10 @@ void main() {
         isFalse);
     expect(controller.canApply, isFalse);
     expect(
-        backend.requests.every(
-            (r) => ['list', 'discover'].contains(r.parameters['action'])),
+        backend.requests.every((r) =>
+            ['list', 'discover'].contains(r.parameters['action']) ||
+            (r.parameters['action'] == 'short-code' &&
+                r.parameters['command'] == 'status')),
         isTrue);
     await tester.pumpWidget(const SizedBox());
     controller.dispose();

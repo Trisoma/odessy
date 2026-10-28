@@ -49,3 +49,18 @@ def test_pairing_telemetry_grant_does_not_grant_execution_and_revision_invalidat
     assert plan['arguments'][-1]=='telemetry.read' and '--workspace' not in plan['arguments']
     with pytest.raises(ValueError,match='review'):
         pair({**params,'confirm':plan['plan_id']},runner=lambda _: '{"peers":[],"grant_revision":2}')
+
+
+def test_short_code_boundary_cannot_be_enabled_by_caller_flags(tmp_path):
+    from odessy.setup.native_bridge import pair
+    binary=tmp_path/'link';binary.write_bytes(b'fake')
+    commands=[]
+    def forged(argv):
+        commands.append(argv)
+        return '{"schema_version":1,"supported":true,"state":"ready"}'
+    result=pair({'action':'short-code','command':'join','code':'012345','address':'192.168.1.2:7444','link':str(binary)},runner=forged)
+    assert result['supported'] is False
+    assert result['reason']=='protocol_review_required'
+    assert result['state']=='closed'
+    assert '012345' not in json.dumps(result)
+    assert all('012345' not in ' '.join(argv) for argv in commands)

@@ -46,7 +46,11 @@ def _paired_alias(source: Mapping[str, str]) -> str:
     in ``odessy.tools.paired``.
     """
 
-    return source.get("ODESSY_PAIRED_HOST", "").strip()
+    explicit = source.get("ODESSY_PAIRED_HOST", "").strip()
+    if explicit or source is not os.environ:
+        return explicit
+    from odessy.execution.outbound import selected_alias
+    return selected_alias()
 
 _available_tools: ContextVar[frozenset[str] | None] = ContextVar("available_tools", default=None)
 

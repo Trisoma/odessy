@@ -198,3 +198,28 @@ session creation (201), fake-model chat, and settings inspection while rejecting
 tool execution and delegated jobs. This supersedes the earlier 503-only recovery
 behavior for unavailable paired execution. Healthy sessions retain existing policy
 and trust revalidation; unavailable model/provider initialization still fails.
+
+## Short-code pairing and outbound execution consent (additive)
+
+The real short-code protocol remains disabled pending M0 approval. Production
+capability responses must say `supported: false`, `reason: protocol_review_required`.
+No environment/build switch may turn an unreviewed protocol into live enrollment.
+
+Existing fixed `pair` operations gain `outbound-inspect`, `outbound-review`, and
+`outbound-save`. Inputs are alias, boolean enabled, prior config revision and exact
+confirmation token; the verified fingerprint comes from the local Rust registry,
+never from an advertised fingerprint or model text. Saving affects new sessions;
+current approvals bind to the previous consent revision and fail on changes.
+The Python-owned per-user record defaults disabled without importing incoming
+MCP grants. It contains no credentials. A disabled selected target remains selected
+and produces chat-only operation, never silent local execution.
+
+The new typed PairingBackend declares session begin/join/status/confirm/cancel; views
+never implement cryptography or invoke shell commands. Fake adapters are explicit
+and usable only in tests/demo. Normal connection UI hides manual enrollment under
+Advanced. The current production adapter only inspects a disabled protocol boundary;
+helper cancellation is not durable enrollment cancellation. The owned interactive
+session transport and recovery remain unimplemented until M0 is resolved.
+Planned Windows execution delivery requires a small local companion, bundled Node
+and Rust, native workspace browsing, verified paths and no user commands. That
+companion/package is not delivered by this increment.

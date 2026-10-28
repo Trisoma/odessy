@@ -194,8 +194,48 @@ def bounded_native(argv,timeout=15):
 
 
 def pair(parameters,*,runner=None):
-    data=fields(parameters,{'action','link','alias','certificate','fingerprint','address','workspace','output','review','confirm','capability'},'pairing')
+    data=fields(parameters,{'action','link','alias','certificate','fingerprint','address','workspace','output','review','confirm','capability','enabled','revision','command','code','session_id','review_token'},'pairing')
     action=data.get('action')
+    if action=='short-code':
+        if data.get('command') not in ('status','begin','join','confirm','cancel'):
+            raise ValueError('Unsupported pairing-session command.')
+        # M0 is not approved. Neither a caller nor a native component response can
+        # enable a provisional cryptographic profile. Codes are never forwarded.
+        available=False
+        try:
+            from odessy.tools.paired import link_binary
+            binary=guard(data['link']) if data.get('link') else link_binary().resolve()
+            reply=json.loads(runner([str(binary),'pairing','capabilities']) if runner else bounded_native([str(binary),'pairing','capabilities'],timeout=5))
+            available=isinstance(reply,dict) and reply.get('schema_version')==1
+        except (ValueError,OSError):pass
+        return {'schema_version':1,'supported':False,'state':'closed','reason':'protocol_review_required',
+            'component_available':available,'session_id':None,
+            'message':'Short-code pairing is unavailable until the protocol security review is complete. Existing paired devices and execution-target review remain available.'}
+    if action=='outbound-inspect':
+        from odessy.execution.outbound import read
+        return read()
+    if action in ('outbound-review','outbound-save'):
+        from odessy.execution import outbound
+        from odessy.tools.paired import link_binary, PairedConfigError
+        try: binary=guard(data['link']) if data.get('link') else link_binary().resolve()
+        except PairedConfigError:
+            if data.get('enabled') is not False:raise
+            binary=None
+        prober=None
+        if runner is not None:
+            def prober(host):
+                listing=json.loads(runner([str(host.binary),'peers','list','--json']))
+                peer=next((item for item in listing.get('peers',[]) if item.get('alias')==host.alias),None)
+                return dict(ok=True,configured_alias_present=peer is not None,
+                    grant_revision=listing.get('grant_revision'),
+                    fingerprint_sha256=peer.get('fingerprint_sha256') if peer else None,
+                    revoked=peer.get('revoked') if peer else None)
+        if action=='outbound-review':
+            result=outbound.review(data.get('alias'),data.get('enabled'),binary,prober=prober)
+            return dict(result,operation='outbound-consent',arguments=[
+                ('Enable' if result['enabled'] else 'Disable')+' outbound tools for '+result['alias'],
+                'Verified certificate: '+result['fingerprint_sha256'],result['message']])
+        return outbound.save(data.get('alias'),data.get('enabled'),binary,data.get('revision'),data.get('confirm'),prober=prober)
     if data.get('link'):link=guard(data['link'])
     else:
         from odessy.tools.paired import link_binary
@@ -247,6 +287,10 @@ def pair(parameters,*,runner=None):
         text=bounded_native(argv)
     else:text=runner(argv)
     result={'operation':action,'link':str(link),'peers':json.loads(text) if action=='list' else None,'message':text if action not in ('list','discover') else '', 'grants_changed':action in ('grant','revoke'),'node_local_only':True}
+    if action=='list':
+        from odessy.execution.outbound import read
+        try:result['outbound']=read()
+        except ValueError:result['outbound']={'enabled':False,'error':'Execution consent requires inspection; no outbound authority is inferred.'}
     if action=='discover':
         discovery=json.loads(text)
         if not isinstance(discovery,dict) or discovery.get('schema_version')!=1 or not isinstance(discovery.get('devices'),list) or len(discovery['devices'])>256:

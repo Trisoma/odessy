@@ -16,7 +16,7 @@ class AcceptanceBackend implements SetupBackend {
   @override Future<SetupReply> execute(SetupRequest request)async {
     requests.add(request);
     final p=request.parameters;
-    final result=request.operation=='component-probe'?{'status':'configured_unverified','message':'Missing microphone permission. Text remains available.'}:
+    final result=p['action']=='short-code'?{'schema_version':1,'supported':false,'state':'closed','reason':'protocol_review_required'}:request.operation=='component-probe'?{'status':'configured_unverified','message':'Missing microphone permission. Text remains available.'}:
       p['review']==true?{'plan_id':'exact-review','operation':p['action'],'arguments':['peers','revoke',p['alias']]}:
       {'peers':{'grant_revision':4,'peers':[
         {'alias':'laptop','installation_id':'id-one','fingerprint_sha256':'a'*64,'revoked':true,'capability_mcp':false,'capability_telemetry':false},
@@ -51,7 +51,7 @@ void main(){
     expect(find.textContaining('Trust: Revoked'),findsOneWidget);
     expect(find.textContaining('Connection: unknown'),findsNWidgets(2));
     await t.tap(find.text('Review revocation').first);await t.pumpAndSettle();
-    await t.ensureVisible(find.text('Review operation'));await t.tap(find.text('Review operation'));await t.pumpAndSettle();
+    await t.scrollUntilVisible(find.text('Review operation'),400,scrollable:find.byType(Scrollable).first);await t.tap(find.text('Review operation'));await t.pumpAndSettle();
     expect(c.canApply,true);expect(c.fields['alias'],'laptop');
     c.update({...c.fields,'alias':'edge'});await t.pumpAndSettle();expect(c.canApply,false);
     await t.pumpWidget(const SizedBox());c.dispose();
@@ -59,7 +59,7 @@ void main(){
   testWidgets('pairing remains scrollable at 200 percent text and renders review evidence',(t)async{
     viewport(t,const Size(840,640));final c=MaintenanceController(AcceptanceBackend());
     await t.pumpWidget(MaterialApp(theme:odessyTheme(Brightness.dark),home:MediaQuery(data:const MediaQueryData(textScaler:TextScaler.linear(2)),child:Scaffold(body:PairingPage(controller:c)))));
-    await t.pumpAndSettle();await t.scrollUntilVisible(find.text('Review operation'),500,scrollable:find.byType(Scrollable).first);expect(t.takeException(),isNull);
+    await t.pumpAndSettle();await t.scrollUntilVisible(find.text('Advanced manual enrollment').hitTestable(),200,scrollable:find.byType(Scrollable).first);await t.pumpAndSettle();await t.tap(find.text('Advanced manual enrollment').hitTestable());await t.pumpAndSettle();await t.scrollUntilVisible(find.text('Review operation'),500,scrollable:find.byType(Scrollable).first);expect(t.takeException(),isNull);
     await t.pumpWidget(const SizedBox());c.dispose();
   });
   testWidgets('capture component and pairing screenshots',(t)async{

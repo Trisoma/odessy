@@ -122,6 +122,24 @@ certificate that will be trusted rather than a bare string.
 
 ## Discovery
 
+### Directional execution consent
+
+The coordinator now requires a separate explicit **Use for tools** review in
+Devices, bound to the enrolled certificate and the current local trust revision.
+Existing inbound `mcp` grants are not converted into outbound permission. After
+updating, existing paired users must review their execution target and reconnect;
+chat remains available while consent or the executor is unavailable. Disabling
+the selected target does not silently select local execution.
+
+The receiving host still independently enforces its incoming workspace grant.
+Changing enrollment, revocation, consent or relevant revisions invalidates pending
+dispatch authorization. Trust roots are reloaded for each new TLS connection.
+
+Short-code enrollment is **not available yet**. The native capability boundary
+reports `protocol_review_required`; the cryptographic profile and independent
+security approval remain release blockers. Current normal UI shows that blocker;
+manual administrator enrollment remains under Advanced.
+
 mDNS is an **address aid only**. It never enrols a peer, never grants a capability and
 never replaces the enrolled identity:
 

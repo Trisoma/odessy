@@ -14,6 +14,9 @@ mod store;
 mod tls;
 mod trust;
 mod telemetry;
+mod pairing;
+#[cfg(test)]
+mod pairing_boundary_tests;
 
 use identity::{display_fingerprint, random_installation_id, EnrollmentBundle, Identity};
 use std::path::{Path, PathBuf};
@@ -118,6 +121,17 @@ fn run(arguments: Vec<String>) -> Result<(), Failure> {
             None => Err(Failure::Usage("peers requires list, grant or revoke".into())),
         },
         "serve" => commands::serve(&arguments[1..]),
+        "pairing" => {
+            match arguments.get(1).map(String::as_str) {
+                Some("capabilities") if arguments.len() == 2 => {
+                    println!("{}", pairing::capabilities());
+                    Ok(())
+                }
+                Some("--stdio") if arguments.len() == 2 => pairing::serve(std::io::stdin().lock(), std::io::stdout().lock())
+                    .map_err(Failure::Runtime),
+                _ => Err(Failure::Usage("pairing requires capabilities or --stdio".into())),
+            }
+        }
         "telemetry" => telemetry::run(&arguments[1..]),
         "connect" => commands::connect(&arguments[1..]),
         "discover" => discover_peers(&arguments[1..]),

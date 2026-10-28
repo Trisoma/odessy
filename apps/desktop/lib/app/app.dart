@@ -535,6 +535,7 @@ class _OdessyAppState extends State<OdessyApp> {
                           'Pairing' => PairingPage(
                               key: const ValueKey('pairing'),
                               controller: pairing,
+                              onReconnect: _activateSaved,
                                 picker:const FileSelectorPicker()),
                           'Settings' => SettingsPage(
                               readiness: readiness,

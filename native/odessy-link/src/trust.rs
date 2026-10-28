@@ -28,7 +28,7 @@ pub struct Peer {
 
 impl Peer {
     pub fn has_execution_grant(&self) -> bool {
-        self.capability_mcp && self.workspace.is_some()
+        !self.revoked && self.capability_mcp && self.workspace.is_some()
     }
 }
 
@@ -226,7 +226,7 @@ impl Registry {
     pub fn enrolled_authorities(&self) -> Result<Vec<Vec<u8>>, String> {
         let mut statement = self
             .connection
-            .prepare("SELECT ca_pem FROM peers")
+            .prepare("SELECT ca_pem FROM peers WHERE revoked = 0")
             .map_err(|error| format!("cannot list authorities: {error}"))?;
         let rows = statement
             .query_map([], |row| row.get::<_, String>(0))

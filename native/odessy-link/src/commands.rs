@@ -57,16 +57,8 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
         )));
     }
     let identity = load_identity()?;
-    let registry = open_registry()?;
-    let authorities = registry.enrolled_authorities()?;
-    if authorities.is_empty() {
-        return Err(Failure::Runtime(
-            "no enrolled peers: enroll the other host before serving".into(),
-        ));
-    }
-    let mut config = tls::server_config(&identity, authorities)?;
-    if telemetry { config.alpn_protocols = vec![crate::telemetry::ALPN.to_vec()]; }
-    drop(registry);
+    let trust_path = state_dir()?.join("trust.sqlite3");
+    drop(open_registry()?);
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -101,7 +93,6 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
                 Err(error) => { eprintln!("mDNS advertisement unavailable: {error}"); None },
             }
         } else { None };
-        let acceptor = TlsAcceptor::from(Arc::new(config));
         loop {
             let (stream, address) = match listener.accept().await {
                 Ok(accepted) => accepted,
@@ -110,7 +101,14 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
                     continue;
                 }
             };
-            let acceptor = acceptor.clone();
+            let config = match fresh_tls_config(&identity, &trust_path, telemetry) {
+                Ok(config) => config,
+                Err(error) => {
+                    eprintln!("refused new connection: {error}");
+                    continue;
+                }
+            };
+            let acceptor = TlsAcceptor::from(Arc::new(config));
             let workspace = workspace.clone();
             let node_server = node_server.clone();
             tokio::spawn(async move {
@@ -122,6 +120,15 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
             });
         }
     })
+}
+
+pub(crate) fn fresh_tls_config(identity: &crate::identity::Identity, path: &std::path::Path, telemetry: bool) -> Result<rustls::ServerConfig,String> {
+    let registry=Registry::open(path)?;
+    let authorities=registry.enrolled_authorities()?;
+    if authorities.is_empty() { return Err("no active enrolled peers; execution admission is unavailable".into()); }
+    let mut config=tls::server_config(identity,authorities)?;
+    if telemetry { config.alpn_protocols=vec![crate::telemetry::ALPN.to_vec()]; }
+    Ok(config)
 }
 
 async fn handle_connection(
@@ -303,6 +310,7 @@ pub fn connect(arguments: &[String]) -> Result<(), Failure> {
     let peer = registry
         .peer(alias)?
         .ok_or_else(|| Failure::Runtime(format!("unknown peer: {alias}")))?;
+    if peer.revoked { return Err(Failure::Runtime(format!("peer {alias} is revoked; explicit re-enrollment is required"))); }
     if !peer.has_execution_grant() {
         // The host decides admission; this is the coordinator's own view only.
         eprintln!("note: no local mcp grant recorded for {alias}");
