@@ -1,7 +1,9 @@
 """Hooks (hooks.toml): configuration, the hook protocol, and where the agent runs them."""
 
+import asyncio
 import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -209,6 +211,56 @@ def test_a_hook_confirmation_does_not_widen_the_sandbox_mode(tmp_path):
 
 
 # --- the protocol --------------------------------------------------------------
+
+@pytest.mark.anyio
+async def test_timeout_stops_descendants_holding_output_pipes(tmp_path):
+    marker = tmp_path / "survived"
+    child = f'import time,pathlib;time.sleep(2);pathlib.Path({str(marker)!r}).write_text("escaped")'
+    parent = f'import subprocess,sys,time;subprocess.Popen([sys.executable,"-c",{child!r}]);time.sleep(30)'
+    started = time.monotonic()
+    result = await run_hook(
+        Hook("pre_tool", "tree", (sys.executable, "-c", parent), timeout=.2), {}, cwd=tmp_path,
+    )
+    assert time.monotonic() - started < 1.5
+    assert "timed out" in result.error
+    await asyncio.sleep(2.1)
+    assert not marker.exists()
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+async def test_hook_output_is_bounded_while_reading(tmp_path, stream):
+    program = f'import sys;sys.{stream}.write("x"*200000);sys.{stream}.flush()'
+    result = await run_hook(
+        Hook("pre_tool", "flood", (sys.executable, "-c", program), timeout=3), {}, cwd=tmp_path,
+    )
+    assert result.error and "output limit" in result.error
+    assert len(result.stdout) <= 65536 and len(result.stderr) <= 65536
+
+
+@pytest.mark.anyio
+async def test_cancellation_stops_hook_descendants(tmp_path):
+    marker = tmp_path / "child-started"
+    survived = tmp_path / "child-survived"
+    child = (f'import pathlib,time;pathlib.Path({str(marker)!r}).touch();'
+             f'time.sleep(1);pathlib.Path({str(survived)!r}).touch()')
+    parent = (f'import subprocess,sys,time;'
+              f'subprocess.Popen([sys.executable,"-c",{child!r}]);time.sleep(30)')
+    task = asyncio.create_task(run_hook(
+        Hook("pre_tool", "cancel-tree", (sys.executable, "-c", parent), timeout=10),
+        {}, cwd=tmp_path,
+    ))
+    try:
+        for _ in range(200):
+            if marker.exists():
+                break
+            await asyncio.sleep(.01)
+        assert marker.exists(), "hook child did not start"
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 1)
+    await asyncio.sleep(1.1)
+    assert not survived.exists()
 
 
 @pytest.mark.anyio

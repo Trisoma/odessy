@@ -39,6 +39,7 @@ import asyncio
 import fnmatch
 import json
 import os
+import signal
 import re
 import sys
 from collections.abc import Mapping
@@ -257,25 +258,51 @@ async def run_hook(
 
     env = hook_environment(os.environ if environ is None else environ, event=hook.event, workspace=cwd)
     data = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+    command = hook.command
+    if os.name == "nt":
+        # The supervisor joins a kill-on-close job before spawning the hook.
+        command = (sys.executable, "-I", str(Path(__file__).with_name("_hook_host.py")), *command)
     try:
         process = await asyncio.create_subprocess_exec(
-            *hook.command,
+            *command,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(cwd),
             env=env,
+            limit=8192,
+            **({"creationflags": 0x08000000} if os.name == "nt" else {"start_new_session": True}),
         )
     except (OSError, ValueError) as error:
         return HookRun(error=f"cannot start {hook.command[0]!r}: {error}")
+    async def feed() -> None:
+        try:
+            process.stdin.write(data)
+            await process.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            process.stdin.close()
+
+    tasks = [asyncio.create_task(feed()),
+             asyncio.create_task(_read_output(process.stdout)),
+             asyncio.create_task(_read_output(process.stderr)),
+             asyncio.create_task(process.wait())]
     try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(data), hook.timeout)
+        _, stdout, stderr, _ = await asyncio.wait_for(asyncio.gather(*tasks), hook.timeout)
     except asyncio.TimeoutError:
         await _kill(process)
         return HookRun(error=f"timed out after {hook.timeout:g} s")
+    except _OutputLimit:
+        await _kill(process)
+        return HookRun(error=f"output limit exceeded ({MAX_OUTPUT_BYTES} bytes per stream)")
     except BaseException:
         await _kill(process)
         raise
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
     return HookRun(
         code=process.returncode,
         stdout=stdout.decode("utf-8", "replace"),
@@ -283,13 +310,36 @@ async def run_hook(
     )
 
 
+MAX_OUTPUT_BYTES = 65536
+
+
+class _OutputLimit(Exception):
+    pass
+
+
+async def _read_output(reader: asyncio.StreamReader) -> bytes:
+    output = bytearray()
+    while chunk := await reader.read(4096):
+        if len(output) + len(chunk) > MAX_OUTPUT_BYTES:
+            raise _OutputLimit
+        output.extend(chunk)
+    return bytes(output)
+
+
 async def _kill(process: asyncio.subprocess.Process) -> None:
-    if process.returncode is None:
-        try:
+    try:
+        if os.name != "nt":
+            os.killpg(process.pid, signal.SIGKILL)
+        elif process.returncode is None:
             process.kill()
-        except ProcessLookupError:
-            pass
-        await process.wait()
+    except ProcessLookupError:
+        pass
+    try:
+        await asyncio.wait_for(process.wait(), 0.5)
+    except asyncio.TimeoutError:
+        # An escaped descendant must not hold pipe cleanup open indefinitely.
+        # asyncio has no public Process.close(); close its owned pipe transport.
+        process._transport.close()
 
 
 def _short(text: str, limit: int) -> str:

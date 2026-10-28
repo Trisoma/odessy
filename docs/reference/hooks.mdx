@@ -63,6 +63,12 @@ Windows `SYSTEMROOT` and friends) plus `ODESSY_HOOK_EVENT` and
 `ODESSY_WORKSPACE`. API keys and tokens are not passed on. Arguments and
 results are redacted the same way the turn log redacts them.
 
+Stdout and stderr are each limited to 64 KiB while being read. Exceeding either
+limit fails the hook under its existing `on_error` policy. Timeouts, cancellation
+and output overflow terminate the owned process tree (a Windows Job Object or
+POSIX process group), with bounded pipe cleanup. Hooks must not start persistent
+background services; Windows also closes descendants when the hook exits.
+
 ### pre_tool
 
 Runs after the policy has decided, before anyone is asked, for calls the policy
