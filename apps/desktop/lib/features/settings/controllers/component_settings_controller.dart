@@ -2,6 +2,23 @@ import 'package:flutter/foundation.dart';
 import 'package:odessy_client/odessy_client.dart';
 import 'section_draft.dart';
 
+class ComponentReviewFailure implements Exception {
+  ComponentReviewFailure(this.message, this.fields);
+  final String message;
+  final Map<String, String> fields;
+}
+
+class DraftMergeReview {
+  DraftMergeReview(this.revision, this.owner, Json edited, Json latest,
+      Json merged, this.conflicts)
+      : edited = Map.unmodifiable(edited),
+        latest = Map.unmodifiable(latest),
+        merged = Map.unmodifiable(merged);
+  final String revision, owner;
+  final Json edited, latest, merged;
+  final List<String> conflicts;
+}
+
 /// App-owned drafts and admitted writes scoped to one backend/installation root.
 class ComponentSettingsController extends ChangeNotifier {
   ComponentSettingsController(SetupBackend source, {this.root = ''})
@@ -14,10 +31,14 @@ class ComponentSettingsController extends ChangeNotifier {
   final bool ownsBackend;
   Json snapshot = {};
   final Map<String, SectionDraft> drafts = {};
+  final Map<String, String> draftOwners = {};
   String? activeSection;
   bool busy = false, _disposed = false, _closed = false;
   bool inspectionRequired = false;
   String error = '', status = '';
+  Map<String, String> fieldErrors = {};
+  Json? writerReview;
+  bool writerBlocked=false;
   Future<bool>? _write;
   Json? _submitted;
   String? _submittedSection;
@@ -42,12 +63,18 @@ class ComponentSettingsController extends ChangeNotifier {
     };
   }
 
-  SectionDraft draft(String section, Json initial) => drafts.putIfAbsent(
-      section, () => SectionDraft(initial, snapshot['revision'] as String));
+  String get _owner =>
+      (snapshot['configuration'] as Map?)?['owner'] as String? ?? root;
+  SectionDraft draft(String section, Json initial) =>
+      drafts.putIfAbsent(section, () {
+        draftOwners[section] = _owner;
+        return SectionDraft(initial, snapshot['revision'] as String);
+      });
   void edit(String section, Json value) {
     if (busy || _disposed || inspectionRequired) return;
     drafts[section]?.edit(value);
     error = '';
+    fieldErrors = {};
     if (!inspectionRequired) status = 'Unsaved changes.';
     _notify();
   }
@@ -73,6 +100,9 @@ class ComponentSettingsController extends ChangeNotifier {
           if (confirm != null) 'confirm': confirm
         }));
     if (!reply.ok) {
+      if (reply.fieldErrors.isNotEmpty) {
+        throw ComponentReviewFailure(reply.reason, reply.fieldErrors);
+      }
       throw StateError(reply.reason.isNotEmpty ? reply.reason : reply.error);
     }
     return reply.result;
@@ -87,6 +117,11 @@ class ComponentSettingsController extends ChangeNotifier {
     try {
       snapshot = await _call('load');
       status = '';
+      writerBlocked=(snapshot['writer'] as Map?)?['pending']==true;
+      if (writerBlocked) {
+        writerReview={'recoverable':false,'status':(snapshot['writer'] as Map)['status']};
+        status=writerReview!['status'] as String;
+      }
       for (final entry in drafts.entries) {
         if (!entry.value.dirty) {
           entry.value.accept(_project(entry.key, entry.value.values),
@@ -139,6 +174,7 @@ class ComponentSettingsController extends ChangeNotifier {
     if (busy ||
         _disposed ||
         inspectionRequired ||
+        writerBlocked ||
         snapshot['revision'] == null) {
       return Future.value(false);
     }
@@ -182,9 +218,12 @@ class ComponentSettingsController extends ChangeNotifier {
       inspectionRequired = dispatched;
       error = dispatched
           ? 'Save outcome is unknown; no success assumed.'
-          : e is StateError
-              ? e.message.toString()
-              : 'Configuration review failed.';
+          : e is ComponentReviewFailure
+              ? e.message
+              : e is StateError
+                  ? e.message.toString()
+                  : 'Configuration review failed.';
+      if (e is ComponentReviewFailure) fieldErrors = e.fields;
       status = dispatched
           ? 'Inspect saved values before another save. Draft retained.'
           : 'Not saved. Draft retained; correct the fields or reload changed settings.';
@@ -200,6 +239,85 @@ class ComponentSettingsController extends ChangeNotifier {
     if (_closed) return;
     _closed = true;
     if (ownsBackend) await backend.close();
+  }
+
+  Future<DraftMergeReview?> reviewMerge(String section) async {
+    final d = drafts[section];
+    if (busy || inspectionRequired || d == null || !d.dirty) return null;
+    final edited = Map<String, dynamic>.of(d.values),
+        baseline = Map<String, dynamic>.of(d.baseline);
+    await load();
+    if (error.isNotEmpty ||
+        draftOwners[section] != _owner ||
+        !mapEquals(d.values, edited)) {
+      error = 'Configuration owner or draft changed. No merge performed.';
+      _notify();
+      return null;
+    }
+    final latest = _project(section, edited);
+    final touched = edited.keys.where((key) => edited[key] != baseline[key]);
+    return DraftMergeReview(
+        snapshot['revision'] as String, _owner, edited, latest, {
+      ...latest,
+      for (final key in touched) key: edited[key]
+    }, [
+      for (final key in touched)
+        if (latest[key] != baseline[key] && latest[key] != edited[key]) key
+    ]);
+  }
+
+  bool acceptMerge(String section, DraftMergeReview review) {
+    final d = drafts[section];
+    if (busy ||
+        inspectionRequired ||
+        d == null ||
+        snapshot['revision'] != review.revision ||
+        _owner != review.owner ||
+        !mapEquals(d.values, review.edited)) {
+      return false;
+    }
+    d.accept(review.latest, review.revision);
+    d.edit(review.merged);
+    error = '';
+    fieldErrors = {};
+    status =
+        'Merged draft reviewed. Press Save to submit a new reviewed change.';
+    _notify();
+    return true;
+  }
+
+  Future<void> inspectWriter() async {
+    if (busy || _disposed || root.isNotEmpty) return;
+    busy = true;
+    _notify();
+    try {
+      writerReview = await _call('lock-inspect');
+      status = writerReview!['status'] as String;
+    } catch (_) {
+      error = 'Writer inspection failed; no recovery performed.';
+    } finally {
+      busy = false;
+      _notify();
+    }
+  }
+
+  Future<void> recoverWriter(String reviewedPlan) async {
+    if (busy || _disposed || writerReview?['plan_id'] != reviewedPlan) return;
+    busy = true;
+    _notify();
+    try {
+      final result = await _call('lock-recover', confirm: reviewedPlan);
+      writerReview = null;
+      writerBlocked = false;
+      status = result['status'] as String;
+      error = '';
+    } catch (_) {
+      error =
+          'Writer state changed or is active. Inspect again; no recovery assumed.';
+    } finally {
+      busy = false;
+      _notify();
+    }
   }
 
   Future<void> shutdown() async {

@@ -21,6 +21,19 @@ def execute(request: dict) -> dict:
     if operation == 'component-settings':
         from .component_settings import dispatch
         return dispatch(request.get('parameters') or {})
+    if operation == 'component-probe':
+        from .diagnostics import probe
+        data=fields(request.get('parameters') or {},{'section','run','consent','audio'},'provider test')
+        if type(data.get('run',False)) is not bool:raise ValueError('run must be boolean')
+        cancel_file=request.get('cancel_file')
+        cancelled=lambda:False
+        if cancel_file:
+            from pathlib import Path
+            path=Path(cancel_file)
+            if not path.is_absolute() or path.name!='cancel' or not path.parent.name.startswith('odessy-setup-'):raise ValueError('invalid cancellation marker')
+            cancelled=path.exists
+        return probe(SetupSelection.from_dict(request.get('selection')),data.get('section'),
+                     run=data.get('run',False),consent=data.get('consent',False),audio=data.get('audio',''),cancelled=cancelled)
     if operation == 'model-catalog':
         from .model_catalog import catalog
         return catalog(request.get('parameters') or {})
@@ -143,6 +156,12 @@ def run(stdin=None, stdout=None) -> int:
         response = {'id': identifier, 'status': 'error',
                     'error': 'Setup failed. Check selection, paths, existing files and review confirmation. No existing configuration was replaced.',
                     'reason': reason}
+        code=getattr(error,'code',None)
+        if code in {'validation','credentials','permission','unsupported','unavailable','cancelled','conflict'}:
+            response['code']=code
+        field_errors=getattr(error,'field_errors',None)
+        if isinstance(field_errors,dict):
+            response.update(code='validation',field_errors={str(k)[:64]:str(v)[:200] for k,v in field_errors.items()})
     stdout.write(json.dumps(response).encode('utf-8')+b'\n')
     stdout.flush()
     return 0 if response['status'] == 'ok' else 2

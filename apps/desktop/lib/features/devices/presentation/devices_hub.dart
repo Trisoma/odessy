@@ -28,6 +28,7 @@ class _DevicesHubState extends State<DevicesHub> {
     super.initState();
     performance = widget.initialPerformance;
     if (performance) widget.monitoring.bind(widget.session.api);
+    if (!widget.session.api.isDemo) widget.monitoring.bind(widget.session.api);
   }
 
   @override
@@ -71,9 +72,51 @@ class _DevicesHubState extends State<DevicesHub> {
         Expanded(
             child: performance
                 ? MonitorPage(controller: widget.monitoring)
-                : DevicePage(
-                    device: device,
-                    controller: widget.session,
-                    onPair: widget.onConnect)),
+                : widget.session.api.isDemo
+                    ? DevicePage(
+                        device: device,
+                        controller: widget.session,
+                        onPair: widget.onConnect)
+                    : ListenableBuilder(
+                        listenable: widget.monitoring,
+                        builder: (context, _) => ListView(
+                                padding: const EdgeInsets.all(24),
+                                children: [
+                                  Text('Device inventory',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleLarge),
+                                  const Text(
+                                      'Inspection only. Online status never grants tool access or changes the coordinator.'),
+                                  if (widget.monitoring.busy)
+                                    const LinearProgressIndicator(),
+                                  if (widget.monitoring.message.isNotEmpty)
+                                    Text(widget.monitoring.message),
+                                  if (widget.monitoring.hosts.isEmpty)
+                                    const Text(
+                                        'No verified inventory available. Connect a device through pairing or check monitoring access.'),
+                                  for (final host in widget.monitoring.hosts)
+                                    Card(
+                                        child: ListTile(
+                                      key: ValueKey('inventory-${host.id}'),
+                                      title: Text(host.name),
+                                      subtitle: SelectableText(
+                                          'Identity: ${host.id}\nTrust: ${host.trust} · Connection: ${host.connectivity} · Telemetry: ${host.access}'),
+                                      trailing: IconButton(
+                                          tooltip: 'Inspect performance',
+                                          icon: const Icon(
+                                              Icons.monitor_heart_outlined),
+                                          onPressed: () {
+                                            widget.monitoring.select(host.id);
+                                            setState(() => performance = true);
+                                          }),
+                                    )),
+                                  const SizedBox(height: 16),
+                                  TextButton(
+                                      onPressed: widget.monitoring.busy
+                                          ? null
+                                          : widget.monitoring.refresh,
+                                      child: const Text('Refresh inventory')),
+                                ]))),
       ]);
 }

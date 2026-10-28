@@ -148,6 +148,11 @@ class JobManager:
     def get(self, job_id):
         return copy.deepcopy(self._jobs[job_id])
 
+    @property
+    def has_active_work(self):
+        return bool(self._remote_inflight) or any(not task.done() for task in self._tasks.values()) or any(
+            job.get('state') in ('queued','running','cancelling') for job in self._jobs.values())
+
     def _reserved(self, key):
         with _repository_lock:
             return key in _repository_reservations

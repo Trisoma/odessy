@@ -8,6 +8,7 @@ import hmac
 import inspect
 import json
 import secrets
+import time
 from contextlib import asynccontextmanager
 
 from .session import public
@@ -46,7 +47,7 @@ window.addEventListener('pagehide',()=>streamAbort?.abort());
 
 
 def create_app(controller_factory, *, config=None, settings=None, jobs=None, token=None,
-               config_path=None, profiles=None, monitoring=None):
+               config_path=None, profiles=None, monitoring=None, runtime_configuration=None, desktop_voice=None):
     """Build an app; the caller owns loopback-only binding and displaying its token."""
     try:
         from fastapi import FastAPI, Request, HTTPException
@@ -77,6 +78,7 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             except Exception:
                 pass  # Optional monitoring failure must not disable agent sessions.
         yield
+        if desktop_voice is not None:await desktop_voice.close()
         if monitoring is not None and hasattr(monitoring, 'close'):
             await monitoring.close()
         for controller in tuple(sessions.values()):
@@ -95,6 +97,49 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     app.state.config = config
     app.state.settings = settings
     app.state.profiles = profiles
+    app.state.runtime_configuration = json.loads(json.dumps(runtime_configuration))
+    app.state.service_instance_id = secrets.token_hex(16)
+    restart_reservation = None
+    pending_admissions = 0
+
+    def admission_open():
+        nonlocal restart_reservation
+        if restart_reservation and restart_reservation['expires'] <= time.monotonic():
+            restart_reservation = None
+        if restart_reservation:
+            raise HTTPException(409, 'Coordinator restart is reserved; no new work was admitted')
+
+    def restart_idle():
+        managers = [jobs] if jobs is not None else []
+        managers.extend(c.jobs for c in sessions.values() if c.jobs is not None)
+        return not (desktop_voice is not None and desktop_voice.busy) and not tasks and not pending_admissions and not any(
+            c.running or getattr(c, 'pending_approvals', []) or getattr(c, 'pending_questions', [])
+            for c in sessions.values()) and all(
+            getattr(manager, 'has_active_work', True) is False for manager in managers)
+
+    @app.get('/v1/capabilities')
+    async def capabilities():
+        return {'schema_version':1,'service_instance_id':app.state.service_instance_id,
+                'configuration':app.state.runtime_configuration,'restart_safe':restart_idle()}
+
+    @app.post('/v1/lifecycle/prepare-restart')
+    async def prepare_restart(request: Request):
+        nonlocal restart_reservation
+        data = await body(request)
+        admission_open()
+        if data != {'service_instance_id': app.state.service_instance_id} or not restart_idle():
+            raise HTTPException(409, 'Service changed or still owns active work; restart was not reserved')
+        restart_reservation = {'ticket':secrets.token_hex(24),'expires':time.monotonic()+60}
+        return {'ticket':restart_reservation['ticket'],'service_instance_id':app.state.service_instance_id}
+
+    @app.post('/v1/lifecycle/resume')
+    async def resume_admission(request: Request):
+        nonlocal restart_reservation
+        data = await body(request)
+        if not restart_reservation or data != {'ticket':restart_reservation['ticket']}:
+            raise HTTPException(409, 'Unknown restart reservation')
+        restart_reservation = None
+        return {'status':'resumed'}
 
     @app.middleware('http')
     async def authenticate(request, call_next):
@@ -129,12 +174,18 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                 'events': controller.events}
 
     async def make_controller():
-        controller = controller_factory()
-        if inspect.isawaitable(controller):
-            controller = await controller
-        if monitoring is not None and hasattr(monitoring, 'attach'):
-            await monitoring.attach(controller)
-        return controller
+        nonlocal pending_admissions
+        admission_open()
+        pending_admissions += 1
+        try:
+            controller = controller_factory()
+            if inspect.isawaitable(controller):
+                controller = await controller
+            if monitoring is not None and hasattr(monitoring, 'attach'):
+                await monitoring.attach(controller)
+            return controller
+        finally:
+            pending_admissions -= 1
 
     @app.get('/', response_class=HTMLResponse)
     async def diagnostic():
@@ -188,6 +239,7 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     @app.delete('/v1/sessions/{sid}', status_code=204)
     async def delete_session(sid: str):
         controller = find(sid)
+        if desktop_voice is not None and desktop_voice.owner==sid:await desktop_voice.cancel(controller)
         await controller.close()
         sessions.pop(sid)
         return Response(status_code=204)
@@ -207,6 +259,14 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     async def start_turn(sid: str, request: Request):
         controller = find(sid)
         data = await body(request)
+        if desktop_voice is not None and desktop_voice.owner==sid:
+            if desktop_voice.wake is not None:await desktop_voice.typed(controller,True)
+            else:await desktop_voice.cancel(controller)
+        return admit_turn(controller,data)
+
+    def admit_turn(controller,data,spoken=False):
+        sid=controller.id
+        admission_open()
         if not isinstance(data.get('text'), str) or not data['text'].strip():
             raise HTTPException(400, 'Nonempty text is required')
         if data.get('participant') is not None and not isinstance(data['participant'], str):
@@ -216,17 +276,74 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         turn_id = secrets.token_hex(16)
         async def run():
             try:
-                await controller.run_turn(data['text'], participant=data.get('participant'), turn_id=turn_id)
+                result=await controller.run_turn(data['text'], participant=data.get('participant'), turn_id=turn_id)
+                if spoken and desktop_voice is not None:
+                    await desktop_voice.speak(controller,result.final_text)
+                return result.final_text
             except (Exception, asyncio.CancelledError):
                 # Controller emits the public failure; retrieve the task exception.
                 pass
             finally:
                 tasks.pop(sid, None)
+                if desktop_voice is not None:await desktop_voice.typed(controller,False)
         tasks[sid] = asyncio.create_task(run())
         return {'turn_id': turn_id, 'session_id': sid, 'status': 'accepted'}
 
+    @app.get('/v1/sessions/{sid}/voice')
+    async def voice_snapshot(sid: str):
+        controller=find(sid)
+        return desktop_voice.snapshot(controller) if desktop_voice is not None else {
+            'supported':False,'state':'unavailable','message':'Enable existing voice components and restart the coordinator. Recording occurs on that computer.'}
+
+    @app.post('/v1/sessions/{sid}/voice')
+    async def voice_action(sid: str,request: Request):
+        controller=find(sid);data=await body(request)
+        if set(data)-{'action','capture_id','expected_interaction_id'}:raise HTTPException(400,'Unknown voice fields')
+        if desktop_voice is None:raise HTTPException(503,'Desktop audio is not configured; typed input remains available')
+        from .desktop_voice import VoiceError
+        try:
+            action=data.get('action')
+            if action=='enable_wake':
+                admission_open()
+                async def submit_wake(text,stop_event,context):
+                    c=controller
+                    c.emit('voice_transcript',{'text':c._public(text),'source':'wake'})
+                    admit_turn(c,{'text':text})
+                    task=tasks.get(c.id)
+                    return (await asyncio.shield(task)) or '' if task is not None else ''
+                async def stop_wake_turn():
+                    await controller.stop()
+                    task=tasks.get(sid)
+                    if task is not None:task.cancel()
+                return await desktop_voice.start_wake(controller,submit_wake,stop_wake_turn)
+            if action=='disable_wake':
+                if desktop_voice.wake is None:return desktop_voice.snapshot(controller)
+                return await desktop_voice.cancel(controller)
+            if action in ('start_capture','test_input'):
+                admission_open()
+                if sid in tasks and not data.get('expected_interaction_id'):raise VoiceError('Current task is busy')
+                return await desktop_voice.start(controller,data.get('expected_interaction_id'),preview=action=='test_input')
+            if action=='finish_capture':
+                if not isinstance(data.get('capture_id'),str):raise VoiceError('capture_id is required',400)
+                async def submit(c,text):admit_turn(c,{'text':text},spoken=True)
+                return await desktop_voice.finish(controller,data['capture_id'],submit)
+            if action in ('cancel_capture','stop_playback'):
+                if action=='cancel_capture' and not isinstance(data.get('capture_id'),str):raise VoiceError('capture_id is required',400)
+                if action=='stop_playback':return await desktop_voice.stop_playback(controller)
+                return await desktop_voice.cancel(controller,data.get('capture_id'))
+            if action=='test_output':
+                admission_open()
+                await desktop_voice.speak(controller,'Odessy audio output test.')
+                return desktop_voice.snapshot(controller)
+            raise VoiceError('Unsupported voice action',400)
+        except VoiceError as exc:raise HTTPException(exc.code,str(exc)) from None
+        except Exception:
+            controller.emit('audio_error',{'message':'Audio unavailable; typed input remains available.'})
+            raise HTTPException(503,'Audio unavailable; typed input remains available.') from None
+
     @app.post('/v1/sessions/{sid}/stop')
     async def stop(sid: str):
+        if desktop_voice is not None and desktop_voice.owner==sid:await desktop_voice.cancel(find(sid))
         await find(sid).stop()
         task = tasks.get(sid)
         if task is not None:
@@ -312,6 +429,15 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         raise HTTPException(400, 'session_id is required for job submission')
 
     async def submit(data, sid=None):
+        nonlocal pending_admissions
+        admission_open()
+        pending_admissions += 1
+        try:
+            return await submit_admitted(data, sid)
+        finally:
+            pending_admissions -= 1
+
+    async def submit_admitted(data, sid=None):
         from odessy.runtime.types import ToolRequest
         allowed = {'participant', 'task', 'mode', 'workspace', 'approved', 'session_id'}
         if set(data) - allowed:

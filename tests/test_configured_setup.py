@@ -25,13 +25,26 @@ def test_launch_never_accepts_unconfigured_or_missing_export(tmp_path):
     with pytest.raises(ValueError):
         execute(dict(operation='launch', selection={'role':'combined'}, output=str(tmp_path/'missing')))
 
+def test_restart_rejects_configuration_changed_after_review(tmp_path,monkeypatch):
+    from odessy.setup import configured,service_entry
+    monkeypatch.setenv('ODESSY_API_TOKEN','test-only')
+    selection={'role':'combined','model':{'provider':'ollama','name':'B'}}
+    path=tmp_path/'selection.json'
+    export_selection(build_plan(SetupSelection.from_dict(selection)),path)
+    spec=execute(dict(operation='launch',selection=selection,output=str(path)))
+    calls=[];monkeypatch.setattr(service_entry,'run',lambda *a,**kw:calls.append(kw))
+    with pytest.raises(ValueError,match='changed after restart review'):
+        configured.main(['--config',str(path),'--format','selection','--selection-json',json.dumps(selection),'--sha256',spec['sha256'],
+            '--workspace',str(tmp_path/'work'),'--port','23456','--expected-fingerprint','0'*64])
+    assert calls==[]
+
 
 def test_recovery_of_directory_unblocks_editing_without_reading_it(tmp_path):
     result = execute(dict(operation='recover', selection={'role':'combined'}, output=str(tmp_path)))
     assert result['recovery'] == 'conflict'
 
 
-def test_configured_server_authenticates_and_stops_without_inference(tmp_path):
+def test_configured_server_authenticates_and_stops_without_inference(tmp_path,monkeypatch):
     import os, secrets, socket, subprocess, sys, time, urllib.request, urllib.error
     selection = {'role': 'combined', 'model': {'provider': 'ollama', 'name': 'existing', 'endpoint':'http://127.0.0.1:11434'}}
     path = tmp_path/'setup.json'
@@ -40,7 +53,9 @@ def test_configured_server_authenticates_and_stops_without_inference(tmp_path):
     token=secrets.token_urlsafe(32)
     with socket.socket() as sock:
         sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
-    bootstrap='import sys,runpy;sys.path[:0]='+repr(sys.path)+';runpy.run_module("odessy.setup.configured",run_name="__main__")'
+    from odessy.setup import configured
+    monkeypatch.setattr(configured,'desktop_state_file',lambda:tmp_path/'desktop.json')
+    bootstrap='import sys,runpy;sys.path[:0]='+repr(sys.path)+';from pathlib import Path;import odessy.setup.configured as c;c.desktop_state_file=lambda:Path('+repr(str(tmp_path/'desktop.json'))+');runpy.run_module("odessy.setup.configured",run_name="__main__")'
     env={**os.environ,'ODESSY_API_TOKEN':token}
     args=[sys.executable,'-c',bootstrap,'--config',str(path),'--format','selection','--selection-json',json.dumps(selection),'--sha256',spec['sha256'],'--workspace',str(tmp_path/'workspace'),'--port',str(port),'--exit-on-stdin-close']
     with (tmp_path/'stderr.log').open('w+') as log:
@@ -58,6 +73,21 @@ def test_configured_server_authenticates_and_stops_without_inference(tmp_path):
                     time.sleep(.1)
             else: pytest.fail('coordinator did not become ready')
             assert 'ollama' in json.dumps(data) and 'fake' not in json.dumps(data)
+            def capabilities():
+                with urllib.request.urlopen(urllib.request.Request(f'http://127.0.0.1:{port}/v1/capabilities',headers={'Authorization':'Bearer '+token}),timeout=2) as response:
+                    return json.load(response)
+            before=capabilities()
+            assert before['configuration']['model']['name']=='existing'
+            changed={'role':'combined','model':{'provider':'ollama','name':'saved-B'}}
+            second=tmp_path/'second.json'
+            export_selection(build_plan(SetupSelection.from_dict(changed)),second)
+            execute(dict(operation='activate',selection=changed,output=str(second)))
+            from odessy.setup.component_settings import dispatch
+            saved=dispatch({'action':'load'})['configuration']
+            after=capabilities()
+            assert after['configuration']==before['configuration']
+            assert saved['owner']==after['configuration']['owner']
+            assert saved['fingerprints']['llm']!=after['configuration']['fingerprints']['llm']
             with pytest.raises(urllib.error.HTTPError) as failure:urllib.request.urlopen(url,timeout=2)
             assert failure.value.code in (401,403)
             child.stdin.close()

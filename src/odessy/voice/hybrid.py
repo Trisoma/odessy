@@ -131,6 +131,7 @@ class HybridAudioAdapter:
     _input_failure: str | None = field(default=None, init=False, repr=False)
     _output_failure: str | None = field(default=None, init=False, repr=False)
     _started: bool = field(default=False, init=False, repr=False)
+    _speech_epoch: int = field(default=0, init=False, repr=False)
     _closing: bool = field(default=False, init=False, repr=False)
     _initializing: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
@@ -236,7 +237,7 @@ class HybridAudioAdapter:
         if self._session is not None and self.input_available:
             self._session.set_utterance_admission(True)
 
-    async def aclose(self) -> None:
+    async def aclose(self, *, preserve_turn: bool = False) -> None:
         """Stop playback, close capture and drain owned blocking calls."""
 
         if self._closing:
@@ -246,7 +247,7 @@ class HybridAudioAdapter:
         self._output_enabled = False
         cancel_provider(self._stt)
         cancel_provider(self._tts)
-        await self._stop_session()
+        await self._stop_session(preserve_turn=preserve_turn)
         if self._stream_started:
             self._close_stream()
         self.stop_speaking()
@@ -261,12 +262,33 @@ class HybridAudioAdapter:
     def stop_speaking(self) -> None:
         """Stop playback now. Synchronous, matching the existing player seam."""
 
+        self._speech_epoch += 1
         cancel_provider(self._tts)
         player = self._player
         if player is None:
             return
         with contextlib.suppress(Exception):
             player.stop()
+
+    async def transcribe_pcm(self, pcm: bytes) -> str:
+        """Explicit push-to-talk seam: no wake/VAD or background reader started."""
+        if self._closing:raise AudioUnavailable('Audio adapter is closed')
+        if self._stt is None:
+            self._stt = await self._run_blocking(self._create_provider, create_stt, WhisperCppSTT)
+        return await self._transcribe(pcm)
+
+    def cancel_transcription(self):
+        cancel_provider(self._stt)
+
+    async def speak_once(self,text):
+        """Explicit playback using the same owned providers and cancellation guard."""
+        if self._closing:return
+        self._speech_epoch += 1
+        epoch=self._speech_epoch
+        self._started=True
+        self._output_enabled=True
+        if await self._prepare_output() and epoch==self._speech_epoch and not self._closing:
+            await self.speak(text)
 
     async def speak(self, text: str) -> None:
         """Synthesise and play one answer, or degrade speech output.
@@ -380,6 +402,9 @@ class HybridAudioAdapter:
         if self._stream is None:
             if self.stream_factory is not None:
                 self._stream = await self._run_blocking(self.stream_factory)
+            elif self._native_audio():
+                from .native_audio import recorder
+                self._stream = recorder(self.config)
             elif not recorder_available(self.config.audio_recorder):
                 self._fail_input(
                     CAPTURE,
@@ -388,10 +413,8 @@ class HybridAudioAdapter:
                 )
                 return False
             else:
-                self._stream = CommandAudioStream(
-                    recorder=self.config.audio_recorder,
-                    input_device=self.config.audio_input_device,
-                )
+                from .native_audio import recorder
+                self._stream = recorder(self.config,command_factory=CommandAudioStream)
         if self._wake is None:
             if not self.listen:
                 class NoWake:
@@ -507,12 +530,12 @@ class HybridAudioAdapter:
         with contextlib.suppress(Exception):
             stream.close()
 
-    async def _stop_session(self) -> None:
+    async def _stop_session(self, *, preserve_turn: bool = False) -> None:
         session, self._session = self._session, None
         task, self._task = self._task, None
         if session is not None:
             with contextlib.suppress(Exception):
-                await session.aclose()
+                await session.aclose(preserve_turn=preserve_turn)
         if task is not None:
             if not task.done():
                 task.cancel()
@@ -595,6 +618,9 @@ class HybridAudioAdapter:
         if self._player is None:
             if self.player_factory is not None:
                 self._player = await self._run_blocking(self.player_factory)
+            elif self._native_audio():
+                from .native_audio import player
+                self._player = player(self.config)
             elif not player_available(self.config.audio_player):
                 self._fail_output(
                     PLAYBACK,
@@ -618,6 +644,10 @@ class HybridAudioAdapter:
                 self._tts = await self._run_blocking(self._create_provider, create_tts, KokoroTTS)
         self._output_failure = None
         return True
+
+    def _native_audio(self):
+        from .native_audio import backend_name
+        return backend_name(self.config.audio_backend)=='native'
 
     def _create_provider(self, factory, builtin):
         provider = factory(self.config, builtin_factory=builtin)

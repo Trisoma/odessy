@@ -40,3 +40,12 @@ def test_pairing_grant_is_explicit_and_never_inferred(tmp_path):
     from odessy.setup.native_bridge import pair
     executable=tmp_path/'odessy-link';executable.write_bytes(b'executable')
     with pytest.raises(ValueError): pair({'action':'grant','link':str(executable),'alias':'laptop','review':True})
+
+def test_pairing_telemetry_grant_does_not_grant_execution_and_revision_invalidates(tmp_path):
+    from odessy.setup.native_bridge import pair
+    executable=tmp_path/'odessy-link';executable.write_bytes(b'executable')
+    params={'action':'grant','link':str(executable),'alias':'laptop','capability':'telemetry.read'}
+    plan=pair({**params,'review':True},runner=lambda _: '{"peers":[],"grant_revision":1}')
+    assert plan['arguments'][-1]=='telemetry.read' and '--workspace' not in plan['arguments']
+    with pytest.raises(ValueError,match='review'):
+        pair({**params,'confirm':plan['plan_id']},runner=lambda _: '{"peers":[],"grant_revision":2}')

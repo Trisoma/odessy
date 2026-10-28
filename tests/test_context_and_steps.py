@@ -68,7 +68,7 @@ def _text(text: str) -> Any:
 
 class _OpenAI(CloudModel):
     def __init__(self, replies: list[dict[str, Any]], **kwargs: Any) -> None:
-        super().__init__(provider="deepseek", model="m", api_key="k", usage=UsageLedger(), **kwargs)
+        super().__init__(provider="openai", model="m", api_key="k", usage=UsageLedger(), **kwargs)
         self.replies = list(replies)
         self.payloads: list[dict[str, Any]] = []
 

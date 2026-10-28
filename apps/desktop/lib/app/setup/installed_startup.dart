@@ -45,9 +45,13 @@ class InstalledStartup extends ChangeNotifier {
       InstalledCoordinator(
           python: spec['python'] as String,
           root: spec['root'] as String,
-          workspace: spec['workspace'] as String);
+          workspace: spec['workspace'] as String,
+          expectedFingerprint: spec['expected_configuration'] as String?);
 
-  Future<void> begin() async {
+  Future<void> begin() => _begin();
+  Future<void> restartWithFingerprint(String fingerprint) =>
+      _begin(expectedConfiguration: fingerprint);
+  Future<void> _begin({String? expectedConfiguration}) async {
     if (_disposed) return;
     final epoch = ++_epoch;
     spec = const {};
@@ -71,6 +75,10 @@ class InstalledStartup extends ChangeNotifier {
       }
       if (_disposed || epoch != _epoch) return;
       spec = reply.result;
+      if (expectedConfiguration != null) {
+        spec = {...spec, 'expected_configuration': expectedConfiguration};
+        await _stopCoordinator();
+      }
       final role = spec['role'];
       if (role == 'execution') {
         phase = InstalledPhase.configure;
@@ -181,6 +189,13 @@ class _InstalledApplicationState extends State<InstalledApplication> {
     _startup = (widget.startupFactory ?? _defaultStartup)(_backend);
     _startup.addListener(_changed);
     _lifecycle = AppLifecycleListener(onExitRequested: () async {
+      // Let the desktop resolve dirty drafts and drain writes before stopping
+      // the parent-owned process; a child may still cancel window closure.
+      if ((_startup.phase == InstalledPhase.ready && _startup.api != null) ||
+          (_startup.phase == InstalledPhase.configure &&
+              _startup.spec['role'] != 'execution')) {
+        return AppExitResponse.exit;
+      }
       await _startup.shutdown();
       return AppExitResponse.exit;
     });
@@ -328,11 +343,17 @@ class _InstalledApplicationState extends State<InstalledApplication> {
       return OdessyApp(
           api: DisconnectedApi(),
           installed: _startup.spec,
-          onConfigured: () => _startup.begin());
+          onRestartSaved: _startup.restartWithFingerprint,
+          onConfigured: () => _startup.begin(),
+          onShutdownOwned: _startup.shutdown);
     }
     final api = _startup.api;
     if (_startup.phase == InstalledPhase.ready && api != null) {
-      return OdessyApp(api: api, installed: _startup.spec);
+      return OdessyApp(
+          api: api,
+          installed: _startup.spec,
+          onRestartSaved: _startup.restartWithFingerprint,
+          onShutdownOwned: _startup.shutdown);
     }
     return MaterialApp(
         navigatorKey: _navigator,

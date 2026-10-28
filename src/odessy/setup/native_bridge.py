@@ -194,9 +194,13 @@ def bounded_native(argv,timeout=15):
 
 
 def pair(parameters,*,runner=None):
-    data=fields(parameters,{'action','link','alias','certificate','fingerprint','address','workspace','output','review','confirm'},'pairing')
-    action=data.get('action');link=guard(data.get('link',''))
-    if not data.get('link') or not link.is_file(): raise ValueError('select an existing odessy-link executable')
+    data=fields(parameters,{'action','link','alias','certificate','fingerprint','address','workspace','output','review','confirm','capability'},'pairing')
+    action=data.get('action')
+    if data.get('link'):link=guard(data['link'])
+    else:
+        from odessy.tools.paired import link_binary
+        link=link_binary().resolve()
+    if not link.is_file(): raise ValueError('select an existing odessy-link executable')
     argv=[str(link)]
     alias=data.get('alias','')
     if action in ('enroll','grant','revoke') and not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_-]{0,63}',alias): raise ValueError('invalid peer alias')
@@ -220,9 +224,13 @@ def pair(parameters,*,runner=None):
             if len(address)>512 or any(c.isspace() for c in address):raise ValueError('invalid peer address')
             argv+=['--address',address]
     elif action=='grant':
-        workspace=guard(data.get('workspace',''))
-        if not data.get('workspace') or not workspace.is_dir():raise ValueError('explicit local workspace required')
-        argv+=['peers','grant',alias,'--capability','mcp','--workspace',str(workspace)]
+        capability=data.get('capability','mcp')
+        if capability not in ('mcp','telemetry.read'):raise ValueError('unsupported local capability')
+        argv+=['peers','grant',alias,'--capability',capability]
+        if capability=='mcp':
+            workspace=guard(data.get('workspace',''))
+            if not data.get('workspace') or not workspace.is_dir():raise ValueError('explicit local workspace required')
+            argv+=['--workspace',str(workspace)]
     elif action=='revoke':argv+=['peers','revoke',alias]
     else:raise ValueError('unsupported pairing operation')
     registry_snapshot=None
@@ -238,6 +246,6 @@ def pair(parameters,*,runner=None):
     if runner is None:
         text=bounded_native(argv)
     else:text=runner(argv)
-    return {'operation':action,'peers':json.loads(text) if action=='list' else None,'message':text if action!='list' else '', 'grants_changed':action in ('grant','revoke'),'node_local_only':True}
+    return {'operation':action,'link':str(link),'peers':json.loads(text) if action=='list' else None,'message':text if action!='list' else '', 'grants_changed':action in ('grant','revoke'),'node_local_only':True}
 
 

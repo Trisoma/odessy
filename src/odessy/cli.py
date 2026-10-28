@@ -4,6 +4,7 @@ from odessy.voice.providers import create_stt, create_tts, close_providers, canc
 import argparse
 import asyncio
 import contextlib
+import functools
 import logging
 import os
 import sys
@@ -26,6 +27,8 @@ from odessy.config.deployment import (
     remote_tool_server_urls,
 )
 from odessy.execution.contract import ISOLATION_REQUIREMENTS, IsolationRequirement
+from odessy.execution.providers import default_execution_providers
+from odessy.execution.registry import ProviderRegistry, with_unconfined_fallback
 from odessy.execution.escalation import ApprovalRequest, EscalationDeniedError, EscalationOutcome
 from odessy.models.fake_model import FakeModel
 from odessy.models.lfm_model import LlamaCppLFMModel
@@ -148,7 +151,7 @@ def _build_agent(
         mcp_server=(
             mcp_servers
             if mcp_servers is not None
-            else (ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root)),)
+            else (ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root, registry=execution_registry())),)
         ),
         confirm=confirmer,
         confirm_batch=confirmer.batch,
@@ -233,6 +236,19 @@ class TerminalEscalationApprover:
         except EOFError:
             return "unavailable"
         return "allowed-once" if answer.strip().lower() == "yes" else "rejected"
+
+
+@functools.lru_cache(maxsize=1)
+def execution_registry() -> ProviderRegistry:
+    """The confinement backends this host offers to the Python ``terminal.run``.
+
+    The shipped backends (bwrap, landlock, seatbelt), each probing whether this host
+    can actually enforce it, then the unconfined fallback, which only a request that
+    does not require isolation can select. Built once: the probes describe the host,
+    not the call.
+    """
+
+    return with_unconfined_fallback(default_execution_providers())
 
 
 def _isolation_from_env() -> IsolationRequirement:
@@ -629,8 +645,9 @@ def _model_backend_argument(parser: argparse.ArgumentParser) -> None:
 #: Printed when ``single`` mode runs without the Node tool server.
 _NO_NODE_WARNING = (
     "[odessy] Node tool server is not installed, so only time.now, calculator.eval and "
-    "terminal.run are available (no file, search or git tools), and commands run with "
-    "no confinement backend. Run `python -m odessy doctor` for the setup steps."
+    "terminal.run are available (no file, search or git tools). Commands use bwrap, "
+    "landlock or seatbelt where this host has one; on Windows they run unconfined. "
+    "Run `python -m odessy doctor` for the setup steps."
 )
 
 
@@ -711,19 +728,19 @@ async def _builtin_tool_servers(workspace_root: Path) -> AsyncIterator[tuple[obj
                     file=sys.stderr,
                 )
                 yield (
-                    ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root)),
+                    ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root, registry=execution_registry())),
                     ExecutionTarget(server),
                 )
             return
         yield (
-            ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root)),
+            ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root, registry=execution_registry())),
             *(ExecutionTarget(url) for url in remote_tool_server_urls()),
         )
         return
 
     if not node_tool_server_dependencies_installed():
         print(_NO_NODE_WARNING, file=sys.stderr)
-        server = build_odessy_mcp_server(workspace_root=workspace_root)
+        server = build_odessy_mcp_server(workspace_root=workspace_root, registry=execution_registry())
         async with Client(server) as client:
             tools = await client.list_tools()
         with model_tool_scope(tool.name for tool in getattr(tools, "tools", tools)):

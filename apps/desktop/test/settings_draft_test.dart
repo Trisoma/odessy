@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show AppExitResponse;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_client/odessy_client.dart';
@@ -54,6 +55,47 @@ class PendingReader implements SetupBackend {
 }
 
 void main() {
+  testWidgets('normal closure can be cancelled before owned shutdown', (tester) async {
+    tester.view.physicalSize=const Size(1280,1000);tester.view.devicePixelRatio=1;
+    addTearDown(tester.view.resetPhysicalSize);addTearDown(tester.view.resetDevicePixelRatio);
+    var shutdowns=0;
+    await tester.pumpWidget(OdessyApp(api:DemoApi(),setupBackend:SavedComponents(),onShutdownOwned:() async {shutdowns++;}));
+    await tester.pumpAndSettle();await tester.tap(find.byKey(const ValueKey('nav-Settings')));await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('consultation-limit')),'3');
+    final exit=tester.binding.handleRequestAppExit();await tester.pumpAndSettle();
+    expect(shutdowns,0);await tester.tap(find.text('Keep editing'));await tester.pumpAndSettle();
+    expect(await exit,AppExitResponse.cancel);expect(shutdowns,0);
+    await tester.pumpWidget(const SizedBox());
+  });
+  test(
+      'reviewed merge preserves fresh untouched fields and requires a new save',
+      () async {
+    final backend = SavedComponents();
+    final c = ComponentSettingsController(backend);
+    await c.load();
+    c.draft('tts', {
+      'tts_provider': 'kokoro',
+      'kokoro_model': 'old',
+      'kokoro_voices': 'first'
+    });
+    c.edit('tts', {
+      'tts_provider': 'kokoro',
+      'kokoro_model': 'my-edit',
+      'kokoro_voices': 'first'
+    });
+    (backend.selection['voice'] as Json)['kokoro_voices'] = 'other-writer';
+    backend.revision = 2;
+    final review = await c.reviewMerge('tts');
+    expect(review, isNotNull);
+    expect(backend.requests.where((r) => r.parameters['action'] == 'save'),
+        isEmpty);
+    expect(c.acceptMerge('tts', review!), isTrue);
+    expect(c.drafts['tts']!.values['kokoro_model'], 'my-edit');
+    expect(c.drafts['tts']!.values['kokoro_voices'], 'other-writer');
+    expect(c.drafts['tts']!.revision, '2');
+    expect(c.drafts['tts']!.dirty, isTrue);
+    c.dispose();
+  });
   test('uncertain write cannot be resubmitted without inspection', () async {
     final backend = UncertainBackend();
     final c = ComponentSettingsController(backend);

@@ -178,17 +178,15 @@ List<(String, String)> approvalFacts(Json e) {
     if (value is Map) {
       return value.isEmpty
           ? 'none reported'
-          : value.entries
-              .map((entry) => '${entry.key}=${entry.value}')
-              .join(', ');
+          : value.entries.map((entry) => '${entry.key}=${entry.value}').join(', ');
     }
     final raw = '$value';
     return raw.isEmpty ? 'not reported' : raw;
   }
 
   return [
-    ('Action', text(e['tool_name'] ?? e['tool'])),
-    ('Execution target', text(e['execution_target'] ?? e['host'])),
+    ('Action', text(e['operation'] ?? e['tool_name'] ?? e['tool'])),
+    ('Execution target', text(e['target_identity'] ?? e['execution_target'] ?? e['host'])),
     ('Permission scope', text(e['permission_scopes'] ?? e['scopes'])),
     ('Risk', text(e['risk'])),
     ('Exact arguments',

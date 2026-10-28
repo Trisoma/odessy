@@ -362,6 +362,7 @@ class CloudModel:
     _history_turns: int = field(default=0, init=False, repr=False)
     _last_usage: dict[str, int | None] = field(default_factory=dict, init=False, repr=False)
     _final_call: bool = field(default=False, init=False, repr=False)
+    _diagnostic_only: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.provider not in CLOUD_PROVIDERS:
@@ -382,6 +383,20 @@ class CloudModel:
         return self.usage if self.usage is not None else process_ledger()
 
     # -- ModelAdapter -------------------------------------------------------
+
+    def test_connection(self) -> str:
+        """One text-only diagnostic exchange; no tools, repair or failover."""
+        self._diagnostics = ModelTurnDiagnostics()
+        self._messages = [{"role": "user", "content": "Say hello briefly."}]
+        self._final_call = True
+        self._diagnostic_only = True
+        try:
+            reply = self._exchange("proposal_generation_ms")
+        finally:
+            self._diagnostic_only = False
+        if reply.calls or reply.refused or not reply.text.strip():
+            raise ValueError('Model test did not return a plain text response.')
+        return reply.text
 
     def propose(self, user_text: str, *, context: Any = None) -> ModelAction:
         from odessy.models.ollama_model import _context_messages
@@ -724,7 +739,9 @@ class CloudModel:
         }
         if self.effort:
             params["output_config"] = {"effort": self.effort}
-        if self.refusal_fallbacks and self.model in _CLAUDE_FALLBACK_MODELS:
+        if self._diagnostic_only:
+            params.pop('tools',None);params.pop('tool_choice',None)
+        if self.refusal_fallbacks and self.model in _CLAUDE_FALLBACK_MODELS and not self._diagnostic_only:
             params["betas"] = [_CLAUDE_FALLBACK_BETA]
             params["fallbacks"] = "default"
         response = self._create_message(params) if speech is None else self._stream_message(params, speech)
@@ -823,6 +840,8 @@ class CloudModel:
                 payload.pop("tools")
         if self.provider == "deepseek" and self.effort:
             payload["reasoning_effort"] = self.effort
+        if self._diagnostic_only:
+            payload.pop('tools',None);payload.pop('tool_choice',None)
         # The plain call shape when not streaming, which tests and wrappers replace.
         data = self._post_chat(payload) if speech is None else self._post_chat(payload, speech)
         choices = data.get("choices") or []

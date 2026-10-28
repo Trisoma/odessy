@@ -2,6 +2,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_desktop/features/conversation/presentation/interaction_card.dart';
 
 void main() {
+  test('real backend operation and enrolled target fields are displayed',(){
+    final facts=approvalFacts({'operation':'terminal.run','host':'jetson',
+      'target_identity':{'host':'jetson','certificate_sha256':'enrolled-fingerprint'},
+      'arguments':{'command':'  mkdir output\\n'},'scopes':['authorization']});
+    expect(facts[0].$2,'terminal.run');
+    expect(facts[1].$2,contains('enrolled-fingerprint'));
+    expect(facts[4].$2,contains('  mkdir output\\n'));
+  });
   test('approval facts lead with human-readable action, target and scope', () {
     final facts = approvalFacts({
       'tool_name': 'run_command',
@@ -31,9 +39,10 @@ void main() {
     expect(facts[2].$2, 'not reported');
     expect(facts[3].$2, 'not reported');
     expect(facts[4].$2, 'not reported');
+    expect(facts.any((f) => f.$2 == 'unknown'), isFalse);
   });
 
-  test('empty scope and argument collections are not absent data', () {
+  test('empty scope and argument collections are not reported as absent data', () {
     final facts = approvalFacts({
       'tool': 'read_file',
       'scopes': <Object>[],

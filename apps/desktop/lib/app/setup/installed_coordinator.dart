@@ -30,6 +30,7 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
     required this.root,
     required this.workspace,
     this.configuration,
+    this.expectedFingerprint,
     String? token,
     this.readyTimeout = const Duration(seconds: 45),
     Future<int> Function()? portPicker,
@@ -44,6 +45,7 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
 
   final String python, root, workspace, token;
   final Json? configuration;
+  final String? expectedFingerprint;
   final Duration readyTimeout;
   final Future<int> Function() portPicker;
   final Future<Process> Function(String python, List<String> arguments,
@@ -133,6 +135,10 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
             ],
             '--port',
             '$chosen',
+            if (expectedFingerprint != null) ...[
+              '--expected-fingerprint',
+              expectedFingerprint!
+            ],
             '--exit-on-stdin-close'
           ],
           launchDirectory(workspace),

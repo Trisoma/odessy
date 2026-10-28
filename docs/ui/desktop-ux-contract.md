@@ -89,6 +89,44 @@ M2 component draft ownership and save/recovery is now implemented as described i
 [the lifecycle contract](settings-draft-lifecycle.md). App-owned component drafts,
 per-service collaboration forms, leave prompts and read-only unknown-outcome
 inspection reuse existing backends. Source/installed real-helper checks passed.
-The broader Phase 2 remains incomplete: authoritative saved/active readiness,
-hard-kill recovery and the remaining validation/merge acceptance are still open.
-Do not mark the full UX overhaul complete from these milestones.
+The Phase 2 follow-up now implements startup/saved state, reviewed restart,
+field validation/merge presentation and source crash recovery; see
+[its current contract and qualification limits](running-configuration.md).
+Native/package acceptance remains open. Do not mark the full UX overhaul complete
+from these milestones.
+
+## October 28 parallel implementation contract
+
+Codex owns Python/Rust, `packages/odessy_client`, packaging and shared docs.
+DeepSeek owns `apps/desktop` during parallel work. No existing field is removed.
+
+- Local helper operation `component-probe` accepts the displayed `selection` and
+  parameters `section` (llm/stt/tts/voice/host), `run` (default false), `consent`
+  (must be exactly true for inference/audio), and optional `audio` (STT WAV path).
+  Omitting STT audio records up to five seconds. No coordinator is required.
+- Observational results contain `status`, `message`, `section`, `fingerprint`,
+  `inference_performed:false`; voice inventory also returns `devices` with
+  `id/name/input/output`. Inventory does not open a microphone. Native device IDs
+  bind the host API and name; duplicate or disappeared selections fail explicitly.
+- Explicit successful probes add `tested_at` (Unix seconds), `elapsed_ms`, optional
+  bounded/redacted `text`, and for LLM `provider/model/usage/accounting`. This is
+  evidence for displayed values, not proof that the coordinator applies them.
+  Each helper is a separate diagnostic run using existing API accounting/egress;
+  it does not share/reset the coordinator's process budget. Editing invalidates
+  displayed evidence. No automatic retry, repair, provider substitution or tools.
+- Additive errors retain `reason` and can include `code` (validation, credentials,
+  unavailable, cancelled, unsupported). Clients must tolerate unknown codes.
+- `selection.voice` additionally persists `audio_backend` (auto/native/command),
+  `audio_input_device`, `audio_output_device`, `wake_model`. Defaults preserve the
+  existing Linux command path; auto uses native audio on Windows/macOS.
+- Session voice actions additionally accept `enable_wake` and `disable_wake`.
+  Snapshot `mode` is push_to_talk or wake; `state` and `recorder_host` identify the
+  actual microphone owner. Wake is opt-in, uses the existing broker and session,
+  and never starts automatically. Stop playback preserves wake listening.
+- Pair operation `grant` optionally accepts `capability` (mcp by default, or
+  telemetry.read). Only mcp needs an exact existing local workspace. Native peer
+  records add boolean `revoked`; absence means unknown, not paired. Discovery
+  advertisements never establish identity, permissions or connection health.
+
+Mutation review tokens, configuration revisions, capture IDs, trusted approval
+channels, origin-bound authentication and no-replay behavior remain unchanged.

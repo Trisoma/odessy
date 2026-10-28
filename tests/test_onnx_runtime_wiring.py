@@ -38,8 +38,10 @@ def _install_fake_onnx_modules(monkeypatch):
     monkeypatch.setitem(sys.modules, "onnxruntime", onnxruntime)
     monkeypatch.setitem(sys.modules, "kokoro_onnx", kokoro_onnx)
     monkeypatch.setitem(sys.modules, "soundfile", soundfile)
-    sys.modules.pop("odessy.voice.onnx_runtime", None)
-    sys.modules.pop("odessy.voice.tts", None)
+    # Restore pre-existing modules on teardown, including class identities imported
+    # by provider tests during collection. Do not leak reloaded fake modules.
+    monkeypatch.delitem(sys.modules, "odessy.voice.onnx_runtime", raising=False)
+    monkeypatch.delitem(sys.modules, "odessy.voice.tts", raising=False)
     return state
 
 

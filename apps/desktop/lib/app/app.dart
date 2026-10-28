@@ -1,9 +1,12 @@
 import '../features/monitoring/controllers/monitor_controller.dart';
 import '../features/devices/presentation/devices_hub.dart';
+import '../features/devices/presentation/pairing_page.dart';
 import '../features/workspaces/presentation/workspace_page.dart';
 import '../widgets/component_state_banner.dart';
 import '../widgets/pixel_boat.dart';
 import 'navigation.dart';
+import 'readiness_controller.dart';
+import '../features/conversation/controllers/voice_controller.dart';
 import '../features/settings/controllers/component_settings_controller.dart';
 import '../features/settings/presentation/settings_navigation.dart';
 import '../features/settings/controllers/settings_form_controller.dart';
@@ -37,6 +40,8 @@ class OdessyApp extends StatefulWidget {
       this.api,
       this.installed,
       this.onConfigured,
+      this.onRestartSaved,
+      this.onShutdownOwned,
       this.restoreConfiguration = false,
       this.setupBackend,
       this.coordinatorFactory});
@@ -44,6 +49,8 @@ class OdessyApp extends StatefulWidget {
   final bool restoreConfiguration;
   final SetupBackend? setupBackend;
   final VoidCallback? onConfigured;
+  final Future<void> Function(String fingerprint)? onRestartSaved;
+  final Future<void> Function()? onShutdownOwned;
   final OdessyApi? api;
 
   /// Recorded installed state when this process was started by the Windows
@@ -55,9 +62,103 @@ class OdessyApp extends StatefulWidget {
 
 class _OdessyAppState extends State<OdessyApp> {
   late final DesktopSession controller;
+  late final VoiceController voice;
   final monitoring = MonitorController();
   late final SetupController setup;
   late final ComponentSettingsController componentSettings;
+  final readiness = ReadinessController();
+  OdessyApi? observedApi;
+  bool restarting = false;
+  void _observeConnection() {
+    if (!identical(observedApi, controller.api)) {
+      observedApi = controller.api;
+      readiness.bind(controller.api);
+    }
+  }
+
+  Future<void> _restartSaved() async {
+    if (restarting ||
+        _settingsBusy ||
+        controller.busy ||
+        controller.session?.running == true) {
+      return;
+    }
+    if (!await _mayNavigate() || !mounted) return;
+    restarting = true;
+    final original = controller.api;
+    String? ticket;
+    try {
+      if (original is! RuntimeConfigurationApi ||
+          (configuredCoordinator == null && widget.onRestartSaved == null)) {
+        throw StateError(
+            'This service is not owned by this desktop. Restart it through its owner.');
+      }
+      await componentSettings.load();
+      await readiness.bind(original);
+      final saved = RuntimeConfiguration.fromJson(
+          componentSettings.snapshot['configuration'] as Json);
+      final observed = readiness.current;
+      if (observed?.configuration?.owner != saved.owner ||
+          !controller.connected) {
+        throw StateError(
+            'Running and saved configuration ownership could not be matched.');
+      }
+      final revision = componentSettings.snapshot['revision'];
+      if (!mounted) return;
+      final accepted = await showDialog<bool>(
+          context: navigatorKey.currentContext!,
+          builder: (context) => AlertDialog(
+                  title: const Text('Restart with saved configuration?'),
+                  content: Text(
+                      'Startup model: ${observed!.configuration!.modelName}\nSaved model: ${saved.modelName}\nWorkspace: ${saved.workspace}\nThe idle conversation closes. Completed tools remain completed. No inference test or model download is run.'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Cancel')),
+                    FilledButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('Restart now'))
+                  ]));
+      if (accepted != true ||
+          !mounted ||
+          !identical(original, controller.api)) {
+        return;
+      }
+      await componentSettings.load();
+      if (componentSettings.error.isNotEmpty ||
+          componentSettings.snapshot['revision'] != revision) {
+        throw StateError('Saved settings changed. Review the restart again.');
+      }
+      ticket = await (original as RuntimeConfigurationApi)
+          .prepareRestart(observed!.serviceInstance);
+      if (widget.installed != null) {
+        await widget.onRestartSaved!(saved.fingerprint);
+      } else {
+        final reply = await setup.backend.execute(SetupRequest(
+            id: 'restart-${DateTime.now().microsecondsSinceEpoch}',
+            operation: 'resume',
+            selection: const {}));
+        if (!reply.ok) throw StateError(reply.reason);
+        await _connectConfigured(
+            {...reply.result, 'expected_fingerprint': saved.fingerprint});
+      }
+      ticket = null;
+    } catch (e) {
+      if (mounted) {
+        setState(() => connectionNotice = e is StateError
+            ? e.message.toString()
+            : 'Restart failed. Inspect the saved configuration and local service before retrying.');
+      }
+    } finally {
+      if (ticket != null && original is RuntimeConfigurationApi) {
+        try {
+          await (original as RuntimeConfigurationApi).resumeAdmission(ticket);
+        } catch (_) {/* Owned process may already be stopped. */}
+      }
+      restarting = false;
+    }
+  }
+
   final navigatorKey = GlobalKey<NavigatorState>();
   bool _navigating = false;
   final collaborationForms = <OdessyApi, SettingsFormController<int>>{};
@@ -100,6 +201,11 @@ class _OdessyAppState extends State<OdessyApp> {
   String settingsSection = SettingsSections.general;
   String connectionNotice = '';
   Future<void> _activateSaved() async {
+    if (restarting) return;
+    if (configuredCoordinator != null || controller.connected) {
+      await _restartSaved();
+      return;
+    }
     if (setup.busy ||
         _settingsBusy ||
         setup.completing ||
@@ -156,6 +262,9 @@ class _OdessyAppState extends State<OdessyApp> {
   void initState() {
     super.initState();
     controller = DesktopSession(widget.api ?? DemoApi());
+    voice = VoiceController(controller);
+    controller.addListener(_observeConnection);
+    _observeConnection();
     setup = SetupController(widget.setupBackend ?? LocalSetupBackend(),
         onConnect: _connectConfigured, onCancelConnect: () async {
       ++configuredEpoch;
@@ -182,6 +291,7 @@ class _OdessyAppState extends State<OdessyApp> {
       await controller.shutdown();
       await setup.shutdown();
       await configuredCoordinator?.stop();
+      await widget.onShutdownOwned?.call();
       await maintenance.shutdown();
       await installerEngine.shutdown();
       await pairing.shutdown();
@@ -206,6 +316,9 @@ class _OdessyAppState extends State<OdessyApp> {
   void dispose() {
     lifecycle.dispose();
     monitoring.dispose();
+    controller.removeListener(_observeConnection);
+    voice.dispose();
+    readiness.dispose();
     componentSettings.dispose();
     for (final form in collaborationForms.values) {
       form.dispose();
@@ -229,7 +342,8 @@ class _OdessyAppState extends State<OdessyApp> {
       darkTheme: odessyTheme(Brightness.dark),
       themeMode: mode,
       home: ListenableBuilder(
-          listenable: Listenable.merge([controller, setup]),
+          listenable: Listenable.merge(
+              [controller, setup, componentSettings, readiness, voice]),
           builder: (context, _) =>
               LayoutBuilder(builder: (context, constraints) {
                 final narrow = constraints.maxWidth < 900;
@@ -299,6 +413,24 @@ class _OdessyAppState extends State<OdessyApp> {
                                           : ThemeMode.dark)),
                             ])),
                         const Divider(height: 1),
+                        if ([
+                          'preparing',
+                          'recording',
+                          'transcribing',
+                          'speaking',
+                          'cancelling'
+                        ].contains(voice.snapshot?.state))
+                          ComponentStateBanner(
+                              message:
+                                  'Audio ${voice.snapshot!.state} on ${voice.snapshot!.host}. Cancel stops audio; completed actions remain completed.',
+                              actions: [
+                                TextButton(
+                                    onPressed: () => voice.command(
+                                        voice.snapshot?.captureId == null
+                                            ? 'stop_playback'
+                                            : 'cancel_capture'),
+                                    child: const Text('Cancel audio'))
+                              ]),
                         if (controller.api is DisconnectedApi)
                           ComponentStateBanner(
                               message: connectionNotice.isNotEmpty
@@ -332,6 +464,11 @@ class _OdessyAppState extends State<OdessyApp> {
                                     onPressed: controller.refresh,
                                     child: const Text('Refresh'))
                               ]),
+                        if (connectionNotice.isNotEmpty &&
+                            controller.api is! DisconnectedApi)
+                          ComponentStateBanner(
+                              message: connectionNotice,
+                              tone: BannerTone.error),
                         Expanded(
                             child: switch (page) {
                           'Monitor' || 'Devices' => DevicesHub(
@@ -340,6 +477,8 @@ class _OdessyAppState extends State<OdessyApp> {
                               initialPerformance: page == 'Monitor',
                               onConnect: () => _navigate('Pairing')),
                           'Workspaces' => WorkspacePage(
+                              readiness: readiness,
+                              connected: controller.connected,
                               componentController: componentSettings,
                               backend: setup.backend,
                               root: widget.installed?['root'] as String? ?? '',
@@ -375,11 +514,17 @@ class _OdessyAppState extends State<OdessyApp> {
                               installer: true),
                           'Maintenance' =>
                             MaintenancePage(controller: maintenance),
-                          'Pairing' => MaintenancePage(
+                          'Pairing' => PairingPage(
                               key: const ValueKey('pairing'),
                               controller: pairing,
-                              pairing: true),
+                                picker:const FileSelectorPicker()),
                           'Settings' => SettingsPage(
+                              readiness: readiness,
+                              onRestartSaved: ((configuredCoordinator != null ||
+                                          widget.onRestartSaved != null) &&
+                                      readiness.current?.configuration != null)
+                                  ? _restartSaved
+                                  : null,
                               key: ValueKey((controller.api, settingsSection)),
                               initialSection: settingsSection,
                               controller: controller,
@@ -389,23 +534,22 @@ class _OdessyAppState extends State<OdessyApp> {
                               installationRoot:
                                   widget.installed?['root'] as String? ?? '',
                               installed: widget.installed != null,
-                              modelConfigured: (widget.installed?['model_configured'] == true ||
-                                  (setup.activeSelection ?? (setup.saved ? setup.selection : const {}))['model'] !=
-                                      null),
-                              voiceEnabled: (widget.installed?['voice_enabled'] == true ||
-                                  ((setup.activeSelection ?? (setup.saved ? setup.selection : const {}))['voice'] as Map?)?['enabled'] ==
-                                      true),
+                              modelConfigured:
+                                  (widget.installed?['model_configured'] == true ||
+                                      (setup.activeSelection ??
+                                              (setup.saved
+                                                  ? setup.selection
+                                                  : const {}))['model'] !=
+                                          null),
+                              voiceEnabled:
+                                  (widget.installed?['voice_enabled'] == true ||
+                                      ((setup.activeSelection ?? (setup.saved ? setup.selection : const {}))['voice']
+                                              as Map?)?['enabled'] ==
+                                          true),
                               themeMode: mode,
-                              onToggleTheme: () => setState(() => mode = mode == ThemeMode.dark
-                                  ? ThemeMode.light
-                                  : ThemeMode.dark),
+                              onToggleTheme: () => setState(() => mode = mode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark),
                               onOpenDevices: () => _navigate('Devices'),
-                              onConnectSaved: setup.busy ||
-                                      setup.completing ||
-                                      controller.session?.running == true ||
-                                      (widget.installed != null && widget.onConfigured == null)
-                                  ? null
-                                  : _activateSaved,
+                              onConnectSaved: setup.busy || setup.completing || controller.session?.running == true || (widget.installed != null && widget.onConfigured == null) ? null : _activateSaved,
                               onOpenInstaller: () => _navigate('Installer'),
                               onOpenMaintenance: () => _navigate('Maintenance'),
                               maintenanceBlocked: controller.session?.running == true,
@@ -416,7 +560,10 @@ class _OdessyAppState extends State<OdessyApp> {
                                     page = 'Settings';
                                   }),
                               onOpenManagement: widget.installed == null ? null : () => setState(() => page = 'Manage installation')),
-                          _ => ConversationPage(controller: controller),
+                          _ => ConversationPage(
+                              voice: voice,
+                              controller: controller,
+                              readiness: readiness),
                         }),
                       ])),
                     ]));
@@ -523,6 +670,7 @@ class _OdessyAppState extends State<OdessyApp> {
           root: '',
           workspace: spec['workspace'] as String,
           configuration: spec,
+          expectedFingerprint: spec['expected_fingerprint'] as String?,
         );
     configuredCoordinator = child;
     try {
@@ -543,6 +691,7 @@ class _OdessyAppState extends State<OdessyApp> {
   }
 
   Future<void> _connect(BuildContext context) async {
+    if (restarting) return;
     if (_settingsBusy) {
       await showDialog<void>(
           context: context,
