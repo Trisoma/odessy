@@ -77,25 +77,27 @@ class _InteractionCardState extends State<InteractionCard> {
                           : e['question'] as String),
                       const SizedBox(height: 12),
                       if (approval)
-                        SelectableText(
-                            const JsonEncoder.withIndent('  ').convert({
-                              for (final key in [
-                                'tool',
-                                'tool_name',
-                                'arguments',
-                                'execution_target',
-                                'host',
-                                'permission_scopes',
-                                'scopes',
-                                'risk'
-                              ])
-                                if (e.containsKey(key)) key: e[key],
-                            }),
-                            style: const TextStyle(
-                                fontFamily: 'monospace', fontSize: 11)),
+                        for (final fact in approvalFacts(e))
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  SizedBox(
+                                      width: 104,
+                                      child: Text(fact.$1,
+                                          style: const TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.grey))),
+                                  Expanded(
+                                      child: SelectableText(fact.$2,
+                                          style:
+                                              const TextStyle(fontSize: 12))),
+                                ]),
+                          ),
                       if (approval)
                         ExpansionTile(
-                            title: const Text('Full validated request',
+                            title: const Text('Details',
                                 style: TextStyle(fontSize: 11)),
                             children: [
                               SelectableText(
@@ -162,4 +164,32 @@ class _InteractionCardState extends State<InteractionCard> {
                               fontSize: 10, color: Colors.grey)),
                     ]))));
   }
+}
+
+/// Human-readable authorization facts, in review order. Missing values are
+/// rendered as explicitly unknown rather than dropped, so an incomplete
+/// request cannot look complete.
+List<(String, String)> approvalFacts(Json e) {
+  String text(Object? value) {
+    if (value == null) return 'not reported';
+    if (value is List) {
+      return value.isEmpty ? 'none reported' : value.map((v) => '$v').join(', ');
+    }
+    if (value is Map) {
+      return value.isEmpty
+          ? 'none reported'
+          : value.entries.map((entry) => '${entry.key}=${entry.value}').join(', ');
+    }
+    final raw = '$value';
+    return raw.isEmpty ? 'not reported' : raw;
+  }
+
+  return [
+    ('Action', text(e['operation'] ?? e['tool_name'] ?? e['tool'])),
+    ('Execution target', text(e['target_identity'] ?? e['execution_target'] ?? e['host'])),
+    ('Permission scope', text(e['permission_scopes'] ?? e['scopes'])),
+    ('Risk', text(e['risk'])),
+    ('Exact arguments',
+        e.containsKey('arguments') ? text(e['arguments']) : 'not reported'),
+  ];
 }

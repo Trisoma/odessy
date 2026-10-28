@@ -57,3 +57,29 @@ def test_stop_during_stream_startup_retains_lease_until_start_drains(tmp_path,mo
     finally:release.set();worker.join(3)
     assert errors==['cancelled']
     later=device_lease.MicrophoneLease();later.acquire();later.close()
+
+@pytest.mark.parametrize('kind',['input','output'])
+def test_native_stop_during_blocking_start_never_leaves_restarted_device(kind,tmp_path,monkeypatch):
+    import threading,wave
+    from odessy.voice import native_audio
+    entered,release=threading.Event(),threading.Event();streams=[];errors=[]
+    class Stream:
+        def __init__(self,**options):self.active=False;self.writes=0;streams.append(self)
+        def start(self):entered.set();release.wait(2);self.active=True
+        def abort(self):self.active=False
+        def close(self):self.active=False
+        def stop(self):self.active=False
+        def write(self,data):self.writes+=1
+    monkeypatch.setitem(sys.modules,'sounddevice',SimpleNamespace(RawInputStream=Stream,RawOutputStream=Stream))
+    path=tmp_path/'sample.wav'
+    with wave.open(str(path),'wb') as wav:wav.setparams((1,2,16000,0,'NONE',''));wav.writeframes(bytes(3200))
+    device=native_audio.NativeInput() if kind=='input' else native_audio.NativePlayer()
+    def run():
+        try:device.start() if kind=='input' else device.play(path)
+        except RuntimeError:errors.append('cancelled')
+    worker=threading.Thread(target=run);worker.start();assert entered.wait(1)
+    try:device.close() if kind=='input' else device.stop()
+    finally:release.set();worker.join(3)
+    assert not worker.is_alive()
+    assert streams[0].active is False
+    assert streams[0].writes==0

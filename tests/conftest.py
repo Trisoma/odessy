@@ -1,9 +1,38 @@
 from __future__ import annotations
 
 import os
+import shutil
+import stat
+from pathlib import Path
 from collections.abc import Iterator
 
 import pytest
+
+
+def discard_fixture_git(root: Path) -> None:
+    """Remove only metadata belonging to this test and its patch-job siblings.
+
+    Working files stay available for failure diagnosis, but editors must not
+    discover these disposable repositories after the test finishes.
+    """
+    root=root.resolve()
+    candidates=[root,*root.parent.glob(root.name+'-odessy-*')]
+    def writable_retry(function,path,error):
+        os.chmod(path,stat.S_IWRITE|stat.S_IREAD);function(path)
+    for candidate in candidates:
+        if candidate.is_symlink():continue
+        actual=candidate.resolve()
+        if actual.parent!=root.parent:raise ValueError('fixture cleanup escaped its temporary directory')
+        metadata=actual/'.git'
+        if metadata.is_symlink():continue
+        if metadata.is_dir():shutil.rmtree(metadata,onerror=writable_retry)
+        elif metadata.is_file():metadata.unlink()
+
+
+@pytest.fixture
+def isolated_patch_repo(tmp_path):
+    try:yield tmp_path
+    finally:discard_fixture_git(tmp_path)
 
 
 @pytest.fixture(autouse=True)

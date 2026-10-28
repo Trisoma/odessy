@@ -56,7 +56,12 @@ class NativeInput:
         if self.closed.is_set():stream.close();raise RuntimeError('Capture cancelled before startup')
         try:stream.start()
         except BaseException:self.close();raise
-        if self.closed.is_set():self.close();raise RuntimeError('Capture cancelled during startup')
+        if self.closed.is_set():
+            # close() may already have detached self.stream while start() blocked.
+            # The local handle must be stopped again after startup has drained.
+            try:stream.abort()
+            finally:stream.close()
+            raise RuntimeError('Capture cancelled during startup')
         return self
     def read(self,size):
         while not self.closed.is_set():
@@ -107,7 +112,11 @@ class NativePlayer:
                 with self.lock:
                     owned=self.stream is stream
                     if owned:self.stream=None
-                if owned:stream.close()
+                # stop() can detach/close this handle before its blocking start()
+                # returns. Always clean the local handle after startup drains.
+                try:
+                    if token!=self.generation:stream.abort()
+                finally:stream.close()
 
 def recorder(config,*,command_factory=CommandAudioStream):
     from .device_lease import LeasedStream

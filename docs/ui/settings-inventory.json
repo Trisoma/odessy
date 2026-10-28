@@ -32,6 +32,25 @@
       }
     },
     {
+      "name": "ODESSY_AUDIO_BACKEND",
+      "kind": "enum",
+      "summary": "native PortAudio or existing commands",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [
+          "auto",
+          "native",
+          "command"
+        ],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
       "name": "ODESSY_AUDIO_INPUT_DEVICE",
       "kind": "text",
       "summary": "the recording device",

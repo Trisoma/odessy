@@ -121,3 +121,69 @@ def test_real_stdio_helper_tests_loopback_model_without_coordinator(tmp_path):
         assert result['status']=='tested' and result['model']=='fixture' and result['text']=='hello'
         assert len(requests)==1 and 'tools' not in requests[0]
     finally:server.shutdown();server.server_close();worker.join(2)
+
+@pytest.mark.parametrize('section',['stt','tts'])
+def test_cancellation_during_provider_creation_still_closes_it(section,tmp_path,monkeypatch):
+    import wave
+    from odessy.setup import diagnostics
+    cancelled=False;closed=[]
+    class Provider:
+        def cancel(self):pass
+        def close(self):closed.append(True)
+    def factory(config):
+        nonlocal cancelled
+        cancelled=True
+        import time
+        time.sleep(.1)  # Watchdog observes cancellation before construction returns.
+        return Provider()
+    monkeypatch.setattr(diagnostics,'create_'+section,factory)
+    path=tmp_path/'sample.wav'
+    with wave.open(str(path),'wb') as wav:wav.setparams((1,2,16000,0,'NONE',''));wav.writeframes(bytes(3200))
+    with pytest.raises(ValueError,match='cancelled'):
+        diagnostics.probe(SetupSelection(role='combined'),section,run=True,consent=True,
+                          audio=str(path),cancelled=lambda:cancelled)
+    assert closed==[True]
+
+def test_diagnostic_redacts_opaque_referenced_credential(monkeypatch):
+    from odessy.setup import diagnostics
+    secret='opaque-unpatterned-credential'
+    monkeypatch.setenv('MY_MODEL_KEY',secret)
+    monkeypatch.setattr(diagnostics,'test_model',lambda _: {'text':'echo '+secret,'usage':None})
+    chosen=SetupSelection(role='combined',model=ModelSelection(provider='openai',name='fixture',credential_env='MY_MODEL_KEY'))
+    result=diagnostics.probe(chosen,'llm',run=True,consent=True)
+    assert secret not in result['text'] and '<redacted>' in result['text']
+
+def test_missing_credential_has_safe_machine_readable_reason(monkeypatch):
+    import io,json
+    from odessy.setup.bridge import run
+    monkeypatch.delenv('MY_MODEL_KEY',raising=False);monkeypatch.delenv('ODESSY_CLOUD_API_KEY',raising=False)
+    request={'id':'credential-test','operation':'component-probe','selection':{'role':'combined',
+        'model':{'provider':'openai','name':'fixture','credential_env':'MY_MODEL_KEY'}},
+        'parameters':{'section':'llm','run':True,'consent':True}}
+    output=io.BytesIO();run(io.BytesIO((json.dumps(request)+'\n').encode()),output)
+    result=json.loads(output.getvalue())
+    assert result['status']=='error' and result['code']=='credentials'
+    assert 'MY_MODEL_KEY' in result['reason']
+
+def test_cancel_before_diagnostic_playback_cannot_adopt_a_new_generation(monkeypatch):
+    from odessy.setup import diagnostics
+    from odessy.voice import native_audio
+    from odessy.voice.tts import TTSResult
+    cancelled=False;played=[]
+    class Provider:
+        def synthesize(self,text,path):
+            with diagnostics.wave.open(str(path),'wb') as wav:
+                wav.setparams((1,2,16000,0,'NONE',''));wav.writeframes(bytes(3200))
+            return TTSResult(path,'ok')
+    class Output:
+        generation=0
+        def stop(self):self.generation+=1
+        def play(self,path,*,generation=None):
+            nonlocal cancelled
+            cancelled=True;self.stop()  # Stop lands just before playback admission.
+            if generation is None or generation==self.generation:played.append(True)
+    monkeypatch.setattr(diagnostics,'create_tts',lambda _:Provider())
+    monkeypatch.setattr(native_audio,'player',lambda _:Output())
+    with pytest.raises(ValueError,match='cancelled'):
+        diagnostics.probe(SetupSelection(role='combined'),'tts',run=True,consent=True,cancelled=lambda:cancelled)
+    assert played==[]

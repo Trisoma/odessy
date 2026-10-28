@@ -21,6 +21,11 @@ from odessy.voice.providers import create_stt, create_tts, close_providers, canc
 
 class DiagnosticInputError(ValueError):
     """Only locally authored validation messages may cross the helper boundary."""
+    def __init__(self,message,code='validation'):
+        super().__init__(message);self.code=code
+
+class ProviderTestError(RuntimeError):
+    code='unavailable'
 
 class ProbeCancellation:
     def __init__(self,cancelled):
@@ -40,7 +45,7 @@ class ProbeCancellation:
         with self.lock:self.hooks.append(hook);stopped=self.stopped.is_set()
         if stopped:hook();self.check()
     def check(self):
-        if self.stopped.is_set() or self.cancelled():raise DiagnosticInputError('Test cancelled or timed out. No chat/tool work was submitted.')
+        if self.stopped.is_set() or self.cancelled():raise DiagnosticInputError('Test cancelled or timed out. No chat/tool work was submitted.', 'cancelled')
     def __exit__(self,*args):self.done.set();self.thread.join(timeout=.2)
 
 @contextmanager
@@ -74,7 +79,7 @@ def observe(selection,section):
         if model is None:return {'status':'not_configured','message':'Choose a model.'}
         key=model.credential_env or KEY_ENV.get(model.provider)
         if key and not (os.environ.get(key) or os.environ.get('ODESSY_CLOUD_API_KEY')):
-            return {'status':'missing','message':f'Supply {key} to the application process, then reopen Odessy.'}
+            return {'status':'missing','code':'credentials','message':f'Supply {key} to the application process, then reopen Odessy.'}
         return {'status':'configured_unverified','message':'Configuration present. An explicit test is required; tool compatibility is a separate check.'}
     voice=selection.voice
     if section in ('stt','tts'):
@@ -132,6 +137,8 @@ def _probe(selection,section,*,run,consent,audio,owner):
     if section=='llm' and selection.model:result.update(provider=selection.model.provider,model=selection.model.name)
     if not run:return result
     if consent is not True:raise ValueError('Explicit test consent is required; provider calls may incur cost or open audio.')
+    if result.get('code')=='credentials':raise DiagnosticInputError(result['message'],'credentials')
+    if section not in ('llm','stt','tts'):raise DiagnosticInputError('This component has no inference test. Use observational checks.','unsupported')
     started=time.monotonic()
     try:
         owner.check()
@@ -143,8 +150,9 @@ def _probe(selection,section,*,run,consent,audio,owner):
                 with wave.open(str(path),'rb') as wav:
                     if (wav.getnchannels(),wav.getsampwidth(),wav.getframerate())!=(1,2,16000) or wav.getnframes()>480000:
                         raise DiagnosticInputError('Input must be 16 kHz mono 16-bit PCM, at most 30 seconds.')
-                provider=create_stt(voice_config(selection));owner.track(lambda:cancel_provider(provider))
+                provider=create_stt(voice_config(selection))
                 try:
+                    owner.track(lambda:cancel_provider(provider))
                     owner.check();answer=provider.transcribe(path)
                     if answer.status=='failed':raise RuntimeError('STT failed; check provider assets and dependencies.')
                     result['text']=answer.text
@@ -152,20 +160,32 @@ def _probe(selection,section,*,run,consent,audio,owner):
                 finally:close_providers(provider)
         elif section=='tts':
             provider=create_tts(voice_config(selection))
-            owner.track(lambda:cancel_provider(provider))
             try:
+                owner.track(lambda:cancel_provider(provider));owner.check()
                 with tempfile.TemporaryDirectory(prefix='odessy-speech-test-') as folder:
                     path=Path(folder)/'output.wav'
                     answer=provider.synthesize('Odessy speech output test.',path)
                     if answer.status!='ok':raise RuntimeError('TTS failed; check provider assets and dependencies.')
+                    if not path.is_file() or path.stat().st_size>32*1024*1024:
+                        raise DiagnosticInputError('Speech test output is missing or exceeds the size limit.')
+                    with wave.open(str(path),'rb') as wav:
+                        if (wav.getsampwidth()!=2 or wav.getnchannels() not in (1,2) or
+                            not 8000<=wav.getframerate()<=192000 or wav.getnframes()>wav.getframerate()*30):
+                            raise DiagnosticInputError('Speech test output must be PCM WAV, mono/stereo, at most 30 seconds.')
                     from odessy.voice.native_audio import player
-                    output=player(voice_config(selection));owner.track(output.stop);owner.check()
-                    output.play(path)
+                    output=player(voice_config(selection));generation=output.generation
+                    owner.track(output.stop);owner.check()
+                    output.play(path,generation=generation)
             finally:close_providers(provider)
         else:raise ValueError('This component has no inference test.')
         owner.check()
-        from odessy.authority.redaction import redact_text
-        if 'text' in result:result['text']=redact_text(result['text'])[:2000]
+        from odessy.authority.redaction import redact_text,looks_like_secret_name
+        if 'text' in result:
+            text=result['text']
+            key=selection.model.credential_env if selection.model else ''
+            secrets={value for name,value in os.environ.items() if value and (looks_like_secret_name(name) or name==key)}
+            for secret in sorted(secrets,key=len,reverse=True):text=text.replace(secret,'<redacted>')
+            result['text']=redact_text(text)[:2000]
         result.update(status='tested',inference_performed=True,elapsed_ms=round((time.monotonic()-started)*1000),
                       tested_at=time.time(),
                       message=result.get('message') if section=='stt' and not result.get('text') else 'Test completed. This does not verify tool capability or human audibility.')
@@ -173,4 +193,4 @@ def _probe(selection,section,*,run,consent,audio,owner):
     except Exception as error:
         # Provider exception strings can contain credentials, URLs or raw HTTP bodies.
         if isinstance(error,DiagnosticInputError):raise
-        raise RuntimeError('Provider test failed. Check credentials, endpoint, model, assets and dependencies; text interaction remains available.') from None
+        raise ProviderTestError('Provider test failed. Check credentials, endpoint, model, assets and dependencies; text interaction remains available.') from None

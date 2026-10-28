@@ -47,7 +47,7 @@ Monitoring-only or online hosts do not gain execution permission. Existing nativ
 pairing remains a separate explicit route; this is not a new pairing protocol or a
 complete polished enrollment wizard.
 
-## What remains
+## October 27 scope snapshot (superseded by the October 28 software checkpoint)
 
 - Actual recorder/microphone/device permission and provider qualification on each
   supported OS. The default recorder/player remain existing arecord/aplay-compatible
@@ -64,3 +64,15 @@ complete polished enrollment wizard.
 Fake audio/API coverage establishes software boundaries, not those native gates.
 The original UX plan remains open. No production-ready or all-platform claim follows
 from a Windows build or the passing suites alone.
+
+## October 28 software checkpoint
+
+Independent Settings probes, native audio/device selection, opt-in desktop wake,
+pairing/revocation presentation and provider-test metadata are now implemented.
+Native audio uses the optional sounddevice/PortAudio backend; Linux command audio
+remains supported. No microphone opens merely by opening Settings or listing
+devices. Diagnostic tests require consent and operate without a coordinator.
+See [the closeout evidence](backend-acceptance-2026-10-28.md) and
+[the additive contract](desktop-ux-contract.md#october-28-parallel-implementation-contract).
+The historical omissions above are not current software omissions; physical and
+native release acceptance remains distinct from these automated checks.

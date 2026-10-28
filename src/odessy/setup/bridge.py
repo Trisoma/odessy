@@ -156,6 +156,9 @@ def run(stdin=None, stdout=None) -> int:
         response = {'id': identifier, 'status': 'error',
                     'error': 'Setup failed. Check selection, paths, existing files and review confirmation. No existing configuration was replaced.',
                     'reason': reason}
+        code=getattr(error,'code',None)
+        if code in {'validation','credentials','permission','unsupported','unavailable','cancelled','conflict'}:
+            response['code']=code
         field_errors=getattr(error,'field_errors',None)
         if isinstance(field_errors,dict):
             response.update(code='validation',field_errors={str(k)[:64]:str(v)[:200] for k,v in field_errors.items()})
