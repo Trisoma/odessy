@@ -78,7 +78,7 @@ def resume():
             provider = values.get('ODESSY_MODEL_BACKEND')
             if not provider: raise ValueError('Saved configuration has no model provider.')
             local = provider in ('ollama', 'lfm')
-            voice_keys = ('whisper_bin','whisper_model','kokoro_model','kokoro_voices','stt_provider','tts_provider','stt_executable','stt_model','tts_executable','tts_model')
+            voice_keys = ('whisper_bin','whisper_model','kokoro_model','kokoro_voices','stt_provider','tts_provider','stt_executable','stt_model','tts_executable','tts_model','audio_backend','audio_input_device','audio_output_device','wake_model')
             voice = {name: values['ODESSY_'+name.upper()] for name in voice_keys if 'ODESSY_'+name.upper() in values}
             selection = SetupSelection.from_dict({'role': 'combined' if values.get('ODESSY_DEPLOYMENT') == 'single' else 'coordinator',
                 'model': {'provider': provider, 'name': values.get('ODESSY_MODEL_NAME' if local else 'ODESSY_CLOUD_MODEL', ''),
@@ -105,6 +105,7 @@ def main(argv=None):
     parser.add_argument('--selection-json', required=True)
     parser.add_argument('--sha256', required=True)
     parser.add_argument('--workspace', required=True)
+    parser.add_argument('--expected-fingerprint')
     parser.add_argument('--port', type=int, required=True)
     parser.add_argument('--exit-on-stdin-close', action='store_true')
     args = parser.parse_args(argv)
@@ -118,9 +119,13 @@ def main(argv=None):
     if not token:
         raise ValueError('An authenticated desktop launch token is required.')
     workspace = Path(args.workspace).expanduser()
+    from odessy.application.capabilities import configuration_descriptor, configuration_owner
+    if args.expected_fingerprint and configuration_descriptor(selection, workspace, owner=configuration_owner())['fingerprint'] != args.expected_fingerprint:
+        raise ValueError('Saved configuration changed after restart review. Review it again.')
     workspace.mkdir(parents=True, exist_ok=True)
     from .service_entry import run
-    run(selection, workspace=workspace, port=args.port, token=token, watch_stdin=args.exit_on_stdin_close)
+    run(selection, workspace=workspace, port=args.port, token=token, watch_stdin=args.exit_on_stdin_close,
+        configuration_owner=configuration_owner())
 
 if __name__ == '__main__':
     main()

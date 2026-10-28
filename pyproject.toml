@@ -41,6 +41,7 @@ wake = [
 # session reuses them, and because a clone could not run `odessy voice` at all while
 # they were undeclared.
 voice = [
+  "sounddevice>=0.5,<1",
   "kokoro-onnx>=0.4.0",
   "onnxruntime>=1.17",
   "numpy>=1.26",

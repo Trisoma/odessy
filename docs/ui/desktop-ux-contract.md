@@ -89,6 +89,8 @@ M2 component draft ownership and save/recovery is now implemented as described i
 [the lifecycle contract](settings-draft-lifecycle.md). App-owned component drafts,
 per-service collaboration forms, leave prompts and read-only unknown-outcome
 inspection reuse existing backends. Source/installed real-helper checks passed.
-The broader Phase 2 remains incomplete: authoritative saved/active readiness,
-hard-kill recovery and the remaining validation/merge acceptance are still open.
-Do not mark the full UX overhaul complete from these milestones.
+The Phase 2 follow-up now implements startup/saved state, reviewed restart,
+field validation/merge presentation and source crash recovery; see
+[its current contract and qualification limits](running-configuration.md).
+Native/package acceptance remains open. Do not mark the full UX overhaul complete
+from these milestones.

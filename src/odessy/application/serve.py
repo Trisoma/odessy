@@ -23,7 +23,7 @@ def validate_binding(host, port):
 
 async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
                      backend=None, token=None, workspace=None, watch_stdin=False,
-                     print_token=True):
+                     print_token=True, runtime_configuration=None, desktop_voice=None):
     host, port = validate_binding(host, port)
     try:
         import uvicorn
@@ -51,7 +51,7 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
                 'local': {'name': 'local', 'adapter': 'lfm'},
                 **{name: profile.public_dict() for name, profile in config.participants.items()}}
 
-    app = create_app(factory, config=load_config(), profiles=profiles,
+    app = create_app(factory, config=load_config(), profiles=profiles, runtime_configuration=runtime_configuration, desktop_voice=desktop_voice,
                      token=token if token is not None else os.environ.get('ODESSY_API_TOKEN') or None)
     address = f'[{host}]' if ':' in host else host
     print(f'[odessy] HTTP API: http://{address}:{port}', file=sys.stderr, flush=True)

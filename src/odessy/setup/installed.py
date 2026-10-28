@@ -91,6 +91,7 @@ def serve(argv=None):
     parser.add_argument('--root',required=True)
     parser.add_argument('--host',default='127.0.0.1')
     parser.add_argument('--port',type=int,required=True)
+    parser.add_argument('--expected-fingerprint')
     parser.add_argument('--exit-on-stdin-close',action='store_true',
         help='Stop when the owning launcher closes its stdin pipe.')
     args=parser.parse_args(argv)
@@ -105,11 +106,14 @@ def serve(argv=None):
     if not (1<=args.port<=65535):
         raise ValueError('invalid loopback port')
     workspace=Path(info['workspace'])
-    workspace.mkdir(parents=True,exist_ok=True)
     selection=SetupSelection.from_dict(info['selection'])
     from .service_entry import run
+    from odessy.application.capabilities import configuration_owner, configuration_descriptor
+    if args.expected_fingerprint and configuration_descriptor(selection,workspace,owner=configuration_owner(args.root,info['installation_id']))['fingerprint'] != args.expected_fingerprint:
+        raise ValueError('Saved configuration changed after restart review. Review it again.')
+    workspace.mkdir(parents=True,exist_ok=True)
     return run(selection,workspace=workspace,host=args.host,port=args.port,token=token,
-               watch_stdin=args.exit_on_stdin_close)
+               watch_stdin=args.exit_on_stdin_close,configuration_owner=configuration_owner(args.root,info['installation_id']))
 
 
 def main(argv=None):

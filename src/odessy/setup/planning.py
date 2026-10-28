@@ -51,6 +51,9 @@ def build_plan(selection: SetupSelection, discovery: DiscoveryReport | None = No
         warnings.append('A coordinator uses split deployment; configure its paired execution node separately before tool work.')
     voice = selection.voice
     if voice.enabled:
+        env['ODESSY_AUDIO_BACKEND']=voice.audio_backend
+        for name in ('audio_input_device','audio_output_device','wake_model'):
+            if getattr(voice,name):env['ODESSY_'+name.upper()]=getattr(voice,name)
         if voice.stt_provider == 'whisper.cpp':
             components.append('whisper.cpp')
         if voice.tts_provider == 'kokoro':

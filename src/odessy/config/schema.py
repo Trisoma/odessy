@@ -296,6 +296,7 @@ SETTINGS: tuple[Setting, ...] = (
        choices=("auto", "tensorrt", "cuda", "cpu")),
     _s("ODESSY_ONNX_CACHE_DIR", "path", "the ONNX Runtime cache directory",
        allow_empty=True),
+    _s("ODESSY_AUDIO_BACKEND", "enum", "native PortAudio or existing commands", choices=("auto","native","command")),
     _s("ODESSY_AUDIO_RECORDER", "text", "the recording command"),
     _s("ODESSY_AUDIO_PLAYER", "text", "the playback command"),
     _s("ODESSY_AUDIO_INPUT_DEVICE", "text", "the recording device", allow_empty=True),

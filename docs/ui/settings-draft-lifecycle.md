@@ -55,8 +55,9 @@ Provider-specific STT/TTS integration and execution verification belong to the
 teammate's separate task. This increment touches shared editor lifecycle, not
 provider adapters. No real provider, audio or model inference was performed.
 
-Still open: authoritative active-versus-saved revisions (Task 3), field-level
-component validation presentation, automatic draft merge/rebase, interrupted-writer
-lock recovery and hard-kill tests between immutable file creation and pointer
-activation. Existing locks/partial files are never deleted by this UI. Native OS,
-packaged and physical acceptance are separate from helper/widget coverage.
+Follow-up implementation now supplies startup/saved comparison, field errors,
+explicitly reviewed draft merges, owned source-writer recovery and forced-kill
+tests around pointer activation. See [running configuration and recovery](running-configuration.md).
+Merges still require a new Save; they are never automatic. Existing unowned locks
+and incomplete files are never deleted by this UI. Native OS, clean-machine
+packaged and physical acceptance remain separate from helper/widget coverage.

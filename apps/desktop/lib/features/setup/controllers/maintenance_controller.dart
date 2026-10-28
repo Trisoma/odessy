@@ -48,7 +48,8 @@ class MaintenanceController extends ChangeNotifier {
                 'fingerprint',
                 'address',
                 'workspace',
-                'output'
+                'output',
+                'capability'
               }
             : {
                 'root',
@@ -105,7 +106,9 @@ class MaintenanceController extends ChangeNotifier {
         selection: const {},
         parameters: parameters);
     final reply = await backend.execute(request);
-    if (!reply.ok) throw StateError(reply.error);
+    if (!reply.ok) {
+      throw StateError(reply.reason.isEmpty ? reply.error : reply.reason);
+    }
     return reply.result;
   }
 

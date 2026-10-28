@@ -8,6 +8,10 @@ export 'src/models.dart';
 export 'src/credentials.dart';
 export 'src/setup.dart';
 export 'src/monitoring/client.dart';
+export 'src/capabilities.dart';
+import 'src/capabilities.dart';
+export 'src/voice.dart';
+import 'src/voice.dart';
 import 'src/monitoring/client.dart';
 
 /// Bounded SSE parsing. UTF-8 decoding belongs to the transport, before this parser.
@@ -68,7 +72,7 @@ class ApiFailure implements Exception {
       };
 }
 
-class LocalApi implements OdessyApi, ProfileMetadataApi {
+class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi, DesktopVoiceApi {
   LocalApi(this.base, String token) : _token = token {
     if (!['http', 'https'].contains(base.scheme) ||
         !['localhost', '127.0.0.1', '::1'].contains(base.host) ||
@@ -128,6 +132,16 @@ class LocalApi implements OdessyApi, ProfileMetadataApi {
   }
 
   String _session(String sid) => '/v1/sessions/${Uri.encodeComponent(sid)}';
+  @override Future<VoiceSnapshot> voiceState(String sid) async => VoiceSnapshot.fromJson(await _json('${_session(sid)}/voice'));
+  @override Future<VoiceSnapshot> voiceCommand(String sid,String action,{String? captureId,String? interactionId}) async =>
+      VoiceSnapshot.fromJson(await _json('${_session(sid)}/voice','POST',{'action':action,if(captureId!=null)'capture_id':captureId,if(interactionId!=null)'expected_interaction_id':interactionId}));
+  @override
+  Future<RuntimeCapabilities> runtimeCapabilities() async => RuntimeCapabilities.fromJson(await _json('/v1/capabilities'));
+  @override
+  Future<String> prepareRestart(String serviceInstance) async =>
+      (await _json('/v1/lifecycle/prepare-restart','POST',{'service_instance_id':serviceInstance}))['ticket'] as String;
+  @override
+  Future<void> resumeAdmission(String ticket) async { await _json('/v1/lifecycle/resume','POST',{'ticket':ticket}); }
   @override
   Future<List<String>> profiles() async =>
       ((await _json('/v1/profiles'))['profiles'] as Map)

@@ -3,6 +3,21 @@ import pytest
 from odessy.setup.bridge import execute
 from odessy.setup import configured
 
+def test_bridge_field_errors_are_additive_and_paths_follow_selected_provider(state):
+    import io
+    from odessy.setup.bridge import run
+    initial=call()
+    request={'id':'fields','operation':'component-settings','parameters':{'action':'review','section':'tts',
+        'patch':{'tts_provider':'kokoro','kokoro_model':str(state/'missing.onnx')},'revision':initial['revision']}}
+    output=io.BytesIO()
+    assert run(io.BytesIO((json.dumps(request)+'\n').encode()),output)==2
+    reply=json.loads(output.getvalue())
+    assert 'kokoro_model' in reply['field_errors']
+    assert reply['code']=='validation'
+    # Inactive builtin paths are retained, not tested/executed for a custom provider.
+    custom=call('review',section='tts',patch={'tts_provider':'custom_audio:factory','kokoro_model':str(state/'old-missing.onnx')},revision=initial['revision'])
+    assert custom['selection']['voice']['kokoro_model'].endswith('old-missing.onnx')
+
 @pytest.fixture
 def state(tmp_path,monkeypatch):
     monkeypatch.setattr(configured,'desktop_state_file',lambda:tmp_path/'desktop.json')

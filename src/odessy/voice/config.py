@@ -27,6 +27,7 @@ class VoiceConfig:
     onnx_cache_dir: Path | None = None
     audio_recorder: str = "arecord"
     audio_player: str = "aplay"
+    audio_backend: str = "command"
     audio_input_device: str | None = None
     audio_output_device: str | None = None
     voice_seconds: int = 5
@@ -53,6 +54,7 @@ class VoiceConfig:
     tts_model: str = ""
 
     def __post_init__(self) -> None:
+        if self.audio_backend not in ('auto','command','native'):raise ValueError('Unknown audio backend')
         from .providers import validate_selector
         validate_selector(self.stt_provider)
         validate_selector(self.tts_provider)
@@ -88,6 +90,7 @@ class VoiceConfig:
             onnx_cache_dir=_env_path("ODESSY_ONNX_CACHE_DIR"),
             audio_recorder=os.environ.get("ODESSY_AUDIO_RECORDER", "arecord"),
             audio_player=os.environ.get("ODESSY_AUDIO_PLAYER", "aplay"),
+            audio_backend=os.environ.get("ODESSY_AUDIO_BACKEND", "auto"),
             audio_input_device=os.environ.get("ODESSY_AUDIO_INPUT_DEVICE") or None,
             audio_output_device=os.environ.get("ODESSY_AUDIO_OUTPUT_DEVICE") or None,
             voice_seconds=_env_int("ODESSY_VOICE_SECONDS", 5),

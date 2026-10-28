@@ -93,7 +93,7 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
     Process? process;
     try {
       final message = request.toJson();
-      if ({'installer', 'manage'}.contains(request.operation)) {
+      if ({'installer', 'manage','component-probe'}.contains(request.operation)) {
         _cancelDirectory =
             await Directory.systemTemp.createTemp('odessy-setup-');
         message['cancel_file'] =

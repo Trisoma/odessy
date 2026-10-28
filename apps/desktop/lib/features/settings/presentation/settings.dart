@@ -5,6 +5,7 @@ import '../../../app/setup/native_picker.dart';
 import '../controllers/component_settings_controller.dart';
 import 'component_settings_pane.dart';
 import 'settings_navigation.dart';
+import '../../../app/readiness_controller.dart';
 import 'package:flutter/material.dart';
 
 import '../../../app/session_controller.dart';
@@ -48,6 +49,8 @@ class SettingsPage extends StatefulWidget {
     this.maintenanceBlocked = false,
     this.configurationBackend,
     this.componentController,
+    this.readiness,
+    this.onRestartSaved,
     this.formController,
     this.installationRoot = '',
     this.initialSection = SettingsSections.general,
@@ -64,6 +67,8 @@ class SettingsPage extends StatefulWidget {
   final DesktopSession controller;
   final SetupBackend? configurationBackend;
   final ComponentSettingsController? componentController;
+  final ReadinessController? readiness;
+  final VoidCallback? onRestartSaved;
   final SettingsFormController<int>? formController;
   final String installationRoot, initialSection;
   final VoidCallback? onOpenManagement, onOpenGetStarted, onOpenDevices;
@@ -203,7 +208,11 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-      listenable: form,
+      listenable: Listenable.merge([
+        form,
+        if (components != null) components!,
+        if (widget.readiness != null) widget.readiness!
+      ]),
       builder: (context, _) => SettingsScaffold(
           title: DesktopCopy.settingsTitle,
           description: DesktopCopy.settingsDescription,
@@ -213,11 +222,38 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _component(String name) => components == null
       ? const Text('Local configuration is unavailable for this connection.')
-      : ComponentSettingsPane(
-          key: ValueKey(name),
-          controller: components!,
-          section: name,
-          picker: const FileSelectorPicker());
+      : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (widget.readiness != null) ...[
+            Text(
+                widget.readiness!.label(name, components!.snapshot,
+                    connected: widget.controller.connected),
+                key: ValueKey('configuration-state-$name')),
+            const SizedBox(height: 8),
+            if (name == 'llm')
+              Text(
+                  'Startup model: ${widget.readiness!.current?.configuration?.modelName ?? 'unknown'} · Saved model: ${((components!.snapshot['selection'] as Map?)?['model'] as Map?)?['name'] ?? 'not configured'}'),
+            if (widget.readiness!.error.isNotEmpty)
+              Text(widget.readiness!.error),
+            Wrap(spacing: 8, children: [
+              TextButton(
+                  onPressed: () =>
+                      widget.readiness!.bind(widget.controller.api),
+                  child: const Text('Refresh running state')),
+              if (widget.onRestartSaved != null)
+                TextButton(
+                    onPressed: components!.busy ? null : widget.onRestartSaved,
+                    child: const Text('Apply saved settings · restart')),
+            ]),
+            if (widget.onRestartSaved == null)
+              const Text(
+                  'Restart through the service owner to apply saved settings. This desktop cannot restart an unowned or unverified service.'),
+          ],
+          ComponentSettingsPane(
+              key: ValueKey(name),
+              controller: components!,
+              section: name,
+              picker: const FileSelectorPicker()),
+        ]);
 
   Widget _content(BuildContext context) =>
       Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -244,6 +280,8 @@ class _SettingsPageState extends State<SettingsPage> {
           _card(context, 'Collaboration', [_collaborationForm(context)]),
         ],
         if (section == SettingsSections.models) ...[
+          const Text(
+              'Cloud credentials must already be available to the desktop process through the named environment variable. This screen stores a reference, not an API key.'),
           if (components != null)
             _component('llm')
           else
@@ -399,9 +437,12 @@ class _SettingsPageState extends State<SettingsPage> {
                 onChanged: (value) => form.edit(value),
                 enabled: !loading && form.loaded,
                 keyboardType: TextInputType.number,
-                decoration: InputDecoration(labelText: 'Limit · 0–32',
+                decoration: InputDecoration(
+                    labelText: 'Limit · 0–32',
                     errorText: field.error,
-                    helperText: form.inspectionRequired ? 'Reload saved values before another save.' : null))),
+                    helperText: form.inspectionRequired
+                        ? 'Reload saved values before another save.'
+                        : null))),
         const SizedBox(height: 18),
         Wrap(spacing: 10, children: [
           FilledButton(
