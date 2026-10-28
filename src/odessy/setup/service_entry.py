@@ -15,6 +15,12 @@ def run(selection,*,workspace,host='127.0.0.1',port=8765,token=None,watch_stdin=
     # Reuse the same validated export rules, without persisting credential contents.
     plan=build_plan(selection)
     environment_text(plan)
+    if selection.model.credential_env:
+        from .verification import credential_value
+        key=credential_value(selection.model)
+        if not key:
+            raise ValueError('Supply the selected credential environment variable before starting Odessy.')
+        os.environ['ODESSY_CLOUD_API_KEY']=key
     for key,value in plan.environment.items(): os.environ[key]=value
     from odessy.application.serve import run_server
     from odessy.application.capabilities import configuration_descriptor

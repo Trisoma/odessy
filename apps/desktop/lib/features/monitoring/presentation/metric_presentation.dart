@@ -106,7 +106,7 @@ List<MetricFact> _factsFrom(
   final facts = <MetricFact>[];
   for (final entry in fields.entries) {
     final raw = value[entry.key];
-    if (raw is! num) continue;
+    if (raw is! num || !raw.isFinite || raw < 0) continue;
     if (skipZero && raw == 0) continue;
     facts.add(MetricFact(entry.value.$1, entry.value.$2(raw)));
   }
@@ -174,12 +174,14 @@ GroupSummary summariseGroup(String group, dynamic value, {bool stale = false}) {
         'total_bytes': ('Total', formatBytes),
         'available_bytes': ('Available', formatBytes),
         'shared_bytes': ('Shared', formatBytes),
+        'swap_used_bytes': ('Swap used', formatBytes),
+        'swap_total_bytes': ('Swap total', formatBytes),
       }));
     case 'disks':
-      devices = _devicesFrom(value['disks'], 'id', {
+      devices = _devicesFrom(value['devices'], 'id', {
         'used_bytes': ('Used', formatBytes),
         'total_bytes': ('Size', formatBytes),
-        'free_bytes': ('Free', formatBytes),
+        'available_bytes': ('Available', formatBytes),
         'utilization_percent': ('Utilisation', formatPercent),
       });
     case 'disk_io':
@@ -188,25 +190,26 @@ GroupSummary summariseGroup(String group, dynamic value, {bool stale = false}) {
         'write_bytes_per_second': ('Write', formatRate),
       });
     case 'network':
-      devices = _devicesFrom(value['interfaces'], 'id', {
-        'receive_bytes_per_second': ('Receive', formatRate),
-        'transmit_bytes_per_second': ('Transmit', formatRate),
-        'receive_errors': ('Receive errors', formatNumber),
-        'transmit_errors': ('Transmit errors', formatNumber),
+      devices = _devicesFrom(value['devices'], 'id', {
+        'rx_bytes_per_second': ('Receive', formatRate),
+        'tx_bytes_per_second': ('Transmit', formatRate),
+        'rx_bytes': ('Received', formatBytes),
+        'tx_bytes': ('Transmitted', formatBytes),
       });
     case 'gpu':
-      devices = _devicesFrom(value['gpus'], 'name', {
+      devices = _devicesFrom(value['devices'], 'id', {
         'utilization_percent': ('Utilisation', formatPercent),
         'memory_used_bytes': ('Memory used', formatBytes),
         'memory_total_bytes': ('Memory total', formatBytes),
         'temperature_celsius': ('Temperature', formatTemperature),
+        'power_watts': ('Power', formatWatts),
       });
     case 'thermal':
-      devices = _devicesFrom(value['sensors'], 'id', {
+      devices = _devicesFrom(value['devices'], 'id', {
         'temperature_celsius': ('Temperature', formatTemperature),
       });
     case 'power':
-      devices = _devicesFrom(value['rails'], 'id', {
+      devices = _devicesFrom(value['devices'], 'id', {
         'watts': ('Power', formatWatts),
       });
   }

@@ -14,6 +14,10 @@ class MonitorPage extends StatelessWidget {
         final staleGroups = ((c.metrics?['stale_groups'] as List?) ?? const [])
             .map((g) => '$g')
             .toSet();
+        if (c.historical || c.hosts.any((h) => h.id == c.selected &&
+            (h.connectivity != 'online' || h.trust == 'revoked'))) {
+          staleGroups.addAll(groupTitles.keys);
+        }
         final series = c.history?['series'] as List? ?? [];
         final points = series.isEmpty
             ? <dynamic>[]

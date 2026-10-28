@@ -21,11 +21,22 @@ from odessy.interaction.broker import InteractionBroker
 from odessy.interaction.context import interaction_scope
 
 
+# These are public measurement counters, not credential-bearing token fields.
+_TOKEN_METRICS = frozenset({
+    'prompt_tokens', 'completion_tokens', 'cached_prompt_tokens', 'total_tokens',
+    'input_tokens', 'output_tokens', 'cache_creation_input_tokens',
+    'cache_read_input_tokens', 'generation_tokens_per_sec',
+    'generation_tokens_per_second',
+})
+
+
 def public(value):
     if is_dataclass(value):
         value = asdict(value)
     if isinstance(value, dict):
-        return {str(k): '<redacted>' if isinstance(v, str) and looks_like_secret_name(str(k)) else public(v) for k, v in value.items()}
+        return {str(k): '<redacted>' if looks_like_secret_name(str(k)) and not (
+            str(k) in _TOKEN_METRICS and (v is None or type(v) in (int, float))
+        ) else public(v) for k, v in value.items()}
     if isinstance(value, (tuple, list)):
         return [public(v) for v in value]
     if isinstance(value, str):

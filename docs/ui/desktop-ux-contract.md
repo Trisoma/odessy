@@ -130,3 +130,22 @@ DeepSeek owns `apps/desktop` during parallel work. No existing field is removed.
 
 Mutation review tokens, configuration revisions, capture IDs, trusted approval
 channels, origin-bound authentication and no-replay behavior remain unchanged.
+
+## October 28 integration corrections (no new wire fields)
+
+- Monitoring cards consume `observation.schema.json` v1: device lists are named
+  `devices`; network rates are `rx_bytes_per_second`/`tx_bytes_per_second`;
+  disk free space is `available_bytes`. Missing values are never zero-filled.
+  A failed refresh marks retained measurements historical rather than current.
+- Credential observation uses the runtime's effective environment-key precedence
+  and rejects whitespace-only keys. This is presence evidence, never authentication.
+- Session snapshots redact credential-named values, including numeric/container
+  credentials; established numeric token-accounting fields remain visible.
+- Existing `restart_required` on helper load is a legacy default, not active-state
+  evidence. Compare saved and service-owned section fingerprints; unavailable
+  service evidence remains unknown. Save never changes the startup descriptor.
+- Credentials remain inherited provider environment references and memory-only
+  connection tokens. No durable OS vault or GUI key-entry support is added.
+- An explicitly selected `credential_env` is authoritative: a missing referenced
+  key cannot silently fall back to another provider/global key. The value is
+  resolved only inside the diagnostic/runtime process, never in saved settings.

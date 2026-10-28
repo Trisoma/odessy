@@ -9,6 +9,7 @@ class MonitorController extends ChangeNotifier {
   Timer? _timer;
   int _epoch = 0;
   bool _disposed = false, busy = false;
+  bool historical = true;
   String message =
       'Connect to a live Odessy service to view monitoring. Demo hosts are not real telemetry.';
   List<MonitoringHost> hosts = [];
@@ -30,6 +31,7 @@ class MonitorController extends ChangeNotifier {
     metrics = null;
     history = null;
     updated = null;
+    historical = true;
     busy = false;
     message =
         'Connect to a live Odessy service to view monitoring. Demo hosts are not real telemetry.';
@@ -46,6 +48,7 @@ class MonitorController extends ChangeNotifier {
     selected = id;
     metrics = null;
     history = null;
+    historical = true;
     notifyListeners();
     if (!busy) await refresh();
   }
@@ -86,6 +89,7 @@ class MonitorController extends ChangeNotifier {
       }
       if (_disposed || epoch != _epoch || id != selected) return;
       metrics = detail;
+      historical = false;
       history = past;
       historyMessage = historyError;
       updated = DateTime.now();
@@ -102,6 +106,7 @@ class MonitorController extends ChangeNotifier {
       });
     } catch (e) {
       if (_disposed || epoch != _epoch) return;
+      historical = true;
       message = e is MonitoringFailure
           ? 'Monitoring unavailable (HTTP ${e.status}). Enable monitoring on the service and check access. Retained values are historical.'
           : 'Monitoring connection unavailable. Retained values are historical; reconnect or refresh.';

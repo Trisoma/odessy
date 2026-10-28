@@ -12,6 +12,14 @@ KEY_ENV = {'claude': 'ANTHROPIC_API_KEY', 'openai': 'OPENAI_API_KEY', 'deepseek'
            'qwen': 'DASHSCOPE_API_KEY', 'kimi': 'MOONSHOT_API_KEY', 'custom': 'ODESSY_CLOUD_API_KEY'}
 
 
+def credential_value(model, environ=None):
+    """Resolve an explicit reference exactly; never persist or return it to a UI."""
+    env = os.environ if environ is None else environ
+    if model.credential_env:
+        return env.get(model.credential_env, '').strip()
+    return (env.get('ODESSY_CLOUD_API_KEY') or env.get(KEY_ENV.get(model.provider, '')) or '').strip()
+
+
 def verify(selection: SetupSelection, discovery: DiscoveryReport | None = None) -> dict:
     local = SetupSelection(role=selection.role)
     if (selection.platform, selection.architecture) != (local.platform, local.architecture):
@@ -22,7 +30,7 @@ def verify(selection: SetupSelection, discovery: DiscoveryReport | None = None) 
         model = {'status': 'not_checked', 'reason': 'No inference was requested; configuration is not model compatibility verification.'}
         if chosen.provider in KEY_ENV:
             key = chosen.credential_env or KEY_ENV[chosen.provider]
-            available = bool(os.environ.get(key, '').strip() or os.environ.get('ODESSY_CLOUD_API_KEY', '').strip())
+            available = bool(credential_value(chosen))
             model = {'status': 'configured' if available else 'needs_credentials', 'credential_env': key,
                      'reason': 'No cloud request sent.'}
         elif discovery and discovery.status != 'not_requested':

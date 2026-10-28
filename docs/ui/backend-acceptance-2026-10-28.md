@@ -63,3 +63,37 @@ machines/accounts/users. Signing and final redistribution approval remain releas
 gates. A Windows build does not qualify Linux/macOS/ARM64. The implementation plan
 retains these acceptance distinctions; this is software closeout, not a claim that
 every release/platform gate is passed.
+
+## Follow-up after merged DeepSeek presentation handoff
+
+Rechecked on `develop` after the hooks merge, preserving the hooks implementation.
+Regression-first corrections:
+
+- Monitor cards consume actual v1 device lists, network rates and disk availability,
+  including reported swap/GPU power values. Invalid numbers stay absent; retained
+  measurements become historical/stale after refresh failures. Closing a stream
+  before its headers arrive no longer emits a spurious shutdown error.
+- Credential presence rejects whitespace-only keys. Checks, probes and startup
+  resolve an explicit environment reference exactly, without silently falling back
+  to an unrelated global key. No value is persisted. Session snapshots also redact
+  numeric/container credentials, preserving public token counts and unknown nulls.
+- A disk-backed save regression verifies saved B does not relabel running A,
+  untouched section hashes remain stable, and stale writers are refused. Client
+  tests verify memory-only connection-token scope, removal and restart behavior.
+
+Fresh results: **170 affected Python tests passed**; Flutter **158 passed, 7 skipped**;
+Dart client **15 passed, 2 skipped**. Both analyses passed; all **105** declared
+settings validated. Windows release build passed (64.9 seconds). Inspected the
+regenerated approval-card widget screenshot: exact action/command, target, scope
+and channel restriction remain visible; payload details remain expandable.
+
+The final wheel/SHA-256 and verification report/dependency notice-member inventory
+are in outer `.qualification/ux-closeout-release/`. Outside-checkout extracted-wheel
+checks passed for exact credential resolution, TTS-only save/reopen and an
+authenticated policy-checked calculator turn using a fake model. Existing
+qualification dependencies were reused; this is not clean-machine or full portable
+bundle acceptance. No new dependency or paid-provider call was introduced.
+Independent read-only review found the explicit-key mismatch and rechecked its fix
+without further blockers. Durable vault support remains unimplemented; inherited
+provider references and session-only connection tokens are the supported behavior.
+Native, physical, accessibility and external-user gates above remain unchanged.

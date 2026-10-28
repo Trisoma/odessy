@@ -75,6 +75,7 @@ class MonitoringClient {
   final String _token;
   final HttpClient _http = HttpClient();
   final Set<HttpClient> _streams = {};
+  bool _closed = false;
   static const _limit = 2 * 1024 * 1024;
 
   Future<HttpClientResponse> _open(String path,
@@ -203,6 +204,10 @@ class MonitoringClient {
       }
       if (buffer.trim().isNotEmpty)
         throw const FormatException('Truncated monitoring stream');
+    } catch (_) {
+      // Closing an owned transport while headers are pending is cancellation,
+      // not a new service failure. Otherwise preserve the real stream error.
+      if (!_closed) rethrow;
     } finally {
       _streams.remove(client);
       client.close(force: true);
@@ -210,6 +215,7 @@ class MonitoringClient {
   }
 
   void close() {
+    _closed = true;
     for (final client in _streams.toList()) {
       client.close(force: true);
     }
