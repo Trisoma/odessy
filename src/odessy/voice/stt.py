@@ -26,9 +26,9 @@ class WhisperCppSTT:
 
     def transcribe(self, audio_path: Path) -> STTResult:
         argv = [
-            self.whisper_bin,
+            str(Path(self.whisper_bin).expanduser()),
             "-m",
-            self.model_path,
+            str(Path(self.model_path).expanduser()),
             "-f",
             str(audio_path),
             "-ng",

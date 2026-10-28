@@ -76,3 +76,23 @@ See [the closeout evidence](backend-acceptance-2026-10-28.md) and
 [the additive contract](desktop-ux-contract.md#october-28-parallel-implementation-contract).
 The historical omissions above are not current software omissions; physical and
 native release acceptance remains distinct from these automated checks.
+
+## Audio selection and STT diagnostic follow-up
+
+Voice settings now enumerate devices automatically without opening them. Microphone
+and Speaker selectors default to **System default**; Refresh audio devices rescans.
+Saved unavailable devices remain labelled **not detected**, rather than silently
+switching. Manual identifiers remain under Advanced. Device selection edits a draft;
+save and explicitly apply/restart to change the running coordinator.
+
+Linux command audio enumerates `arecord -L` / `aplay -L`; the `pulse` entry routes
+through the microphone/speaker selected in the desktop's system sound settings.
+These are ALSA endpoints, not a guarantee that every Bluetooth product name appears.
+Native audio retains its host-API/name identities. No model or microphone is opened
+by enumeration. TTS playback behavior is unchanged.
+
+Whisper now expands `~/...` executable/model paths before running. STT test errors
+identify capture, WAV validation, initialization or transcription with safe messages
+instead of provider raw output. A capture failure is not a cloud credential error.
+Stop wake listening before an independent microphone test, since the audio lease
+permits only one reader. Physical Jetson retesting remains required.
