@@ -98,8 +98,7 @@ class _OdessyAppState extends State<OdessyApp> {
       final saved = RuntimeConfiguration.fromJson(
           componentSettings.snapshot['configuration'] as Json);
       final observed = readiness.current;
-      if (observed?.configuration?.owner != saved.owner ||
-          !controller.connected) {
+      if (observed?.configuration?.owner != saved.owner) {
         throw StateError(
             'Running and saved configuration ownership could not be matched.');
       }
@@ -330,6 +329,7 @@ class _OdessyAppState extends State<OdessyApp> {
     controller.dispose();
     setup.dispose();
     configuredCoordinator?.stop();
+    _sessionKeys.clear();
     maintenance.dispose();
     installerEngine.dispose();
     pairing.dispose();
@@ -679,6 +679,31 @@ class _OdessyAppState extends State<OdessyApp> {
               fontSize: 9,
               fontWeight: FontWeight.w600,
               letterSpacing: 1)));
+  final Map<String,String> _sessionKeys={};
+  Future<String?> _credentialFor(Json spec) async {
+    final name=InstalledCoordinator.credentialVariable(spec);
+    if(name==null || InstalledCoordinator.hasCredential(spec))return null;
+    final model=(spec['selection'] as Map)['model'] as Map;
+    final scope='${model['provider']}:$name';
+    if(_sessionKeys.containsKey(scope))return _sessionKeys[scope];
+    final editor=TextEditingController();
+    final key=await showDialog<String>(context:navigatorKey.currentContext!,builder:(context)=>AlertDialog(
+      title:Text('Connect ${model['provider']}'),
+      content:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
+        const Text('Enter your API key. It stays in memory for this app session and is cleared when Odessy closes. No model request is sent until you send a message or explicitly test the model.'),
+        const SizedBox(height:16),
+        TextField(key:const ValueKey('session-api-key'),controller:editor,obscureText:true,autocorrect:false,enableSuggestions:false,
+          decoration:const InputDecoration(labelText:'API key'))]),
+      actions:[TextButton(onPressed:()=>Navigator.pop(context),child:const Text('Cancel')),
+        FilledButton(onPressed:(){if(editor.text.trim().isNotEmpty)Navigator.pop(context,editor.text.trim());},child:const Text('Connect for this session'))]));
+    editor.clear();
+    // Dialog widgets finish their closing animation before their controller is disposed.
+    WidgetsBinding.instance.addPostFrameCallback((_)=>editor.dispose());
+    if(key==null)throw StateError('An API key is required. Choose Connect saved configuration to enter it.');
+    _sessionKeys[scope]=key;
+    return key;
+  }
+
   Future<void> _connectConfigured(Json spec) async {
     if (_settingsBusy) {
       throw StateError(
@@ -689,6 +714,8 @@ class _OdessyAppState extends State<OdessyApp> {
       throw StateError(
           'Stop the active conversation before changing configuration.');
     }
+    final sessionKey = widget.coordinatorFactory == null ? await _credentialFor(spec) : null;
+    if (!mounted || epoch != configuredEpoch) return;
     await configuredCoordinator?.stop();
     await controller.replace(DisconnectedApi());
     if (!mounted || epoch != configuredEpoch) return;
@@ -698,6 +725,7 @@ class _OdessyAppState extends State<OdessyApp> {
           root: '',
           workspace: spec['workspace'] as String,
           configuration: spec,
+          sessionApiKey: sessionKey,
           expectedFingerprint: spec['expected_fingerprint'] as String?,
         );
     configuredCoordinator = child;

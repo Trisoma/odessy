@@ -281,7 +281,7 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
         if (section == SettingsSections.models) ...[
           const Text(
-              'Cloud credentials must already be available to the desktop process through the named environment variable. This screen stores a reference, not an API key.'),
+              'API keys can come from your environment or be entered when connecting for this app session. Saved settings contain only a credential reference.'),
           if (components != null)
             _component('llm')
           else

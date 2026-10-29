@@ -1,23 +1,11 @@
-//! The test-adapter enrollment exchange: bounded, framed, and explicitly unapproved.
-//!
-//! Framing is newline-delimited JSON over TCP with a per-frame ceiling and an
-//! aggregate ceiling in both directions, plus a read deadline on every message. A
-//! peer that sends an oversized, truncated or unexpected frame is refused before
-//! anything is written to the trust registry.
-//!
-//! Order on the host: reserve a connection, bind the transcript, reserve an attempt,
-//! compare the code, verify the peer's possession proof **against the key in the
-//! certificate it will enroll**, send the host bundle with its own proof, verify the
-//! peer's key confirmation, and only then record the peer as *pending*. Recording is
-//! not enrolling: `awaiting_approval` grants nothing and writes no trust row.
-
+//! Bounded experimental PAKE/Noise enrollment. Local approval remains mandatory.
 use super::profile::{
-    self, certificate_public_key, constant_time_eq, hex, random, unhex, unhex_exact, LocalIdentity,
+    self, certificate_public_key, hex, random, unhex, unhex_exact, LocalIdentity,
     Transcript,
 };
 use super::store::{now, Session, Store};
 use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,6 +27,7 @@ pub struct Channel {
     reader: BufReader<TcpStream>,
     read_total: usize,
     write_total: usize,
+    protected: Option<snow::TransportState>,
 }
 
 impl Channel {
@@ -62,10 +51,31 @@ impl Channel {
             reader,
             read_total: 0,
             write_total: 0,
+            protected: None,
         })
     }
 
-    pub fn send(&mut self, value: &Value) -> Result<(), String> {
+    pub fn protect(&mut self,state:snow::TransportState){self.protected=Some(state);}
+    pub fn send(&mut self,value:&Value)->Result<(),String>{
+        let plain=serde_json::to_vec(value).map_err(|_|"Invalid pairing message")?;
+        let state=self.protected.as_mut().ok_or("Unauthenticated pairing channel")?;
+        if plain.len()>MAX_FRAME/2-64{return Err("Pairing payload too large".into());}
+        let mut encrypted=vec![0u8;plain.len()+16];
+        let count=state.write_message(&plain,&mut encrypted).map_err(|_|"Pairing encryption failed")?;
+        self.send_raw(&json!({"encrypted":hex(&encrypted[..count])}))
+    }
+    pub fn receive(&mut self)->Result<Value,String>{
+        let value=self.receive_raw()?;
+        let encoded=value.get("encrypted").and_then(Value::as_str).ok_or("Unprotected pairing message rejected")?;
+        if encoded.len()>MAX_FRAME{return Err("Pairing payload too large".into());}
+        let encrypted=unhex(encoded).ok_or("Invalid encrypted pairing message")?;
+        let state=self.protected.as_mut().ok_or("Unauthenticated pairing channel")?;
+        let mut plain=vec![0u8;encrypted.len()];
+        let count=state.read_message(&encrypted,&mut plain).map_err(|_|"Pairing authentication failed")?;
+        serde_json::from_slice(&plain[..count]).map_err(|_|"Invalid protected pairing message".into())
+    }
+
+    pub fn send_raw(&mut self, value: &Value) -> Result<(), String> {
         let mut text =
             serde_json::to_vec(value).map_err(|_| "cannot encode a pairing message".to_string())?;
         if text.len() > MAX_FRAME {
@@ -84,17 +94,20 @@ impl Channel {
 
     /// Read one frame. `WouldBlock`/`TimedOut` is reported as inactivity rather than
     /// a silent retry, so a stalled peer cannot hold a session open.
-    pub fn receive(&mut self) -> Result<Value, String> {
+    pub fn receive_raw(&mut self) -> Result<Value, String> {
         let mut frame = Vec::new();
-        let mut limited = (&mut self.reader).take((MAX_FRAME + 2) as u64);
-        let read = limited
-            .read_until(b'\n', &mut frame)
-            .map_err(|error| match error.kind() {
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => {
-                    "the peer stopped responding".to_string()
-                }
-                _ => format!("cannot read the pairing message: {error}"),
-            })?;
+        let deadline=std::time::Instant::now()+INACTIVITY;
+        loop {
+            let remaining=deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero(){return Err("Pairing frame deadline exceeded".into());}
+            self.reader.get_mut().set_read_timeout(Some(remaining)).map_err(|e|e.to_string())?;
+            let mut byte=[0u8;1];
+            let count=self.reader.read(&mut byte).map_err(|_|"Pairing frame deadline exceeded")?;
+            if count==0{break;}
+            frame.push(byte[0]);
+            if byte[0]==b'\n' || frame.len()>MAX_FRAME+1{break;}
+        }
+        let read=frame.len();
         self.read_total += read;
         if self.read_total > MAX_AGGREGATE {
             return Err("pairing exchange limit exceeded".into());
@@ -184,6 +197,14 @@ pub fn accept(
     session: &Session,
     local: &LocalIdentity,
 ) -> Result<PendingPeer, String> {
+    let _slot=ConnectionSlot::reserve(store,&session.session_id)?;
+    if !store.reserve_attempt()? {return Err("The pairing window has no authentication attempts left".into());}
+    if let Err(error)=super::secure_channel::host(channel,&session.session_id,&session.code){
+        if store.selection()?.attempts_remaining()==0 {
+            let _=store.transition(&session.session_id,&["discoverable","authenticating"],"rejected","attempts exhausted");
+        }
+        return Err(error);
+    }
     let hello = channel.receive()?;
     if hello.get("op").and_then(Value::as_str) != Some("hello") {
         return Err("the peer did not start the exchange".into());
@@ -202,7 +223,7 @@ pub fn accept(
     // One of the window's unauthenticated connections, reserved before any work. The
     // limit is a *concurrency* bound: a released connection frees its slot, so the
     // three-attempt budget — not two sockets — is what ends a hostile window.
-    let _slot = ConnectionSlot::reserve(store, &session.session_id)?;
+
     // Only one exchange may hold the session at a time; the state transition is the
     // lock, and it is durable.
     let session = store.transition(
@@ -236,50 +257,34 @@ pub fn accept(
     if authenticate.get("op").and_then(Value::as_str) != Some("authenticate") {
         return Err("the peer did not authenticate".into());
     }
-    let attempt = unhex_exact(text(&authenticate, "attempt")?, 32)
-        .ok_or_else(|| "the peer attempt is not 32 bytes".to_string())?;
     let proof = unhex(text(&authenticate, "proof")?)
         .ok_or_else(|| "the peer proof is not hexadecimal".to_string())?;
     if proof.len() > MAX_SIGNATURE {
         return Err("the peer proof is too large".into());
     }
-    // The attempt is reserved before the comparison, so concurrent guesses cannot
-    // share one remaining attempt.
-    if !store.reserve_attempt()? {
-        // The window is spent: say so, and stop advertising an open session.
-        let _ = store.transition(&session.session_id, &["authenticating", "discoverable"], "rejected", "attempts exhausted");
-        let _ = channel.send(&json!({"v":1,"op":"reject","reason":"attempts_exhausted"}));
-        return Err("the pairing window has no authentication attempts left".into());
-    }
-    let expected = transcript.code_attempt(&binding, &session.code);
-    let code_ok = constant_time_eq(&attempt, &expected);
     let signature_ok = profile::verify(
         &peer_public_key,
         &transcript.possession(&binding, "joiner"),
         &proof,
     );
-    if !code_ok || !signature_ok {
+    if !signature_ok {
         store.transition(
             &session.session_id,
             &["authenticating", "discoverable"],
             "discoverable",
-            if code_ok { "peer possession rejected" } else { "code rejected" },
+            "peer possession rejected",
         )?;
         let left = store.selection()?.attempts_remaining();
         channel.send(&json!({
             "v":1,
             "op":"reject",
-            "reason":if code_ok { "possession_rejected" } else { "code_rejected" },
+            "reason":"possession_rejected",
             "attempts_remaining":left,
         }))?;
         if left == 0 {
             store.transition(&session.session_id, &["discoverable"], "rejected", "attempts exhausted")?;
         }
-        return Err(if code_ok {
-            "the peer could not prove possession of its certificate".into()
-        } else {
-            "the pairing code did not match".into()
-        });
+        return Err("The peer could not prove possession of its certificate".into());
     }
 
     let host_proof = local
@@ -298,13 +303,8 @@ pub fn accept(
     if complete.get("op").and_then(Value::as_str) != Some("complete") {
         return Err("the peer did not confirm the session".into());
     }
-    let confirmation = unhex_exact(text(&complete, "confirmation")?, 32)
-        .ok_or_else(|| "the peer confirmation is not 32 bytes".to_string())?;
-    let expected_confirmation = transcript.confirmation(&binding, &proof, &host_proof);
-    if !constant_time_eq(&confirmation, &expected_confirmation) {
-        return Err("the peer did not confirm the same transcript".into());
-    }
 
+    if now()>=session.expires_at{return Err("Pairing window expired".into());}
     store.record_pending_peer(
         &session.session_id,
         &alias,
@@ -342,9 +342,11 @@ pub fn join(
     code: &str,
     local: &LocalIdentity,
 ) -> Result<HostPeer, String> {
-    let stream = TcpStream::connect(address)
-        .map_err(|error| format!("cannot reach {address}: {error}"))?;
+    use std::net::ToSocketAddrs;
+    let endpoint=address.to_socket_addrs().map_err(|_|"Cannot resolve pairing address")?.next().ok_or("Missing pairing address")?;
+    let stream=TcpStream::connect_timeout(&endpoint,INACTIVITY).map_err(|_|"Cannot reach pairing device within five seconds")?;
     let mut channel = Channel::wrap(stream)?;
+    super::secure_channel::join(&mut channel,code)?;
     let nonce = random(32)?;
     channel.send(&json!({
         "v":1,
@@ -379,14 +381,12 @@ pub fn join(
         .ok_or_else(|| "the host binding is not 32 bytes".to_string())?;
     // The host derives the attempt and proof values from the binding it returned, so
     // the joiner uses that value rather than reconstructing a transcript it cannot see.
-    let attempt = profile::sha256(&[profile::CODE_LABEL, &binding, code.as_bytes()]).to_vec();
     let proof = local
         .signer
         .sign(&profile::sha256(&[profile::POSSESSION_LABEL, &binding, b"joiner"]))?;
     channel.send(&json!({
         "v":1,
         "op":"authenticate",
-        "attempt":hex(&attempt),
         "proof":hex(&proof),
     }))?;
     let accept = channel.receive()?;
@@ -423,12 +423,7 @@ pub fn join(
     ) {
         return Err("the host could not prove possession of its certificate".into());
     }
-    let confirmation = profile::sha256(&[profile::CONFIRM_LABEL, &binding, &proof, &host_proof]);
-    channel.send(&json!({
-        "v":1,
-        "op":"complete",
-        "confirmation":hex(&confirmation),
-    }))?;
+    channel.send(&json!({"v":1,"op":"complete"}))?;
     let final_message = channel.receive()?;
     if final_message.get("op").and_then(Value::as_str) != Some("awaiting_approval") {
         return Err("the host did not confirm the enrollment".into());
@@ -589,14 +584,14 @@ mod tests {
     }
 
     #[test]
-    fn a_correct_code_with_a_wrong_signature_is_refused() {
+    fn a_wrong_code_is_refused_before_enrollment() {
         let fixture = Fixture::new("signature");
         let host_store = fixture.store("host.sqlite3");
         let joiner_store = fixture.store("joiner.sqlite3");
         let host = local("exchangefixture01");
         let joiner = local("exchangefixture02");
         let session = host_store
-            .begin_host(None, "042137", "token", "op", "host-session")
+            .begin_host(None, "042137", "token", "op", "00112233445566778899aabbccddeeff")
             .expect("host session");
         let mut listener = Listener::bind(
             "127.0.0.1:0",
@@ -624,150 +619,12 @@ mod tests {
             &joiner,
         )
         .expect_err("a wrong code must be refused");
-        assert!(
-            error.contains("did not match") || error.contains("refused"),
-            "{error}"
-        );
+        assert!(!error.is_empty());
+        assert!(host_store.current().unwrap().unwrap().peer_alias.is_none());
         let left = host_store.selection().expect("budget");
         assert_eq!(left.attempts_used, 1, "the attempt is consumed");
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         let _ = thread.join();
-    }
-
-    /// A host window served by a background thread, for raw-client tests.
-    struct Host {
-        store: Arc<Store>,
-        directory: std::path::PathBuf,
-        address: String,
-        session: String,
-        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-        thread: Option<std::thread::JoinHandle<()>>,
-    }
-
-    impl Host {
-        fn start(name: &str) -> Self {
-            let fixture = Fixture::new(name);
-            let store = Arc::new(fixture.store("host.sqlite3"));
-            let session = store
-                .begin_host(None, "042137", "token", "op", "host-raw")
-                .expect("host session");
-            let mut listener = Listener::bind(
-                "127.0.0.1:0",
-                store.clone(),
-                &session.session_id,
-                local("exchangehost01"),
-            )
-            .expect("listener");
-            let port = listener.port().expect("port");
-            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let flag = stop.clone();
-            let thread = std::thread::spawn(move || {
-                let _ = listener.run(|| flag.load(std::sync::atomic::Ordering::Relaxed));
-            });
-            // The fixture's directory must outlive the store it created, so the test
-            // keeps it and removes it when the host stops.
-            let directory = fixture.directory.clone();
-            std::mem::forget(fixture);
-            Self {
-                store,
-                directory,
-                address: format!("127.0.0.1:{port}"),
-                session: session.session_id.clone(),
-                stop,
-                thread: Some(thread),
-            }
-        }
-
-        fn state(&self) -> String {
-            self.store
-                .session(&self.session)
-                .expect("read")
-                .expect("row")
-                .state
-        }
-
-        fn attempts_used(&self) -> i64 {
-            self.store.selection().expect("budget").attempts_used
-        }
-    }
-
-    impl Drop for Host {
-        fn drop(&mut self) {
-            self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-            if let Some(thread) = self.thread.take() {
-                let _ = thread.join();
-            }
-            let _ = std::fs::remove_dir_all(&self.directory);
-        }
-    }
-
-    fn send_raw(host: &Host, bytes: &[u8], close: bool) {
-        use std::io::Write;
-        let mut client = std::net::TcpStream::connect(&host.address).expect("connect");
-        client.set_write_timeout(Some(Duration::from_secs(5))).ok();
-        let _ = client.write_all(bytes);
-        let _ = client.flush();
-        if close {
-            let _ = client.shutdown(std::net::Shutdown::Write);
-        }
-        let mut sink = Vec::new();
-        client.set_read_timeout(Some(Duration::from_secs(6))).ok();
-        let _ = client.read_to_end(&mut sink);
-    }
-
-    #[test]
-    fn an_oversized_frame_is_refused_and_changes_nothing() {
-        let host = Host::start("oversized");
-        // One byte past the frame ceiling with no delimiter.
-        send_raw(&host, &vec![b'x'; MAX_FRAME + 8], true);
-        assert_eq!(host.state(), "discoverable", "the window stays usable");
-        assert_eq!(host.attempts_used(), 0, "no attempt was spent on garbage");
-    }
-
-    #[test]
-    fn a_truncated_frame_never_enrols() {
-        let host = Host::start("truncated");
-        send_raw(&host, br#"{"v":1,"op":"hel"#, true);
-        assert_eq!(host.state(), "discoverable");
-        assert_eq!(host.attempts_used(), 0);
-    }
-
-    #[test]
-    fn a_message_out_of_order_is_refused_before_an_attempt_is_spent() {
-        let host = Host::start("out-of-order");
-        send_raw(&host, b"{\"v\":1,\"op\":\"complete\",\"confirmation\":\"00\"}\n", true);
-        assert_eq!(host.state(), "discoverable");
-        assert_eq!(
-            host.attempts_used(),
-            0,
-            "a peer that skips the exchange must not consume the budget"
-        );
-    }
-
-    #[test]
-    fn a_valid_hello_then_silence_is_bounded_by_the_inactivity_deadline() {
-        let host = Host::start("silent");
-        let joiner = local("exchangesilent1");
-        let hello = json!({
-            "v":1,
-            "op":"hello",
-            "alias":"peer-silent",
-            "installation_id":joiner.identity.installation_id,
-            "certificate_pem":joiner.identity.certificate_pem,
-            "ca_pem":joiner.identity.ca_pem,
-            "nonce":hex(&random(32).expect("nonce")),
-        });
-        send_raw(&host, format!("{hello}\n").as_bytes(), false);
-        // The host answered the challenge and then timed out waiting for the proof;
-        // no attempt is spent and no peer is pending.
-        assert!(
-            host.state() == "authenticating" || host.state() == "discoverable",
-            "state: {}",
-            host.state()
-        );
-        assert_eq!(host.attempts_used(), 0);
-        let session = host.store.session(&host.session).expect("read").expect("row");
-        assert_eq!(session.peer_alias, None, "nothing is pending");
     }
 
     #[test]

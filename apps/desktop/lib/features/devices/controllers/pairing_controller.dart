@@ -44,9 +44,10 @@ class PairingController extends ChangeNotifier {
   /// a user-initiated operation. Used to watch for the other computer's approval.
   Future<void> refresh() async {
     if (busy || _disposed) return;
+    final epoch=_epoch;
     try {
       final value = await backend.status();
-      if (!_disposed && !busy) {
+      if (!_disposed && !busy && epoch==_epoch) {
         snapshot = value;
         _notify();
       }

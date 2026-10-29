@@ -158,3 +158,12 @@ is claimed for this increment.
   previous review is not M0 approval and does not cover these files.
 
 Nothing was committed, merged or pushed.
+
+## October 29 closeout update
+
+See [pairing UX closeout](pairing-ux-closeout-2026-10-29.md). It supersedes the
+placeholder-package, synchronous-window and missing whole-change-review items
+above: a real Windows executor package and local packaged mTLS/Node verification
+now exist. Exact-session cancellation, native state ownership, polling/Stop,
+bounded helper output/cleanup and owned executor containment were corrected.
+M0 and real Windows–Jetson short-code acceptance remain blocked/unperformed.

@@ -1,9 +1,7 @@
 """End-to-end short-code pairing through the real helper and the real binary.
 
 This is the path the desktop uses: the Python bridge validates inputs, then runs
-fixed `odessy-link pairing` commands. The exchange itself is the unapproved test
-adapter, which needs both the `test-profile` cargo feature and an explicit
-environment marker; when it is unavailable the test skips instead of pretending.
+fixed `odessy-link pairing` commands. The exchange uses the default experimental authenticated pairing protocol.
 """
 from __future__ import annotations
 
@@ -17,8 +15,7 @@ import time
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARY = ROOT / 'native' / 'odessy-link' / 'target' / 'debug' / (
-    'odessy-link.exe' if os.name == 'nt' else 'odessy-link')
+BINARY = Path(os.environ.get('ODESSY_PAIRING_TEST_BINARY', str(ROOT / 'native' / 'odessy-link' / 'target' / 'release' / ('odessy-link.exe' if os.name == 'nt' else 'odessy-link'))))
 
 
 def _adapter_available(binary, state):

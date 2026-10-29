@@ -236,18 +236,53 @@ def _unavailable_pairing(detail=''):
 
 def _native_json(argv,timeout,stdin_text=None):
     """Run a fixed native command, bounded in time and output, without a shell."""
+    import queue
+    import threading
+    import time
     process=subprocess.Popen(argv,stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
         stdout=subprocess.PIPE,stderr=subprocess.PIPE,
         **({'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}))
+    replies=[queue.Queue(maxsize=1),queue.Queue(maxsize=1)]
+    oversized=threading.Event()
+    def drain(stream,limit,target):
+        kept=bytearray()
+        try:
+            while True:
+                chunk=stream.read(8192)
+                if not chunk:break
+                room=limit-len(kept)
+                if len(chunk)>room:oversized.set()
+                kept.extend(chunk[:max(0,room)])
+        finally:
+            target.put(bytes(kept))
+            stream.close()
+    for stream,limit,target in zip((process.stdout,process.stderr),(262144,65536),replies):
+        threading.Thread(target=drain,args=(stream,limit,target),daemon=True).start()
+    if stdin_text is not None:
+        try:process.stdin.write(stdin_text.encode('utf-8'));process.stdin.close()
+        except BrokenPipeError:pass
+    deadline=time.monotonic()+timeout
+    failure=None
+    while process.poll() is None:
+        if oversized.is_set():failure='The pairing component returned too much data.';break
+        if time.monotonic()>=deadline:
+            failure='The pairing component did not respond in time. Inspect both devices before retrying.';break
+        time.sleep(.01)
+    if failure:
+        process.kill()
+        try:process.wait(timeout=.5)
+        except subprocess.TimeoutExpired:pass
+        # Never wait for inherited descendant pipes on timeout. Drain threads retain
+        # fixed caps only, and exit when those handles close.
+        raise ValueError(failure)
     try:
-        stdout,stderr=process.communicate(timeout=timeout,
-            input=stdin_text.encode('utf-8') if stdin_text is not None else None)
-    except subprocess.TimeoutExpired:
-        process.kill();process.communicate()
-        raise ValueError('The pairing component did not respond in time. Inspect both devices before retrying.') from None
-    if len(stdout)>262144 or len(stderr)>65536:
-        raise ValueError('The pairing component returned too much data.')
+        stdout=replies[0].get(timeout=.5)
+        stderr=replies[1].get(timeout=.5)
+    except queue.Empty:
+        raise ValueError('Pairing output is incomplete. Inspect the operation before retrying.') from None
+    if oversized.is_set():raise ValueError('The pairing component returned too much data.')
     return process.returncode,stdout.decode('utf-8','replace'),stderr.decode('utf-8','replace')
+
 
 
 def _short_code(data,*,runner=None):
@@ -316,6 +351,25 @@ def _short_code(data,*,runner=None):
                 raise
         raise ValueError('The pairing component refused the request. Inspect the component status before retrying.')
     return _pairing_snapshot(stdout,command)
+
+
+def _discovery_devices(devices):
+    """One untrusted candidate per advertised identity, with pairing endpoints first."""
+    import ipaddress
+    grouped={}
+    def rank(item):
+        address=item.get('address') or ''
+        host=address.rsplit(':',1)[0].strip('[]')
+        try: version=ipaddress.ip_address(host).version
+        except ValueError: version=9
+        return (item.get('purpose')!='pairing',version,address)
+    for item in devices:
+        if not isinstance(item,dict) or not item.get('usable') or not isinstance(item.get('address'),str):continue
+        fingerprint=item.get('advertised_fingerprint')
+        key=fingerprint.lower() if isinstance(fingerprint,str) and re.fullmatch('[a-fA-F0-9]{64}',fingerprint) else item['address']
+        candidate=dict(item,trusted=False)
+        if key not in grouped or rank(candidate)<rank(grouped[key]):grouped[key]=candidate
+    return sorted(grouped.values(),key=lambda item:(item.get('name',''),item['address']))
 
 
 def pair(parameters,*,runner=None):
@@ -407,7 +461,7 @@ def pair(parameters,*,runner=None):
         discovery=json.loads(text)
         if not isinstance(discovery,dict) or discovery.get('schema_version')!=1 or not isinstance(discovery.get('devices'),list) or len(discovery['devices'])>256:
             raise ValueError('Unsupported discovery response; update odessy-link.')
-        result['devices']=discovery['devices']
+        result['devices']=_discovery_devices(discovery['devices'])
         result['message']='Nearby advertisements are unverified. Selecting a device never enrolls it or grants access.'
     return result
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/app/app.dart';
+import 'readiness_controller_test.dart' show ObservedApi;
 import 'component_settings_test.dart' show SavedComponents;
 import 'setup_controller_test.dart' show RestoringBackend;
 import 'package:odessy_desktop/app/setup/disconnected_api.dart';
@@ -13,10 +14,23 @@ class RecoveryApi extends LocalApi {
   Future<List<String>> profiles() async => ['current'];
   @override
   Future<List<Profile>> profileMetadata() async => [];
+  @override Future<Json> settings() async => {'settings':{'max_consultations':1}};
   @override
-  Future<RuntimeCapabilities> runtimeCapabilities() async => throw const ApiFailure(404);
+  Future<RuntimeCapabilities> runtimeCapabilities() => ObservedApi().runtimeCapabilities();
   @override
   Future<Session> createSession() async => throw const ApiFailure(503);
+}
+
+class OwnedRecoverySettings extends RestoringBackend {
+  @override Future<SetupReply> execute(SetupRequest request) async {
+    final reply=await super.execute(request);
+    if(request.operation!='component-settings')return reply;
+    return SetupReply.fromJson({'id':request.id,'status':'ok','result':{
+      ...reply.result,'configuration':{'owner':'b'*64,'fingerprint':'c'*64,
+      'fingerprints':{for(final s in ['llm','stt','tts','voice','host'])s:'d'*64},
+      'model':{'provider':'ollama','name':'A'},'workspace':'/workspace','role':'combined'}
+    }},request.id);
+  }
 }
 
 class RecoveryCoordinator implements InstalledCoordinatorHandle {
@@ -75,15 +89,21 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final child = RecoveryCoordinator();
-    await tester.pumpWidget(OdessyApp(api: DisconnectedApi(), setupBackend: RestoringBackend(), coordinatorFactory: (_) => child));
-    await tester.pumpAndSettle();
+    await tester.pumpWidget(OdessyApp(api: DisconnectedApi(), setupBackend: OwnedRecoverySettings(), coordinatorFactory: (_) => child));
+    for(var frame=0;frame<10;frame++){await tester.pump(const Duration(milliseconds:100));}
     await tester.tap(find.text('Configure model'));
-    await tester.pumpAndSettle();
+    for(var frame=0;frame<10;frame++){await tester.pump(const Duration(milliseconds:100));}
     await tester.ensureVisible(find.text('Connect saved configuration').last);
     await tester.tap(find.text('Connect saved configuration').last);
-    await tester.pumpAndSettle();
+    for(var frame=0;frame<10;frame++){await tester.pump(const Duration(milliseconds:100));}
     expect(find.textContaining('Cannot start a conversation'), findsWidgets);
     expect(child.stops, 0, reason: 'independent service management must remain available');
+    await tester.ensureVisible(find.text('Apply saved settings · restart'));
+    await tester.tap(find.text('Apply saved settings · restart'));
+    for(var frame=0;frame<10;frame++){await tester.pump(const Duration(milliseconds:100));}
+    expect(find.text('Restart with saved configuration?'),findsOneWidget,reason:tester.widgetList<Text>(find.byType(Text)).map((w)=>w.data).whereType<String>().join(' | '));
+    await tester.tap(find.widgetWithText(TextButton,'Cancel').last);
+    for(var frame=0;frame<10;frame++){await tester.pump(const Duration(milliseconds:100));}
     await tester.pumpWidget(const SizedBox());
   });
   testWidgets('startup failure offers settings and devices without retrying work', (tester) async {

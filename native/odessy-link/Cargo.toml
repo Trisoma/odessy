@@ -7,9 +7,7 @@ description = "Authenticated host pairing and MCP transport for Odessy."
 license = "Apache-2.0"
 
 [features]
-# Off by default and never enabled for a release artifact. It adds an explicitly
-# unapproved pairing exchange so software around the M0 gate can be exercised end to
-# end. A build without it contains no way to enroll by short code at all.
+# Legacy feature retained as a no-op for existing development commands.
 default = []
 test-profile = []
 
@@ -46,6 +44,9 @@ mdns-sd = "0.13"
 # ECDSA P-256 possession proofs for enrollment. Already present transitively through
 # rustls/rcgen's `ring` provider, so this adds no new C build and no second provider.
 ring = "0.17"
+spake2 = "=0.4.0"
+snow = "=0.9.6"
+x509-parser = "=0.16.0"
 
 [target.'cfg(unix)'.dependencies]
 # Signalling the process group created at spawn, so descendants are terminated too.

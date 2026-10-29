@@ -231,3 +231,15 @@ browsing, Allow pairing, Approve request, Cancel, the six-digit code and its sta
 single-instance focus, owned child processes, an explicit keep-in-background choice,
 package checksum verification and `--selftest`. It is not the Flutter assistant and
 contains no trust logic of its own.
+
+October 29 additive clarification: cancellation names the session created by the
+current Dart adapter; read-only status never adopts ownership. Native Start/Stop
+executor is separate from enrollment and does not grant authority. `ready` denotes
+a saved grant, not remote health; polling never restarts a stopped executor. The
+private `serve --activation-stdin` switch blocks listener/Node creation until its
+owning Windows companion has assigned process containment and sends one newline.
+This is local lifecycle control, not a remote authentication mechanism. M0 stays
+closed. See `docs/setup/pairing-ux-closeout-2026-10-29.md` for exact evidence.
+
+### Oct 29 credential recovery correction
+Session creation may return additive detail.code=model_credentials_missing or model_configuration_invalid with HTTP 503. Clients render fixed local copy, never arbitrary error bodies. Owned source coordinators can receive an explicitly entered, session-only provider key through their child environment; no key is persisted, passed in argv, added to configuration descriptors or sent to an execution host. Service ownership/restart reservation remains independent of conversation-session success.

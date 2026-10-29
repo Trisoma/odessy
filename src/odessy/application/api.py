@@ -187,9 +187,16 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         except (Exception, SystemExit) as exc:
             # Startup failure does not make independent configuration and
             # native pairing management unavailable. Never expose raw errors.
+            from odessy.models.cloud_model import CloudModelConfigError
+            cause = exc
+            while cause.__cause__ is not None:
+                cause = cause.__cause__
+            code = 'session_unavailable'
+            if isinstance(cause, CloudModelConfigError):
+                code = 'model_credentials_missing' if 'needs an API key' in str(cause) else 'model_configuration_invalid'
             raise HTTPException(503, detail={
-                'code': 'session_unavailable',
-                'message': 'Cannot start a conversation. Check the configured model and execution host in Settings or Devices. No alternative host was selected.',
+                'code': code,
+                'message': 'Conversation initialization failed. Configuration remains available.',
             }) from exc
         finally:
             pending_admissions -= 1

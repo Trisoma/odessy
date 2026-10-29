@@ -15,6 +15,7 @@ mod cli;
 mod exchange;
 mod profile;
 mod store;
+mod secure_channel;
 
 pub use cli::run;
 #[cfg(test)]

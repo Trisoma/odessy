@@ -12,9 +12,10 @@ class ChatModel(FakeModel):
         assert model_tool_names() == []
         return FinalResponse('Hello from the selected model')
 
+@pytest.mark.parametrize('alias', ['', 'laptop'])
 @pytest.mark.parametrize('failure', [RuntimeError('offline'), SystemExit('revoked')])
-def test_executor_failure_allows_chat_but_no_tools_hooks_or_jobs(monkeypatch, tmp_path, failure):
-    monkeypatch.setenv('ODESSY_PAIRED_HOST', 'laptop')
+def test_executor_failure_allows_chat_but_no_tools_hooks_or_jobs(monkeypatch, tmp_path, failure, alias):
+    monkeypatch.setenv('ODESSY_PAIRED_HOST', alias)
     monkeypatch.setenv('ODESSY_DEPLOYMENT', 'split')
     @asynccontextmanager
     async def unavailable(*args, **kwargs):

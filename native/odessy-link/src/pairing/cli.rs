@@ -1,15 +1,4 @@
-//! Short-code enrollment: the profile gate, durable sessions and the CLI surface.
-//!
-//! Production behavior is unchanged from the security-review gate: no listener is
-//! opened, no code is compared and no trust row is written, because no complete
-//! reviewed protocol profile exists (see `docs/security/m0-pairing-profile.md`).
-//! Everything else — durable sessions, the window, the global attempt budget, the
-//! staged commit and its recovery — is implemented and exercised through an
-//! explicitly unapproved test adapter that a release build cannot enable.
-//!
-//! The stdio boundary in [`serve`] stays closed: it answers with the capability
-//! snapshot and never dispatches a command.
-
+//! Experimental six-digit authenticated enrollment and local approval.
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -17,8 +6,8 @@ use std::path::PathBuf;
 use super::{exchange, profile, store};
 
 /// The message a production build answers with.
-pub const REVIEW_REASON: &str = "protocol_review_required";
-pub const REVIEW_MESSAGE: &str = "Short-code pairing is unavailable until the protocol security review is complete. Existing paired devices remain usable.";
+
+
 
 /// Limits, reported so a client never has to hard-code its own copy.
 pub fn limits() -> Value {
@@ -38,32 +27,19 @@ pub fn limits() -> Value {
 pub fn capabilities() -> Value {
     json!({
         "schema_version": 1,
-        "supported": false,
+        "supported": true,
         "state": "closed",
-        "reason": REVIEW_REASON,
-        "message": REVIEW_MESSAGE,
+        "reason": "experimental",
+        "message": "Experimental six-digit pairing. Approve the device and workspace on the host.",
         "session_id": "",
         "review_token": "",
-        "profile": profile::Profile::Production.name(),
+        "profile": profile::Profile::Experimental.name(),
         "approved": false,
         "limits": limits(),
     })
 }
 
-fn test_capabilities() -> Value {
-    json!({
-        "schema_version": 1,
-        "supported": true,
-        "state": "closed",
-        "reason": "unapproved_test_profile",
-        "message": "Test adapter only: this is not the reviewed pairing protocol. Codes are not protected against offline guessing.",
-        "session_id": "",
-        "review_token": "",
-        "profile": profile::Profile::TestOnly.name(),
-        "approved": false,
-        "limits": limits(),
-    })
-}
+
 
 /// The stdio capability boundary. It answers every request with the closed snapshot
 /// and never dispatches, echoes a code or opens a session.
@@ -137,17 +113,9 @@ pub fn open_store_readonly() -> Result<store::Store, String> {
 
 /// A status document for a session, or the closed snapshot when there is none.
 pub fn snapshot(session: Option<&store::Session>, active: profile::Profile) -> Value {
-    if active == profile::Profile::Production {
-        let mut value = capabilities();
-        if let Some(session) = session {
-            // An old session's state is truthful information, but it does not make
-            // enrollment available.
-            value["previous_state"] = json!(session.state);
-        }
-        return value;
-    }
+
     let Some(session) = session else {
-        return test_capabilities();
+        return capabilities();
     };
     let now = store::now();
     let mut value = json!({
@@ -242,8 +210,7 @@ pub fn run(arguments: &[String]) -> Result<(), crate::Failure> {
         "capabilities" => {
             let options = options(&arguments[1..], &[])?;
             print_json(&match options.profile {
-                profile::Profile::Production => capabilities(),
-                profile::Profile::TestOnly => test_capabilities(),
+                profile::Profile::Experimental => capabilities(),
             })
         }
         "status" => {
@@ -270,10 +237,7 @@ pub fn run(arguments: &[String]) -> Result<(), crate::Failure> {
 
 fn begin(arguments: &[String]) -> Result<(), crate::Failure> {
     let options = options(arguments, &["--workspace"])?;
-    if options.profile == profile::Profile::Production {
-        // No session, no code, no listener: report the gate truthfully.
-        return print_json(&capabilities());
-    }
+
     let workspace = match options.values.get("--workspace") {
         Some(path) => {
             let path = PathBuf::from(path);
@@ -320,9 +284,7 @@ fn listen(arguments: &[String]) -> Result<(), crate::Failure> {
     let active =
         profile::resolve(values.get("--profile").map(String::as_str) == Some("test-adapter"))
             .map_err(crate::Failure::Runtime)?;
-    if active == profile::Profile::Production {
-        return print_json(&capabilities());
-    }
+
     let address = crate::required(&values, "--listen")?.to_string();
     if address.len() > 512 || address.chars().any(char::is_whitespace) {
         return Err(crate::Failure::Usage("the listen address is not usable".into()));
@@ -354,7 +316,7 @@ fn listen(arguments: &[String]) -> Result<(), crate::Failure> {
             .parse::<std::net::SocketAddr>()
             .map(|value| value.ip())
             .ok();
-        match crate::discover::advertise(
+        match crate::discover::advertise_pairing(
             &identity.installation_id,
             &identity.fingerprint(),
             "odessy-link.local.",
@@ -370,7 +332,7 @@ fn listen(arguments: &[String]) -> Result<(), crate::Failure> {
     } else {
         None
     };
-    eprintln!("pairing listener on port {port} (test adapter, unapproved)");
+    eprintln!("pairing listener on port {port} (experimental authenticated enrollment)");
     let deadline = store::now() + seconds as i64;
     let session_id = session.session_id.clone();
     let watch = store.clone();
@@ -422,19 +384,14 @@ fn code_from_stdin() -> Result<String, crate::Failure> {
 
 fn join(arguments: &[String]) -> Result<(), crate::Failure> {
     let values = crate::parse_with_switches(arguments, &["--address", "--code", "--profile"], &["--code-stdin"])?;
-    if profile::resolve(values.get("--profile").map(String::as_str) == Some("test-adapter"))
-        .map_err(crate::Failure::Runtime)?
-        == profile::Profile::Production
-    {
-        return print_json(&capabilities());
-    }
+
     let address = crate::required(&values, "--address")?.to_string();
     if address.len() > 512 || address.chars().any(char::is_whitespace) {
         return Err(crate::Failure::Usage(
             "the address is not a socket address".into(),
         ));
     }
-    let active = profile::Profile::TestOnly;
+    let active = profile::Profile::Experimental;
     let code = match (values.get("--code"), values.contains_key("--code-stdin")) {
         (Some(code), false) => {
             if !store::valid_code(code) {
@@ -464,8 +421,12 @@ fn join(arguments: &[String]) -> Result<(), crate::Failure> {
             // The host identity is now *pending* locally. Enrolling it is an address
             // book entry with no capability: execution authority is unchanged, and the
             // operator must still review outbound consent.
-            commit(&store, &session.session_id, None, false)
-                .map_err(crate::Failure::Runtime)?
+            let committed=commit(&store, &session.session_id, None, false).map_err(crate::Failure::Runtime)?;
+            use std::net::ToSocketAddrs;
+            let mut endpoint=address.to_socket_addrs().map_err(|_|crate::Failure::Runtime("Cannot resolve execution address".into()))?.next().ok_or_else(||crate::Failure::Runtime("Execution address missing".into()))?;
+            endpoint.set_port(7443);
+            crate::open_registry()?.set_address(&committed.peer_alias.clone().unwrap_or_default(),&endpoint.to_string()).map_err(crate::Failure::Runtime)?;
+            committed
         }
         Err(error) => {
             let current = store
@@ -577,9 +538,7 @@ pub(crate) fn commit(
 
 fn confirm(arguments: &[String]) -> Result<(), crate::Failure> {
     let options = options(arguments, &["--session-id", "--review-token", "--workspace"])?;
-    if options.profile == profile::Profile::Production {
-        return print_json(&capabilities());
-    }
+
     let session_id = crate::required(&options.values, "--session-id")?.to_string();
     let token = crate::required(&options.values, "--review-token")?.to_string();
     let store = open_store().map_err(crate::Failure::Runtime)?;

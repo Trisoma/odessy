@@ -1,127 +1,86 @@
-# Assemble the Windows executor package and write its checksum manifest.
-#
-# Nothing is invented here: every required component must already exist, and the
-# resulting package is verified with `odessy-executor --selftest` before this script
-# reports success. A missing component is an error, not a warning.
-#
-#   pwsh -File native/odessy-link/package-executor.ps1 `
-#       -NodeDirectory C:\odessy\node `
-#       -NodeServer C:\odessy\tool-server\index.js `
-#       -OutputDirectory build\executor-package
+# Build a Windows x64 executor package. No installer and no model dependencies.
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$NodeDirectory,
-    [Parameter(Mandatory = $true)][string]$NodeServer,
-    [string]$OutputDirectory = 'build/executor-package',
-    [string]$Release = 'release'
+    [Parameter(Mandatory=$true)][string]$NodeDirectory,
+    [string]$NodeServer,
+    [string]$ToolServerDirectory,
+    [string]$OutputDirectory='../../build/executor-package',
+    [ValidateSet('release','debug')][string]$Release='release',
+    [switch]$SkipBuild
 )
-
-$ErrorActionPreference = 'Stop'
-$crate = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ErrorActionPreference='Stop'
+$crate=$PSScriptRoot
+$repo=[IO.Path]::GetFullPath((Join-Path $crate '../..'))
+$output=if([IO.Path]::IsPathRooted($OutputDirectory)){[IO.Path]::GetFullPath($OutputDirectory)}else{[IO.Path]::GetFullPath((Join-Path $crate $OutputDirectory))}
+# Never clear an existing path, even if it happens to contain a checksum file.
+if(Test-Path -LiteralPath $output){throw "output already exists; choose a new directory: $output"}
+$parent=Split-Path -Parent $output
+if(-not(Test-Path -LiteralPath $parent -PathType Container)){throw 'output parent must exist'}
+if(-not $ToolServerDirectory){
+    if($NodeServer){$ToolServerDirectory=Split-Path -Parent (Split-Path -Parent (Split-Path -Parent ([IO.Path]::GetFullPath($NodeServer))))}
+    else{$ToolServerDirectory=Join-Path $repo 'tools'}
+}
+$ToolServerDirectory=[IO.Path]::GetFullPath($ToolServerDirectory)
+$NodeDirectory=[IO.Path]::GetFullPath($NodeDirectory)
+function Assert-PlainTree([string]$root){
+    if((Get-Item -LiteralPath $root).LinkType){throw "linked component refused: $root"}
+    foreach($item in Get-ChildItem -LiteralPath $root -Recurse -Force){
+        if($item.LinkType){throw "linked component refused: $($item.FullName)"}
+        if($item.Name -match '^(\.env($|\.)|\.npmrc$|credentials\.json$)'){throw "private configuration refused: $($item.FullName)"}
+    }
+}
+$node=Join-Path $NodeDirectory 'node.exe'
+foreach($required in @($node,(Join-Path $NodeDirectory 'LICENSE'),(Join-Path $ToolServerDirectory 'dist/src/server.js'),(Join-Path $ToolServerDirectory 'package.json'),(Join-Path $ToolServerDirectory 'package-lock.json'),(Join-Path $repo 'LICENSE'),(Join-Path $repo 'THIRD-PARTY-NOTICES.md'))){
+    if(-not(Test-Path -LiteralPath $required -PathType Leaf)){throw "missing required package component: $required"}
+}
+if(-not(Test-Path -LiteralPath (Join-Path $ToolServerDirectory 'node_modules') -PathType Container)){throw 'build the tool-server dependencies first'}
+$version=& $node --version
+if($LASTEXITCODE -ne 0 -or $version -notmatch '^v\d+\.\d+\.\d+$'){throw 'Node runtime could not execute --version'}
+foreach($component in @('dist','node_modules')){Assert-PlainTree (Join-Path $ToolServerDirectory $component)}
+if((Get-Content (Join-Path $ToolServerDirectory 'package.json') -Raw | ConvertFrom-Json).type -ne 'module'){throw 'tool server must retain its ESM package metadata'}
 Push-Location $crate
-try {
-    $exe = if ($IsWindows -or $env:OS -eq 'Windows_NT') { 'odessy-executor.exe' } else { 'odessy-executor' }
-    $linkExe = 'odessy-link.exe'
-    $target = Join-Path $crate "target/$Release"
-
-    # 1. Build both binaries. The window and the pairing component are one product.
-    Write-Host "building odessy-link and odessy-executor ($Release)…"
-    & cargo build --$Release --bins
-    if ($LASTEXITCODE -ne 0) { throw 'cargo build failed; the package was not assembled' }
-
-    foreach ($required in @((Join-Path $target $exe), (Join-Path $target $linkExe))) {
-        if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
-            throw "missing component: $required"
-        }
+try{
+    if(-not $SkipBuild){
+        $buildArgs=@('build','--locked','--bins')
+        if($Release -eq 'release'){$buildArgs+='--release'}
+        & cargo @buildArgs
+        if($LASTEXITCODE -ne 0){throw 'executor build failed'}
     }
-    if (-not (Test-Path -LiteralPath $NodeDirectory -PathType Container)) {
-        throw "missing Node runtime directory: $NodeDirectory"
+    $target=Join-Path $crate "target/$Release"
+    foreach($name in @('odessy-executor.exe','odessy-link.exe')){
+        if(-not(Test-Path -LiteralPath (Join-Path $target $name) -PathType Leaf)){throw "missing binary: $name"}
     }
-    if (-not (Test-Path -LiteralPath $NodeServer -PathType Leaf)) {
-        throw "missing tool server entry: $NodeServer"
+    # Unique staging is never recursively deleted. A failed stage remains for inspection.
+    $stage=$output+'.preparing-'+[Guid]::NewGuid().ToString('N')
+    New-Item -ItemType Directory -Path $stage | Out-Null
+    foreach($name in @('odessy-executor.exe','odessy-link.exe')){Copy-Item -LiteralPath (Join-Path $target $name) -Destination $stage}
+    New-Item -ItemType Directory -Path (Join-Path $stage 'node') | Out-Null
+    Copy-Item -LiteralPath $node -Destination (Join-Path $stage 'node/node.exe')
+    Copy-Item -LiteralPath (Join-Path $NodeDirectory 'LICENSE') -Destination (Join-Path $stage 'node/LICENSE')
+    $tools=Join-Path $stage 'tool-server'
+    New-Item -ItemType Directory -Path $tools | Out-Null
+    foreach($name in @('dist','node_modules','package.json','package-lock.json')){Copy-Item -LiteralPath (Join-Path $ToolServerDirectory $name) -Destination $tools -Recurse}
+    # Prune in staging only. Native modules are already built; do not run lifecycle scripts.
+    Push-Location $tools
+    try{& npm.cmd prune --omit=dev --ignore-scripts --offline --no-audit --no-fund; if($LASTEXITCODE -ne 0){throw 'production dependency pruning failed'}}finally{Pop-Location}
+    foreach($name in @('LICENSE','THIRD-PARTY-NOTICES.md')){Copy-Item -LiteralPath (Join-Path $repo $name) -Destination $stage}
+    Copy-Item -LiteralPath (Join-Path $repo 'installer/assets/odessy-boat.ico') -Destination (Join-Path $stage 'odessy-executor.ico')
+    @('Odessy Executor development preview (unsigned).','Open odessy-executor.exe. Choose one workspace, click Allow pairing, and enter its six-digit code on the other device. Approve the request here. Keep this window open to serve it.','Short-code pairing uses the experimental SPAKE2/Noise profile; it is not formally audited.','The coordinator separately reviews outbound execution consent. Enrollment alone grants no execution access.','No model, voice stack, Python or development toolchain is required by this package.') | Set-Content (Join-Path $stage 'README.txt')
+    $inventory=@{schema_version=1;platform='windows';architecture='x64';node_version=$version;unsigned=$true;short_code_supported=$true;pairing_profile='spake2-noise-v1-experimental';source_revision=(& git -C $repo rev-parse HEAD);source_dirty=$true;components=@('odessy-executor','odessy-link','node','tool-server')}
+    $inventory | ConvertTo-Json | Set-Content (Join-Path $stage 'inventory.json')
+    $lines=foreach($file in Get-ChildItem -LiteralPath $stage -Recurse -File){
+        $relative=[IO.Path]::GetRelativePath($stage,$file.FullName).Replace('\','/')
+        "$( (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() )  $relative"
     }
-
-    # 2. Lay the package out. Paths are relative so the manifest is portable.
-    $output = if ([System.IO.Path]::IsPathRooted($OutputDirectory)) {
-        $OutputDirectory
-    } else {
-        Join-Path $crate $OutputDirectory
-    }
-    # Never recursively delete a directory this script did not create: the path must sit
-    # under build/, or already look like one of our packages.
-    $outputFull = [System.IO.Path]::GetFullPath($output).TrimEnd('\', '/')
-    $buildRoot = [System.IO.Path]::GetFullPath((Join-Path $crate '../../build')).TrimEnd('\', '/')
-    $ours = Test-Path -LiteralPath (Join-Path $outputFull 'checksums.txt')
-    if (-not $ours -and -not $outputFull.StartsWith($buildRoot + [System.IO.Path]::DirectorySeparatorChar, 'OrdinalIgnoreCase')) {
-        throw "refusing to clear '$outputFull': it is neither inside build/ nor an existing executor package"
-    }
-    if ((Split-Path -Leaf $outputFull) -notmatch '^[A-Za-z0-9._-]+$') {
-        throw "refusing to use the unusual package directory name '$outputFull'"
-    }
-    if (Test-Path -LiteralPath $outputFull) { Remove-Item -LiteralPath $outputFull -Recurse -Force }
-    New-Item -ItemType Directory -Path $outputFull | Out-Null
-    $output = $outputFull
-
-    # 3. Refuse placeholder components. A package that looks complete but contains
-    # stubs is worse than no package.
-    $nodeExe = Join-Path $NodeDirectory 'node.exe'
-    if (-not (Test-Path -LiteralPath $nodeExe -PathType Leaf)) {
-        throw "missing Node runtime: $nodeExe"
-    }
-    $nodeInfo = Get-Item -LiteralPath $nodeExe
-    $nodeHeader = [System.IO.File]::ReadAllBytes($nodeExe)[0..1]
-    if ($nodeInfo.Length -lt 1MB -or -not ($nodeHeader[0] -eq 0x4D -and $nodeHeader[1] -eq 0x5A)) {
-        throw "$nodeExe is not a redistributable Node runtime (too small or not a PE binary)"
-    }
-    $serverInfo = Get-Item -LiteralPath $NodeServer
-    if ($serverInfo.Length -lt 1KB) {
-        throw "$NodeServer is a placeholder: the built tool server must be at least 1 KiB"
-    }
-    foreach ($notice in @('THIRD-PARTY-NOTICES.md', 'LICENSE')) {
-        $source = Join-Path (Split-Path -Parent (Split-Path -Parent $crate)) $notice
-        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
-            throw "$notice is missing; a package without notices is not releasable"
-        }
-    }
-
-    Copy-Item -LiteralPath (Join-Path $target $exe) -Destination $output
-    Copy-Item -LiteralPath (Join-Path $target $linkExe) -Destination $output
-    Copy-Item -LiteralPath $NodeServer -Destination (Join-Path $output 'tool-server.js')
-    Copy-Item -LiteralPath $NodeDirectory -Destination (Join-Path $output 'node') -Recurse
-
-    foreach ($notice in @('THIRD-PARTY-NOTICES.md', 'LICENSE')) {
-        $source = Join-Path (Split-Path -Parent (Split-Path -Parent $crate)) $notice
-        Copy-Item -LiteralPath $source -Destination $output
-    }
-    $icon = Join-Path $crate 'assets/odessy-executor.ico'
-    if (Test-Path -LiteralPath $icon -PathType Leaf) {
-        Copy-Item -LiteralPath $icon -Destination $output
-    } else {
-        Write-Warning 'no executor icon was found; the window uses the default icon'
-    }
-
-    # 3. Write the checksum manifest the executor verifies before it starts.
-    $lines = foreach ($file in Get-ChildItem -LiteralPath $output -Recurse -File) {
-        if ($file.Name -eq 'checksums.txt') { continue }
-        $relative = [System.IO.Path]::GetRelativePath($output, $file.FullName) -replace '\\', '/'
-        $digest = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-        "$digest  $relative"
-    }
-    if (-not $lines) { throw 'the package contains no files; refusing to write an empty manifest' }
-    $lines | Sort-Object | Set-Content -LiteralPath (Join-Path $output 'checksums.txt') -Encoding utf8NoBOM
-
-    # 4. Prove it: the packaged executor must resolve and answer.
-    Write-Host 'verifying the assembled package…'
-    $selftest = & (Join-Path $output $exe) --selftest 2>&1 | Out-String
+    $lines | Sort-Object | Set-Content (Join-Path $stage 'checksums.txt') -Encoding utf8NoBOM
+    $selftest=& (Join-Path $stage 'odessy-executor.exe') --selftest 2>&1 | Out-String
     Write-Host $selftest
-    if ($LASTEXITCODE -ne 0) { throw 'the packaged executor failed its self-test' }
-    if ($selftest -notmatch 'checksums: \d+ files verified') {
-        throw 'the packaged executor could not verify its own checksums'
-    }
-
+    if($LASTEXITCODE -ne 0){throw "package self-test failed; retained stage: $stage"}
+    Move-Item -LiteralPath $stage -Destination $output
+    $archive=$output+'.zip'
+    if(Test-Path -LiteralPath $archive){throw 'archive already exists; package directory was preserved'}
+    Compress-Archive -LiteralPath $output -DestinationPath $archive -CompressionLevel Fastest
+    "$( (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() )  $([IO.Path]::GetFileName($archive))" | Set-Content ($archive+'.sha256')
     Write-Host "package: $output"
-    Write-Host "manifest: $(Join-Path $output 'checksums.txt')"
-}
-finally {
-    Pop-Location
-}
+    Write-Host "archive: $archive"
+}finally{Pop-Location}

@@ -509,7 +509,7 @@ fn a_saved_grant_is_not_reported_as_a_working_connection() {
     commit(&store, "session-ready", Some(&fixture.workspace()), false).expect("commit");
     let session = store.session("session-ready").expect("read").expect("row");
     assert_eq!(session.state, "ready");
-    let value = super::snapshot(Some(&session), profile::Profile::TestOnly);
+    let value = super::snapshot(Some(&session), profile::Profile::Experimental);
     let message = value["message"].as_str().unwrap_or("");
     assert!(
         message.is_empty() || !message.to_lowercase().contains("connected"),
@@ -521,12 +521,12 @@ fn a_saved_grant_is_not_reported_as_a_working_connection() {
 fn the_profile_gate_is_closed_without_both_gates() {
     assert_eq!(
         profile::resolve(false).expect("production"),
-        profile::Profile::Production
+        profile::Profile::Experimental
     );
     let value = super::capabilities();
-    assert_eq!(value["supported"], serde_json::json!(false));
+    assert_eq!(value["supported"], serde_json::json!(true));
     assert_eq!(value["state"], serde_json::json!("closed"));
-    assert_eq!(value["reason"], serde_json::json!("protocol_review_required"));
+    assert_eq!(value["reason"], serde_json::json!("experimental"));
     assert_eq!(value["approved"], serde_json::json!(false));
     // Nothing in a status document claims approval.
     let fixture = Fixture::new("gate");
@@ -534,10 +534,10 @@ fn the_profile_gate_is_closed_without_both_gates() {
     let session = store
         .begin_host(None, "123466", "token", "op", "session-gate")
         .expect("session");
-    let value = super::snapshot(Some(&session), profile::Profile::TestOnly);
+    let value = super::snapshot(Some(&session), profile::Profile::Experimental);
     assert_eq!(value["approved"], serde_json::json!(false));
     assert_eq!(
         value["profile"],
-        serde_json::json!("test-adapter-unapproved")
+        serde_json::json!("spake2-noise-v1-experimental")
     );
 }

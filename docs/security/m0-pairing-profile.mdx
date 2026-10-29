@@ -7,6 +7,11 @@ keywords: ["pairing", "spake2", "m0", "threat model", "protocol review"]
 
 # M0: the protocol profile decision
 
+> Historical design/review record. The maintainer superseded the pre-implementation
+> gate on October 29 with explicitly experimental six-digit pairing. See
+> [current behavior](six-digit-pairing.md). The disabled-state statements below
+> describe the previous implementation, not the current source.
+
 Status: **not approved**. Production short-code enrollment is closed. There is no
 toggle, environment variable or build flag that opens it, and the release binary
 contains no enrollment exchange at all.
@@ -39,12 +44,14 @@ produces a composition nobody has analysed.
 
 ## 2. Candidate construction (proposed, not approved)
 
-This is the profile that is ready to be reviewed. It is deliberately built from
-published, complete constructions rather than assembling primitives.
+This is an incomplete candidate, not an implementation-ready or approved profile.
+Selecting published primitives does not make their composition a published complete
+construction. The dependency's actual wire format and key derivation must be
+identified before selecting interoperability vectors or writing production code.
 
 | Element | Candidate |
 |---|---|
-| PAKE | SPAKE2 as specified in RFC 9382, using the group the crate actually implements |
+| PAKE | Candidate `spake2 0.4.0` protocol; RFC 9382 wire/KDF compatibility is not established and must not be claimed |
 | Dependency | `spake2` crate `=0.4.0` (Apache-2.0/MIT, MSRV compatible) |
 | Group | **Ed25519 group** (`Ed25519Group`), which is the only group `spake2 0.4.0` documents as implemented. P-256 is *not* available in that version |
 | Hash / KDF | SHA-256 transcript, HKDF-SHA-256 for the per-direction keys |
@@ -52,7 +59,7 @@ published, complete constructions rather than assembling primitives.
 | Roles | `A` = the host showing the code, `B` = the joining device; a role byte is in the transcript so the two sides cannot be swapped |
 | Channel binding | the TLS exporter value of the connection carrying the exchange, labelled for this purpose |
 | Key confirmation | both directions confirm `HMAC(K_confirm, transcript_hash)`, checked before any certificate material is accepted |
-| Encryption | ChaCha20-Poly1305 with a per-direction key and a 64-bit sequence number as the nonce prefix |
+| Encryption | Candidate ChaCha20-Poly1305; exact 96-bit nonce encoding, associated data, direction, sequence exhaustion and failure rules remain unspecified |
 | Certificate possession | ECDSA P-256 signature over the transcript with the **connection certificate's** leaf key, verified against the key extracted from the certificate being enrolled |
 | Limits | 6 digits, 120-second window, 3 authentication attempts per window, 2 concurrent unauthenticated connections, 5-second inactivity, 64 KiB frame, 256 KiB per direction |
 
@@ -72,6 +79,14 @@ the possession proof still need review by someone independent of this implementa
 
 Sources: <https://docs.rs/spake2/0.4.0/spake2/> and
 <https://www.rfc-editor.org/rfc/rfc9382.html>.
+
+**Further review (2026-10-29): not approved.** The pinned crate's source computes
+its 32-byte output from hashed password/identities, exchanged elements and the
+group secret (`lib.rs`, `finish`, lines 406–437 in the published source). That
+does not establish compatibility with RFC 9382's transcript, key derivation or
+confirmation suites. An RFC vector cannot be relabelled as an Odessy interoperability
+result. The existing test adapter performs neither that PAKE nor authenticated
+encryption. See [M0 technical review](m0-review-2026-10-29.md).
 
 ## 3. What is implemented today
 
@@ -105,10 +120,11 @@ present only in a binary built with the `test-profile` cargo feature *and* run w
 `ODESSY_LINK_TEST_PAIRING_ADAPTER=1`. It is not a variant of the production profile;
 there is no production code path to enable.
 
-What it proves: role separation, transcript binding, code comparison against a
-per-session transcript, mutual ECDSA possession proofs, mutual key confirmation, the
-window/attempt/connection limits, durable staging and recovery, and the operator
-approval flow.
+What it exercises: role separation, transcript consistency, code comparison against
+a per-session transcript, ECDSA signature checks, window/attempt/connection limits,
+durable staging and recovery, and the operator approval flow. Its public transcript
+hash is not cryptographic key confirmation, and the current DER byte scanner is not
+evidence of possession of the actual leaf SPKI. Neither claim clears M0.
 
 What it does **not** prove, and must never be described as proving:
 

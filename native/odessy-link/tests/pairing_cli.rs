@@ -63,8 +63,7 @@ impl State {
 
     /// Run with a JSON document on stdin, which is how the code travels: it must not
     /// appear in a process command line.
-    #[cfg(feature = "test-profile")]
-    fn json_stdin(&self, arguments: &[&str], body: &str) -> Value {
+        fn json_stdin(&self, arguments: &[&str], body: &str) -> Value {
         use std::io::Write as _;
         let mut child = self
             .command()
@@ -96,7 +95,6 @@ impl Drop for State {
     }
 }
 
-#[cfg(feature = "test-profile")]
 fn workspace(state: &State) -> std::path::PathBuf {
     let path = state.directory.join("workspace");
     std::fs::create_dir_all(&path).expect("workspace");
@@ -104,39 +102,11 @@ fn workspace(state: &State) -> std::path::PathBuf {
 }
 
 #[test]
-fn a_build_without_the_test_profile_has_no_pairing_exchange() {
-    let state = State::new("gate");
-    state.init();
-    // No profile requested: the production snapshot, always closed.
-    let snapshot = state.json(&["pairing", "capabilities"]);
-    assert_eq!(snapshot["supported"], Value::Bool(false));
-    assert_eq!(snapshot["reason"], Value::String("protocol_review_required".into()));
-    assert_eq!(snapshot["state"], Value::String("closed".into()));
-    // A code cannot be produced for a window that was never opened.
-    if cfg!(feature = "test-profile") {
-        // The feature is present, so this invocation may open a window; it must still
-        // say the profile is unapproved.
-        let snapshot = state.json(&["pairing", "begin", "--profile", "test-adapter"]);
-        assert_eq!(
-            snapshot["profile"],
-            Value::String("test-adapter-unapproved".into())
-        );
-        assert_eq!(snapshot["approved"], Value::Bool(false));
-        assert_eq!(snapshot["supported"], Value::Bool(true));
-    } else {
-        // Without the feature the adapter does not exist, and asking for it is an
-        // error rather than a silent fallback to something unreviewed.
-        let (ok, stdout, stderr) = state.run(&["pairing", "begin", "--profile", "test-adapter"]);
-        assert!(!ok, "a build without the adapter must refuse to open a window");
-        assert!(
-            stderr.contains("no unapproved pairing profile"),
-            "{stderr}"
-        );
-        assert!(!stdout.contains("code"), "{stdout}");
-    }
+fn default_build_exposes_experimental_six_digit_pairing(){
+ let state=State::new("capabilities");state.init();let value=state.json(&["pairing","capabilities"]);
+ assert_eq!(value["supported"],true);assert_eq!(value["approved"],false);
 }
 
-#[cfg(feature = "test-profile")]
 mod journey {
     use super::*;
     use std::io::{BufRead, BufReader};
@@ -214,7 +184,7 @@ mod journey {
             &format!("{{\"code\":\"{code}\"}}"),
         );
         assert_eq!(joined["role"], Value::String("joiner".into()));
-        assert_eq!(joined["state"], Value::String("paired_no_access".into()));
+        assert_eq!(joined["state"], Value::String("paired_no_access".into()),"{joined}");
         assert!(joined["peer"]["alias"].as_str().is_some());
 
         let output = child.wait_with_output().expect("listener exits");

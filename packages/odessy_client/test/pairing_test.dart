@@ -12,6 +12,28 @@ class PairingFixture implements SetupBackend {
   @override Future<void> close() async {}
 }
 void main(){
+  test('explicit selected native component is used for every pairing command',()async{
+    final source=PairingFixture();final backend=SetupPairingBackend(source,link:'/bundle/odessy-link');
+    await backend.status();await backend.join('10.1.1.1:60095','012345');
+    expect(source.requests.every((r)=>r.parameters['link']=='/bundle/odessy-link'),true);
+    await backend.close();
+  });
+  test('cancel addresses only the session owned by this adapter',()async{
+    final source=OwnedPairingFixture();final backend=SetupPairingBackend(source);
+    await backend.join('127.0.0.1:7444','012345');
+    await backend.cancel();
+    expect(source.requests.last.parameters['command'],'cancel');
+    expect(source.requests.last.parameters['session_id'],'owned-session');
+    expect(source.interruptions,1);
+    await backend.close();
+  });
+  test('cancel without an owned session never cancels the newest native session',()async{
+    final source=OwnedPairingFixture();final backend=SetupPairingBackend(source);
+    await backend.status();
+    await backend.cancel();
+    expect(source.requests.where((r)=>r.parameters['command']=='cancel'),isEmpty);
+    await backend.close();
+  });
   test('unreviewed protocol is explicit and codes travel only in bounded request payload',()async{
     final source=PairingFixture();final backend=SetupPairingBackend(source);
     final state=await backend.join('192.168.1.2:7444','012345');
@@ -49,4 +71,17 @@ void main(){
     // A non-closed state without a session is never progress.
     expect(()=>PairingSnapshot.fromJson({'schema_version':1,'supported':true,'state':'ready'}),throwsFormatException);
   });
+}
+class OwnedPairingFixture implements SetupBackend {
+  final requests=<SetupRequest>[];
+  int interruptions=0;
+  @override Future<SetupReply> execute(SetupRequest request)async{
+    requests.add(request);
+    return SetupReply.fromJson({'id':request.id,'status':'ok','result':{
+      'schema_version':1,'supported':true,'state':'awaiting_approval',
+      'session_id':request.parameters['command']=='status'?'someone-elses-session':'owned-session'
+    }},request.id);
+  }
+  @override Future<void> cancel()async{interruptions++;}
+  @override Future<void> close()async{}
 }

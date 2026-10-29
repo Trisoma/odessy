@@ -373,3 +373,14 @@ def test_revoked_peer_is_rejected_before_connect(fake_binary):
     env = {PAIRED_HOST_ENV: 'laptop', LINK_BIN_ENV: str(fake_binary)}
     with pytest.raises(PairedConfigError, match='revoked'):
         paired_host(env, prober=lambda host: enrolled(revoked=True))
+
+
+def test_checkout_lookup_never_selects_another_operating_system_binary(monkeypatch,tmp_path):
+    import os
+    import odessy.tools.paired as paired
+    monkeypatch.setattr(paired,'__file__',str(tmp_path/'src/odessy/tools/paired.py'))
+    monkeypatch.setattr(paired.shutil,'which',lambda _:None)
+    wrong=tmp_path/'native/odessy-link/target/release'/('odessy-link' if os.name=='nt' else 'odessy-link.exe')
+    right=tmp_path/'native/odessy-link/target/debug'/('odessy-link.exe' if os.name=='nt' else 'odessy-link')
+    for path in (wrong,right):path.parent.mkdir(parents=True,exist_ok=True);path.write_text('fixture')
+    assert paired.link_binary({})==right

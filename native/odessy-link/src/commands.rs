@@ -35,10 +35,18 @@ fn relay_error_text(context: &str, error: relay::RelayError) -> String {
 
 pub fn serve(arguments: &[String]) -> Result<(), Failure> {
     let options = crate::parse_with_switches(
-        arguments, &["--listen", "--workspace", "--node-server"], &["--advertise", "--telemetry", "--telemetry-only"],
+        arguments, &["--listen", "--workspace", "--node-server"], &["--advertise", "--telemetry", "--telemetry-only", "--activation-stdin"],
     )?;
     // `--advertise` is a bare switch: opt-in address discovery, never trust.
     let advertise = options.contains_key("--advertise");
+    // The native companion assigns its owned process job before allowing this
+    // child to bind a port or create any Node descendants. EOF fails closed.
+    if options.contains_key("--activation-stdin") {
+        use std::io::Read;
+        let mut signal=[0u8;1];
+        std::io::stdin().read_exact(&mut signal).map_err(|_|Failure::Runtime("Executor activation was cancelled".into()))?;
+        if signal != [b'\n'] {return Err(Failure::Runtime("Invalid executor activation".into()));}
+    }
     let listen = crate::required(&options, "--listen")?.to_string();
     let telemetry_only = options.contains_key("--telemetry-only");
     let telemetry = telemetry_only || options.contains_key("--telemetry");

@@ -131,19 +131,14 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
         service.event_sink = print_consultation
 
     resources = OwnedResources(lambda: cli._tool_servers(workspace, cloud=cli.model_uses_cloud(model)))
-    from odessy.tools.paired import configured_alias
-    paired = bool(configured_alias())
     try:
-        servers, externals, audit = (await asyncio.wait_for(asyncio.shield(resources.ready), timeout=4)
-                                    if paired else await resources.ready)
+        servers, externals, audit = await asyncio.wait_for(asyncio.shield(resources.ready), timeout=4)
     except (Exception, SystemExit):
         resources.task.cancel()
         await resources.aclose()
         if resources.ready.done() and not resources.ready.cancelled():
             resources.ready.exception()
-        if not paired:
-            raise
-        # An unavailable paired executor never selects a local/raw replacement.
+        # An unavailable executor never selects a local/raw replacement.
         # The selected model can still answer with an empty execution surface.
         return _chat_only_controller(workspace=workspace, model_factory=model_factory,
             profiles=profiles, selected_profile=selected_profile, resources=resources,

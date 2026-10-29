@@ -1,21 +1,4 @@
-//! Protocol profile selection and the primitives the enrollment exchange needs.
-//!
-//! **M0 is not approved.** No complete, reviewed pairing construction exists in this
-//! repository, so the production profile is *unavailable*: it opens no listener and
-//! dials nothing. The only executable exchange is an explicitly labelled test
-//! adapter, present in this binary only when it is built with the `test-profile`
-//! feature *and* the invoking process sets `ODESSY_LINK_TEST_PAIRING_ADAPTER=1`.
-//! A release build cannot enable it by configuration alone, and every response it
-//! produces says `profile: "test-adapter-unapproved"`.
-//!
-//! What the test adapter does prove is real: code comparison against a per-session
-//! transcript, ECDSA P-256 possession of the exact certificate being enrolled, mutual
-//! proof verification and mutual key confirmation. What it does **not** prove is the
-//! M0 profile: there is no PAKE, so the code-derived value is a plain hash of a
-//! 20-bit secret and offers no offline-guess resistance, and the confirmation value
-//! is a transcript hash rather than a MAC under a negotiated key. Do not describe it
-//! as approved enrollment.
-
+//! Experimental six-digit pairing: identity helpers over an authenticated Noise channel.
 use crate::identity::Identity;
 use ring::rand::SystemRandom;
 use ring::signature::{EcdsaKeyPair, KeyPair, UnparsedPublicKey, ECDSA_P256_SHA256_ASN1, ECDSA_P256_SHA256_ASN1_SIGNING};
@@ -23,55 +6,22 @@ use sha2::{Digest, Sha256};
 
 /// Appears in every transcript so a message from another purpose cannot be replayed
 /// into this exchange.
-pub const PROFILE_DOMAIN: &[u8] = b"odessy-link/pairing/test-adapter-v1";
+pub const PROFILE_DOMAIN: &[u8] = b"odessy-link/pairing/spake2-noise-v1";
 /// Label for the code-derived attempt value.
-pub const CODE_LABEL: &[u8] = b"odessy-link/pairing/code";
+
 /// Label for a possession proof.
 pub const POSSESSION_LABEL: &[u8] = b"odessy-link/pairing/possession";
 /// Label for the mutual key confirmation.
-pub const CONFIRM_LABEL: &[u8] = b"odessy-link/pairing/confirm";
+
 /// Environment variable that a test run must also set. It cannot enable the adapter
 /// in a build without the feature, and the feature is off by default.
-pub const TEST_ADAPTER_ENV: &str = "ODESSY_LINK_TEST_PAIRING_ADAPTER";
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Profile {
-    /// No reviewed construction: enrollment is closed.
-    Production,
-    /// Explicit, unapproved, test-only construction.
-    TestOnly,
-}
-
-impl Profile {
-    pub fn name(self) -> &'static str {
-        match self {
-            Profile::Production => "unavailable",
-            Profile::TestOnly => "test-adapter-unapproved",
-        }
-    }
-}
-
-/// Choose a profile. `explicit` is `--profile test-adapter` on the command line.
-///
-/// Both gates are required: a build with the feature and a caller that asks for it.
-/// Nothing promotes a profile implicitly, so a normal invocation is always closed.
-pub fn resolve(explicit: bool) -> Result<Profile, String> {
-    if !explicit {
-        return Ok(Profile::Production);
-    }
-    if !cfg!(feature = "test-profile") {
-        return Err(
-            "this build contains no unapproved pairing profile; rebuild with --features test-profile for tests"
-                .into(),
-        );
-    }
-    if std::env::var(TEST_ADAPTER_ENV).as_deref() != Ok("1") {
-        return Err(format!(
-            "the test adapter requires {TEST_ADAPTER_ENV}=1 in the invoking process"
-        ));
-    }
-    Ok(Profile::TestOnly)
-}
+pub enum Profile { Experimental }
+impl Profile {pub fn name(self)->&'static str{"spake2-noise-v1-experimental"}}
+// Legacy --profile is accepted for compatibility, but selects no alternate code.
+pub fn resolve(_legacy_alias:bool)->Result<Profile,String>{Ok(Profile::Experimental)}
 
 pub fn hex(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -82,7 +32,7 @@ pub fn hex(bytes: &[u8]) -> String {
 }
 
 pub fn unhex(text: &str) -> Option<Vec<u8>> {
-    if text.len() % 2 != 0 || text.len() > 4096 {
+    if text.len() % 2 != 0 || text.len() > 65536 {
         return None;
     }
     let bytes = text.as_bytes();
@@ -178,23 +128,15 @@ pub fn verify(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
 /// that is not on the curve. A certificate is not otherwise parsed here, and the
 /// exact leaf fingerprint remains the value that is enrolled.
 pub fn certificate_public_key(der: &[u8]) -> Result<Vec<u8>, String> {
-    const PREFIX: &[u8] = &[
-        0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, // id-ecPublicKey
-        0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, // prime256v1
-        0x03, 0x42, 0x00, 0x04, // BIT STRING, 66 bytes, no unused bits, uncompressed
-    ];
-    let position = der
-        .windows(PREFIX.len())
-        .position(|window| window == PREFIX)
-        .ok_or_else(|| "the certificate has no P-256 public key".to_string())?;
-    let start = position + PREFIX.len();
-    let end = start + 64;
-    if end > der.len() {
-        return Err("the certificate public key is truncated".into());
+    let (rest,cert)=x509_parser::parse_x509_certificate(der).map_err(|_|"Invalid X.509 certificate")?;
+    if !rest.is_empty(){return Err("Trailing certificate data".into());}
+    let info=cert.public_key();
+    if info.algorithm.algorithm.to_id_string()!="1.2.840.10045.2.1" ||
+       info.algorithm.parameters.as_ref().and_then(|p|p.as_oid().ok()).map(|oid|oid.to_id_string()).as_deref()!=Some("1.2.840.10045.3.1.7"){
+        return Err("Expected a P-256 leaf public key".into());
     }
-    let mut key = Vec::with_capacity(65);
-    key.push(0x04);
-    key.extend_from_slice(&der[start..end]);
+    let key=info.subject_public_key.data.to_vec();
+    if key.len()!=65 || key[0]!=4{return Err("Invalid P-256 leaf key".into());}
     Ok(key)
 }
 
@@ -243,17 +185,13 @@ impl Transcript {
         .to_vec()
     }
 
-    pub fn code_attempt(&self, binding: &[u8], code: &str) -> Vec<u8> {
-        sha256(&[CODE_LABEL, binding, code.as_bytes()]).to_vec()
-    }
+
 
     pub fn possession(&self, binding: &[u8], role: &str) -> Vec<u8> {
         sha256(&[POSSESSION_LABEL, binding, role.as_bytes()]).to_vec()
     }
 
-    pub fn confirmation(&self, binding: &[u8], peer_proof: &[u8], host_proof: &[u8]) -> Vec<u8> {
-        sha256(&[CONFIRM_LABEL, binding, peer_proof, host_proof]).to_vec()
-    }
+
 }
 
 /// Random bytes from the OS source.
@@ -290,7 +228,13 @@ pub struct LocalIdentity {
 
 impl LocalIdentity {
     pub fn load() -> Result<Self, String> {
-        let identity = crate::load_identity()?;
+        let directory=crate::state_dir()?.join("identity");
+        let identity=if !directory.join("identity.json").exists() && !directory.join("identity.dpapi").exists() {
+            crate::store::ensure_state_dir(&directory)?;
+            let value=Identity::generate(&crate::identity::random_installation_id()?)?;
+            crate::save_identity(&directory,&value)?;
+            value
+        } else {crate::load_identity()?};
         let signer = Signer::from_pem(&identity.key_pem)?;
         let public_key = signer.public_key();
         // The proof and the certificate must describe the same key, or the
@@ -332,7 +276,7 @@ mod tests {
         assert_eq!(unhex("zz"), None);
         assert_eq!(unhex_exact("0000", 2), Some(vec![0, 0]));
         assert_eq!(unhex_exact("0000", 1), None);
-        assert_eq!(unhex(&"0".repeat(4098)), None);
+        assert_eq!(unhex(&"0".repeat(65538)), None);
     }
 
     #[test]
@@ -356,11 +300,6 @@ mod tests {
             }
         };
         assert_ne!(binding, changed.binding());
-        // A different code must produce a different attempt value.
-        assert_ne!(
-            base.code_attempt(&binding, "000042"),
-            base.code_attempt(&binding, "000043")
-        );
         // Roles are separated, so a host proof cannot be replayed as a peer proof.
         assert_ne!(
             base.possession(&binding, "host"),
@@ -408,11 +347,9 @@ mod tests {
 
     #[test]
     fn a_normal_invocation_never_selects_the_test_profile() {
-        assert_eq!(resolve(false).expect("production"), Profile::Production);
+        assert_eq!(resolve(false).expect("production"), Profile::Experimental);
         // Without the feature, asking for the adapter is an error rather than a
         // silent fallback to something unreviewed.
-        if !cfg!(feature = "test-profile") {
-            assert!(resolve(true).is_err());
-        }
+
     }
 }

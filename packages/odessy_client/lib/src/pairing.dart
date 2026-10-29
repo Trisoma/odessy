@@ -75,18 +75,24 @@ abstract interface class PairingBackend {
 /// Fixed-operation adapter; the native boundary owns protocol availability and
 /// session IDs. No process arguments, trust storage or cryptography live here.
 class SetupPairingBackend implements PairingBackend {
-  SetupPairingBackend(this.source,{this.ownsSource=false});
+  SetupPairingBackend(this.source,{this.ownsSource=false,this.link=''});
   final SetupBackend source;
   final bool ownsSource;
+  final String link;
   bool _closed=false;
+  String? _ownedSession;
   @override bool get isDemo=>false;
   Future<PairingSnapshot> _call(String command,[Json values=const {}]) async {
     if(_closed) throw StateError('Pairing adapter closed');
     final request=SetupRequest(id:'pair-${DateTime.now().microsecondsSinceEpoch}',
-      operation:'pair',selection:const {},parameters:{'action':'short-code','command':command,...values});
+      operation:'pair',selection:const {},parameters:{'action':'short-code','command':command,if(link.isNotEmpty)'link':link,...values});
     final reply=await source.execute(request);
     if(!reply.ok) throw StateError('Pairing component unavailable; inspect and retry.');
-    return PairingSnapshot.fromJson(reply.result);
+    final snapshot=PairingSnapshot.fromJson(reply.result);
+    if ((command=='join'||command=='begin') && snapshot.sessionId.isNotEmpty) {
+      _ownedSession=snapshot.sessionId;
+    }
+    return snapshot;
   }
   @override Future<PairingSnapshot> status()=>_call('status');
   @override Future<PairingSnapshot> begin(String workspace)=>_call('begin',{'workspace':workspace});
@@ -102,7 +108,13 @@ class SetupPairingBackend implements PairingBackend {
     }
     return _call('confirm',{'session_id':sessionId,'review_token':reviewToken});
   }
-  @override Future<void> cancel() async {await source.cancel();}
+  @override Future<void> cancel() async {
+    await source.cancel();
+    final session=_ownedSession;
+    if(session!=null) {
+      await _call('cancel',{'session_id':session});
+    }
+  }
   @override Future<void> close() async {
     if(_closed) return;
     _closed=true;

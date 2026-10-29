@@ -1,15 +1,15 @@
 use std::io::Cursor;
 
 #[test]
-fn unreviewed_protocol_never_reports_pairing_or_echoes_the_code() {
+fn capabilities_report_experimental_pairing_without_echoing_codes() {
     let mut output = Vec::new();
     let input = b"{\"id\":\"request-1\",\"command\":\"join\",\"code\":\"012345\"}\n";
     crate::pairing::serve(Cursor::new(input), &mut output).unwrap();
     let text = String::from_utf8(output).unwrap();
     assert!(!text.contains("012345"));
     let reply: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
-    assert_eq!(reply["supported"], false);
-    assert_eq!(reply["reason"], "protocol_review_required");
+    assert_eq!(reply["supported"], true);
+    assert_eq!(reply["reason"], "experimental");
     assert_eq!(reply["state"], "closed");
 }
 

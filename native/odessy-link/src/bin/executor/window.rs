@@ -7,7 +7,7 @@
 
 use super::{link_binary, package_root, run_component, Status};
 use std::ffi::c_void;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 
 type Handle = *mut c_void;
 type Hwnd = Handle;
@@ -31,13 +31,12 @@ const SW_HIDE: i32 = 0;
 const SW_SHOW: i32 = 5;
 const SW_RESTORE: i32 = 9;
 const WM_CREATE: u32 = 1;
+const WM_NCCREATE: u32 = 0x0081;
 const WM_DESTROY: u32 = 2;
 const WM_CLOSE: u32 = 0x0010;
 const WM_COMMAND: u32 = 0x0111;
 const WM_TIMER: u32 = 0x0113;
 const WM_SETFONT: u32 = 0x0030;
-/// Completion of work done off the window thread.
-const WM_WORK: u32 = 0x8001;
 const MB_YESNOCANCEL: u32 = 0x0000_0003;
 const MB_ICONQUESTION: u32 = 0x0000_0020;
 const MB_ICONERROR: u32 = 0x0000_0010;
@@ -60,6 +59,8 @@ const ID_CANCEL: usize = 105;
 const ID_CODE: usize = 106;
 const ID_HEADLINE: usize = 107;
 const ID_NOTE: usize = 108;
+const ID_START: usize=109;
+const ID_STOP: usize=110;
 
 #[repr(C)]
 struct WndClassW {
@@ -98,6 +99,22 @@ struct Msg {
     point_y: i32,
 }
 
+#[repr(C)]
+struct CreateStructW {
+    params: *mut c_void,
+    instance: Hinstance,
+    menu: Hmenu,
+    parent: Hwnd,
+    cy: i32,
+    cx: i32,
+    y: i32,
+    x: i32,
+    style: i32,
+    name: *const u16,
+    class: *const u16,
+    ex_style: u32,
+}
+
 #[link(name = "user32")]
 extern "system" {
     fn RegisterClassW(class: *const WndClassW) -> u16;
@@ -132,7 +149,6 @@ extern "system" {
     fn SetForegroundWindow(hwnd: Hwnd) -> i32;
     fn EnableWindow(hwnd: Hwnd, enable: i32) -> i32;
     fn GetDlgItem(hwnd: Hwnd, id: i32) -> Hwnd;
-    fn PostMessageW(hwnd: Hwnd, message: u32, w: Wparam, l: Lparam) -> i32;
     fn GetSystemMetrics(index: i32) -> i32;
     fn LoadCursorW(instance: Hinstance, name: *const u16) -> Hcursor;
     #[cfg(target_pointer_width = "64")]
@@ -193,9 +209,11 @@ struct State {
     status: Status,
     listener: Option<Child>,
     /// The mTLS relay serving the approved workspace, owned by this window.
-    serve: Option<Child>,
+    serve: Option<super::execution::Execution>,
     /// A job is running off the window thread; further requests wait for its answer.
     busy: bool,
+    worker: Option<std::sync::mpsc::Receiver<(Job, Result<Status, String>)>>,
+    last_poll: std::time::Instant,
     /// The session this window opened. Cancellation names it, so a stale window cannot
     /// cancel some newer session and call that success.
     owned_session: Option<String>,
@@ -229,17 +247,9 @@ impl State {
                 // Name the session this window opened, so a stale window cannot cancel
                 // a newer one and report that as success.
                 let mut arguments = vec!["pairing".into(), "cancel".into()];
-                let session = self.owned_session.clone().or_else(|| {
-                    if self.status.session_id.is_empty() {
-                        None
-                    } else {
-                        Some(self.status.session_id.clone())
-                    }
-                });
-                if let Some(session) = session {
-                    arguments.push("--session-id".into());
-                    arguments.push(session);
-                }
+                let session=self.owned_session.clone().ok_or("This window owns no pairing session. Inspect the current request before acting.")?;
+                arguments.push("--session-id".into());
+                arguments.push(session);
                 Ok(arguments)
             }
         }
@@ -257,7 +267,7 @@ impl State {
         if self.listener.is_some() {
             return;
         }
-        let child = Command::new(link)
+        let child = super::component_command(link)
             .args([
                 "pairing",
                 "listen",
@@ -308,14 +318,14 @@ impl State {
         self.busy = false;
         match result {
             Ok(status) => {
-                if !status.session_id.is_empty() {
+                if job == Job::Allow && !status.session_id.is_empty() {
                     self.owned_session = Some(status.session_id.clone());
                 }
                 let discoverable = status.state == "discoverable";
                 let supported = status.supported;
                 let ready = status.state == "ready";
                 self.status = status;
-                self.note.clear();
+                if job != Job::Refresh {self.note.clear();}
                 if discoverable && job == Job::Allow {
                     if let Ok(link) = link_binary(&self.root) {
                         self.start_listener(&link);
@@ -324,7 +334,7 @@ impl State {
                 if !supported && job == Job::Allow {
                     self.note = "This build cannot open a pairing window: the protocol review is not complete.".into();
                 }
-                if ready {
+                if ready && job==Job::Approve {
                     self.start_serve();
                 }
             }
@@ -341,60 +351,12 @@ impl State {
         if self.serve.is_some() || self.workspace.is_empty() {
             return;
         }
-        let Ok(link) = link_binary(&self.root) else {
-            return;
-        };
-        let node = self.root.join("node").join(if cfg!(windows) { "node.exe" } else { "node" });
-        let server = self
-            .root
-            .join("tool-server")
-            .join("dist")
-            .join("src")
-            .join("server.js");
-        if !node.is_file() || !server.is_file() {
-            self.note = "The package is incomplete: the bundled Node runtime or tool server is missing."
-                .into();
-            return;
-        }
-        let child = Command::new(&link)
-            .args([
-                "serve",
-                "--listen",
-                "0.0.0.0:0",
-                "--workspace",
-                self.workspace.as_str(),
-                "--node-server",
-                &server.to_string_lossy(),
-                "--advertise",
-            ])
-            .env("ODESSY_LINK_NODE", &node)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn();
-        match child {
-            Ok(child) => {
-                self.serve = Some(child);
-                self.note =
-                    "Serving the shared folder over mutual TLS. Tools run under the policy of this computer."
-                        .into();
-            }
-            Err(error) => {
-                self.note = format!(
-                    "Cannot start the executor service: {error}. Check the firewall for a private \
-                     network; do not disable it."
-                )
-            }
+        match super::execution::Execution::start(&self.root, std::path::Path::new(&self.workspace), "0.0.0.0:7443") {
+            Ok(host)=>{self.serve=Some(host);self.note="Starting executor; waiting for the local listener. No remote connection is verified.".into();}
+            Err(error)=>self.note=error,
         }
     }
-
-    fn stop_serve(&mut self) {
-        if let Some(mut serve) = self.serve.take() {
-            let _ = serve.kill();
-            let _ = serve.wait();
-        }
-    }
-
+    fn stop_serve(&mut self) { self.serve=None; }
 
     fn choose_workspace(&mut self, owner: Hwnd) {
         let title = wide("Choose the folder this computer shares");
@@ -438,14 +400,17 @@ impl State {
         );
         unsafe {
             if let Some(control) = non_null(GetDlgItem(hwnd, ID_ALLOW as i32)) {
-                EnableWindow(control, i32::from(!open));
+                EnableWindow(control, i32::from(!self.busy && !open));
             }
             if let Some(control) = non_null(GetDlgItem(hwnd, ID_APPROVE as i32)) {
-                EnableWindow(control, i32::from(self.status.state == "awaiting_approval"));
+                EnableWindow(control, i32::from(!self.busy && self.status.state == "awaiting_approval"));
             }
             if let Some(control) = non_null(GetDlgItem(hwnd, ID_CANCEL as i32)) {
-                EnableWindow(control, i32::from(open));
+                EnableWindow(control, i32::from(!self.busy && open && self.owned_session.is_some()));
             }
+            EnableWindow(GetDlgItem(hwnd, ID_START as i32),i32::from(!self.busy && !open && !self.workspace.is_empty() && self.serve.is_none()));
+            EnableWindow(GetDlgItem(hwnd, ID_STOP as i32),i32::from(self.serve.is_some()));
+            EnableWindow(GetDlgItem(hwnd, ID_BROWSE as i32), i32::from(!self.busy && !open && self.serve.is_none()));
         }
     }
 
@@ -478,18 +443,7 @@ enum Job {
     Cancel,
 }
 
-impl Job {
-    fn code(self) -> Wparam {
-        match self {
-            Job::Refresh => 1,
-            Job::Allow => 2,
-            Job::Approve => 3,
-            Job::Cancel => 4,
-        }
-    }
-}
-
-/// Start `job` on a worker thread; its outcome arrives as [`WM_WORK`].
+/// A bounded channel owns results; workers never retain native window handles.
 fn start_job(hwnd: Hwnd, job: Job) {
     let state = state_of(hwnd);
     if state.busy {
@@ -511,9 +465,8 @@ fn start_job(hwnd: Hwnd, job: Job) {
     state.busy = true;
     state.paint(hwnd);
     let root = state.root.clone();
-    // A window handle is not `Send`; the numeric value is, and the window outlives the
-    // worker because its owner only exits after the message loop stops.
-    let target = hwnd as usize;
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    state.worker = Some(receiver);
     std::thread::spawn(move || {
         let timeout = if job == Job::Approve { 30 } else { 15 };
         let result = link_binary(&root)
@@ -522,10 +475,7 @@ fn start_job(hwnd: Hwnd, job: Job) {
                 run_component(&link, &borrowed, std::time::Duration::from_secs(timeout))
             })
             .and_then(|output| Status::parse(&output));
-        let payload = Box::into_raw(Box::new((job, result))) as Lparam;
-        unsafe {
-            PostMessageW(target as Hwnd, WM_WORK, job.code(), payload);
-        }
+        let _ = sender.send((job, result));
     });
 }
 
@@ -550,12 +500,14 @@ fn state_of(hwnd: Hwnd) -> &'static mut State {
 
 extern "system" fn wnd_proc(hwnd: Hwnd, message: u32, w: Wparam, l: Lparam) -> Lresult {
     match message {
+        WM_NCCREATE => {
+            let creation = unsafe { &*(l as *const CreateStructW) };
+            unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, creation.params as isize); }
+            1
+        }
         WM_CREATE => {
             // The state pointer arrives as the creation parameter: GWLP_USERDATA
             // cannot be written before the window exists.
-            unsafe {
-                SetWindowLongPtrW(hwnd, GWLP_USERDATA, l);
-            }
             unsafe {
                 let font = GetStockObject(DEFAULT_GUI_FONT);
                 let left = 18;
@@ -595,7 +547,10 @@ extern "system" fn wnd_proc(hwnd: Hwnd, message: u32, w: Wparam, l: Lparam) -> L
                 create("BUTTON", "Allow pairing", BS_PUSHBUTTON | WS_TABSTOP, left, y, 140, 30, ID_ALLOW);
                 create("BUTTON", "Approve request", BS_PUSHBUTTON | WS_TABSTOP, left + 150, y, 140, 30, ID_APPROVE);
                 create("BUTTON", "Cancel", BS_PUSHBUTTON | WS_TABSTOP, left + 300, y, 100, 30, ID_CANCEL);
-                y += 42;
+                y += 38;
+                create("BUTTON", "Start executor", BS_PUSHBUTTON | WS_TABSTOP, left, y, 140, 30, ID_START);
+                create("BUTTON", "Stop executor", BS_PUSHBUTTON | WS_TABSTOP, left+150, y, 140, 30, ID_STOP);
+                y += 38;
                 create("STATIC", "", SS_LEFT, left, y, 380, 24, ID_CODE);
                 y += 30;
                 create("STATIC", "Starting…", SS_LEFT, left, y, 500, 66, ID_HEADLINE);
@@ -613,29 +568,44 @@ extern "system" fn wnd_proc(hwnd: Hwnd, message: u32, w: Wparam, l: Lparam) -> L
                 );
                 y += 50;
                 create("STATIC", "", SS_LEFT, left, y, 500, 40, ID_NOTE);
-                SetTimer(hwnd, 1, 1000, std::ptr::null_mut());
+                SetTimer(hwnd, 1, 100, std::ptr::null_mut());
             }
             0
         }
         WM_TIMER => {
             // Polling is a subprocess too, so it also runs off the window thread and
             // waits for any job already in flight.
-            if !state_of(hwnd).busy {
+            let state=state_of(hwnd);
+            if let Some(host)=&mut state.serve {
+                match host.poll() {
+                    Ok(Some(message))=>{
+                        state.note=if message.starts_with("listening on ") {
+                            "Executor listening over mTLS. Only enrolled peers with a workspace grant are admitted. Remote connection health remains unknown.".into()
+                        } else {message};state.paint(hwnd);
+                    }
+                    Err(error)=>{state.note=error;state.serve=None;state.paint(hwnd);}
+                    _=>{}
+                }
+            }
+            if let Some(receiver)=&state.worker {
+                if let Ok((job,result))=receiver.try_recv() {
+                    state.worker=None;
+                    state.apply(job,result);
+                    state.paint(hwnd);
+                }
+            }
+            if !state.busy && state.last_poll.elapsed()>=std::time::Duration::from_secs(2) {
+                state.last_poll=std::time::Instant::now();
                 start_job(hwnd, Job::Refresh);
             }
-            0
-        }
-        WM_WORK => {
-            let (job, result) = unsafe { *Box::from_raw(l as *mut (Job, Result<Status, String>)) };
-            let state = state_of(hwnd);
-            state.apply(job, result);
-            state.paint(hwnd);
             0
         }
         WM_COMMAND => {
             let identifier = w & 0xffff;
             match identifier {
-                ID_BROWSE => state_of(hwnd).choose_workspace(hwnd),
+                ID_BROWSE => {state_of(hwnd).choose_workspace(hwnd);state_of(hwnd).paint(hwnd);},
+                ID_START => {state_of(hwnd).start_serve();state_of(hwnd).paint(hwnd);},
+                ID_STOP => {state_of(hwnd).stop_serve();state_of(hwnd).note="Executor stopped. Saved identities and grants were retained.".into();state_of(hwnd).paint(hwnd);},
                 ID_ALLOW => start_job(hwnd, Job::Allow),
                 ID_APPROVE => start_job(hwnd, Job::Approve),
                 ID_CANCEL => start_job(hwnd, Job::Cancel),
@@ -644,6 +614,11 @@ extern "system" fn wnd_proc(hwnd: Hwnd, message: u32, w: Wparam, l: Lparam) -> L
             0
         }
         WM_CLOSE => {
+            if state_of(hwnd).busy {
+                state_of(hwnd).note="Finishing the current request. Its outcome will be shown before closing; completed grants are not undone.".into();
+                state_of(hwnd).paint(hwnd);
+                return 0;
+            }
             let answer = message_box(
                 hwnd,
                 "Keep this computer available for pairing in the background?\n\n\
@@ -719,6 +694,8 @@ pub fn smoke() -> i32 {
             listener: None,
             serve: None,
             busy: false,
+            worker: None,
+            last_poll: std::time::Instant::now(),
             owned_session: None,
             note: String::new(),
         }));
@@ -731,7 +708,7 @@ pub fn smoke() -> i32 {
             0,
             0,
             560,
-            460,
+            510,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             instance,
@@ -739,6 +716,15 @@ pub fn smoke() -> i32 {
         );
         if window.is_null() {
             eprintln!("executor: the window could not be created");
+            drop(Box::from_raw(state));
+            return 1;
+        }
+        // This must be the user pointer, not the CREATESTRUCTW address supplied
+        // by Windows to WM_CREATE. Do not dispatch any action on invalid state.
+        if GetWindowLongPtrW(window, GWLP_USERDATA) != state as isize {
+            eprintln!("executor: window state was not bound to its owner");
+            SetWindowLongPtrW(window, GWLP_USERDATA, state as isize);
+            DestroyWindow(window);
             drop(Box::from_raw(state));
             return 1;
         }
@@ -752,20 +738,22 @@ pub fn smoke() -> i32 {
             (ID_CODE, "code"),
             (ID_HEADLINE, "headline"),
             (ID_NOTE, "note"),
+            (ID_START, "start executor"),
+            (ID_STOP, "stop executor"),
         ] {
             if GetDlgItem(window, id as i32).is_null() {
                 missing.push(name);
             }
         }
         // Give the timer one turn so the status line is written from the component.
-        SetTimer(window, 1, 1000, std::ptr::null_mut());
+        state_of(window).paint(window);
         DestroyWindow(window);
         drop(Box::from_raw(state));
         if !missing.is_empty() {
             eprintln!("executor: missing controls: {missing:?}");
             return 1;
         }
-        println!("window: 8 controls created, status painted, window destroyed");
+        println!("window: 10 controls created, owner binding checked, status painted, window destroyed");
     }
     0
 }
@@ -839,6 +827,8 @@ pub fn run() -> i32 {
             listener: None,
             serve: None,
             busy: false,
+            worker: None,
+            last_poll: std::time::Instant::now(),
             owned_session: None,
             note: startup_note,
         }));
@@ -851,9 +841,9 @@ pub fn run() -> i32 {
             title.as_ptr(),
             WS_OVERLAPPEDWINDOW,
             (screen_width - 560) / 2,
-            (screen_height - 460) / 2,
+            (screen_height - 510) / 2,
             560,
-            460,
+            510,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             instance,
@@ -876,4 +866,25 @@ pub fn run() -> i32 {
         }
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn refresh_never_adopts_another_session_or_restarts_a_stopped_executor(){
+        let mut state=State{
+            root:std::env::temp_dir(),workspace:"previous-workspace".into(),
+            status:Status::default(),listener:None,serve:None,busy:false,
+            worker:None,last_poll:std::time::Instant::now(),
+            owned_session:Some("owned-session".into()),note:String::new(),
+        };
+        let response=Status::parse(r#"{"schema_version":1,"supported":true,"state":"ready","session_id":"another-session"}"#).unwrap();
+        state.apply(Job::Refresh,Ok(response));
+        assert_eq!(state.owned_session.as_deref(),Some("owned-session"));
+        assert!(state.serve.is_none());
+        assert!(state.note.is_empty(),"refresh tried to start an executor");
+        let cancel=state.arguments(Job::Cancel).unwrap();
+        assert_eq!(cancel.last().map(String::as_str),Some("owned-session"));
+    }
 }

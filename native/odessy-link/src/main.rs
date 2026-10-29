@@ -248,7 +248,7 @@ fn discover_peers(arguments: &[String]) -> Result<(), Failure> {
         println!("{}", serde_json::json!({"schema_version":1,"devices":found.iter().map(|peer| {
             let address=peer.address().ok();
             serde_json::json!({"name":peer.alias,"address":address,"advertised_fingerprint":peer.fingerprint,
-                "usable":address.is_some(),"trusted":false})
+                "usable":address.is_some(),"trusted":false,"purpose":peer.purpose})
         }).collect::<Vec<_>>()}));
         return Ok(());
     }

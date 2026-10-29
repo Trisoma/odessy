@@ -246,7 +246,7 @@ def link_binary(env: Mapping[str, str] | None = None) -> Path:
         return Path(found)
     repo = Path(__file__).resolve().parents[3]
     for profile in ("release", "debug"):
-        for name in ("odessy-link.exe", "odessy-link"):
+        for name in (("odessy-link.exe",) if os.name == "nt" else ("odessy-link",)):
             candidate = repo / "native" / "odessy-link" / "target" / profile / name
             if candidate.is_file():
                 return candidate

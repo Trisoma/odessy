@@ -290,6 +290,13 @@ impl Registry {
 
     /// Revoke every capability for a peer. Returns whether the peer existed, so a
     /// caller can distinguish "already gone" from "revoked now".
+    /// Address is routing metadata only; identities and grants are unchanged.
+    pub fn set_address(&self,alias:&str,address:&str)->Result<(),String>{
+        let transaction=self.connection.unchecked_transaction().map_err(|e|e.to_string())?;
+        if transaction.execute("UPDATE peers SET address=?2 WHERE alias=?1",params![alias,address]).map_err(|e|e.to_string())?!=1 {return Err("Unknown peer".into());}
+        self.bump_revision(&transaction)?;
+        transaction.commit().map_err(|e|e.to_string())
+    }
     pub fn revoke(&self, alias: &str) -> Result<bool, String> {
         let transaction = self
             .connection

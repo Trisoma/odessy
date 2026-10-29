@@ -35,8 +35,8 @@ class _PairingPageState extends State<PairingPage> {
     return source is SetupMetadataBackend
         ? SetupPairingBackend(
             (source as SetupMetadataBackend).createMetadataReader(),
-            ownsSource: true)
-        : SetupPairingBackend(source);
+            ownsSource: true,link:c.fields['link'] as String? ?? '')
+        : SetupPairingBackend(source,link:c.fields['link'] as String? ?? '');
   }
 
   bool scanned = false;

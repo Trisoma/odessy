@@ -16,6 +16,8 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+#[path = "executor/execution.rs"]
+mod execution;
 
 /// Name of the pairing component shipped beside this executable.
 const LINK_BINARY: &str = if cfg!(windows) {
@@ -254,7 +256,7 @@ fn run_component(
     arguments: &[&str],
     timeout: std::time::Duration,
 ) -> Result<String, String> {
-    let mut child = Command::new(link)
+    let mut child = component_command(link)
         .args(arguments)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -262,7 +264,8 @@ fn run_component(
         .spawn()
         .map_err(|error| format!("cannot start {LINK_BINARY}: {error}"))?;
     let mut stdout = child.stdout.take().ok_or("the component has no output")?;
-    let reader = std::thread::spawn(move || {
+    let (output_sender, output_receiver)=std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
         use std::io::Read;
         let mut kept = Vec::new();
         // Keep at most 256 KiB; the rest is drained and discarded so the child never
@@ -280,7 +283,7 @@ fn run_component(
                 Err(_) => break,
             }
         }
-        String::from_utf8_lossy(&kept).to_string()
+        let _=output_sender.send(String::from_utf8_lossy(&kept).to_string());
     });
     let started = std::time::Instant::now();
     let status = loop {
@@ -301,7 +304,8 @@ fn run_component(
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     };
-    let output = reader.join().unwrap_or_default();
+    let output=output_receiver.recv_timeout(std::time::Duration::from_secs(1))
+        .map_err(|_|"Component output did not close; inspect the interrupted operation before retrying.".to_string())?;
     match status {
         Some(status) => {
             if !status.success() && !output.trim_start().starts_with('{') {
@@ -313,6 +317,15 @@ fn run_component(
         }
         None => Err("the pairing component did not answer in time".into()),
     }
+}
+
+fn component_command(link:&Path)->Command {
+    let mut command=Command::new(link);
+    #[cfg(windows)] {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000);
+    }
+    command
 }
 
 fn selftest() -> i32 {
@@ -329,7 +342,18 @@ fn selftest() -> i32 {
         Err(error) => {
             // A source checkout has no manifest; that is reported, never ignored.
             println!("checksums: {error}");
+            return 1;
         }
+    }
+    for relative in [LINK_BINARY,"node/node.exe","node/LICENSE","tool-server/dist/src/server.js","tool-server/package.json","tool-server/package-lock.json","LICENSE","THIRD-PARTY-NOTICES.md"] {
+        if !root.join(relative).is_file() {
+            eprintln!("package component missing: {relative}");
+            return 1;
+        }
+    }
+    match run_component(&root.join("node/node.exe"), &["--version"],std::time::Duration::from_secs(10)) {
+        Ok(version) if version.trim().starts_with('v')=>println!("node: {}",version.trim()),
+        _=>{eprintln!("bundled Node runtime did not start");return 1;}
     }
     let link = match link_binary(&root) {
         Ok(link) => link,
@@ -367,6 +391,24 @@ mod window;
 
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    // Administrator/acceptance entry point. The ordinary user uses the window;
+    // both paths share exactly the same owned mTLS process implementation.
+    if arguments.first().map(String::as_str)==Some("--serve") {
+        let value=|flag:&str|arguments.iter().position(|v|v==flag).and_then(|i|arguments.get(i+1));
+        let result=(||->Result<(),String>{
+            let root=package_root()?;
+            verify_package(&root)?;
+            let workspace=value("--workspace").ok_or("Choose a workspace")?;
+            let listen=value("--listen").map(String::as_str).unwrap_or("127.0.0.1:7443");
+            let mut host=execution::Execution::start(&root,Path::new(workspace),listen)?;
+            loop {
+                if let Some(message)=host.poll()?{eprintln!("{message}");}
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        })();
+        if let Err(error)=result{eprintln!("{error}");std::process::exit(1);}
+        return;
+    }
     if arguments.iter().any(|argument| argument == "--selftest") {
         std::process::exit(selftest());
     }

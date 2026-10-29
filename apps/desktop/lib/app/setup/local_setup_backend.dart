@@ -87,6 +87,11 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
     return candidate.existsSync() ? candidate.path : null;
   }
 
+  static String? _siblingLink() {
+    final file=File('${File(Platform.resolvedExecutable).parent.path}/${Platform.isWindows ? 'odessy-link.exe' : 'odessy-link'}');
+    return file.existsSync()?file.path:null;
+  }
+
   static String defaultOutput() {
     final home = Platform.environment['HOME'] ??
         Platform.environment['USERPROFILE'] ??
@@ -138,6 +143,7 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
           workingDirectory: sourceRoot.isEmpty ? null : sourceRoot,
           environment: {
             'PYTHONUNBUFFERED': '1',
+            if (_siblingLink() case final String link) 'ODESSY_LINK_BIN': link,
             if (payloadRoot.isNotEmpty) 'ODESSY_SETUP_PAYLOAD': payloadRoot,
             if (sourceRoot.isNotEmpty)
               'PYTHONPATH':
