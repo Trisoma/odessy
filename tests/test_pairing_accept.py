@@ -11,23 +11,37 @@ import pytest
 pytest.importorskip('fastapi')
 httpx = pytest.importorskip('httpx')
 
-from odessy.application import pairing
+from odessy.application import execution_access, pairing
 from odessy.application.api import create_app
 
 REMOTE = ('192.168.1.50', 51234)
 LOCAL = ('127.0.0.1', 51234)
+HOSTED_SECRET = 'exec-session-key'
+WORKSPACE = 'C:/work/odessy'
+
+
+@pytest.fixture(autouse=True)
+def _isolated_grants():
+    execution_access.reset()
+    yield
+    execution_access.reset()
 
 
 def build_app(token='secret'):
     def factory():  # Pairing must never need a session or a model.
         raise AssertionError('pairing must not build a session controller')
-    app = create_app(factory, token=token)
+    app = create_app(factory, token=token, workspace=WORKSPACE)
     app.state.pairing_port = 8765
+    app.state.execution_url = 'http://192.168.1.10:9000/mcp'
+    execution_access.configure(HOSTED_SECRET, WORKSPACE)
+    probe = asyncio.Queue(maxsize=64)
+    app.state.pairing_subscribers.add(probe)
+    app.state.probe = probe
     return app
 
 
 def drain(app):
-    queue = app.state.pairing_events
+    queue = app.state.probe
     return [queue.get_nowait() for _ in range(queue.qsize())]
 
 
@@ -47,7 +61,14 @@ def test_request_accepted(monkeypatch):
             response = await client.post('/v1/pairing/request', json={'name': 'Jetson'})
         assert response.status_code == 200, response.text
         payload = response.json()
-        assert payload == {'token': 'secret', 'url': 'http://192.168.1.10:8765'}
+        # The coordinator gets a reviewable tool credential, never the app token.
+        assert set(payload) == {'url', 'credential', 'workspace'}
+        assert payload['url'] == 'http://192.168.1.10:9000/mcp'
+        assert payload['workspace'] == WORKSPACE
+        assert payload['credential'] == HOSTED_SECRET
+        assert 'secret' not in response.text
+        assert execution_access.validate(payload['credential'], workspace=WORKSPACE)
+        assert not execution_access.validate(payload['credential'], workspace='C:/other')
         assert seen == {'id': seen['id'], 'name': 'Jetson', 'ip': '192.168.1.50'}
         assert len(seen['id']) == 16 and int(seen['id'], 16) >= 0
         assert pairing._pending == {}
@@ -131,7 +152,7 @@ def test_request_is_released_by_a_tap(monkeypatch):
             assert tap.status_code == 200, tap.text
             response = await asyncio.wait_for(pending, timeout=5)
             assert response.status_code == 200, response.text
-            assert response.json()['url'] == 'http://192.168.1.10:8765'
+            assert response.json()['url'] == 'http://192.168.1.10:9000/mcp'
         assert pairing._pending == {}
 
     asyncio.run(run())
@@ -154,6 +175,47 @@ def test_local_or_unreachable_hosts_cannot_pair(monkeypatch):
             assert response.status_code == 503
         assert drain(app) == [], 'a refused request must not prompt the local user'
         assert pairing._pending == {}
+
+    asyncio.run(run())
+
+
+def test_an_execution_credential_opens_no_application_route(monkeypatch):
+    """The tool secret must not become a second admin key."""
+    async def run():
+        app = build_app()
+
+        async def accepted(request_id, name, ip, timeout=60):
+            return True
+
+        monkeypatch.setattr(pairing, 'wait_for_approval', accepted)
+        monkeypatch.setattr(pairing, 'lan_ip', lambda: '192.168.1.10')
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=REMOTE),
+                                     base_url='http://test') as client:
+            granted = await client.post('/v1/pairing/request', json={'name': 'Jetson'})
+            assert granted.status_code == 200, granted.text
+            credential = granted.json()['credential']
+            headers = {'Authorization': 'Bearer ' + credential}
+            for path in ('/v1/settings', '/v1/profiles', '/v1/capabilities', '/v1/sessions'):
+                assert (await client.get(path, headers=headers)).status_code == 401, path
+            assert (await client.post('/v1/sessions', headers=headers)).status_code == 401
+            assert (await client.post('/v1/pairing/approve',
+                                       json={'id': 'x', 'accepted': True},
+                                       headers=headers)).status_code == 401
+
+    asyncio.run(run())
+
+
+def test_pairing_refuses_when_tool_hosting_is_not_enabled(monkeypatch):
+    async def run():
+        app = build_app()
+        app.state.execution_url = None
+        monkeypatch.setattr(pairing, 'lan_ip', lambda: '192.168.1.10')
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=REMOTE),
+                                     base_url='http://test') as client:
+            response = await client.post('/v1/pairing/request', json={'name': 'Jetson'})
+        assert response.status_code == 503
+        assert 'LAN tool hosting is not enabled' in response.json()['detail']
+        assert drain(app) == [], 'the local user must not be prompted for an unusable pairing'
 
     asyncio.run(run())
 

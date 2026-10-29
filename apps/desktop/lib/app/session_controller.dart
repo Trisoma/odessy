@@ -35,6 +35,7 @@ class DesktopSession extends ChangeNotifier {
   int _epoch = 0;
   Future<void>? _shutdown;
   StreamSubscription<SessionEvent>? _subscription;
+  StreamSubscription<PairingEvent>? _pairingSubscription;
   Timer? _retry;
   int get lastEvent =>
       session?.events.fold<int>(0, (n, e) => e.id > n ? e.id : n) ?? 0;
@@ -55,6 +56,10 @@ class DesktopSession extends ChangeNotifier {
     busy = true;
     error = '';
     _notify();
+    // A laptop may have no model and no session yet, but its user still has to
+    // answer a request. The pairing stream is therefore opened first, and its
+    // failure never blocks the session.
+
     try {
       final values = await api.profiles();
       final details = api is ProfileMetadataApi
@@ -78,6 +83,16 @@ class DesktopSession extends ChangeNotifier {
     }
   }
 
+  Future<void> reloadExecutionTarget() async {
+    if (busy || session?.running == true) throw StateError('Stop the active turn first.');
+    await _subscription?.cancel();
+    _subscription = null;
+    final old = session;
+    if (old != null) await api.deleteSession(old.id);
+    session = null;
+    await start();
+  }
+
   String _safeError(Object e) => e is ApiFailure
       ? e.toString()
       : 'Connection unavailable. Check that the local service is running.';
@@ -91,6 +106,22 @@ class DesktopSession extends ChangeNotifier {
     if (text.isEmpty) return fallback;
     return text.length > 64 ? text.substring(0, 64) : text;
   }
+  /// Shared by both transports: a session event and a pairing event describe the
+  /// same request, so there is one place that interprets them.
+  void _applyPairing(String type, Json data) {
+    if (type == 'pairing_request') {
+      final id = data['id'];
+      if (id is String && id.isNotEmpty) {
+        pairing = PairingRequest(id, _remoteLabel(data['name'], 'Unnamed device'),
+            _remoteLabel(data['ip'], 'unknown address'));
+      }
+    }
+    if (type == 'pairing_resolved' && pairing?.id == data['id']) {
+      // Another window answered, or the request expired: stop asking here.
+      pairing = null;
+    }
+  }
+
   void _listen(int epoch) {
     final sid = session!.id;
     _subscription = api.events(sid, lastEvent).listen((event) async {
@@ -111,20 +142,8 @@ class DesktopSession extends ChangeNotifier {
             : text.substring(0, text.length > 600 ? 600 : text.length);
         status = 'Failed';
       }
-      if (event.type == 'pairing_request') {
-        final id = event.data['id'];
-        if (id is String && id.isNotEmpty) {
-          pairing = PairingRequest(
-              id,
-              _remoteLabel(event.data['name'], 'Unnamed device'),
-              _remoteLabel(event.data['ip'], 'unknown address'));
-          _notify();
-        }
-      }
-      if (event.type == 'pairing_resolved' && pairing?.id == event.data['id']) {
-        // Another window answered, or the request expired: stop asking here.
-        pairing = null;
-        _notify();
+      if (event.type == 'pairing_request' || event.type == 'pairing_resolved') {
+        _applyPairing(event.type, event.data);
       }
       await refresh(epoch: epoch);
       if (event.type == 'error' && epoch == _epoch && !_disposed) {
@@ -362,6 +381,8 @@ class DesktopSession extends ChangeNotifier {
     _retry?.cancel();
     final transport = api, sid = session?.id;
     try {
+      await _pairingSubscription?.cancel();
+      _pairingSubscription = null;
       await _subscription?.cancel();
       if (sid != null) {
         await transport.deleteSession(sid).timeout(const Duration(seconds: 3));

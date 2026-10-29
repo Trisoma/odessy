@@ -89,7 +89,7 @@ def resolve(request_id, accepted):
     return True
 
 
-def register_mdns(app, port, *, instance=None):
+def register_mdns(app, port, *, instance=None, address=None, device_id=None):
     """Announce ``_odessy-exec._tcp.local.`` and record the serving port.
 
     The port is recorded whether or not zeroconf is installed, because the
@@ -101,7 +101,7 @@ def register_mdns(app, port, *, instance=None):
         from zeroconf import ServiceInfo, Zeroconf
     except ImportError:
         return None  # Optional dependency: LAN discovery is best effort.
-    address = lan_ip()
+    address = address or lan_ip()
     if address is None:
         return None  # No LAN IPv4 address to advertise.
     hostname = socket.gethostname()
@@ -112,7 +112,8 @@ def register_mdns(app, port, *, instance=None):
             f'{instance or hostname}.{SERVICE_TYPE}',
             addresses=[socket.inet_aton(address)],
             port=port,
-            properties={'version': '1', 'hostname': hostname},
+            properties={'version': '1', 'hostname': hostname,
+                        **({'device_id': device_id} if device_id else {})},
             server=f'{hostname}.local.',
         )
         zeroconf = Zeroconf()

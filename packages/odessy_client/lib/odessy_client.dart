@@ -41,6 +41,49 @@ Stream<SessionEvent> decodeEvents(Stream<String> chunks) async* {
   }
 }
 
+/// Bounded SSE parsing for the pre-session pairing stream (no sequence ids).
+Stream<PairingEvent> decodePairingEvents(Stream<String> chunks) async* {
+  var buffer = '';
+  await for (final chunk in chunks) {
+    buffer += chunk;
+    if (buffer.length > 2 * 1024 * 1024)
+      throw const FormatException('Event frame exceeds 2 MiB');
+    while (true) {
+      final boundary = RegExp(r'\r?\n\r?\n').firstMatch(buffer);
+      if (boundary == null) break;
+      final block = buffer.substring(0, boundary.start);
+      buffer = buffer.substring(boundary.end);
+      final data = block
+          .split(RegExp(r'\r?\n'))
+          .where((l) => l.startsWith('data:'))
+          .map((l) => l.substring(5).trimLeft())
+          .join('\n');
+      if (data.isEmpty) continue;
+      final payload = jsonDecode(data) as Json;
+      final type = payload['type'];
+      if (type is! String) continue;
+      yield PairingEvent(type, Map<String, dynamic>.from(payload['data'] as Map? ?? {}));
+    }
+  }
+}
+
+/// One pairing step, delivered before any session exists.
+///
+/// Session events carry a sequence id; these do not, because they describe a
+/// request that arrives when there is no session to sequence against.
+class PairingEvent {
+  PairingEvent(this.type, Json data) : data = freezeJson(data);
+  final String type;
+  final Json data;
+}
+
+/// Optional capability: the pairing event stream of this computer.
+abstract interface class PairingEventsApi {
+  /// Each call is an independent subscriber, so two windows both see every
+  /// request; a second reader never consumes the first one's events.
+  Stream<PairingEvent> pairingEvents();
+}
+
 abstract class OdessyApi {
   bool get isDemo;
   String get identity;
@@ -57,6 +100,21 @@ abstract class OdessyApi {
   Future<Json> saveSettings(Json value);
   Future<void> deleteSession(String sid);
   void close();
+}
+
+/// Local coordinator commands. Remote credentials stay entirely inside Python.
+abstract interface class ExecutionHostsApi {
+  Future<Json> scanExecutionHosts();
+  Future<Json> executionHostStatus();
+  Future<Json> connectExecutionHost(String id);
+  Future<void> disconnectExecutionHost();
+}
+
+class ExecutionConnectionFailure implements Exception {
+  const ExecutionConnectionFailure(this.message);
+  final String message;
+  @override
+  String toString() => message;
 }
 
 /// Optional capability: answering a LAN pairing prompt.
@@ -86,7 +144,7 @@ class ApiFailure implements Exception {
       };
 }
 
-class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi, DesktopVoiceApi, PairingApi {
+class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi, DesktopVoiceApi, PairingApi, PairingEventsApi, ExecutionHostsApi {
   LocalApi(this.base, String token) : _token = token {
     if (!['http', 'https'].contains(base.scheme) ||
         !['localhost', '127.0.0.1', '::1'].contains(base.host) ||
@@ -114,7 +172,7 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
   @override
   String get identity => base.origin;
   Future<HttpClientResponse> _open(String path, String method,
-      [Json? data, HttpClient? client]) async {
+      [Json? data, HttpClient? client, Duration responseTimeout = const Duration(seconds: 12)]) async {
     final request = await (client ?? _http)
         .openUrl(method, base.resolve(path))
         .timeout(const Duration(seconds: 8));
@@ -125,7 +183,7 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
       request.headers.contentType = ContentType.json;
       request.write(jsonEncode(data));
     }
-    final response = await request.close().timeout(const Duration(seconds: 12));
+    final response = await request.close().timeout(responseTimeout);
     if (response.statusCode >= 300) {
       await response.drain<void>().timeout(const Duration(seconds: 12));
       throw ApiFailure(response.statusCode);
@@ -143,6 +201,35 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
       bytes.addAll(chunk);
     }
     return jsonDecode(utf8.decode(bytes)) as Json;
+  }
+
+  @override
+  Future<Json> scanExecutionHosts() => _json('/v1/execution-hosts');
+  @override
+  Future<Json> executionHostStatus() => _json('/v1/execution-hosts/status');
+  @override
+  Future<void> disconnectExecutionHost() async {
+    await _json('/v1/execution-hosts/disconnect', 'POST');
+  }
+  @override
+  Future<Json> connectExecutionHost(String id) async {
+    try {
+      final response = await _open('/v1/execution-hosts/connect', 'POST', {'id': id}, null,
+          const Duration(seconds: 90));
+      final bytes = <int>[];
+      await for (final chunk in response.timeout(const Duration(seconds: 12))) {
+        bytes.addAll(chunk);
+        if (bytes.length > 65536) throw const FormatException('Connection response exceeds 64 KiB');
+      }
+      return jsonDecode(utf8.decode(bytes)) as Json;
+    } on ApiFailure catch (error) {
+      throw ExecutionConnectionFailure(switch (error.status) {
+        403 => 'The execution host declined or did not answer. Press Connect to ask again.',
+        409 => 'Stop any active turn, disconnect the current host, or refresh nearby hosts before retrying.',
+        503 => 'The execution host could not connect its tools. Restart sharing there and retry. Chat remains available.',
+        _ => 'Connection request failed. Check the local coordinator and execution host.',
+      });
+    }
   }
 
   String _session(String sid) => '/v1/sessions/${Uri.encodeComponent(sid)}';
@@ -247,6 +334,46 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
   @override
   Future<void> approvePairing(String id, bool accepted) async {
     await _json('/v1/pairing/approve', 'POST', {'id': id, 'accepted': accepted});
+  }
+
+  @override
+  Stream<PairingEvent> pairingEvents() {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+    _streams.add(client);
+    var cancelled = false;
+    StreamSubscription<PairingEvent>? subscription;
+    late final StreamController<PairingEvent> output;
+    output = StreamController<PairingEvent>(onListen: () {
+      unawaited(() async {
+        try {
+          final response =
+              await _open('/v1/pairing/events', 'GET', null, client);
+          if (cancelled) return;
+          subscription = decodePairingEvents(utf8.decoder
+                  .bind(response.timeout(const Duration(seconds: 35))))
+              .listen((event) {
+            if (!cancelled) output.add(event);
+          }, onError: (Object error, StackTrace stack) {
+            if (!cancelled) output.addError(error, stack);
+          }, onDone: () {
+            _streams.remove(client);
+            client.close(force: true);
+            unawaited(output.close());
+          });
+        } catch (error, stack) {
+          if (!cancelled) {
+            output.addError(error, stack);
+            unawaited(output.close());
+          }
+        }
+      }());
+    }, onCancel: () {
+      cancelled = true;
+      _streams.remove(client);
+      client.close(force: true);
+      unawaited(subscription?.cancel().catchError((Object _) {}));
+    });
+    return output.stream;
   }
 
   @override

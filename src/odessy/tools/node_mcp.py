@@ -14,13 +14,13 @@ from pathlib import Path
 from types import TracebackType
 from typing import IO, Any
 
-from mcp.client.stdio import StdioServerParameters, stdio_client
 
 # TODO: Potentially a dead code: this class and the following function code:
 class NodeToolServerTransport(AbstractAsyncContextManager):
     """MCP stdio transport for Odessy's laptop-side Node tool server."""
 
     def __init__(self, workspace_root: Path | str) -> None:
+        from mcp.client.stdio import StdioServerParameters, stdio_client
         public_repo_root = Path(__file__).resolve().parents[3]
         self._context = stdio_client(
             StdioServerParameters(

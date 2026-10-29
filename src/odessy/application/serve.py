@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import ipaddress
 import os
 from pathlib import Path
@@ -53,6 +52,7 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
                 **{name: profile.public_dict() for name, profile in config.participants.items()}}
 
     app = create_app(factory, config=load_config(), profiles=profiles, runtime_configuration=runtime_configuration, desktop_voice=desktop_voice,
+                     workspace=workspace,
                      token=token if token is not None else os.environ.get('ODESSY_API_TOKEN') or None)
     address = f'[{host}]' if ':' in host else host
     print(f'[odessy] HTTP API: http://{address}:{port}', file=sys.stderr, flush=True)
@@ -61,6 +61,7 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
     print('[odessy] Open / for diagnostics; send Authorization: Bearer <token> on every /v1 request.',
           file=sys.stderr, flush=True)
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, access_log=False, log_level='warning'))
+
     if watch_stdin:
         # The owning desktop keeps this pipe open; EOF means it is gone, so the
         # coordinator must not outlive the application that started it.
@@ -80,20 +81,8 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
 
         threading.Thread(target=watch, name='odessy-parent-watch', daemon=True).start()
 
-    async def announce():
-        # Announce only once sockets are bound, so a coordinator that discovers
-        # the service can actually connect to it.
-        from odessy.application.pairing import register_mdns
-        while not server.started and not server.should_exit:
-            await asyncio.sleep(0.02)
-        if server.started:
-            await asyncio.to_thread(register_mdns, app, port)
-
-    announce_task = asyncio.create_task(announce())
     try:
         await server.serve()
     finally:
-        announce_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await announce_task
-
+        from odessy.tools.lan_executor import clear
+        clear()

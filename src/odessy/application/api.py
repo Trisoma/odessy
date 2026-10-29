@@ -11,7 +11,7 @@ import secrets
 import time
 from contextlib import asynccontextmanager
 
-from . import pairing
+from . import execution_access, pairing
 from .session import public
 from odessy.interaction.broker import InteractionError
 from odessy.models.cloud_model import CloudModelConfigError
@@ -49,7 +49,8 @@ window.addEventListener('pagehide',()=>streamAbort?.abort());
 
 
 def create_app(controller_factory, *, config=None, settings=None, jobs=None, token=None,
-               config_path=None, profiles=None, monitoring=None, runtime_configuration=None, desktop_voice=None):
+               config_path=None, profiles=None, monitoring=None, runtime_configuration=None, desktop_voice=None,
+               workspace=None):
     """Build an app; the caller owns loopback-only binding and displaying its token."""
     try:
         from fastapi import FastAPI, Request, HTTPException
@@ -103,15 +104,24 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     register_monitoring(app, monitoring)
     app.state.monitoring = monitoring
     app.state.sessions, app.state.turn_tasks = sessions, tasks
+    from .lan_connections import register as register_lan_connections
+    register_lan_connections(app)
     app.state.config = config
     app.state.settings = settings
     app.state.profiles = profiles
     app.state.runtime_configuration = json.loads(json.dumps(runtime_configuration))
     app.state.service_instance_id = secrets.token_hex(16)
     # Pairing happens before a session exists, so its events cannot ride a
-    # controller's stream; they go to this queue until a reader drains it.
-    app.state.pairing_events = asyncio.Queue(maxsize=64)
+    # controller's stream. Each reader gets its own queue: one subscriber must
+    # never consume another's events.
+    app.state.pairing_subscribers = set()
     app.state.pairing_port = None
+    # The LAN-reachable MCP endpoint the tool server is actually listening on.
+    # None means LAN tool hosting is not enabled, so pairing cannot hand out an
+    # endpoint that would not answer.
+    app.state.execution_url = None
+    # The workspace a coordinator's reviewed access is limited to.
+    app.state.workspace_root = str(workspace) if workspace else None
     restart_reservation = None
     pending_admissions = 0
 
@@ -155,13 +165,14 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         return {'status':'resumed'}
 
     def publish_pairing(event_type, data):
-        """Announce a pairing step to live sessions and to the pre-session queue."""
+        """Announce a pairing step to live sessions and to every subscriber."""
         for controller in tuple(sessions.values()):
             controller.emit(event_type, data)
-        queue = app.state.pairing_events
-        if queue.full():
-            queue.get_nowait()  # A stalled reader must not fill the queue.
-        queue.put_nowait({'type': event_type, 'data': data})
+        event = {'type': event_type, 'data': data}
+        for queue in tuple(app.state.pairing_subscribers):
+            if queue.full():
+                queue.get_nowait()  # A stalled reader must not stall the others.
+            queue.put_nowait(event)
 
     def verified(request):
         value = request.headers.get('authorization', '')
@@ -186,9 +197,13 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             raise HTTPException(403, 'Pairing requests must come from another host on the network')
         port = app.state.pairing_port
         address = pairing.lan_ip()
+        execution_url = app.state.execution_url
         if port is None or address is None:
             # Answering with a URL no coordinator can reach would be worse.
             raise HTTPException(503, 'This host has no LAN address to offer for pairing')
+        if not execution_url:
+            # Tool hosting is off: an execution handle now would authorize nothing.
+            raise HTTPException(503, 'LAN tool hosting is not enabled on this computer')
         if not pairing.has_room():
             # Refuse before prompting: the local user must not face a queue.
             raise HTTPException(429, 'Too many pairing requests are already awaiting local approval')
@@ -198,7 +213,15 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         publish_pairing('pairing_resolved', {'id': request_id, 'accepted': accepted})
         if not accepted:
             raise HTTPException(403, 'Pairing declined')
-        return {'token': app.state.auth_token, 'url': f'http://{address}:{port}'}
+        # Never hand out the application token: it would open settings, sessions,
+        # pairing approval and management. The coordinator receives a credential
+        # that only the tool endpoint accepts, limited to the reviewed workspace.
+        try:
+            credential = execution_access.issue(request_id, app.state.workspace_root or '')
+        except ValueError as error:
+            raise HTTPException(503, str(error)) from error
+        return {'url': execution_url, 'credential': credential,
+                'workspace': app.state.workspace_root}
 
     @app.post('/v1/pairing/approve')
     async def pairing_approve(request: Request):
@@ -215,17 +238,23 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
 
     @app.get('/v1/pairing/events')
     async def pairing_event_stream(request: Request):
-        # One reader drains the queue; a second reader would steal its events.
-        queue = app.state.pairing_events
+        if not verified(request):
+            return Response(status_code=401)
+        # One queue per reader, registered for the life of this stream only.
+        queue: asyncio.Queue = asyncio.Queue(maxsize=64)
+        app.state.pairing_subscribers.add(queue)
 
         async def stream():
-            while not await request.is_disconnected():
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=15)
-                except asyncio.TimeoutError:
-                    yield ': keepalive\n\n'
-                    continue
-                yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+            try:
+                while not await request.is_disconnected():
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=15)
+                    except asyncio.TimeoutError:
+                        yield ': keepalive\n\n'
+                        continue
+                    yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+            finally:
+                app.state.pairing_subscribers.discard(queue)
         return StreamingResponse(stream(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 

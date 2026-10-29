@@ -14,6 +14,7 @@ dependencies = [
 [project.scripts]
 odessy-loop = "odessy.entrypoint:main"
 odessy = "odessy.entrypoint:main"
+odessy-executor = "odessy.application.executor:main"
 
 [project.optional-dependencies]
 test = [
@@ -43,6 +44,7 @@ wake = [
 # effort -- without it a coordinator can still pair by typing the URL.
 pairing = [
   "zeroconf>=0.131,<1",
+  "ifaddr>=0.2,<1",
 ]
 # The existing voice pipeline's Python dependencies. Declared now because the wake
 # session reuses them, and because a clone could not run `odessy voice` at all while

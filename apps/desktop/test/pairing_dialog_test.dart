@@ -75,18 +75,54 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text(request), findsOneWidget);
   });
+
+  testWidgets('a laptop with no session yet can still answer a request',
+      (tester) async {
+    // No model, no conversation: session creation never completes.
+    final api = PairingTransport(holdSession: true);
+    tester.view.physicalSize = const Size(1200, 850);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(OdessyApp(api: api));
+    await tester.pump();
+    api.emitPairing(PairingEvent('pairing_request',
+        {'id': 'p1', 'name': 'Jetson', 'ip': '192.168.1.50'}));
+    // The loading spinner animates forever while the session is held open, so
+    // settle would never return; fixed frames are the honest wait here.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text(request), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Accept'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(api.answers, {'p1': true});
+  });
 }
 
 /// A loopback transport that can raise pairing events on demand.
-class PairingTransport extends DemoApi implements PairingApi {
-  PairingTransport() : super(delay: const Duration(milliseconds: 20));
+class PairingTransport extends DemoApi implements PairingApi, PairingEventsApi {
+  PairingTransport({this.holdSession = false})
+      : super(delay: const Duration(milliseconds: 20));
+  final bool holdSession;
   final _events = StreamController<SessionEvent>.broadcast();
+  final _pairing = StreamController<PairingEvent>.broadcast();
   final answers = <String, bool>{};
 
   void emit(SessionEvent event) => _events.add(event);
+  void emitPairing(PairingEvent event) => _pairing.add(event);
 
   @override
   Stream<SessionEvent> events(String sid, int after) => _events.stream;
+
+  @override
+  Stream<PairingEvent> pairingEvents() => _pairing.stream;
+
+  @override
+  Future<Session> createSession() {
+    if (!holdSession) return super.createSession();
+    return Completer<Session>().future;  // The model never starts.
+  }
 
   @override
   Future<void> approvePairing(String id, bool accepted) async {
@@ -96,6 +132,7 @@ class PairingTransport extends DemoApi implements PairingApi {
   @override
   void close() {
     unawaited(_events.close());
+    unawaited(_pairing.close());
     super.close();
   }
 }

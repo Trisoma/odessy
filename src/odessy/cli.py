@@ -701,6 +701,20 @@ async def _builtin_tool_servers(workspace_root: Path) -> AsyncIterator[tuple[obj
     so trust is never inherited from construction.
     """
 
+    from odessy.tools.lan_executor import current as current_lan_execution
+    connection = current_lan_execution()
+    if connection is not None:
+        server = connection.server()
+        try:
+            await asyncio.wait_for(server.list_tools(), timeout=15)
+        except Exception:
+            # A stopped execution host must never prevent model-only conversation.
+            yield (ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root, registry=execution_registry())),)
+        else:
+            yield (ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root, registry=execution_registry())),
+                   ExecutionTarget(server))
+        return
+
     try:
         mode = deployment_mode()
     except DeploymentConfigError as error:

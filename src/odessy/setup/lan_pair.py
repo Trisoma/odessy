@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import threading
+from urllib.parse import urlsplit
 import urllib.error
 import urllib.request
 
@@ -52,6 +54,7 @@ def scan_execution_hosts(timeout: float = 3.0) -> list[dict]:
         return []
 
     found: dict[str, dict] = {}
+    lock = threading.Lock()
 
     class Collector:
         """zeroconf resolves a name on a worker thread; this only records it."""
@@ -63,12 +66,15 @@ def scan_execution_hosts(timeout: float = 3.0) -> list[dict]:
                 return
             entry = _entry(info, name)
             if entry is not None:
-                found.setdefault(entry['name'], entry)
+                with lock:
+                    found[entry.get('id', entry['name'])] = entry
 
         update_service = add_service
 
         def remove_service(self, zeroconf, service_type, name):
-            found.pop(_label(name), None)
+            with lock:
+                for key in [key for key, row in found.items() if row['name'] == _label(name)]:
+                    found.pop(key, None)
 
     zeroconf = Zeroconf()
     browser = None
@@ -81,10 +87,11 @@ def scan_execution_hosts(timeout: float = 3.0) -> list[dict]:
         if browser is not None:
             browser.cancel()
         zeroconf.close()
-    return [found[name] for name in sorted(found)]
+    with lock:
+        return [found[name] for name in sorted(found)]
 
 
-async def request_pairing(host: str, port: int, coordinator_name: str) -> dict:
+async def request_pairing(host: str, port: int, coordinator_name: str, *, device_id=None) -> dict:
     """Ask the execution host to pair; return ``{"token", "url"}``.
 
     Raises :class:`PairingDeclined` when the laptop's user said no or let the
@@ -100,7 +107,7 @@ async def request_pairing(host: str, port: int, coordinator_name: str) -> dict:
         raise PairingFailed('a coordinator name of 1-64 characters is required')
     request = urllib.request.Request(
         f'http://{address}:{port}/v1/pairing/request',
-        data=json.dumps({'name': name}).encode('utf-8'),
+        data=json.dumps({'name': name, **({'device_id': device_id} if device_id else {})}).encode('utf-8'),
         method='POST',
         headers={'Content-Type': 'application/json', 'Accept': 'application/json'})
     # urllib blocks; keep the event loop free while the laptop's user decides.
@@ -109,10 +116,22 @@ async def request_pairing(host: str, port: int, coordinator_name: str) -> dict:
         data = json.loads(payload)
     except ValueError as error:
         raise PairingFailed('the host returned an unreadable response') from error
-    token, url = (data.get('token'), data.get('url')) if isinstance(data, dict) else (None, None)
+    token, url = (data.get('credential') or data.get('token'), data.get('url')) if isinstance(data, dict) else (None, None)
     if not isinstance(token, str) or not token or not isinstance(url, str) or not url:
         raise PairingFailed('the host accepted the request but returned no token or URL')
-    return {'token': token, 'url': url}
+    if device_id is not None:
+        try:
+            target = urlsplit(url)
+            valid = (data.get('device_id') == device_id and target.scheme == 'http'
+                     and target.hostname == address and target.port and 1 <= target.port <= 65535
+                     and target.path == '/mcp' and not target.username and not target.password
+                     and not target.query and not target.fragment)
+        except ValueError:
+            valid = False
+        if not valid:
+            raise PairingFailed('The execution endpoint changed; refresh discovery and reconnect')
+        return {'credential': token, 'url': url, 'workspace': data.get('workspace'), 'device_id': device_id}
+    return {'token': token, 'url': url}  # Legacy CLI compatibility; new UI never prints tokens.
 
 
 def _exchange(request: urllib.request.Request) -> bytes:
@@ -160,4 +179,9 @@ def _entry(info, name: str) -> dict | None:
     if not host:
         return None
     label = _label(name) or name
-    return {'name': label, 'host': host, 'port': port}
+    properties = getattr(info, 'properties', {}) or {}
+    device_id = properties.get(b'device_id') or properties.get('device_id')
+    if isinstance(device_id, bytes):
+        device_id = device_id.decode('ascii', errors='replace')
+    return {'name': label, 'host': host, 'port': port,
+            **({'id': device_id} if isinstance(device_id, str) and device_id else {})}
