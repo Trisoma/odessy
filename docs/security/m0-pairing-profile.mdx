@@ -1,0 +1,175 @@
+---
+title: "M0: short-code pairing protocol profile"
+sidebar-title: "M0 pairing profile"
+description: "The protocol decision for short-code pairing: what construction is proposed, what is implemented, what the test adapter does and does not prove, the threat model, and the exact external blocker that keeps production enrollment closed."
+keywords: ["pairing", "spake2", "m0", "threat model", "protocol review"]
+---
+
+# M0: the protocol profile decision
+
+Status: **not approved**. Production short-code enrollment is closed. There is no
+toggle, environment variable or build flag that opens it, and the release binary
+contains no enrollment exchange at all.
+
+This document records the decision explicitly so the remaining work is not mistaken
+for a reviewed protocol.
+
+## 1. What M0 must decide
+
+An encrypted, authenticated short-code enrollment needs all of the following to be
+chosen *together* and reviewed as one construction. Choosing any of them separately
+produces a composition nobody has analysed.
+
+1. **Dependency and version.** The exact crate, version, licence and audit status.
+2. **PAKE.** The password-authenticated key exchange, its group/hash parameters, and
+   the exact encoding of the code as the password.
+3. **Transcript and identity binding.** What is hashed: roles, both installation
+   identities, both certificate fingerprints, both nonces, the session, and the
+   channel binding (TLS exporter) that ties the exchange to *this* connection.
+4. **Mutual key confirmation.** Both sides prove they derived the same key before
+   any identity material is trusted (RFC 9382 §3.3).
+5. **Authenticated encryption and framing.** Cipher, nonce construction, per-direction
+   keys, sequence numbers, rekey rules, and the exact frame limits.
+6. **Replay, nonce and downgrade rules.** What happens to a replayed frame, a
+   repeated nonce, a truncated exchange and an unknown profile id.
+7. **Certificate possession.** Proof that the enrolling party holds the private key of
+   the certificate it is asking to enroll, verified against the key *in that
+   certificate*.
+8. **Failure behavior.** How many attempts, for how long, and what is durable.
+
+## 2. Candidate construction (proposed, not approved)
+
+This is the profile that is ready to be reviewed. It is deliberately built from
+published, complete constructions rather than assembling primitives.
+
+| Element | Candidate |
+|---|---|
+| PAKE | SPAKE2 as specified in RFC 9382, using the group the crate actually implements |
+| Dependency | `spake2` crate `=0.4.0` (Apache-2.0/MIT, MSRV compatible) |
+| Group | **Ed25519 group** (`Ed25519Group`), which is the only group `spake2 0.4.0` documents as implemented. P-256 is *not* available in that version |
+| Hash / KDF | SHA-256 transcript, HKDF-SHA-256 for the per-direction keys |
+| Password | the six-digit code, encoded as the ASCII string of six digits (leading zeros preserved), **not** as an integer |
+| Roles | `A` = the host showing the code, `B` = the joining device; a role byte is in the transcript so the two sides cannot be swapped |
+| Channel binding | the TLS exporter value of the connection carrying the exchange, labelled for this purpose |
+| Key confirmation | both directions confirm `HMAC(K_confirm, transcript_hash)`, checked before any certificate material is accepted |
+| Encryption | ChaCha20-Poly1305 with a per-direction key and a 64-bit sequence number as the nonce prefix |
+| Certificate possession | ECDSA P-256 signature over the transcript with the **connection certificate's** leaf key, verified against the key extracted from the certificate being enrolled |
+| Limits | 6 digits, 120-second window, 3 authentication attempts per window, 2 concurrent unauthenticated connections, 5-second inactivity, 64 KiB frame, 256 KiB per direction |
+
+**Correction (2026-10-29).** An earlier version of this table proposed SPAKE2 over
+P-256. That is inconsistent with the dependency: `spake2 0.4.0` documents
+`Ed25519Group` as its implemented group and does not provide a P-256 group, so a
+P-256 claim could only be honoured by writing a custom group — exactly the invented
+composition this record exists to prevent. The group is therefore Ed25519, while the
+*identity and possession* material stays on the repository's existing ECDSA P-256
+certificates. Those are two different keys for two different jobs and neither
+substitutes for the other.
+
+The `spake2` crate explicitly does not claim an independent audit, and RFC 9382
+requires mutual key confirmation, so neither is sufficient alone. Cipher-suite
+compatibility, the exporter label, the exact transcript layout, the HKDF labels and
+the possession proof still need review by someone independent of this implementation.
+
+Sources: <https://docs.rs/spake2/0.4.0/spake2/> and
+<https://www.rfc-editor.org/rfc/rfc9382.html>.
+
+## 3. What is implemented today
+
+Implemented and tested in `native/odessy-link/src/pairing/`:
+
+- durable sessions with a six-digit code (leading zeros preserved) and a 120-second
+  window, created and read back across process restarts;
+- a **global** attempt budget of three, reserved atomically before the code is
+  compared, so concurrent guesses cannot share the last attempt;
+- at most two concurrent unauthenticated connections, released when an exchange ends;
+- bounded frames (64 KiB) and aggregate bytes (256 KiB) in both directions, with a
+  five-second deadline on every message;
+- pending enrollment (`awaiting_approval`) kept separate from active trust: no trust
+  row is written before the local operator approves;
+- a staged commit (`peer` → `grant` → `done`) with a durable operation id, idempotent
+  on retry, and **no automatic grant replay**;
+- recovery at open: an interrupted commit becomes `incomplete` and is neither
+  completed nor rolled back;
+- cancellation that refuses to claim a rollback while a commit is in progress;
+- truthful status for every state, including `expired`, `rejected` and `incomplete`;
+- preservation of the strict mTLS verification and the per-request grant recheck.
+
+What is **not** implemented, because it depends on M0: a reviewed PAKE exchange, a
+reviewed AEAD framing layer, vector compatibility with another implementation, and
+therefore any production enrollment at all.
+
+## 4. The test adapter, and what it does not prove
+
+Everything above is exercised end to end through an explicitly labelled test adapter,
+present only in a binary built with the `test-profile` cargo feature *and* run with
+`ODESSY_LINK_TEST_PAIRING_ADAPTER=1`. It is not a variant of the production profile;
+there is no production code path to enable.
+
+What it proves: role separation, transcript binding, code comparison against a
+per-session transcript, mutual ECDSA possession proofs, mutual key confirmation, the
+window/attempt/connection limits, durable staging and recovery, and the operator
+approval flow.
+
+What it does **not** prove, and must never be described as proving:
+
+- offline-guess resistance. The attempt value is a plain SHA-256 over a 20-bit code
+  and a public transcript, so an observer of one exchange can test all 10^6 codes
+  offline. A PAKE exists precisely to remove that.
+- confidentiality of the exchange. Frames are not encrypted by the adapter; only the
+  test adapter's non-secret material travels that way.
+- any compatibility with another implementation. There are no published vectors for
+  it, because it is not a published construction.
+
+## 5. Threat model
+
+**Assets.** The host's private key and trust registry; the joining device's private
+key; the operator's decision about workspace access; the user's files under the
+granted workspace.
+
+**Adversaries considered.**
+
+1. *A device on the same LAN* that connects to the pairing window and guesses codes.
+   Mitigated by the 120-second window, three attempts per window, one attempt per
+   connection, and the operator-initiated window itself. Atomic reservation is what
+   makes the budget hold under concurrency.
+2. *A device that forwards someone else's certificate bundle* without holding its
+   key. Refused by the possession proof, which is verified against the key inside the
+   certificate being enrolled.
+3. *A device that proves its own key but relays the code exchange* to impersonate a
+   different peer. Refused by binding roles, both fingerprints, both nonces and the
+   session id into the transcript, and by mutual confirmation.
+4. *A replay of a completed exchange*. Refused by the per-session nonce, the session
+   id in the transcript and the single-use approval token; a repeated commit is the
+   same durable operation, not a second grant.
+5. *A crashed or killed host mid-commit*. Recovery reports `incomplete`; it never
+   invents completion and never silently revokes what was already committed.
+6. *A local user who edits the trust database*. Out of scope for pairing; the
+   registry is owner-only and the host's own operator is trusted with their machine.
+
+**Explicitly not covered.**
+
+- A hostile local administrator or malware running as the same user: it can read the
+  DPAPI identity and rewrite the registry.
+- An attacker who already knows the code and can complete the exchange before the
+  legitimate device (the operator sees the peer name and fingerprint before
+  approving, but the adapter has no PAKE to make guessing infeasible offline).
+- Availability: a peer that floods connections is bounded in concurrency and bytes,
+  but there is no rate limit beyond the window itself.
+- Attribution of a person. This authenticates two machines enrolled by their owners.
+
+## 6. The exact external blockers
+
+1. **Independent cryptographic review** of the complete profile in §2 (dependency,
+   parameters, transcript, confirmation, framing, possession proof, vectors). No such
+   review has been performed. An AI review, including one performed while writing this
+   code, is **not** an independent cryptographic audit.
+2. **Interoperability vectors** produced by a second implementation. None exist for
+   this profile, and inventing our own would not be evidence.
+3. **Two real devices on the intended network** exercising the reviewed profile. The
+   current evidence is two local processes on one Windows machine using the unapproved
+   adapter.
+
+Until (1) and (2) exist, `odessy-link pairing capabilities` answers
+`supported: false, reason: protocol_review_required`, `pairing begin` returns that
+snapshot without creating a session, and the desktop shows the blocker instead of a
+code field. That is the intended behavior, not a missing feature.

@@ -412,6 +412,12 @@ pub fn certificate_der_for_tests(pem: &str) -> Result<Vec<u8>, String> {
     certificate_der(pem)
 }
 
+/// One PEM body decoder for the whole crate. Pairing proofs and enrolment read the
+/// same way a certificate does, so they share this transform rather than copying it.
+pub fn decode_base64_for_pairing(text: &str) -> Result<Vec<u8>, String> {
+    decode_base64(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -286,7 +286,7 @@ pub fn random_installation_id() -> Result<String, String> {
         .collect())
 }
 
-fn fill_random(buffer: &mut [u8]) -> Result<(), String> {
+pub(crate) fn fill_random(buffer: &mut [u8]) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::io::Read;

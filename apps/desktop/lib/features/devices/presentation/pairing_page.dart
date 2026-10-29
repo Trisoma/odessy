@@ -27,6 +27,8 @@ class _PairingPageState extends State<PairingPage> {
   Map? savedPeers;
   Map? savedOutbound;
   bool advanced = false;
+  String nearbyLabel = '';
+  bool pairedNotice = false;
   late final PairingBackend shortCodes = _pairingBackend();
   PairingBackend _pairingBackend() {
     final source = c.backend;
@@ -101,6 +103,7 @@ class _PairingPageState extends State<PairingPage> {
     }
     editors.putIfAbsent('address', () => TextEditingController()).text =
         address;
+    nearbyLabel = '${device['name'] ?? 'Nearby computer'} · $address';
     final peers = savedPeers?['peers'] as List? ?? [];
     for (final peer in peers.whereType<Map>()) {
       if (peer['fingerprint_sha256'] == device['advertised_fingerprint']) {
@@ -161,7 +164,28 @@ class _PairingPageState extends State<PairingPage> {
                 'Pairing establishes identity. It does not grant execution or monitoring. Permissions below apply on this computer; the other device must grant its own permissions.'),
             const SizedBox(height: 16),
             ShortCodePanel(
-                backend: shortCodes, address: editors['address']?.text ?? ''),
+                backend: shortCodes,
+                address: editors['address']?.text ?? '',
+                addressLabel: nearbyLabel,
+                onPaired: () => setState(() {
+                      pairedNotice = true;
+                      advanced = false;
+                    })),
+            if (pairedNotice)
+              Card(
+                  child: ListTile(
+                      leading: const Icon(Icons.verified_outlined),
+                      title: const Text('Identity paired'),
+                      subtitle: const Text(
+                          'No execution access yet. Choose “Use for tools” on the paired device below, then reconnect to apply it. The other computer must grant its own workspace access.'),
+                      trailing: TextButton(
+                          onPressed: c.busy
+                              ? null
+                              : () async {
+                                  await c.inspect('pair:list');
+                                  if (mounted) setState(() {});
+                                },
+                          child: const Text('Review access')))),
             ExpansionTile(title: const Text('Connection component'), children: [
               field('link', 'odessy-link executable · automatic when available',
                   browse: 'file')

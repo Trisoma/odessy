@@ -217,9 +217,17 @@ and produces chat-only operation, never silent local execution.
 The new typed PairingBackend declares session begin/join/status/confirm/cancel; views
 never implement cryptography or invoke shell commands. Fake adapters are explicit
 and usable only in tests/demo. Normal connection UI hides manual enrollment under
-Advanced. The current production adapter only inspects a disabled protocol boundary;
-helper cancellation is not durable enrollment cancellation. The owned interactive
-session transport and recovery remain unimplemented until M0 is resolved.
-Planned Windows execution delivery requires a small local companion, bundled Node
-and Rust, native workspace browsing, verified paths and no user commands. That
-companion/package is not delivered by this increment.
+Advanced. `pair:short-code` now drives the real native sessions and reports every
+state truthfully (`discoverable`, `authenticating`, `awaiting_approval`, `enrolling`,
+`paired_no_access`, `ready`, `expired`, `rejected`, `cancelled`, `incomplete`,
+`failed`); a stale code, an expired window and an interrupted commit each have their
+own message, and the digits stay in the field after a failed attempt. While a
+request waits for the other computer, the panel polls status and, once an identity is
+enrolled, tells the page once so it can offer the separate **Use for tools** review.
+Production enrollment still answers `supported: false` until M0 is approved.
+
+The Windows executor companion is `odessy-executor`: one native window with workspace
+browsing, Allow pairing, Approve request, Cancel, the six-digit code and its status;
+single-instance focus, owned child processes, an explicit keep-in-background choice,
+package checksum verification and `--selftest`. It is not the Flutter assistant and
+contains no trust logic of its own.

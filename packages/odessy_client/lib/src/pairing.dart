@@ -24,9 +24,42 @@ class PairingSnapshot {
         (supported && state!='closed' && sessionId.isEmpty)) {
       throw const FormatException('Invalid pairing ownership');
     }
+    // Additive, non-authoritative detail. Each field is only accepted in the shape
+    // the native component documents, so malformed data cannot look like progress.
+    role=value['role'] is String && (value['role'] as String).length<=16 ? value['role'] as String : '';
+    message=value['message'] is String ? (value['message'] as String).substring(0, ((value['message'] as String).length>300?300:(value['message'] as String).length)) : '';
+    error=value['error'] is String ? (value['error'] as String).substring(0, ((value['error'] as String).length>200?200:(value['error'] as String).length)) : '';
+    final seconds=value['seconds_remaining'];
+    secondsRemaining=seconds is int && seconds>=0 && seconds<=86400 ? seconds : 0;
+    final attempts=value['attempts_remaining'];
+    attemptsRemaining=attempts is int && attempts>=0 && attempts<=3 ? attempts : null;
+    cancelled=value['cancelled']==true;
+    final peer=value['peer'];
+    // `late final` fields may be assigned once, so the peer detail is resolved into
+    // locals first and written once.
+    final peerAliasValue=peer is Map && peer['alias'] is String ? peer['alias'] as String : '';
+    final peerInstallationValue=peer is Map && peer['installation_id'] is String ? peer['installation_id'] as String : '';
+    final peerFingerprintValue=peer is Map && peer['fingerprint_sha256'] is String ? peer['fingerprint_sha256'] as String : '';
+    peerAlias=peerAliasValue;
+    peerInstallationId=peerInstallationValue;
+    peerFingerprint=peerFingerprintValue;
   }
   late final bool supported;
   late final String state,reason,sessionId,reviewToken;
+  late final String role,message,error,peerAlias,peerInstallationId,peerFingerprint;
+  late final int secondsRemaining;
+  late final int? attemptsRemaining;
+  late final bool cancelled;
+
+  /// The other computer's operator must approve the request there.
+  bool get awaitingApproval => state=='awaiting_approval';
+  /// A finished attempt at this window; the user can ask for a new code.
+  bool get canStartOver =>
+      const {'closed','expired','rejected','cancelled','failed'}.contains(state);
+  /// The outcome is unknown; the user must inspect rather than retry blindly.
+  bool get needsInspection => state=='incomplete';
+  /// Identity is enrolled. Execution still needs an explicit consent review.
+  bool get paired => state=='paired_no_access'||state=='ready';
 }
 
 abstract interface class PairingBackend {

@@ -39,6 +39,22 @@ class PairingController extends ChangeNotifier {
   }
 
   Future<void> load() => _run(backend.status);
+
+  /// Refresh while a window is open without claiming the busy state or cancelling
+  /// a user-initiated operation. Used to watch for the other computer's approval.
+  Future<void> refresh() async {
+    if (busy || _disposed) return;
+    try {
+      final value = await backend.status();
+      if (!_disposed && !busy) {
+        snapshot = value;
+        _notify();
+      }
+    } catch (_) {
+      // A failed poll leaves the last known state; it is not progress and must not
+      // be reported as one.
+    }
+  }
   Future<void> join(String address, String code) =>
       _run(() => backend.join(address, code));
   Future<void> confirm() async {

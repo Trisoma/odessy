@@ -135,10 +135,82 @@ The receiving host still independently enforces its incoming workspace grant.
 Changing enrollment, revocation, consent or relevant revisions invalidates pending
 dispatch authorization. Trust roots are reloaded for each new TLS connection.
 
-Short-code enrollment is **not available yet**. The native capability boundary
-reports `protocol_review_required`; the cryptographic profile and independent
-security approval remain release blockers. Current normal UI shows that blocker;
-manual administrator enrollment remains under Advanced.
+## Short-code pairing
+
+Production short-code enrollment is **closed**: no complete, reviewed protocol
+profile exists, so `odessy-link pairing capabilities` answers
+`supported: false, reason: protocol_review_required`, `pairing begin` creates no
+session and opens no listener, and no code is shown. The decision, the candidate
+construction, the threat model and the exact blockers are in
+[the M0 profile record](../security/m0-pairing-profile.mdx).
+
+Everything around that decision is implemented:
+
+```powershell
+odessy-link pairing capabilities            # what this build can do
+odessy-link pairing status                  # newest session, truthfully
+odessy-link pairing begin --workspace D:\work
+odessy-link pairing listen --listen 0.0.0.0:0 --advertise --seconds 120
+odessy-link pairing join --address 192.0.2.10:41415 --code-stdin   # code on stdin
+odessy-link pairing confirm --session-id <id> --review-token <token> --workspace D:\work
+odessy-link pairing cancel
+```
+
+- A code is exactly six digits, leading zeros included (`042137`), valid for 120
+  seconds.
+- Three authentication attempts are allowed per window and are reserved **before**
+  the code is compared, so concurrent guesses cannot share the last attempt. Two
+  unauthenticated connections may be open at once, released when an exchange ends.
+- Frames are capped at 64 KiB, each direction at 256 KiB, and every message has a
+  five-second deadline.
+- An authenticated request is `awaiting_approval` and **is not trust**. The local
+  operator's approval commits the identity first and the reviewed workspace second,
+  in durable stages with a durable operation id. Re-running the approval is the same
+  operation: it does not grant twice.
+- A process that dies mid-commit leaves `incomplete` with reason `commit_interrupted`.
+  Recovery never completes or reverts authority on the operator's behalf, and
+  cancelling during a commit reports an unknown outcome instead of a rollback.
+- A re-enrolled alias with a different certificate needs an explicit replacement; it
+  never silently inherits the old peer's access.
+
+The enrollment exchange itself exists only in a **test adapter**, built with
+`--features test-profile` and run with `ODESSY_LINK_TEST_PAIRING_ADAPTER=1`. It proves
+the mechanisms above (transcript binding, mutual ECDSA possession proofs, mutual key
+confirmation, limits, staging, recovery) but it is not a PAKE, so it offers no offline
+guess resistance and must never be described as approved enrollment. A release build
+contains no such code path.
+
+## Executor companion
+
+`odessy-executor` is the packaged Windows executor's whole user interface: one window
+that shows the shared folder, opens a pairing window, displays the code and the
+status, approves an authenticated request, and can be sent to the background instead
+of blocking the desktop.
+
+- It resolves `odessy-link.exe` from **its own verified package directory**, never
+  from `PATH`, and verifies `checksums.txt` before it starts (a development build
+  without a manifest says so in the window instead).
+- One instance only: a second launch focuses the running window.
+- The pairing listener is a child of the window and stops with it; the close button
+  asks whether to keep serving in the background or stop.
+- Firewall, port and missing-component problems are reported in the window with an
+  instruction. The companion never asks for elevation and never suggests disabling a
+  firewall or another security control.
+- `odessy-executor --selftest` verifies the package and asks the component for its
+  capabilities, so packaging can fail before a user sees a broken package.
+
+```powershell
+pwsh -File native/odessy-link/package-executor.ps1 `
+    -NodeDirectory C:\odessy\node -NodeServer C:\odessy\tool-server\index.js `
+    -OutputDirectory build\executor-package
+```
+
+The script builds both binaries, assembles the Node runtime, tool server, notices and
+icon, writes `checksums.txt`, and then runs the packaged `--selftest`. A missing
+component is an error, not a warning.
+
+Manual administrator enrollment (identity export, fingerprint comparison, `pair add`,
+`peers grant`) remains available under **Advanced** in the desktop and is unchanged.
 
 mDNS is an **address aid only**. It never enrols a peer, never grants a capability and
 never replaces the enrolled identity:
