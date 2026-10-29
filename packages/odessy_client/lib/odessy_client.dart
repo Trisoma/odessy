@@ -68,6 +68,8 @@ class ApiFailure implements Exception {
         409 ||
         410 =>
           'Request is stale, already resolved, or unavailable. Refresh the session.',
+        503 =>
+          'The coordinator could not start the model. Check your API key and model settings.',
         _ => 'Odessy service returned HTTP $status.',
       };
 }

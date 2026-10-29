@@ -5,6 +5,32 @@ import 'package:odessy_client/odessy_client.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('HTTP 503 provides model configuration guidance without server details', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final api = LocalApi(Uri.parse('http://127.0.0.1:${server.port}'), 'secret');
+    server.listen((request) async {
+      request.response.statusCode = 503;
+      request.response.write('{"detail":"private-server-diagnostic"}');
+      await request.response.close();
+    });
+    try {
+      for (final operation in [api.createSession, api.profiles]) {
+        try {
+          await operation();
+          fail('Unavailable model must not create a session or profiles');
+        } on ApiFailure catch (error) {
+          expect(error.status, 503);
+          expect(error.toString(), contains('API key'));
+          expect(error.toString(), contains('model settings'));
+          expect(error.toString(), isNot(contains('private-server-diagnostic')));
+        }
+      }
+    } finally {
+      api.close();
+      await server.close(force: true);
+    }
+  });
+
   test('SSE cancellation does not wait for another server event', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final api =
