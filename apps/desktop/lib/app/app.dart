@@ -162,6 +162,67 @@ class _OdessyAppState extends State<OdessyApp> {
   final navigatorKey = GlobalKey<NavigatorState>();
   final navigationFocus = <String, FocusNode>{};
   bool _navigating = false;
+
+  /// The pairing request whose dialog is open, so repeat notifications do not
+  /// stack dialogs.
+  String pairingDialog = '';
+
+  /// A remote coordinator is waiting on an answer, so the prompt is raised on
+  /// the root navigator: it must survive whatever page is showing.
+  void _pairingChanged() {
+    final request = controller.pairing;
+    if (request == null || pairingDialog == request.id) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || controller.pairing?.id != request.id) return;
+      final context = navigatorKey.currentContext;
+      if (context == null) return;
+      await _showPairingDialog(context, request);
+    });
+  }
+
+  Future<void> _showPairingDialog(
+      BuildContext context, PairingRequest request) async {
+    // One prompt at a time: repeated notifications for the same request must
+    // not stack dialogs.
+    if (pairingDialog.isNotEmpty) return;
+    pairingDialog = request.id;
+    var resolvedElsewhere = false;
+    void watch() {
+      // Another window answered, or the request expired while it was open.
+      if (controller.pairing?.id == request.id) return;
+      resolvedElsewhere = true;
+      if (navigatorKey.currentState?.canPop() ?? false) {
+        navigatorKey.currentState?.pop();
+      }
+    }
+
+    controller.addListener(watch);
+    try {
+      final accepted = await showDialog<bool>(
+          context: context,
+          builder: (dialog) => AlertDialog(
+                  title: const Text('Incoming connection request'),
+                  content: Text(
+                      '${request.name} (${request.ip}) wants to connect to this computer as your coordinator. Only accept if you recognise this device.'),
+                  actions: [
+                    TextButton(
+                        onPressed: () => Navigator.pop(dialog, false),
+                        child: const Text('Decline')),
+                    FilledButton(
+                        onPressed: () => Navigator.pop(dialog, true),
+                        child: const Text('Accept'))
+                  ]));
+      controller.removeListener(watch);
+      // A dialog closed by another window owes no answer; one dismissed here
+      // counts as a refusal. A failure is already recorded on the controller,
+      // which shows it in its own banner.
+      if (resolvedElsewhere) return;
+      await controller.answerPairing(request.id, accepted ?? false);
+    } finally {
+      controller.removeListener(watch);
+      pairingDialog = '';
+    }
+  }
   final collaborationForms = <OdessyApi, SettingsFormController<int>>{};
   SettingsFormController<int> _collaborationForm() =>
       collaborationForms.putIfAbsent(controller.api, () {
@@ -265,6 +326,7 @@ class _OdessyAppState extends State<OdessyApp> {
     controller = DesktopSession(widget.api ?? DemoApi());
     voice = VoiceController(controller);
     controller.addListener(_observeConnection);
+    controller.addListener(_pairingChanged);
     _observeConnection();
     setup = SetupController(widget.setupBackend ?? LocalSetupBackend(),
         onConnect: _connectConfigured, onCancelConnect: () async {
@@ -321,6 +383,7 @@ class _OdessyAppState extends State<OdessyApp> {
     lifecycle.dispose();
     monitoring.dispose();
     controller.removeListener(_observeConnection);
+    controller.removeListener(_pairingChanged);
     voice.dispose();
     readiness.dispose();
     componentSettings.dispose();
