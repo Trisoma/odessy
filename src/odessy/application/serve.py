@@ -68,9 +68,13 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
 
         def watch():
             try:
-                while sys.stdin.buffer.readline():
-                    pass
-            except (OSError, ValueError):
+                while raw := sys.stdin.buffer.readline(65537):
+                    # The owned desktop may rotate session-only credentials.
+                    # This private channel is not an HTTP/pairing operation.
+                    from odessy.credentials import acknowledge_startup
+                    import io
+                    acknowledge_startup(io.BytesIO(raw), sys.stdout)
+            except (OSError, ValueError, RuntimeError):
                 pass
             server.should_exit = True
 

@@ -53,7 +53,10 @@ def test_reviewed_service_uses_the_explicit_credential_reference(tmp_path, monke
     seen = []
     async def fake_server(**kwargs):
         import os
-        seen.append(os.environ["ODESSY_CLOUD_API_KEY"])
+        from odessy.models.cloud_model import build_cloud_model
+        seen.append(build_cloud_model(kwargs['backend'])._resolved_api_key())
+        # Explicit references must win without injecting keys into global env.
+        assert os.environ["ODESSY_CLOUD_API_KEY"] == 'unrelated-key'
     monkeypatch.setattr(serve, "run_server", fake_server)
     chosen = SetupSelection.from_dict({"role": "combined", "model": {
         "provider": "openai", "name": "fixture", "credential_env": "OPENAI_API_KEY"}})

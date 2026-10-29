@@ -15,6 +15,30 @@ class UnavailableCoordinator implements InstalledCoordinatorHandle {
 }
 
 void main() {
+  testWidgets('a failed owned start can be retried after configuring a key', (tester) async {
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var attempts = 0;
+    await tester.pumpWidget(OdessyApp(api: DisconnectedApi(), restoreConfiguration: true,
+      setupBackend: RestoringBackend(), coordinatorFactory: (_) {
+        attempts++;
+        return UnavailableCoordinator();
+      }));
+    await tester.pumpAndSettle();
+    expect(attempts, 1);
+    await tester.tap(find.widgetWithText(ListTile, 'Settings'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Models and connections'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Connect saved configuration').last);
+    await tester.tap(find.text('Connect saved configuration').last);
+    await tester.pumpAndSettle();
+    expect(attempts, 2);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets(
       'restored source settings show configured even when backend is offline',
       (tester) async {

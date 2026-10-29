@@ -73,3 +73,6 @@ evals/results/
 
 # Locally built standalone installer
 /OdessySetup.exe
+
+# Local verification wheels, inventories, logs and baseline exports
+/.qualification/

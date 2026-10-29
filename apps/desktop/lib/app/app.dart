@@ -1,3 +1,4 @@
+import 'dart:async';
 import '../features/monitoring/controllers/monitor_controller.dart';
 import '../features/devices/presentation/devices_hub.dart';
 import '../features/devices/presentation/pairing_page.dart';
@@ -33,6 +34,7 @@ import 'setup/installation_location.dart';
 import 'setup/disconnected_api.dart';
 import 'setup/native_picker.dart';
 import 'setup/installed_coordinator.dart';
+import 'setup/session_model_credentials.dart';
 
 class OdessyApp extends StatefulWidget {
   const OdessyApp(
@@ -98,8 +100,7 @@ class _OdessyAppState extends State<OdessyApp> {
       final saved = RuntimeConfiguration.fromJson(
           componentSettings.snapshot['configuration'] as Json);
       final observed = readiness.current;
-      if (observed?.configuration?.owner != saved.owner ||
-          !controller.connected) {
+      if (observed?.configuration?.owner != saved.owner) {
         throw StateError(
             'Running and saved configuration ownership could not be matched.');
       }
@@ -377,6 +378,7 @@ class _OdessyAppState extends State<OdessyApp> {
 
   @override
   void dispose() {
+    unawaited(sessionModelCredentials.clear().catchError((Object _) {}));
     for (final node in navigationFocus.values) {
       node.dispose();
     }
@@ -737,7 +739,9 @@ class _OdessyAppState extends State<OdessyApp> {
       throw StateError(
           'Stop the active conversation before changing configuration.');
     }
-    await configuredCoordinator?.stop();
+    final previous = configuredCoordinator;
+    await previous?.stop();
+    if (identical(configuredCoordinator, previous)) configuredCoordinator = null;
     await controller.replace(DisconnectedApi());
     if (!mounted || epoch != configuredEpoch) return;
     final child = widget.coordinatorFactory?.call(spec) ??
@@ -754,6 +758,7 @@ class _OdessyAppState extends State<OdessyApp> {
       if (!mounted || epoch != configuredEpoch) {
         api.close();
         await child.stop();
+        if (identical(configuredCoordinator, child)) configuredCoordinator = null;
         return;
       }
       await controller.replace(api);
@@ -762,6 +767,7 @@ class _OdessyAppState extends State<OdessyApp> {
       if (mounted) setState(() => page = 'Conversation');
     } catch (_) {
       await child.stop();
+      if (identical(configuredCoordinator, child)) configuredCoordinator = null;
       rethrow;
     }
   }

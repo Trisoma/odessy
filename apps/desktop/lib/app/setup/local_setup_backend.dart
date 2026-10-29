@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:odessy_client/odessy_client.dart';
+import 'session_model_credentials.dart';
 
 /// Launches only the configured Python interpreter and fixed setup module.
 class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
@@ -124,6 +125,8 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
     Process? process;
     try {
       final message = request.toJson();
+      sessionModelCredentials.validate(request);
+      message['session_credentials'] = sessionModelCredentials.privateStdinValues;
       if ({'installer', 'manage','component-probe'}.contains(request.operation)) {
         _cancelDirectory =
             await Directory.systemTemp.createTemp('odessy-setup-');
@@ -164,6 +167,7 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
       if ((results[2] != 0) && reply.ok) {
         throw StateError('Setup helper failed.');
       }
+      await sessionModelCredentials.accept(request, reply);
       return reply;
     } finally {
       if (process != null) {

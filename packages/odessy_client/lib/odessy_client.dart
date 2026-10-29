@@ -6,6 +6,7 @@ import 'dart:io';
 import 'src/models.dart';
 export 'src/models.dart';
 export 'src/credentials.dart';
+export 'src/model_credentials.dart';
 export 'src/setup.dart';
 export 'src/monitoring/client.dart';
 export 'src/capabilities.dart';

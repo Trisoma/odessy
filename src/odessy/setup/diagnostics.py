@@ -79,7 +79,7 @@ def observe(selection,section):
         if model is None:return {'status':'not_configured','message':'Choose a model.'}
         key=model.credential_env or KEY_ENV.get(model.provider)
         if key and not credential_value(model):
-            return {'status':'missing','code':'credentials','message':f'Supply {key} to the application process, then reopen Odessy.'}
+            return {'status':'missing','code':'credentials','message':f'Configure {key} in Models and connections, or supply that environment variable.'}
         return {'status':'configured_unverified','message':'Configuration present. An explicit test is required; tool compatibility is a separate check.'}
     voice=selection.voice
     if section in ('stt','tts'):
@@ -113,13 +113,11 @@ def test_model(selection):
     env=dict(os.environ,ODESSY_CLOUD_MODEL=model.name,ODESSY_CLOUD_RETRIES='0',
              ODESSY_CLOUD_TIMEOUT='15',ODESSY_CLOUD_MAX_TOKENS='256',ODESSY_CLOUD_OPENAI_MAX_TOKENS='256')
     if model.endpoint:env['ODESSY_CLOUD_BASE_URL']=model.endpoint
-    if model.credential_env:
-        key=credential_value(model)
-        if not key:raise DiagnosticInputError('Supply the selected credential environment variable before testing.', 'credentials')
-        env['ODESSY_CLOUD_API_KEY']=key
-    adapter=build_cloud_model(model.provider,env)
+    adapter=build_cloud_model(model.provider,env,credential_ref=model.credential_env)
     try:
         text=adapter.test_connection()
+        if adapter.api_key:
+            text = text.replace(adapter.api_key, '<redacted>')
         return {'text':text,'usage':asdict(process_ledger().total),'accounting':'separate diagnostic run'}
     finally:
         client=getattr(adapter,'_client',None)

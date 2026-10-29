@@ -123,7 +123,11 @@ def main(argv=None):
     parser.add_argument('--expected-fingerprint')
     parser.add_argument('--port', type=int, required=True)
     parser.add_argument('--exit-on-stdin-close', action='store_true')
+    parser.add_argument('--credentials-stdin', action='store_true')
     args = parser.parse_args(argv)
+    if args.credentials_stdin:
+        from odessy.credentials import acknowledge_startup
+        acknowledge_startup(sys.stdin.buffer, sys.stdout)
     selection = SetupSelection.from_dict(json.loads(args.selection_json))
     spec = saved_spec(selection, args.config, args.format)
     if spec['sha256'] != args.sha256:
