@@ -1,6 +1,9 @@
 #include "my_application.h"
 
 #include <flutter_linux/flutter_linux.h>
+
+#include <algorithm>
+
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
 #endif
@@ -13,6 +16,95 @@ struct _MyApplication {
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
+
+namespace {
+
+// Logical (device independent) sizes. The Windows runner opens the same
+// footprint, so the installer reads as one product on both platforms.
+constexpr int kSetupWidth = 900;
+constexpr int kSetupHeight = 680;
+constexpr int kSetupMinWidth = 720;
+constexpr int kSetupMinHeight = 540;
+constexpr int kMainWidth = 1200;
+constexpr int kMainHeight = 850;
+// Keep a margin so a window that nearly fills the work area still shows edges.
+constexpr int kWorkAreaMargin = 24;
+
+enum class LaunchMode { kApplication, kSetup, kManage, kUninstall, kInstalled };
+
+// The mode is decided from the arguments before Flutter starts; it is never
+// inferred from the window title.
+LaunchMode LaunchModeFor(char** arguments) {
+  bool installed = false;
+  bool uninstall = false;
+  bool setup = false;
+  bool manage = false;
+  for (int index = 0; arguments != nullptr && arguments[index] != nullptr;
+       ++index) {
+    const char* argument = arguments[index];
+    if (g_strcmp0(argument, "--installed") == 0) {
+      installed = true;
+    } else if (g_strcmp0(argument, "--uninstall") == 0) {
+      uninstall = true;
+    } else if (g_strcmp0(argument, "--setup") == 0) {
+      setup = true;
+    } else if (g_strcmp0(argument, "--manage") == 0) {
+      manage = true;
+    }
+  }
+  if (installed) return LaunchMode::kInstalled;
+  if (uninstall) return LaunchMode::kUninstall;
+  if (setup) return LaunchMode::kSetup;
+  if (manage) return LaunchMode::kManage;
+  return LaunchMode::kApplication;
+}
+
+bool IsSetupSurface(LaunchMode mode) {
+  return mode == LaunchMode::kSetup || mode == LaunchMode::kManage ||
+         mode == LaunchMode::kUninstall;
+}
+
+const char* TitleFor(LaunchMode mode) {
+  switch (mode) {
+    case LaunchMode::kSetup:
+      return "Odessy Setup";
+    case LaunchMode::kManage:
+      return "Manage Odessy";
+    case LaunchMode::kUninstall:
+      return "Uninstall Odessy";
+    default:
+      return "Odessy";
+  }
+}
+
+// Shrink a requested size so it still fits the monitor work area. Monitors
+// report application pixels, which is also what GtkWindow expects here.
+void FitToWorkArea(GtkWindow* window, int* width, int* height) {
+  GdkDisplay* display = gtk_widget_get_display(GTK_WIDGET(window));
+  if (display == nullptr) return;
+  GdkMonitor* monitor = gdk_display_get_primary_monitor(display);
+  if (monitor == nullptr) monitor = gdk_display_get_monitor(display, 0);
+  if (monitor == nullptr) return;
+  GdkRectangle area = {};
+  gdk_monitor_get_workarea(monitor, &area);
+  if (area.width > 0) {
+    *width = std::min(*width, std::max(area.width - kWorkAreaMargin, 320));
+  }
+  if (area.height > 0) {
+    *height = std::min(*height, std::max(area.height - kWorkAreaMargin, 240));
+  }
+}
+
+bool EnvironmentFlagEnabled(const char* name) {
+  const char* value = g_getenv(name);
+  if (value == nullptr || *value == '\0') return false;
+  return g_ascii_strcasecmp(value, "0") != 0 &&
+         g_ascii_strcasecmp(value, "false") != 0 &&
+         g_ascii_strcasecmp(value, "no") != 0 &&
+         g_ascii_strcasecmp(value, "off") != 0;
+}
+
+}  // namespace
 
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
@@ -42,23 +134,47 @@ static void my_application_activate(GApplication* application) {
     }
   }
 #endif
+  const LaunchMode launch_mode = LaunchModeFor(self->dart_entrypoint_arguments);
+  const char* title = TitleFor(launch_mode);
+
   if (use_header_bar) {
     GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
     gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "Odessy");
+    gtk_header_bar_set_title(header_bar, title);
     gtk_header_bar_set_show_close_button(header_bar, TRUE);
     gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
   } else {
-    gtk_window_set_title(window, "Odessy");
+    gtk_window_set_title(window, title);
   }
 
-  gtk_window_set_default_size(window, 1280, 720);
+  const bool setup_surface = IsSetupSurface(launch_mode);
+  int width = setup_surface ? kSetupWidth : kMainWidth;
+  int height = setup_surface ? kSetupHeight : kMainHeight;
+  FitToWorkArea(window, &width, &height);
+  gtk_window_set_default_size(window, width, height);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(
       project, self->dart_entrypoint_arguments);
+  // Impeller renders through OpenGL ES and produces incomplete frames on
+  // graphics stacks without working acceleration (virtual machines, remote
+  // desktops, older drivers). Set ODESSY_DISABLE_IMPELLER to fall back to Skia
+  // without rebuilding Flutter. The opt-out is explicit and off by default.
+  if (EnvironmentFlagEnabled("ODESSY_DISABLE_IMPELLER")) {
+    fl_dart_project_set_enable_impeller(project, FALSE);
+  }
 
   FlView* view = fl_view_new(project);
+  if (setup_surface) {
+    // A size request on the view expresses the floor in content (application)
+    // pixels, the same unit the Windows runner uses. Geometry hints would be
+    // applied to the outer window and let the CSD title bar eat into the
+    // usable area. Never exceed the size actually granted by the work area,
+    // otherwise the window could not be created on a small display.
+    gtk_widget_set_size_request(GTK_WIDGET(view),
+                                std::min(kSetupMinWidth, width),
+                                std::min(kSetupMinHeight, height));
+  }
   GdkRGBA background_color;
   // Background defaults to black, override it here if necessary, e.g. #00000000
   // for transparent.
