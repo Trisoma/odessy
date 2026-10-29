@@ -171,6 +171,11 @@ SETTINGS: tuple[Setting, ...] = (
        choices=("windows", "linux", "macos", "win32", "darwin", "mac", "osx")),
     _s("ODESSY_TOOL_SERVER_URL", "url", "the laptop tool server's MCP endpoint",
        allow_empty=True),
+    # Returned by the paired laptop when its own user accepted this coordinator.
+    # Optional: an unpaired or token-free endpoint stays valid, and a secret's
+    # value is never echoed in a report.
+    _s("ODESSY_TOOL_SERVER_TOKEN", "secret",
+       "bearer token returned by the paired laptop's tool server", allow_empty=True),
     _s("ODESSY_MCP_SERVER_URLS", "url_list", "comma-separated remote MCP endpoints",
        allow_empty=True),
     # -- local model --------------------------------------------------------
