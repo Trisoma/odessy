@@ -58,7 +58,7 @@ def _packaged(parameters,*,cancelled=lambda:False):
         data,root=_versioned_root({key:value for key,value in parameters.items() if key!='log_cursor'},'packaged status')
         return ManagedInstallation(root).status(log_cursor=cursor)
     if action=='package-launch':
-        from .windows_installation import launch
+        from .platform_installation import launch
         launch_id=parameters.get('launch_id')
         data,root=_versioned_root({key:value for key,value in parameters.items() if key!='launch_id'},'packaged launch')
         mode=data.get('mode') or 'app'
@@ -70,7 +70,7 @@ def _packaged(parameters,*,cancelled=lambda:False):
         data,root=_versioned_root(parameters,'packaged verify')
         manager=ManagedInstallation(root)
         record=manager.record()
-        return dict(manager.verify(),registration=record.get('windows_registration',{}).get('state','none'))
+        return dict(manager.verify(),registration=(record.get('windows_registration') or record.get('linux_registration') or {}).get('state','none'))
     if action in ('package-configure-review','package-configure'):
         from .contracts import SetupSelection
         from .maintenance import ManagedInstallation
@@ -89,7 +89,7 @@ def _packaged(parameters,*,cancelled=lambda:False):
         return dispatch({'action':'uninstall','root':str(root),'confirm':plan['plan_id']},cancelled=cancelled)
     if action=='package-register':
         from .maintenance import ManagedInstallation, atomic
-        from .windows_installation import register
+        from .platform_installation import register
         data,root=_versioned_root(parameters,'packaged registration')
         manager=ManagedInstallation(root)
         record=manager.record()
@@ -106,7 +106,7 @@ def _packaged(parameters,*,cancelled=lambda:False):
     from .package_context import context
     from .contracts import SetupSelection
     from .maintenance import ManagedInstallation, atomic
-    from .windows_installation import register
+    from .platform_installation import register
     data=fields(parameters,{'action','root','payload','selection','confirm'},'packaged operation')
     package=context(payload=data.get('payload'),root=data.get('root'))
     root=guard(package['root'])

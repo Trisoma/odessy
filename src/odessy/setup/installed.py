@@ -14,8 +14,9 @@ from pathlib import Path
 from .contracts import SetupSelection, public
 from .lifecycle import format_of
 from .maintenance import ManagedInstallation, default_workspace, digest, guard, read_json, validated_workspace
+from .platform_installation import DESKTOP_RELATIVE
 
-EXECUTABLES=('Scripts/python.exe','bin/python3','desktop/odessy_desktop.exe')
+EXECUTABLES=('Scripts/python.exe','bin/python3',DESKTOP_RELATIVE)
 MAX_CONFIGURATION_BYTES=65536
 
 
@@ -54,7 +55,7 @@ def spec(root):
         path=guard(base/name)
         if not path.is_file() or digest(path)!=files[name]:changed.append(name)
     if python_name not in files:raise ValueError('the installed runtime is incomplete; repair it in management')
-    if 'desktop/odessy_desktop.exe' not in files:
+    if DESKTOP_RELATIVE not in files:
         raise ValueError('this installation has no desktop application; open Odessy management instead')
     if changed:
         raise ValueError('installed files were modified or damaged; repair before launching: '+', '.join(sorted(set(changed))))
@@ -69,18 +70,19 @@ def spec(root):
         selection=SetupSelection.from_dict(configuration['selection'])
         workspace=validated_workspace(configuration['workspace'],root)
         source='configuration'
-    helper=record.get('windows_registration',{}).get('helper')
+    registration=record.get('windows_registration') or record.get('linux_registration') or {}
+    helper=registration.get('helper')
     payload=None
     if isinstance(helper,str) and helper:
         candidate=guard(Path(helper))
         if candidate.is_dir() and (candidate/'setup-context.json').is_file():payload=str(candidate)
     return {'schema_version':1,'root':str(root),'installation_id':record['id'],'version':version,
-            'python':str(guard(base/python_name)),'desktop':str(guard(base/'desktop/odessy_desktop.exe')),
+            'python':str(guard(base/python_name)),'desktop':str(guard(base/DESKTOP_RELATIVE)),
             'selection':public(selection),'configuration_source':source,'role':selection.role,
             'model_configured':selection.model is not None,'voice_enabled':selection.voice.enabled,
             'workspace':str(workspace),'workspace_exists':workspace.is_dir(),
             'config':str(root/'configuration.json'),'payload':payload,
-            'registration':record.get('windows_registration',{}).get('state','none'),
+            'registration':registration.get('state','none'),
             'service_recorded':(root/'service.json').exists(),
             'ready':selection.model is not None and selection.role!='execution'}
 
