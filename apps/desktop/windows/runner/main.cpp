@@ -1,12 +1,8 @@
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
-#include <flutter_windows.h>
 #include <windows.h>
-#include <algorithm>
 #include <cwctype>
 #include <sstream>
-#include <string>
-#include <vector>
 
 #include "flutter_window.h"
 #include "utils.h"
@@ -56,64 +52,6 @@ std::wstring InstanceKey(const std::vector<std::string>& arguments) {
   output << L"Odessy.Instance." << std::hex << hash;
   return output.str();
 }
-
-// Setup, manage and uninstall are one installer surface and share a compact
-// window; the installed application keeps the larger productivity layout.
-// Sizes are logical pixels and are scaled for the monitor DPI by
-// Win32Window::Create.
-constexpr int kCompactWidth = 900;
-constexpr int kCompactHeight = 680;
-constexpr int kCompactMinWidth = 720;
-constexpr int kCompactMinHeight = 540;
-constexpr int kMainWidth = 1200;
-constexpr int kMainHeight = 850;
-
-enum class LaunchMode { kApplication, kSetup, kManage, kUninstall, kInstalled };
-
-bool HasArgument(const std::vector<std::string>& arguments, const char* flag) {
-  return std::find(arguments.begin(), arguments.end(), flag) !=
-         arguments.end();
-}
-
-// Mirrors installationMode() in lib/app/setup/setup_application.dart so the
-// native window and the Flutter surface read the same flag precedence.
-LaunchMode LaunchModeFor(const std::vector<std::string>& arguments) {
-  if (HasArgument(arguments, "--installed")) return LaunchMode::kInstalled;
-  if (HasArgument(arguments, "--uninstall")) return LaunchMode::kUninstall;
-  if (HasArgument(arguments, "--setup")) return LaunchMode::kSetup;
-  if (HasArgument(arguments, "--manage")) return LaunchMode::kManage;
-  return LaunchMode::kApplication;
-}
-
-bool IsSetupSurface(LaunchMode mode) {
-  return mode == LaunchMode::kSetup || mode == LaunchMode::kManage ||
-         mode == LaunchMode::kUninstall;
-}
-
-// A compact window that is taller than the work area would open with its
-// footer below the screen edge. Fit the initial size to the primary monitor's
-// work area in logical pixels; the user may still resize down to the minimum.
-Win32Window::Size FitToWorkArea(const Win32Window::Size& size) {
-  POINT origin{0, 0};
-  HMONITOR monitor = MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
-  MONITORINFO info{};
-  info.cbSize = sizeof(info);
-  if (!GetMonitorInfoW(monitor, &info)) return size;
-  const double scale_factor = FlutterDesktopGetDpiForMonitor(monitor) / 96.0;
-  if (scale_factor <= 0) return size;
-  constexpr int kMargin = 24;
-  const int available_width = std::max(
-      320, static_cast<int>((info.rcWork.right - info.rcWork.left) /
-                            scale_factor) -
-               kMargin);
-  const int available_height = std::max(
-      240, static_cast<int>((info.rcWork.bottom - info.rcWork.top) /
-                            scale_factor) -
-               kMargin);
-  return Win32Window::Size(
-      std::min(static_cast<int>(size.width), available_width),
-      std::min(static_cast<int>(size.height), available_height));
-}
 }  // namespace
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
@@ -158,28 +96,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
-  const LaunchMode mode = LaunchModeFor(arguments);
-  Win32Window::Size size(kMainWidth, kMainHeight);
-  Win32Window::Size minimum(0, 0);
-  std::wstring title = L"Odessy";
-  if (IsSetupSurface(mode)) {
-    title = mode == LaunchMode::kSetup
-                ? L"Odessy Setup"
-                : mode == LaunchMode::kManage ? L"Manage Odessy"
-                                              : L"Uninstall Odessy";
-    size = FitToWorkArea(Win32Window::Size(kCompactWidth, kCompactHeight));
-    // The minimum never exceeds the size that actually fits the screen, so a
-    // small or high-DPI display can still shrink the window to its footer.
-    minimum = Win32Window::Size(std::min<unsigned int>(kCompactMinWidth,
-                                                       size.width),
-                                std::min<unsigned int>(kCompactMinHeight,
-                                                       size.height));
-  }
-  if (!window.Create(title, origin, size)) {
+  Win32Window::Size size(1200, 850);
+  if (!window.Create(L"Odessy", origin, size)) {
     if (instance_mutex) CloseHandle(instance_mutex);
     return EXIT_FAILURE;
   }
-  window.SetMinimumSize(minimum);
   if (!key.empty()) SetPropW(window.GetHandle(), key.c_str(), reinterpret_cast<HANDLE>(1));
   window.SetQuitOnClose(true);
 

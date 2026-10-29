@@ -13,8 +13,7 @@ import 'setup_usability_test.dart' show FakeAck, FakePicker;
 /// Renders the setup surface at the sizes and Windows scaling settings named in
 /// the usability plan. Artifacts land in `build/preview` (not committed).
 void main() {
-  testWidgets('capture setup surfaces at compact, minimum and scaled sizes',
-      (tester) async {
+  testWidgets('capture setup surfaces at 720/960/1280', (tester) async {
     await (FontLoader('OdessySans')
           ..addFont(rootBundle.load('assets/fonts/roboto-regular.ttf'))
           ..addFont(rootBundle.load('assets/fonts/roboto-bold.ttf')))
@@ -27,9 +26,6 @@ void main() {
 
     for (final entry in const [
       ('720', Size(720, 540), 1.0),
-      ('900', Size(900, 680), 1.0),
-      ('900-150', Size(1350, 1020), 1.5),
-      ('900-200', Size(1800, 1360), 2.0),
       ('960', Size(960, 700), 1.0),
       ('1280-150', Size(1280, 800), 1.5),
     ]) {

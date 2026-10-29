@@ -98,7 +98,8 @@ class _OdessyAppState extends State<OdessyApp> {
       final saved = RuntimeConfiguration.fromJson(
           componentSettings.snapshot['configuration'] as Json);
       final observed = readiness.current;
-      if (observed?.configuration?.owner != saved.owner) {
+      if (observed?.configuration?.owner != saved.owner ||
+          !controller.connected) {
         throw StateError(
             'Running and saved configuration ownership could not be matched.');
       }
@@ -329,7 +330,6 @@ class _OdessyAppState extends State<OdessyApp> {
     controller.dispose();
     setup.dispose();
     configuredCoordinator?.stop();
-    _sessionKeys.clear();
     maintenance.dispose();
     installerEngine.dispose();
     pairing.dispose();
@@ -459,25 +459,11 @@ class _OdessyAppState extends State<OdessyApp> {
                                     child: const Text(
                                         'Connect saved configuration')),
                               ]),
-                        if (controller.executionNotice.isNotEmpty)
-                          ComponentStateBanner(
-                              message: controller.executionNotice,
-                              actions: [TextButton(onPressed: () => _navigate('Devices'), child: const Text('Open Devices'))]),
                         if (controller.error.isNotEmpty)
                           ComponentStateBanner(
                               message: controller.error,
                               tone: BannerTone.error,
                               actions: [
-                                if (!controller.connected) ...[
-                                  TextButton(
-                                      key: const ValueKey('startup-recovery-settings'),
-                                      onPressed: () => _openSettings(SettingsSections.models),
-                                      child: const Text('Open Settings')),
-                                  TextButton(
-                                      key: const ValueKey('startup-recovery-devices'),
-                                      onPressed: () => _navigate('Devices'),
-                                      child: const Text('Open Devices')),
-                                ],
                                 TextButton(
                                     onPressed: controller.refresh,
                                     child: const Text('Refresh'))
@@ -535,7 +521,6 @@ class _OdessyAppState extends State<OdessyApp> {
                           'Pairing' => PairingPage(
                               key: const ValueKey('pairing'),
                               controller: pairing,
-                              onReconnect: _activateSaved,
                                 picker:const FileSelectorPicker()),
                           'Settings' => SettingsPage(
                               readiness: readiness,
@@ -679,31 +664,6 @@ class _OdessyAppState extends State<OdessyApp> {
               fontSize: 9,
               fontWeight: FontWeight.w600,
               letterSpacing: 1)));
-  final Map<String,String> _sessionKeys={};
-  Future<String?> _credentialFor(Json spec) async {
-    final name=InstalledCoordinator.credentialVariable(spec);
-    if(name==null || InstalledCoordinator.hasCredential(spec))return null;
-    final model=(spec['selection'] as Map)['model'] as Map;
-    final scope='${model['provider']}:$name';
-    if(_sessionKeys.containsKey(scope))return _sessionKeys[scope];
-    final editor=TextEditingController();
-    final key=await showDialog<String>(context:navigatorKey.currentContext!,builder:(context)=>AlertDialog(
-      title:Text('Connect ${model['provider']}'),
-      content:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
-        const Text('Enter your API key. It stays in memory for this app session and is cleared when Odessy closes. No model request is sent until you send a message or explicitly test the model.'),
-        const SizedBox(height:16),
-        TextField(key:const ValueKey('session-api-key'),controller:editor,obscureText:true,autocorrect:false,enableSuggestions:false,
-          decoration:const InputDecoration(labelText:'API key'))]),
-      actions:[TextButton(onPressed:()=>Navigator.pop(context),child:const Text('Cancel')),
-        FilledButton(onPressed:(){if(editor.text.trim().isNotEmpty)Navigator.pop(context,editor.text.trim());},child:const Text('Connect for this session'))]));
-    editor.clear();
-    // Dialog widgets finish their closing animation before their controller is disposed.
-    WidgetsBinding.instance.addPostFrameCallback((_)=>editor.dispose());
-    if(key==null)throw StateError('An API key is required. Choose Connect saved configuration to enter it.');
-    _sessionKeys[scope]=key;
-    return key;
-  }
-
   Future<void> _connectConfigured(Json spec) async {
     if (_settingsBusy) {
       throw StateError(
@@ -714,8 +674,6 @@ class _OdessyAppState extends State<OdessyApp> {
       throw StateError(
           'Stop the active conversation before changing configuration.');
     }
-    final sessionKey = widget.coordinatorFactory == null ? await _credentialFor(spec) : null;
-    if (!mounted || epoch != configuredEpoch) return;
     await configuredCoordinator?.stop();
     await controller.replace(DisconnectedApi());
     if (!mounted || epoch != configuredEpoch) return;
@@ -725,11 +683,9 @@ class _OdessyAppState extends State<OdessyApp> {
           root: '',
           workspace: spec['workspace'] as String,
           configuration: spec,
-          sessionApiKey: sessionKey,
           expectedFingerprint: spec['expected_fingerprint'] as String?,
         );
     configuredCoordinator = child;
-    var serviceReady = false;
     try {
       final api = await child.start();
       if (!mounted || epoch != configuredEpoch) {
@@ -737,15 +693,12 @@ class _OdessyAppState extends State<OdessyApp> {
         await child.stop();
         return;
       }
-      serviceReady = true;
       await controller.replace(api);
       if (!controller.connected) throw StateError(controller.error);
       monitoring.bind(controller.api);
       if (mounted) setState(() => page = 'Conversation');
     } catch (_) {
-      // A failed conversation (for example a revoked executor) must not
-      // shut down the healthy API needed to inspect and recover configuration.
-      if (!serviceReady) await child.stop();
+      await child.stop();
       rethrow;
     }
   }

@@ -8,7 +8,6 @@ import queue
 import sys
 import threading
 import wave
-import subprocess
 
 from .capture import CommandAudioStream, CommandPlayer
 
@@ -21,24 +20,8 @@ def library():
 
 def inventory(backend='auto'):
     if backend_name(backend)=='command':
-        devices={}
-        available=False
-        for command, kind in [('arecord','input'),('aplay','output')]:
-            try:
-                result=subprocess.run([command,'-L'],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,
-                    text=True,timeout=3,check=False)
-                if result.returncode!=0:continue
-                available=True
-                for line in result.stdout[:65536].splitlines():
-                    if not line or line[0].isspace() or line.strip()=='null':continue
-                    name=line.strip()
-                    if name not in devices and len(devices)>=256:continue
-                    item=devices.setdefault(name,{'id':name,'name':name,'input':False,'output':False})
-                    item[kind]=True
-            except (OSError,subprocess.TimeoutExpired):pass
-        return {'status':'available_unverified' if available else 'unavailable','devices':list(devices.values()),
-                'message':'Detected ALSA devices; pulse uses the device selected in system sound settings. No microphone was opened.' if available
-                    else 'Audio device discovery unavailable. Check that arecord/aplay are installed. No microphone was opened.'}
+        return {'status':'configured_unverified','devices':[],
+                'message':'ALSA command backend: use default, pulse, or an explicit ALSA device. No microphone was opened.'}
     try:
         module=library();apis=module.query_hostapis()
         devices=[{'id':f"{apis[d['hostapi']]['name']}::{d['name']}",

@@ -14,9 +14,6 @@ mod store;
 mod tls;
 mod trust;
 mod telemetry;
-mod pairing;
-#[cfg(test)]
-mod pairing_boundary_tests;
 
 use identity::{display_fingerprint, random_installation_id, EnrollmentBundle, Identity};
 use std::path::{Path, PathBuf};
@@ -36,7 +33,7 @@ odessy-link — authenticated host pairing for Odessy
   odessy-link peers revoke <peer>
   odessy-link serve --listen <address> --workspace <path> --node-server <entry> [--advertise]
   odessy-link connect --peer <alias> [--address <host:port>] [--discover]
-  odessy-link discover [--seconds <n>] [--json]
+  odessy-link discover [--seconds <n>]
 
 State directory: $ODESSY_LINK_STATE_DIR or the per-user data directory.
 ";
@@ -121,7 +118,6 @@ fn run(arguments: Vec<String>) -> Result<(), Failure> {
             None => Err(Failure::Usage("peers requires list, grant or revoke".into())),
         },
         "serve" => commands::serve(&arguments[1..]),
-        "pairing" => pairing::run(&arguments[1..]),
         "telemetry" => telemetry::run(&arguments[1..]),
         "connect" => commands::connect(&arguments[1..]),
         "discover" => discover_peers(&arguments[1..]),
@@ -231,27 +227,19 @@ fn peers_list(arguments: &[String]) -> Result<(), Failure> {
 }
 
 fn discover_peers(arguments: &[String]) -> Result<(), Failure> {
-    let options = parse_with_switches(arguments, &["--seconds"], &["--json"])?;
+    let options = parse(arguments, &["--seconds"])?;
     let seconds = options
         .get("--seconds")
         .map(|raw| raw.parse::<u64>())
         .transpose()
         .map_err(|_| Failure::Usage("--seconds must be a whole number".into()))?
         .unwrap_or(discover::BROWSE_WINDOW.as_secs());
-    if !options.contains_key("--json") { println!(
+    println!(
         "discovering {SERVICE} for {seconds}s (bindings are not affected: advertisements \
          are only an address aid and never enroll a peer)",
         SERVICE = discover::SERVICE_TYPE
-    ); }
+    );
     let found = discover::browse(std::time::Duration::from_secs(seconds.max(1)))?;
-    if options.contains_key("--json") {
-        println!("{}", serde_json::json!({"schema_version":1,"devices":found.iter().map(|peer| {
-            let address=peer.address().ok();
-            serde_json::json!({"name":peer.alias,"address":address,"advertised_fingerprint":peer.fingerprint,
-                "usable":address.is_some(),"trusted":false,"purpose":peer.purpose})
-        }).collect::<Vec<_>>()}));
-        return Ok(());
-    }
     if found.is_empty() {
         println!("no advertisements found; use the address saved by `pair add --address`");
         return Ok(());

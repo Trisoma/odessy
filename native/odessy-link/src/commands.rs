@@ -35,18 +35,10 @@ fn relay_error_text(context: &str, error: relay::RelayError) -> String {
 
 pub fn serve(arguments: &[String]) -> Result<(), Failure> {
     let options = crate::parse_with_switches(
-        arguments, &["--listen", "--workspace", "--node-server"], &["--advertise", "--telemetry", "--telemetry-only", "--activation-stdin"],
+        arguments, &["--listen", "--workspace", "--node-server"], &["--advertise", "--telemetry", "--telemetry-only"],
     )?;
     // `--advertise` is a bare switch: opt-in address discovery, never trust.
     let advertise = options.contains_key("--advertise");
-    // The native companion assigns its owned process job before allowing this
-    // child to bind a port or create any Node descendants. EOF fails closed.
-    if options.contains_key("--activation-stdin") {
-        use std::io::Read;
-        let mut signal=[0u8;1];
-        std::io::stdin().read_exact(&mut signal).map_err(|_|Failure::Runtime("Executor activation was cancelled".into()))?;
-        if signal != [b'\n'] {return Err(Failure::Runtime("Invalid executor activation".into()));}
-    }
     let listen = crate::required(&options, "--listen")?.to_string();
     let telemetry_only = options.contains_key("--telemetry-only");
     let telemetry = telemetry_only || options.contains_key("--telemetry");
@@ -65,8 +57,16 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
         )));
     }
     let identity = load_identity()?;
-    let trust_path = state_dir()?.join("trust.sqlite3");
-    drop(open_registry()?);
+    let registry = open_registry()?;
+    let authorities = registry.enrolled_authorities()?;
+    if authorities.is_empty() {
+        return Err(Failure::Runtime(
+            "no enrolled peers: enroll the other host before serving".into(),
+        ));
+    }
+    let mut config = tls::server_config(&identity, authorities)?;
+    if telemetry { config.alpn_protocols = vec![crate::telemetry::ALPN.to_vec()]; }
+    drop(registry);
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -80,7 +80,7 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
             .local_addr()
             .map_err(|error| Failure::Runtime(format!("cannot read listen address: {error}")))?;
         eprintln!("listening on {local} (mTLS, enrolled peers only)");
-        let _advertisement = if advertise {
+        if advertise {
             let ip = local.ip();
             match crate::discover::advertise(
                 &identity.installation_id,
@@ -92,15 +92,16 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
                 Ok((daemon, _info)) => {
                     // Held for the lifetime of the listener so the advertisement
                     // disappears when this process stops.
+                    let _daemon = daemon;
                     eprintln!(
                         "advertising {} as an address aid only",
                         crate::discover::SERVICE_TYPE
                     );
-                    Some((daemon, _info))
                 }
-                Err(error) => { eprintln!("mDNS advertisement unavailable: {error}"); None },
+                Err(error) => eprintln!("mDNS advertisement unavailable: {error}"),
             }
-        } else { None };
+        }
+        let acceptor = TlsAcceptor::from(Arc::new(config));
         loop {
             let (stream, address) = match listener.accept().await {
                 Ok(accepted) => accepted,
@@ -109,14 +110,7 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
                     continue;
                 }
             };
-            let config = match fresh_tls_config(&identity, &trust_path, telemetry) {
-                Ok(config) => config,
-                Err(error) => {
-                    eprintln!("refused new connection: {error}");
-                    continue;
-                }
-            };
-            let acceptor = TlsAcceptor::from(Arc::new(config));
+            let acceptor = acceptor.clone();
             let workspace = workspace.clone();
             let node_server = node_server.clone();
             tokio::spawn(async move {
@@ -128,15 +122,6 @@ pub fn serve(arguments: &[String]) -> Result<(), Failure> {
             });
         }
     })
-}
-
-pub(crate) fn fresh_tls_config(identity: &crate::identity::Identity, path: &std::path::Path, telemetry: bool) -> Result<rustls::ServerConfig,String> {
-    let registry=Registry::open(path)?;
-    let authorities=registry.enrolled_authorities()?;
-    if authorities.is_empty() { return Err("no active enrolled peers; execution admission is unavailable".into()); }
-    let mut config=tls::server_config(identity,authorities)?;
-    if telemetry { config.alpn_protocols=vec![crate::telemetry::ALPN.to_vec()]; }
-    Ok(config)
 }
 
 async fn handle_connection(
@@ -318,7 +303,6 @@ pub fn connect(arguments: &[String]) -> Result<(), Failure> {
     let peer = registry
         .peer(alias)?
         .ok_or_else(|| Failure::Runtime(format!("unknown peer: {alias}")))?;
-    if peer.revoked { return Err(Failure::Runtime(format!("peer {alias} is revoked; explicit re-enrollment is required"))); }
     if !peer.has_execution_grant() {
         // The host decides admission; this is the coordinator's own view only.
         eprintln!("note: no local mcp grant recorded for {alias}");

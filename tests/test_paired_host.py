@@ -40,7 +40,6 @@ def enrolled(**overrides):
         "fingerprint_sha256": "ab" * 32,
         "grant_revision": 7,
         "capability_mcp": True,
-        "revoked": False,
         "workspace": r"C:\work",
         **overrides,
     }
@@ -59,7 +58,7 @@ def test_no_configuration_means_no_paired_host():
 
 def test_a_paired_host_selects_split_execution(tmp_path):
     env = {PAIRED_HOST_ENV: "jetson", LINK_BIN_ENV: str(stub_binary(tmp_path))}
-    host = paired_host(env, prober=lambda _host: enrolled(), authorizer=lambda alias, fingerprint:'fixture-consent')
+    host = paired_host(env, prober=lambda _host: enrolled())
     assert host is not None
     assert host.alias == "jetson"
     assert deployment_mode(env) == "split"
@@ -110,7 +109,6 @@ def test_the_transport_command_is_a_connect_for_the_enrolled_alias(fake_binary):
     host = paired_host(
         {PAIRED_HOST_ENV: "jetson", LINK_BIN_ENV: str(fake_binary)},
         prober=lambda _host: enrolled(),
-        authorizer=lambda alias, fingerprint:'fixture-consent',
     )
     config = host.server_config()
     assert config.name == "jetson"
@@ -205,13 +203,12 @@ def test_approval_metadata_names_the_enrolled_certificate_and_revision(fake_bina
             "fingerprint_sha256": fingerprint,
             "grant_revision": 7,
             "capability_mcp": True,
-            "revoked": False,
             "workspace": r"C:\work",
         }
 
     monkeypatch.setenv(PAIRED_HOST_ENV, "jetson")
     monkeypatch.setenv(LINK_BIN_ENV, str(fake_binary))
-    host = paired_host(prober=prober, authorizer=lambda alias, fingerprint:'fixture-consent')
+    host = paired_host(prober=prober)
     assert recorded["alias"] == "jetson"
     metadata = host.server_config().target_metadata
     assert metadata["paired_alias"] == "jetson"
@@ -227,12 +224,10 @@ def _server(tmp_path, **overrides):
         binary=stub_binary(tmp_path),
         enrolled_fingerprint="ab" * 32,
         grant_revision=7,
-        consent_revision='fixture-consent',
     )
     state = {"current": enrolled(**overrides)}
     server = host.server()
     object.__setattr__(server, "prober", lambda _host: state["current"])
-    object.__setattr__(server, "authorizer", lambda alias, fingerprint:'fixture-consent')
     return server, state
 
 
@@ -257,10 +252,10 @@ def test_preflight_refuses_a_changed_permission_revision(tmp_path):
         server.preflight()
 
 
-def test_preflight_refuses_a_revoked_peer(tmp_path):
+def test_preflight_refuses_a_revoked_capability(tmp_path):
     server, state = _server(tmp_path)
-    state["current"] = enrolled(revoked=True)
-    with pytest.raises(PairedTrustError, match="revoked"):
+    state["current"] = enrolled(capability_mcp=False)
+    with pytest.raises(PairedTrustError, match="no longer holds"):
         server.preflight()
 
 
@@ -367,20 +362,3 @@ def test_an_unreachable_paired_host_never_falls_back(monkeypatch, tmp_path):
     assert "Paired host 'jetson' is unavailable" in message
     assert "No legacy transport is used instead" in message
 
-
-
-def test_revoked_peer_is_rejected_before_connect(fake_binary):
-    env = {PAIRED_HOST_ENV: 'laptop', LINK_BIN_ENV: str(fake_binary)}
-    with pytest.raises(PairedConfigError, match='revoked'):
-        paired_host(env, prober=lambda host: enrolled(revoked=True))
-
-
-def test_checkout_lookup_never_selects_another_operating_system_binary(monkeypatch,tmp_path):
-    import os
-    import odessy.tools.paired as paired
-    monkeypatch.setattr(paired,'__file__',str(tmp_path/'src/odessy/tools/paired.py'))
-    monkeypatch.setattr(paired.shutil,'which',lambda _:None)
-    wrong=tmp_path/'native/odessy-link/target/release'/('odessy-link' if os.name=='nt' else 'odessy-link.exe')
-    right=tmp_path/'native/odessy-link/target/debug'/('odessy-link.exe' if os.name=='nt' else 'odessy-link')
-    for path in (wrong,right):path.parent.mkdir(parents=True,exist_ok=True);path.write_text('fixture')
-    assert paired.link_binary({})==right

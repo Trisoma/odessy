@@ -128,15 +128,7 @@ void main() {
         OdessyApp(api: FailedApi(), setupBackend: SavedComponents()));
     await tester.pumpAndSettle();
     expect(find.byType(ComponentStateBanner), findsWidgets);
-    // The failure must still be visible and actionable. The literal `HTTP 503` was a
-    // proxy for "the failure is surfaced"; the documented contract now promises a
-    // labelled, actionable message for 503, so this asserts that exact promise
-    // rather than a status code the user cannot act on.
-    expect(
-        find.textContaining('Cannot start a conversation'), findsWidgets,
-        reason: 'a failed session must remain visible, not silently degrade');
-    expect(find.textContaining('HTTP 503'), findsNothing,
-        reason: 'the contract labels 503 instead of echoing the status code');
+    expect(find.textContaining('HTTP 503'), findsWidgets);
     await nav(tester, 'Settings');
     expect(find.text('Preferences'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());

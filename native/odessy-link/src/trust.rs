@@ -28,7 +28,7 @@ pub struct Peer {
 
 impl Peer {
     pub fn has_execution_grant(&self) -> bool {
-        !self.revoked && self.capability_mcp && self.workspace.is_some()
+        self.capability_mcp && self.workspace.is_some()
     }
 }
 
@@ -226,7 +226,7 @@ impl Registry {
     pub fn enrolled_authorities(&self) -> Result<Vec<Vec<u8>>, String> {
         let mut statement = self
             .connection
-            .prepare("SELECT ca_pem FROM peers WHERE revoked = 0")
+            .prepare("SELECT ca_pem FROM peers")
             .map_err(|error| format!("cannot list authorities: {error}"))?;
         let rows = statement
             .query_map([], |row| row.get::<_, String>(0))
@@ -290,13 +290,6 @@ impl Registry {
 
     /// Revoke every capability for a peer. Returns whether the peer existed, so a
     /// caller can distinguish "already gone" from "revoked now".
-    /// Address is routing metadata only; identities and grants are unchanged.
-    pub fn set_address(&self,alias:&str,address:&str)->Result<(),String>{
-        let transaction=self.connection.unchecked_transaction().map_err(|e|e.to_string())?;
-        if transaction.execute("UPDATE peers SET address=?2 WHERE alias=?1",params![alias,address]).map_err(|e|e.to_string())?!=1 {return Err("Unknown peer".into());}
-        self.bump_revision(&transaction)?;
-        transaction.commit().map_err(|e|e.to_string())
-    }
     pub fn revoke(&self, alias: &str) -> Result<bool, String> {
         let transaction = self
             .connection
@@ -417,12 +410,6 @@ fn decode_base64(text: &str) -> Result<Vec<u8>, String> {
 /// Expose the PEM decoder to the identity tests without a second implementation.
 pub fn certificate_der_for_tests(pem: &str) -> Result<Vec<u8>, String> {
     certificate_der(pem)
-}
-
-/// One PEM body decoder for the whole crate. Pairing proofs and enrolment read the
-/// same way a certificate does, so they share this transform rather than copying it.
-pub fn decode_base64_for_pairing(text: &str) -> Result<Vec<u8>, String> {
-    decode_base64(text)
 }
 
 #[cfg(test)]

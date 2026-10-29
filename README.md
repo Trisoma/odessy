@@ -161,68 +161,6 @@ unconfined `terminal.run` only (no file, search, or git tools).
 Voice (`python -m odessy voice`) currently needs Whisper.cpp, Kokoro, and the Linux
 `arecord`/`aplay` programs; see [Voice](#voice).
 
-## Configure a cloud API key in the desktop app
-
-**Example: DeepSeek.** Have your provider's API key ready, then close Odessy.
-The current desktop reads keys from the terminal environment when it starts.
-
-### Linux / Jetson / macOS terminal
-
-Copy this command and **replace `sk-xxxxxxxxxxxxxxxxxxxx` with your actual key**.
-Keep the single quotes and the variable name unchanged:
-
-```bash
-export DEEPSEEK_API_KEY='sk-xxxxxxxxxxxxxxxxxxxx'
-```
-
-For example, the key goes **between the quotes immediately after `=`**.
-Press Enter after running the completed command; successful assignment prints nothing.
-
-**Launch Odessy from that same terminal.** From your extracted preview directory
-(the folder containing `bundle`), run:
-
-```bash
-./bundle/odessy_desktop
-```
-
-On macOS, launch your macOS build from that terminal using its executable path;
-the Linux `bundle` command above is for Linux/Jetson builds only.
-
-### Windows PowerShell
-
-Replace the same placeholder with your actual key:
-
-```powershell
-$env:DEEPSEEK_API_KEY='sk-xxxxxxxxxxxxxxxxxxxx'
-```
-
-From the repository folder, launch the development build in **that same PowerShell window**:
-
-```powershell
-.\apps\desktop\build\windows\x64\runner\Release\odessy_desktop.exe
-```
-
-### Finish in Odessy Settings
-
-Open **Settings → Models and connections**:
-
-| Field | What to enter |
-|---|---|
-| Provider | `deepseek` |
-| Credential environment variable / `credential env` | `DEEPSEEK_API_KEY` — this exact name, **not your secret key** |
-| Model | Choose an available model, or enter the exact model ID your provider supports. |
-
-Save the section. Use **Connect saved configuration**, or the explicit
-**Apply saved settings · restart** action if a coordinator is already running.
-An optional model test sends a real provider request and may incur a charge.
-
-The exported key lasts for this terminal session; it is not saved by the GUI.
-After opening another terminal or rebooting, set it again before launching Odessy.
-If you set the key while Odessy was already open, close and relaunch the app from
-the terminal where you set it. Do not commit or share your actual key. Direct key
-assignment may remain in shell history; see the
-[cloud backend guide](docs/reference/cloud-models.mdx) for more configuration options.
-
 ## Configuration
 
 Optional authenticated split deployment uses `ODESSY_PAIRED_HOST=<enrolled-alias>`
@@ -405,7 +343,7 @@ requests plus redacted tool output are sent to the provider:
 
 ```bash
 pip install -e .[cloud]   # needed for Claude only
-export DEEPSEEK_API_KEY='sk-xxxxxxxxxxxxxxxxxxxx'  # Replace the quoted placeholder with your real key.
+export DEEPSEEK_API_KEY=...
 export ODESSY_CLOUD_MODEL=deepseek-flash
 export ODESSY_CLOUD_EFFORT=low
 python -m odessy --model-backend deepseek "on my laptop, run pwd"

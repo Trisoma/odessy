@@ -6,19 +6,9 @@ rust-version = "1.85"
 description = "Authenticated host pairing and MCP transport for Odessy."
 license = "Apache-2.0"
 
-[features]
-# Legacy feature retained as a no-op for existing development commands.
-default = []
-test-profile = []
-
 [[bin]]
 name = "odessy-link"
 path = "src/main.rs"
-
-[[bin]]
-# The packaged Windows executor's small native window. No Flutter, no model.
-name = "odessy-executor"
-path = "src/bin/executor.rs"
 
 [dependencies]
 # OS metrics only; version supports the existing Rust 1.85 floor.
@@ -41,12 +31,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-uti
 # Address discovery only. Advertisements never enroll, grant, or replace the saved
 # certificate identity; the manual address remains the fallback.
 mdns-sd = "0.13"
-# ECDSA P-256 possession proofs for enrollment. Already present transitively through
-# rustls/rcgen's `ring` provider, so this adds no new C build and no second provider.
-ring = "0.17"
-spake2 = "=0.4.0"
-snow = "=0.9.6"
-x509-parser = "=0.16.0"
 
 [target.'cfg(unix)'.dependencies]
 # Signalling the process group created at spawn, so descendants are terminated too.

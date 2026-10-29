@@ -27,12 +27,6 @@ def configuration_descriptor(selection, workspace, *, owner):
         'voice': {key:voice[key] for key in ('enabled','audio_backend','audio_input_device','audio_output_device','wake_model')},
         'host': {'role':value['role'],'workspace':os.path.normcase(str(Path(workspace).expanduser().resolve()))},
     }
-    from odessy.execution.outbound import read as outbound_consent
-    try:
-        consent=outbound_consent()
-        if consent['alias']:sections['host']['outbound_consent_revision']=consent['revision']
-    except ValueError:
-        sections['host']['outbound_consent_revision']='unreadable'
     fingerprints={name:digest(data) for name,data in sections.items()}
     return {'owner':owner,'fingerprints':fingerprints,'fingerprint':digest({'owner':owner,'sections':fingerprints}),
             'model':None if value['model'] is None else {key:value['model'][key] for key in ('provider','name')},
