@@ -31,8 +31,15 @@ def _policy(workspace: Path) -> ExecutionPolicy:
     return ExecutionPolicy(mode='workspace-write', workspace_root=str(workspace))
 
 
-def test_workspace_escape_is_rejected(tmp_path):
-    """A credential for W must not authorize a path outside W."""
+def test_workspace_policy_rejects_escapes(tmp_path):
+    """What this proves: the policy, not the credential, decides containment.
+
+    A *valid* credential for W is held throughout, and escapes are still
+    refused -- so issuing one cannot widen access. It does not prove the
+    credential-bearing tool call itself; that path is exercised end to end in
+    ``test_terminal_executor_integration`` (an in-workspace read succeeds and
+    ``../settings.json`` is denied with the credential attached).
+    """
     workspace = (tmp_path / 'shared').resolve()
     workspace.mkdir()
     note = workspace / 'note.txt'
@@ -58,6 +65,9 @@ def test_workspace_escape_is_rejected(tmp_path):
 
     # A path inside the workspace stays allowed, so the check is not vacuous.
     assert contained(note)
+
+    # The credential was live for every attempt above: it grants reach, not root.
+    assert execution_access.validate(credential, workspace=WORKSPACE)
 
 
 def test_a_credential_for_another_workspace_is_refused():

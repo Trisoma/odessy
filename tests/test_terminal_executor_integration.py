@@ -88,11 +88,20 @@ def test_real_terminal_approval_connects_tools_and_policy(tmp_path):
                 return True
             async def handle(entry):
                 approvals.append(entry)
-                controller.interactions.resolve_approval(entry['id'], True, channel='gui')
+                # The approver this prototype defines is the execution host's
+                # terminal, so that is the channel it answers on. The broker allows
+                # only channels it advertised on the entry; anything else is refused
+                # as a channel mismatch rather than approved.
+                assert 'terminal' in entry['allowed_channels'], entry['allowed_channels']
+                controller.interactions.resolve_approval(entry['id'], True, channel='terminal')
             controller.interactions.handler = handle
             turn = await controller.run_turn('Run the reviewed echo command on the execution host')
             assert approvals, 'The real agent must request command approval'
-            assert (workspace / 'approved.txt').read_text().strip() == 'odessy-connected', turn.final_text
+            # PowerShell's redirection writes UTF-16LE with a BOM on Windows, so the
+            # assertion decodes by BOM rather than assuming the platform default.
+            raw = (workspace / 'approved.txt').read_bytes()
+            written = raw.decode('utf-16') if raw[:2] in (b'\xff\xfe', b'\xfe\xff') else raw.decode('utf-8')
+            assert written.strip() == 'odessy-connected', turn.final_text
             clear()
         finally:
             if controller:
