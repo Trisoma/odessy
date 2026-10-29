@@ -59,6 +59,17 @@ abstract class OdessyApi {
   void close();
 }
 
+/// Optional capability: answering a LAN pairing prompt.
+///
+/// A remote coordinator asks for access with `POST /v1/pairing/request` and
+/// waits; only the loopback client holding the bearer token may answer. Kept
+/// off [OdessyApi] so demo and offline transports stay compatible.
+abstract interface class PairingApi {
+  /// Answers the pending request [id]. The service rejects it with
+  /// [ApiFailure] when the request already timed out or was answered elsewhere.
+  Future<void> approvePairing(String id, bool accepted);
+}
+
 class ApiFailure implements Exception {
   const ApiFailure(this.status);
   final int status;
@@ -75,7 +86,7 @@ class ApiFailure implements Exception {
       };
 }
 
-class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi, DesktopVoiceApi {
+class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi, DesktopVoiceApi, PairingApi {
   LocalApi(this.base, String token) : _token = token {
     if (!['http', 'https'].contains(base.scheme) ||
         !['localhost', '127.0.0.1', '::1'].contains(base.host) ||
@@ -231,6 +242,11 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
   Future<void> answer(String sid, String id, String answer) async {
     await _json('${_session(sid)}/questions/${Uri.encodeComponent(id)}', 'POST',
         {'answer': answer});
+  }
+
+  @override
+  Future<void> approvePairing(String id, bool accepted) async {
+    await _json('/v1/pairing/approve', 'POST', {'id': id, 'accepted': accepted});
   }
 
   @override

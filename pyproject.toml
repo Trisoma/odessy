@@ -38,6 +38,12 @@ wake = [
   "openwakeword>=0.6.0",
   "numpy>=1.26",
 ]
+# Accept-tap LAN pairing: announces `_odessy-exec._tcp.local.` so a coordinator
+# on the same network can find this host. Optional because discovery is best
+# effort -- without it a coordinator can still pair by typing the URL.
+pairing = [
+  "zeroconf>=0.131,<1",
+]
 # The existing voice pipeline's Python dependencies. Declared now because the wake
 # session reuses them, and because a clone could not run `odessy voice` at all while
 # they were undeclared.

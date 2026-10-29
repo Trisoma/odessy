@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ipaddress
 import os
 from pathlib import Path
@@ -78,5 +79,21 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
             server.should_exit = True
 
         threading.Thread(target=watch, name='odessy-parent-watch', daemon=True).start()
-    await server.serve()
+
+    async def announce():
+        # Announce only once sockets are bound, so a coordinator that discovers
+        # the service can actually connect to it.
+        from odessy.application.pairing import register_mdns
+        while not server.started and not server.should_exit:
+            await asyncio.sleep(0.02)
+        if server.started:
+            await asyncio.to_thread(register_mdns, app, port)
+
+    announce_task = asyncio.create_task(announce())
+    try:
+        await server.serve()
+    finally:
+        announce_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await announce_task
 

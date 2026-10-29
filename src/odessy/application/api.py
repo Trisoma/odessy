@@ -11,6 +11,7 @@ import secrets
 import time
 from contextlib import asynccontextmanager
 
+from . import pairing
 from .session import public
 from odessy.interaction.broker import InteractionError
 from odessy.models.cloud_model import CloudModelConfigError
@@ -86,6 +87,13 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             await controller.close()
         if jobs is not None:
             await jobs.close()
+        zeroconf = getattr(app.state, 'zeroconf', None)
+        if zeroconf is not None:
+            app.state.zeroconf = None
+            try:
+                await asyncio.to_thread(zeroconf.close)  # Withdraws the mDNS record.
+            except Exception:
+                pass
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.auth_token = token if token is not None else secrets.token_urlsafe(32)
@@ -100,6 +108,10 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     app.state.profiles = profiles
     app.state.runtime_configuration = json.loads(json.dumps(runtime_configuration))
     app.state.service_instance_id = secrets.token_hex(16)
+    # Pairing happens before a session exists, so its events cannot ride a
+    # controller's stream; they go to this queue until a reader drains it.
+    app.state.pairing_events = asyncio.Queue(maxsize=64)
+    app.state.pairing_port = None
     restart_reservation = None
     pending_admissions = 0
 
@@ -142,13 +154,88 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         restart_reservation = None
         return {'status':'resumed'}
 
+    def publish_pairing(event_type, data):
+        """Announce a pairing step to live sessions and to the pre-session queue."""
+        for controller in tuple(sessions.values()):
+            controller.emit(event_type, data)
+        queue = app.state.pairing_events
+        if queue.full():
+            queue.get_nowait()  # A stalled reader must not fill the queue.
+        queue.put_nowait({'type': event_type, 'data': data})
+
+    def verified(request):
+        value = request.headers.get('authorization', '')
+        supplied = value[7:] if value.startswith('Bearer ') else ''
+        return hmac.compare_digest(supplied.encode(), app.state.auth_token.encode())
+
+    # Pairing is pre-auth by construction: a coordinator has no token yet. The
+    # approve route therefore verifies the token itself instead of relying on
+    # the middleware below.
+    @app.post('/v1/pairing/request')
+    async def pairing_request(request: Request):
+        data = await body(request)
+        if set(data) - {'name'}:
+            raise HTTPException(400, 'Unknown pairing fields')
+        name = data.get('name')
+        if not isinstance(name, str) or not name.strip() or len(name) > 64:
+            raise HTTPException(400, 'name must be a non-empty string of at most 64 characters')
+        name = name.strip()
+        host = request.client.host if request.client is not None else ''
+        if not host or pairing.is_loopback(host):
+            # A local process must not be able to pair with this machine itself.
+            raise HTTPException(403, 'Pairing requests must come from another host on the network')
+        port = app.state.pairing_port
+        address = pairing.lan_ip()
+        if port is None or address is None:
+            # Answering with a URL no coordinator can reach would be worse.
+            raise HTTPException(503, 'This host has no LAN address to offer for pairing')
+        if not pairing.has_room():
+            # Refuse before prompting: the local user must not face a queue.
+            raise HTTPException(429, 'Too many pairing requests are already awaiting local approval')
+        request_id = secrets.token_hex(8)
+        publish_pairing('pairing_request', {'id': request_id, 'name': name, 'ip': host})
+        accepted = await pairing.wait_for_approval(request_id, name, host)
+        publish_pairing('pairing_resolved', {'id': request_id, 'accepted': accepted})
+        if not accepted:
+            raise HTTPException(403, 'Pairing declined')
+        return {'token': app.state.auth_token, 'url': f'http://{address}:{port}'}
+
+    @app.post('/v1/pairing/approve')
+    async def pairing_approve(request: Request):
+        if not verified(request):  # Pre-auth path: authority is decided here.
+            return Response(status_code=401, headers={'WWW-Authenticate': 'Bearer'})
+        data = await body(request)
+        if set(data) != {'id', 'accepted'}:
+            raise HTTPException(400, 'Only an id and an accepted flag are accepted')
+        if not isinstance(data['id'], str) or not isinstance(data['accepted'], bool):
+            raise HTTPException(400, 'id must be a string and accepted must be a boolean')
+        if not pairing.resolve(data['id'], data['accepted']):
+            raise HTTPException(404, 'No pairing request with that id is pending')
+        return {'id': data['id'], 'accepted': data['accepted'], 'resolved': True}
+
+    @app.get('/v1/pairing/events')
+    async def pairing_event_stream(request: Request):
+        # One reader drains the queue; a second reader would steal its events.
+        queue = app.state.pairing_events
+
+        async def stream():
+            while not await request.is_disconnected():
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ': keepalive\n\n'
+                    continue
+                yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
+        return StreamingResponse(stream(), media_type='text/event-stream',
+                                 headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
     @app.middleware('http')
     async def authenticate(request, call_next):
         if request.url.path == '/' and request.method == 'GET':
             return await call_next(request)
-        value = request.headers.get('authorization', '')
-        supplied = value[7:] if value.startswith('Bearer ') else ''
-        if not hmac.compare_digest(supplied.encode(), app.state.auth_token.encode()):
+        if request.url.path.startswith('/v1/pairing/'):
+            return await call_next(request)
+        if not verified(request):
             return Response(status_code=401, headers={'WWW-Authenticate': 'Bearer'})
         return await call_next(request)
 
@@ -186,6 +273,8 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             except CloudModelConfigError as exc:
                 raise HTTPException(503, public(str(exc))) from exc
             except SystemExit as exc:
+                # The shared CLI model builder wraps configuration failures.
+                # Translate only that known cause; unrelated exits stay errors.
                 if not isinstance(exc.__cause__, CloudModelConfigError):
                     raise
                 raise HTTPException(503, public(str(exc.__cause__))) from exc
