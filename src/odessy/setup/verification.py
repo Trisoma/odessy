@@ -14,10 +14,8 @@ KEY_ENV = {'claude': 'ANTHROPIC_API_KEY', 'openai': 'OPENAI_API_KEY', 'deepseek'
 
 def credential_value(model, environ=None):
     """Resolve an explicit reference exactly; never persist or return it to a UI."""
-    env = os.environ if environ is None else environ
-    if model.credential_env:
-        return env.get(model.credential_env, '').strip()
-    return (env.get('ODESSY_CLOUD_API_KEY') or env.get(KEY_ENV.get(model.provider, '')) or '').strip()
+    from odessy.credentials import Scope, resolve
+    return resolve(Scope(model.provider, model.endpoint, model.credential_env), environ=environ) or ''
 
 
 def verify(selection: SetupSelection, discovery: DiscoveryReport | None = None) -> dict:

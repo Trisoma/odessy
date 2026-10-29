@@ -31,6 +31,8 @@ def build(wheels, licenses, output, *, runtime=None, desktop=None, node=None, to
         if not isinstance(license_,str) or not license_.strip(): raise ValueError('license required for every wheel')
         artifacts.append({'file':wheel.name,'sha256':hashlib.sha256(wheel.read_bytes()).hexdigest(),'license':license_})
     if not any(a['file'].startswith('odessy-') for a in artifacts): raise ValueError('Odessy wheel required')
+    if desktop is not None and not any(re.fullmatch(r'keyring-25\.[A-Za-z0-9_.+-]+\.whl', a['file']) for a in artifacts):
+        raise ValueError('Desktop payload requires keyring 25.x and its resolved UI dependency wheels.')
     # Write a private staging archive, then publish create-only.
     import os
     fd,temporary=tempfile.mkstemp(dir=output.parent,suffix='.zip')
@@ -57,6 +59,8 @@ def build(wheels, licenses, output, *, runtime=None, desktop=None, node=None, to
             from installer.build.context import files as installer_files
             for name,data in installer_files(ROOT).items():archive.writestr('bootstrap/'+name,data)
             archive.writestr('bootstrap/odessy/__init__.py','')
+            archive.write(ROOT/'src/odessy/credentials.py', 'bootstrap/odessy/credentials.py')
+            archive.write(ROOT/'src/odessy/model_providers.py', 'bootstrap/odessy/model_providers.py')
             for module in (ROOT/'src/odessy/setup').glob('*.py'):
                 archive.write(module,'bootstrap/odessy/setup/'+module.name)
             # Progress runs before the application wheel is installed. Include

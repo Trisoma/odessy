@@ -16,8 +16,14 @@ MAX_REQUEST = 65536
 
 
 def execute(request: dict) -> dict:
-    fields(request, {'id', 'operation', 'selection', 'output', 'format', 'confirm_plan', 'endpoint', 'parameters', 'cancel_file'}, 'request')
+    fields(request, {'id', 'operation', 'selection', 'output', 'format', 'confirm_plan', 'endpoint', 'parameters', 'cancel_file', 'session_credentials'}, 'request')
+    if 'session_credentials' in request:
+        from odessy.credentials import load_sessions
+        load_sessions(request['session_credentials'])
     operation = request.get('operation')
+    if operation == 'model-credential':
+        from odessy.credentials import dispatch
+        return dispatch(request.get('parameters') or {})
     if operation == 'component-settings':
         from .component_settings import dispatch
         return dispatch(request.get('parameters') or {})

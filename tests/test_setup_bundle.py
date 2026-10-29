@@ -48,6 +48,23 @@ def test_bundle_refuses_missing_license_and_existing_destination(tmp_path):
     with pytest.raises(ValueError): builder().build(wheels,licenses,tmp_path/'setup.zip')
 
 
+def test_desktop_payload_requires_and_hashes_credential_runtime(tmp_path):
+    wheels = tmp_path / 'wheels'; wheels.mkdir()
+    app = 'odessy-0.5.0-py3-none-any.whl'; (wheels / app).write_bytes(b'app')
+    desktop = tmp_path / 'desktop'; desktop.mkdir()
+    licenses = tmp_path / 'licenses.json'; licenses.write_text(json.dumps({app: 'Apache-2.0'}))
+    with pytest.raises(ValueError, match='keyring'):
+        builder().build(wheels, licenses, tmp_path / 'missing.zip', desktop=desktop)
+    keyring = 'keyring-25.7.0-py3-none-any.whl'; (wheels / keyring).write_bytes(b'credential-runtime')
+    licenses.write_text(json.dumps({app: 'Apache-2.0', keyring: 'MIT'}))
+    output = tmp_path / 'desktop.zip'
+    builder().build(wheels, licenses, output, desktop=desktop)
+    with zipfile.ZipFile(output) as archive:
+        manifest = json.loads(archive.read('wheelhouse/manifest.json'))
+        assert any(a['file'] == keyring and a['license'] == 'MIT' for a in manifest['artifacts'])
+        assert 'bootstrap/odessy/credentials.py' in archive.namelist()
+
+
 def test_standalone_bundle_includes_runtime_and_native_launcher(tmp_path):
     wheels=tmp_path/'wheels';wheels.mkdir();name='odessy-0.5.0-py3-none-any.whl';(wheels/name).write_bytes(b'wheel')
     licenses=tmp_path/'licenses.json';licenses.write_text(json.dumps({name:'Apache-2.0'}))
@@ -91,3 +108,19 @@ print('bootstrap progress passed')
         cwd=tmp_path, capture_output=True, text=True, timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_extracted_bootstrap_can_describe_model_credentials(tmp_path):
+    wheels=tmp_path/'wheels';wheels.mkdir()
+    name='odessy-0.5.0-py3-none-any.whl';(wheels/name).write_bytes(b'wheel')
+    licenses=tmp_path/'licenses.json';licenses.write_text(json.dumps({name:'Apache-2.0'}))
+    output=tmp_path/'bootstrap.zip';builder().build(wheels,licenses,output)
+    extracted=tmp_path/'extracted'
+    with zipfile.ZipFile(output) as archive:archive.extractall(extracted)
+    bootstrap='import sys;sys.path.insert(0,sys.argv[1]);from odessy.setup.bridge import run;raise SystemExit(run())'
+    request={'id':'bootstrap-status','operation':'model-credential','selection':{},'parameters':{
+        'action':'describe','provider':'deepseek','endpoint':'https://bootstrap-credential-qualification.invalid'}}
+    result=subprocess.run([sys.executable,'-I','-c',bootstrap,str(extracted/'bootstrap')],input=json.dumps(request)+'\n',
+                          cwd=tmp_path,text=True,capture_output=True,timeout=20)
+    assert result.returncode==0,result.stdout+result.stderr
+    assert json.loads(result.stdout)['result']['source'] in ('env','none')

@@ -5,6 +5,7 @@ import '../../setup/controllers/model_catalog_controller.dart';
 import '../../setup/presentation/model_picker.dart';
 import '../controllers/component_settings_controller.dart';
 import 'provider_probe_panel.dart';
+import 'model_credential_panel.dart';
 
 /// Independent component editor. Saving patches only this section on the backend.
 class ComponentSettingsPane extends StatefulWidget {
@@ -242,8 +243,11 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
                 fieldKey: const ValueKey('component-name'),
                 enabled: !locked,
                 onChanged: _remember),
-            const Text(
-                'Credentials are environment-variable references only; never enter an API key.'),
+            if (!{'ollama', 'lfm'}.contains(provider))
+              ModelCredentialPanel(backend: c.backend, provider: provider,
+                endpoint: fields['endpoint']!.text.trim(),
+                reference: fields['credential_env']!.text.trim()),
+            const Text('Credential reference names an optional environment variable. Enter API keys only in the separate masked API key field.'),
           ] else if (widget.section == 'voice') ...[
             SwitchListTile(
                 title: const Text('Enable the voice pipeline'),

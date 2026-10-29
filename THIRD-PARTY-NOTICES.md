@@ -1,5 +1,18 @@
 # Third-Party Notices And Licenses
 
+## Secure model credentials (October 29, 2026)
+
+The desktop/UI extra uses Python `keyring>=25.0,<26`; qualification resolved
+keyring 25.7.0 (MIT). Native Windows storage also uses pywin32-ctypes; Linux
+Secret Service resolves its platform-specific dependencies during packaging.
+Keep the exact resolved wheels' license texts and transitive notices in each
+distributed runtime. Source/API inspiration from DeepSeek Harness does not make
+its plaintext file store an encrypted vault; Odessy's storage uses native OS
+credential services instead. No Harness credential implementation was copied.
+
+The verification inventory records wheel versions and SHA-256 hashes; it is not
+a redistribution approval for unbuilt Linux/macOS artifacts.
+
 ## Runtime libraries and model assets (October 23, 2026)
 
 See the [third-party license inventory](docs/reference/third-party-licenses.md)

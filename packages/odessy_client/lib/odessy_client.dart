@@ -6,6 +6,7 @@ import 'dart:io';
 import 'src/models.dart';
 export 'src/models.dart';
 export 'src/credentials.dart';
+export 'src/model_credentials.dart';
 export 'src/setup.dart';
 export 'src/monitoring/client.dart';
 export 'src/capabilities.dart';
@@ -68,6 +69,8 @@ class ApiFailure implements Exception {
         409 ||
         410 =>
           'Request is stale, already resolved, or unavailable. Refresh the session.',
+        503 =>
+          'The coordinator could not start the model. Check your API key and model settings.',
         _ => 'Odessy service returned HTTP $status.',
       };
 }

@@ -12,7 +12,7 @@ Object? _freeze(Object? value) {
   return value;
 }
 
-/// Local setup protocol. No credentials, arbitrary commands or remote authority.
+/// Local setup protocol. Credential writes are private stdin-only operations.
 class SetupRequest {
   SetupRequest({
     required this.id,
@@ -39,6 +39,7 @@ class SetupRequest {
           'model-catalog',
           'component-settings',
           'component-probe',
+          'model-credential',
           'manage',
           'installer',
           'pair',

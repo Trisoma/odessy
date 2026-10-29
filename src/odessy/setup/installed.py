@@ -94,7 +94,11 @@ def serve(argv=None):
     parser.add_argument('--expected-fingerprint')
     parser.add_argument('--exit-on-stdin-close',action='store_true',
         help='Stop when the owning launcher closes its stdin pipe.')
+    parser.add_argument('--credentials-stdin', action='store_true')
     args=parser.parse_args(argv)
+    if args.credentials_stdin:
+        from odessy.credentials import acknowledge_startup
+        acknowledge_startup(sys.stdin.buffer, sys.stdout)
     info=spec(args.root)
     if info['role']=='execution':
         raise ValueError('this installation is an execution node; start its service instead of a coordinator')

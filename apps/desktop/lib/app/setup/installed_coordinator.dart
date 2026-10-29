@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:odessy_client/odessy_client.dart';
+import 'session_model_credentials.dart';
 
 /// An installed coordinator that could not be started. The message is shown to
 /// the user; it never contains the bearer token.
@@ -56,6 +57,8 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
   int? _exitCode;
   String _stderr = '';
   int? port;
+  final Map<int, Completer<void>> _credentialAcks = {};
+  String _ackBuffer = '';
 
   Uri? get base => port == null ? null : Uri.parse('http://127.0.0.1:$port');
   bool get running => _process != null && _exitCode == null;
@@ -110,6 +113,9 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
       throw StateError('The coordinator is already running.');
     }
     final chosen = await portPicker();
+    _exitCode = null;
+    _stderr = '';
+    _ackBuffer = '';
     final Process process;
     try {
       process = await launcher(
@@ -139,7 +145,8 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
               '--expected-fingerprint',
               expectedFingerprint!
             ],
-            '--exit-on-stdin-close'
+            '--exit-on-stdin-close',
+            '--credentials-stdin'
           ],
           launchDirectory(workspace),
           {
@@ -153,13 +160,20 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
           'The installed interpreter could not be started: ${failure.message}');
     }
     _process = process;
+    sessionModelCredentials.addListener(_sendCredentials);
     process.exitCode.then((code) => _exitCode = code);
-    process.stdout.drain<void>();
+    process.stdout.transform(const Utf8Decoder(allowMalformed: true)).listen(_readCredentialAcks);
     process.stderr
         .transform(const Utf8Decoder(allowMalformed: true))
         .listen((chunk) {
       if (_stderr.length < 8192) _stderr += chunk;
     });
+    try {
+      await _sendCredentials();
+    } catch (_) {
+      await stop();
+      throw const CoordinatorStartFailure('The coordinator did not acknowledge its private credential startup message.');
+    }
     final target = Uri.parse('http://127.0.0.1:$chosen');
     final deadline = DateTime.now().add(readyTimeout);
     while (DateTime.now().isBefore(deadline)) {
@@ -187,14 +201,51 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
     return ' ${tail.replaceAll('\n', ' ')}';
   }
 
+  Future<void> _sendCredentials() async {
+    final process = _process;
+    if (process == null || _exitCode != null) {
+      throw StateError('The owned coordinator is no longer running.');
+    }
+    final revision = sessionModelCredentials.revision;
+    final ack = Completer<void>();
+    _credentialAcks[revision] = ack;
+    try {
+      await (() async {
+        process.stdin.writeln(jsonEncode({'session_credentials': sessionModelCredentials.privateStdinValues,
+          'credential_revision': revision}));
+        await process.stdin.flush();
+        await ack.future;
+      })().timeout(const Duration(seconds: 5));
+    } finally {
+      _credentialAcks.remove(revision);
+      if (!ack.isCompleted) ack.complete();
+    }
+  }
+
+  void _readCredentialAcks(String chunk) {
+    _ackBuffer += chunk;
+    if (_ackBuffer.length > 65536) { _ackBuffer = ''; return; }
+    while (_ackBuffer.contains('\n')) {
+      final index = _ackBuffer.indexOf('\n');
+      final line = _ackBuffer.substring(0, index);
+      _ackBuffer = _ackBuffer.substring(index + 1);
+      try {
+        final value = jsonDecode(line);
+        final ack = value is Map ? _credentialAcks[value['credential_revision']] : null;
+        if (ack != null && !ack.isCompleted) ack.complete();
+      } on FormatException catch (_) { /* Ordinary stdout is never a credential reply. */ }
+    }
+  }
+
   /// Stops the owned child; the installed coordinator never outlives the app.
   @override
   Future<void> stop() async {
+    sessionModelCredentials.removeListener(_sendCredentials);
     final process = _process;
     _process = null;
     if (process == null) return;
     try {
-      await process.stdin.close();
+      await process.stdin.close().timeout(const Duration(seconds: 2));
     } catch (_) {/* The child may already be gone. */}
     try {
       await process.exitCode.timeout(const Duration(seconds: 6));

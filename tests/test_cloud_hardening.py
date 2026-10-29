@@ -82,7 +82,7 @@ def test_rate_limit_status_is_transient_and_reads_retry_after(monkeypatch: pytes
     def fail(request: Any, timeout: float) -> Any:
         raise _http_error(429, {"Retry-After": "3"})
 
-    monkeypatch.setattr(cloud.urllib.request, "urlopen", fail)
+    monkeypatch.setattr(cloud.urllib.request, "build_opener", lambda *args: __import__('types').SimpleNamespace(open=fail))
     model = CloudModel(provider="deepseek", model="m", api_key="k")
     with pytest.raises(_TransientCloudError) as raised:
         model._post_chat_once({"model": "m"})
@@ -96,7 +96,7 @@ def test_a_bad_request_is_not_retried(monkeypatch: pytest.MonkeyPatch) -> None:
         calls.append(1)
         raise _http_error(400)
 
-    monkeypatch.setattr(cloud.urllib.request, "urlopen", fail)
+    monkeypatch.setattr(cloud.urllib.request, "build_opener", lambda *args: __import__('types').SimpleNamespace(open=fail))
     model = CloudModel(provider="deepseek", model="m", api_key="k")
     model._sleep = lambda seconds: None
     with pytest.raises(RuntimeError, match=r"\(400\)"):

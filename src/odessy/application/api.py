@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 
 from .session import public
 from odessy.interaction.broker import InteractionError
+from odessy.models.cloud_model import CloudModelConfigError
 
 _DIAGNOSTIC = r'''<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Odessy diagnostics</title>
@@ -178,9 +179,16 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         admission_open()
         pending_admissions += 1
         try:
-            controller = controller_factory()
-            if inspect.isawaitable(controller):
-                controller = await controller
+            try:
+                controller = controller_factory()
+                if inspect.isawaitable(controller):
+                    controller = await controller
+            except CloudModelConfigError as exc:
+                raise HTTPException(503, public(str(exc))) from exc
+            except SystemExit as exc:
+                if not isinstance(exc.__cause__, CloudModelConfigError):
+                    raise
+                raise HTTPException(503, public(str(exc.__cause__))) from exc
             if monitoring is not None and hasattr(monitoring, 'attach'):
                 await monitoring.attach(controller)
             return controller

@@ -45,7 +45,7 @@ def build_plan(selection: SetupSelection, discovery: DiscoveryReport | None = No
             env['ODESSY_CLOUD_MODEL'] = model.name
             if model.endpoint:
                 env['ODESSY_CLOUD_BASE_URL'] = model.endpoint
-            warnings.append('Cloud credentials must be supplied through the provider environment; no credential is saved.')
+            warnings.append('Cloud credentials are supplied separately through OS secure storage, a session key or the provider environment; no credential is saved in this configuration.')
         warnings.append('Selected model compatibility and tool capability have not been established by listing/configuration.')
     if selection.role == 'coordinator':
         warnings.append('A coordinator uses split deployment; configure its paired execution node separately before tool work.')

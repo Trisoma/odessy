@@ -37,9 +37,10 @@ def catalog(parameters):
     reference = options.get('credential_env', '')
     if not isinstance(reference, str) or reference and not re.fullmatch(r'[A-Z][A-Z0-9_]{0,127}', reference):
         raise ValueError('credential_env must name an environment variable')
-    key = os.environ.get(reference) if reference else (os.environ.get('ODESSY_CLOUD_API_KEY') or os.environ.get(preset.api_key_env))
+    from odessy.credentials import Scope, resolve
+    key = resolve(Scope(provider, address, reference))
     if not key and provider != 'custom':
-        return dict(result, status='credentials_missing', error='Set the provider API key in the application environment, then fetch again.')
+        return dict(result, status='credentials_missing', error='Configure the provider API key in Settings, then fetch again.')
     headers = {'Accept': 'application/json'}
     if key:
         if provider == 'claude':

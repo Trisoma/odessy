@@ -7,6 +7,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+from odessy.credentials import tool_environment
 from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
@@ -27,7 +28,7 @@ class NodeToolServerTransport(AbstractAsyncContextManager):
                 args=["run", "start", "--silent"],
                 cwd=_node_tools_dir(public_repo_root),
                 env={
-                    **os.environ,
+                    **tool_environment(os.environ),
                     "ODESSY_WORKSPACE_ROOT": str(Path(workspace_root).resolve()),
                 },
                 encoding="utf-8",
@@ -84,7 +85,7 @@ class NodeToolServerHttp(AbstractAsyncContextManager):
         tools_dir = _node_tools_dir(public_repo_root)
         node = shutil.which("node")
         env = {
-            **os.environ,
+            **tool_environment(os.environ),
             "ODESSY_WORKSPACE_ROOT": str(self._workspace_root),
             "ODESSY_MCP_HOST": self._host,
             "ODESSY_MCP_PORT": str(port),

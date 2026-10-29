@@ -1,5 +1,24 @@
 # Desktop UX foundation contract — October 27, 2026
 
+## Additive model credential contract — October 29
+
+The fixed local stdio bridge accepts `model-credential` with actions `describe`,
+`set`, `remove`. Scope is `provider`, `endpoint`, `credential_env`; set carries
+`storage: keyring|session` and a bounded `value`. No remote credential route exists.
+Replies contain `scope`, `configured`, `source: env|session|keyring|none`, `writable`,
+`persistence: persistent|session|none`, `secure_storage_available`, and safe `message`.
+No read operation returns a secret. Existing setup operations remain compatible.
+
+The desktop keeps session-only values separately from component drafts and sends
+them only through owned helpers' stdin. Owned coordinators acknowledge numeric
+`credential_revision` updates on stdout before a save is reported complete. No
+value appears in acknowledgements or process arguments. Startup opts into this
+channel with `--credentials-stdin`; existing headless launches remain compatible.
+
+Saving a key contacts no provider, downloads no model and grants no tool authority.
+Environment credentials are read-only. OS-store failure offers explicit session
+use; it never selects a file fallback. Provider-origin changes select a new scope.
+
 Scope: M1 navigation and shared layout on `develop`, starting from `f016a7c`.
 This is an implemented presentation contract, not a new HTTP protocol or release
 acceptance claim. The parent-folder desktop audit and overhaul plan remain the
