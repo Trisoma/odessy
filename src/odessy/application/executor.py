@@ -15,6 +15,7 @@ import sys
 import threading
 import uuid
 
+from odessy.application import execution_access
 from odessy.tools.node_mcp import NodeToolServerHttp
 
 
@@ -206,6 +207,10 @@ async def run(settings, *, host=None):
     if not networks:
         raise ValueError('Select an address belonging to this machine')
     secret = secrets.token_urlsafe(32)
+    # One place decides what this credential is: stopping the executor calls
+    # reset(), which is what invalidates it.
+    execution_access.reset()
+    execution_access.configure(secret, str(settings.workspace))
     print(f'Odessy execution host: {settings.name}\nDevice ID: {settings.device_id}\nWorkspace: {settings.workspace}', flush=True)
     print('Experimental trusted-LAN mode (unencrypted). Only approve requests you expect. Close this terminal or press Ctrl+C to stop sharing.', flush=True)
     async with NodeToolServerHttp(settings.workspace, host=address, extra_env={'ODESSY_MCP_TOKEN': secret}) as url:

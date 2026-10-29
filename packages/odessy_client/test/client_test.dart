@@ -88,25 +88,6 @@ void main() {
     api.close();
     await server.close(force: true);
   });
-  test('pairing approval is authenticated and carries id plus decision',
-      () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final api =
-        LocalApi(Uri.parse('http://127.0.0.1:${server.port}'), 'secret');
-    final received = Completer<Map<String, dynamic>>();
-    server.listen((request) async {
-      expect(request.headers.value('authorization'), 'Bearer secret');
-      expect(request.method, 'POST');
-      expect(request.uri.path, '/v1/pairing/approve');
-      received.complete(jsonDecode(await utf8.decoder.bind(request).join()));
-      request.response.write('{"id":"a1","accepted":false,"resolved":true}');
-      await request.response.close();
-    });
-    await api.approvePairing('a1', false);
-    expect(await received.future, {'id': 'a1', 'accepted': false});
-    api.close();
-    await server.close(force: true);
-  });
   test('demo stop invalidates delayed generation; selection is next turn only',
       () async {
     final demo = DemoApi(delay: const Duration(milliseconds: 50));

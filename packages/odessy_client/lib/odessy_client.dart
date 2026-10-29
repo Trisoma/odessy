@@ -41,49 +41,6 @@ Stream<SessionEvent> decodeEvents(Stream<String> chunks) async* {
   }
 }
 
-/// Bounded SSE parsing for the pre-session pairing stream (no sequence ids).
-Stream<PairingEvent> decodePairingEvents(Stream<String> chunks) async* {
-  var buffer = '';
-  await for (final chunk in chunks) {
-    buffer += chunk;
-    if (buffer.length > 2 * 1024 * 1024)
-      throw const FormatException('Event frame exceeds 2 MiB');
-    while (true) {
-      final boundary = RegExp(r'\r?\n\r?\n').firstMatch(buffer);
-      if (boundary == null) break;
-      final block = buffer.substring(0, boundary.start);
-      buffer = buffer.substring(boundary.end);
-      final data = block
-          .split(RegExp(r'\r?\n'))
-          .where((l) => l.startsWith('data:'))
-          .map((l) => l.substring(5).trimLeft())
-          .join('\n');
-      if (data.isEmpty) continue;
-      final payload = jsonDecode(data) as Json;
-      final type = payload['type'];
-      if (type is! String) continue;
-      yield PairingEvent(type, Map<String, dynamic>.from(payload['data'] as Map? ?? {}));
-    }
-  }
-}
-
-/// One pairing step, delivered before any session exists.
-///
-/// Session events carry a sequence id; these do not, because they describe a
-/// request that arrives when there is no session to sequence against.
-class PairingEvent {
-  PairingEvent(this.type, Json data) : data = freezeJson(data);
-  final String type;
-  final Json data;
-}
-
-/// Optional capability: the pairing event stream of this computer.
-abstract interface class PairingEventsApi {
-  /// Each call is an independent subscriber, so two windows both see every
-  /// request; a second reader never consumes the first one's events.
-  Stream<PairingEvent> pairingEvents();
-}
-
 abstract class OdessyApi {
   bool get isDemo;
   String get identity;
@@ -117,17 +74,6 @@ class ExecutionConnectionFailure implements Exception {
   String toString() => message;
 }
 
-/// Optional capability: answering a LAN pairing prompt.
-///
-/// A remote coordinator asks for access with `POST /v1/pairing/request` and
-/// waits; only the loopback client holding the bearer token may answer. Kept
-/// off [OdessyApi] so demo and offline transports stay compatible.
-abstract interface class PairingApi {
-  /// Answers the pending request [id]. The service rejects it with
-  /// [ApiFailure] when the request already timed out or was answered elsewhere.
-  Future<void> approvePairing(String id, bool accepted);
-}
-
 class ApiFailure implements Exception {
   const ApiFailure(this.status);
   final int status;
@@ -144,7 +90,7 @@ class ApiFailure implements Exception {
       };
 }
 
-class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi, DesktopVoiceApi, PairingApi, PairingEventsApi, ExecutionHostsApi {
+class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi, DesktopVoiceApi, ExecutionHostsApi {
   LocalApi(this.base, String token) : _token = token {
     if (!['http', 'https'].contains(base.scheme) ||
         !['localhost', '127.0.0.1', '::1'].contains(base.host) ||
@@ -329,51 +275,6 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
   Future<void> answer(String sid, String id, String answer) async {
     await _json('${_session(sid)}/questions/${Uri.encodeComponent(id)}', 'POST',
         {'answer': answer});
-  }
-
-  @override
-  Future<void> approvePairing(String id, bool accepted) async {
-    await _json('/v1/pairing/approve', 'POST', {'id': id, 'accepted': accepted});
-  }
-
-  @override
-  Stream<PairingEvent> pairingEvents() {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-    _streams.add(client);
-    var cancelled = false;
-    StreamSubscription<PairingEvent>? subscription;
-    late final StreamController<PairingEvent> output;
-    output = StreamController<PairingEvent>(onListen: () {
-      unawaited(() async {
-        try {
-          final response =
-              await _open('/v1/pairing/events', 'GET', null, client);
-          if (cancelled) return;
-          subscription = decodePairingEvents(utf8.decoder
-                  .bind(response.timeout(const Duration(seconds: 35))))
-              .listen((event) {
-            if (!cancelled) output.add(event);
-          }, onError: (Object error, StackTrace stack) {
-            if (!cancelled) output.addError(error, stack);
-          }, onDone: () {
-            _streams.remove(client);
-            client.close(force: true);
-            unawaited(output.close());
-          });
-        } catch (error, stack) {
-          if (!cancelled) {
-            output.addError(error, stack);
-            unawaited(output.close());
-          }
-        }
-      }());
-    }, onCancel: () {
-      cancelled = true;
-      _streams.remove(client);
-      client.close(force: true);
-      unawaited(subscription?.cancel().catchError((Object _) {}));
-    });
-    return output.stream;
   }
 
   @override

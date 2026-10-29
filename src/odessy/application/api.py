@@ -11,7 +11,6 @@ import secrets
 import time
 from contextlib import asynccontextmanager
 
-from . import execution_access, pairing
 from .session import public
 from odessy.interaction.broker import InteractionError
 from odessy.models.cloud_model import CloudModelConfigError
@@ -49,8 +48,7 @@ window.addEventListener('pagehide',()=>streamAbort?.abort());
 
 
 def create_app(controller_factory, *, config=None, settings=None, jobs=None, token=None,
-               config_path=None, profiles=None, monitoring=None, runtime_configuration=None, desktop_voice=None,
-               workspace=None):
+               config_path=None, profiles=None, monitoring=None, runtime_configuration=None, desktop_voice=None):
     """Build an app; the caller owns loopback-only binding and displaying its token."""
     try:
         from fastapi import FastAPI, Request, HTTPException
@@ -111,17 +109,6 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     app.state.profiles = profiles
     app.state.runtime_configuration = json.loads(json.dumps(runtime_configuration))
     app.state.service_instance_id = secrets.token_hex(16)
-    # Pairing happens before a session exists, so its events cannot ride a
-    # controller's stream. Each reader gets its own queue: one subscriber must
-    # never consume another's events.
-    app.state.pairing_subscribers = set()
-    app.state.pairing_port = None
-    # The LAN-reachable MCP endpoint the tool server is actually listening on.
-    # None means LAN tool hosting is not enabled, so pairing cannot hand out an
-    # endpoint that would not answer.
-    app.state.execution_url = None
-    # The workspace a coordinator's reviewed access is limited to.
-    app.state.workspace_root = str(workspace) if workspace else None
     restart_reservation = None
     pending_admissions = 0
 
@@ -164,105 +151,14 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         restart_reservation = None
         return {'status':'resumed'}
 
-    def publish_pairing(event_type, data):
-        """Announce a pairing step to live sessions and to every subscriber."""
-        for controller in tuple(sessions.values()):
-            controller.emit(event_type, data)
-        event = {'type': event_type, 'data': data}
-        for queue in tuple(app.state.pairing_subscribers):
-            if queue.full():
-                queue.get_nowait()  # A stalled reader must not stall the others.
-            queue.put_nowait(event)
-
     def verified(request):
         value = request.headers.get('authorization', '')
         supplied = value[7:] if value.startswith('Bearer ') else ''
         return hmac.compare_digest(supplied.encode(), app.state.auth_token.encode())
 
-    # Pairing is pre-auth by construction: a coordinator has no token yet. The
-    # approve route therefore verifies the token itself instead of relying on
-    # the middleware below.
-    @app.post('/v1/pairing/request')
-    async def pairing_request(request: Request):
-        data = await body(request)
-        if set(data) - {'name'}:
-            raise HTTPException(400, 'Unknown pairing fields')
-        name = data.get('name')
-        if not isinstance(name, str) or not name.strip() or len(name) > 64:
-            raise HTTPException(400, 'name must be a non-empty string of at most 64 characters')
-        name = name.strip()
-        host = request.client.host if request.client is not None else ''
-        if not host or pairing.is_loopback(host):
-            # A local process must not be able to pair with this machine itself.
-            raise HTTPException(403, 'Pairing requests must come from another host on the network')
-        port = app.state.pairing_port
-        address = pairing.lan_ip()
-        execution_url = app.state.execution_url
-        if port is None or address is None:
-            # Answering with a URL no coordinator can reach would be worse.
-            raise HTTPException(503, 'This host has no LAN address to offer for pairing')
-        if not execution_url:
-            # Tool hosting is off: an execution handle now would authorize nothing.
-            raise HTTPException(503, 'LAN tool hosting is not enabled on this computer')
-        if not pairing.has_room():
-            # Refuse before prompting: the local user must not face a queue.
-            raise HTTPException(429, 'Too many pairing requests are already awaiting local approval')
-        request_id = secrets.token_hex(8)
-        publish_pairing('pairing_request', {'id': request_id, 'name': name, 'ip': host})
-        accepted = await pairing.wait_for_approval(request_id, name, host)
-        publish_pairing('pairing_resolved', {'id': request_id, 'accepted': accepted})
-        if not accepted:
-            raise HTTPException(403, 'Pairing declined')
-        # Never hand out the application token: it would open settings, sessions,
-        # pairing approval and management. The coordinator receives a credential
-        # that only the tool endpoint accepts, limited to the reviewed workspace.
-        try:
-            credential = execution_access.issue(request_id, app.state.workspace_root or '')
-        except ValueError as error:
-            raise HTTPException(503, str(error)) from error
-        return {'url': execution_url, 'credential': credential,
-                'workspace': app.state.workspace_root}
-
-    @app.post('/v1/pairing/approve')
-    async def pairing_approve(request: Request):
-        if not verified(request):  # Pre-auth path: authority is decided here.
-            return Response(status_code=401, headers={'WWW-Authenticate': 'Bearer'})
-        data = await body(request)
-        if set(data) != {'id', 'accepted'}:
-            raise HTTPException(400, 'Only an id and an accepted flag are accepted')
-        if not isinstance(data['id'], str) or not isinstance(data['accepted'], bool):
-            raise HTTPException(400, 'id must be a string and accepted must be a boolean')
-        if not pairing.resolve(data['id'], data['accepted']):
-            raise HTTPException(404, 'No pairing request with that id is pending')
-        return {'id': data['id'], 'accepted': data['accepted'], 'resolved': True}
-
-    @app.get('/v1/pairing/events')
-    async def pairing_event_stream(request: Request):
-        if not verified(request):
-            return Response(status_code=401)
-        # One queue per reader, registered for the life of this stream only.
-        queue: asyncio.Queue = asyncio.Queue(maxsize=64)
-        app.state.pairing_subscribers.add(queue)
-
-        async def stream():
-            try:
-                while not await request.is_disconnected():
-                    try:
-                        event = await asyncio.wait_for(queue.get(), timeout=15)
-                    except asyncio.TimeoutError:
-                        yield ': keepalive\n\n'
-                        continue
-                    yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
-            finally:
-                app.state.pairing_subscribers.discard(queue)
-        return StreamingResponse(stream(), media_type='text/event-stream',
-                                 headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
-
     @app.middleware('http')
     async def authenticate(request, call_next):
         if request.url.path == '/' and request.method == 'GET':
-            return await call_next(request)
-        if request.url.path.startswith('/v1/pairing/'):
             return await call_next(request)
         if not verified(request):
             return Response(status_code=401, headers={'WWW-Authenticate': 'Bearer'})

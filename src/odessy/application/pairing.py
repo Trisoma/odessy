@@ -1,9 +1,9 @@
-"""Accept-tap LAN pairing for the execution host.
+"""LAN discovery for the execution host.
 
-A coordinator on the LAN asks this host for a token; the person sitting at the
-host decides. Nothing here is trusted from the network: the request only creates
-a pending question, and only the bearer-authenticated ``/v1/pairing/approve``
-route -- reachable by the local user alone -- can answer it.
+This module only announces the host: the decision to accept a coordinator is made
+on that host's console by :mod:`odessy.application.executor`, and the credential it
+hands out is described by :mod:`odessy.application.execution_access`. Nothing here
+holds approval state or mints secrets.
 
 ``zeroconf`` is optional. Importing this module never imports it, and
 :func:`register_mdns` degrades to a no-op when it is missing, so the LAN
@@ -11,7 +11,6 @@ discovery dependency stays out of the hard requirement set.
 """
 from __future__ import annotations
 
-import asyncio
 import ipaddress
 import socket
 
@@ -46,47 +45,6 @@ def lan_ip():
         if address.version == 4 and not address.is_loopback:
             return candidate
     return None
-
-
-#: Concurrent prompts are capped: the request route is unauthenticated, so an
-#: uninvited host must not be able to queue up questions for the local user.
-MAX_PENDING = 8
-
-#: request_id -> Future[bool] resolved by the local approve route.
-_pending: dict[str, asyncio.Future] = {}
-
-
-def has_room():
-    """False when the local user already has the maximum unanswered prompts."""
-    return len(_pending) < MAX_PENDING
-
-
-async def wait_for_approval(request_id, name, ip, timeout=60):
-    """Block until the local user accepts or declines this request.
-
-    Returns ``True`` only on acceptance. A timeout, a decline, or a cancelled
-    waiter all return ``False``: an unanswered request is never an approval.
-    """
-    if request_id in _pending:
-        raise ValueError('Pairing request is already pending')
-    future = asyncio.get_running_loop().create_future()
-    _pending[request_id] = future
-    try:
-        return bool(await asyncio.wait_for(future, timeout))
-    except asyncio.TimeoutError:
-        return False
-    finally:
-        # A timeout or a dropped caller must not leave a resolvable approval behind.
-        _pending.pop(request_id, None)
-
-
-def resolve(request_id, accepted):
-    """Answer a pending request. Returns False when the id is unknown or settled."""
-    future = _pending.get(request_id)
-    if future is None or future.done():
-        return False
-    future.set_result(bool(accepted))
-    return True
 
 
 def register_mdns(app, port, *, instance=None, address=None, device_id=None):
