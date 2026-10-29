@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:odessy_client/odessy_client.dart';
 
 import '../controllers/installed_manage_controller.dart';
+import '../../../app/setup/platform_copy.dart';
 
 /// Installed maintenance without internal-path entry: the root, interpreter and
 /// payload come from the installation record. Mutations require an exact review.
@@ -91,7 +92,7 @@ class ManagePage extends StatelessWidget {
                     OutlinedButton.icon(
                         onPressed: c.busy || c.uninstalled || portable ? null : c.register,
                         icon: const Icon(Icons.app_shortcut_outlined, size: 18),
-                        label: const Text('Repair Start-menu entry')),
+                        label: Text(repairRegistrationLabel)),
                   ]),
                   const SizedBox(height: 22),
                   if (c.uninstalled)
@@ -254,8 +255,7 @@ class ManagePage extends StatelessWidget {
         builder: (context) => AlertDialog(
                 title: const Text('Background service'),
                 content: Column(mainAxisSize: MainAxisSize.min, children: [
-                  const Text(
-                      'The service runs for this Windows account. Registering one requires an existing workspace directory.'),
+                  Text('$serviceAccountCopy Registering one requires an existing workspace directory.'),
                   const SizedBox(height: 16),
                   Wrap(spacing: 8, runSpacing: 8, children: [
                     OutlinedButton(

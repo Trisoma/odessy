@@ -63,15 +63,15 @@ def dispatch(parameters,*,cancelled=lambda:False):
         if operation=='rollback':
             # The launcher must follow the version that is actually active.
             from .maintenance import atomic
-            from .windows_installation import refresh
+            from .platform_installation import refresh
             updated=manager.record()
             try:
                 refresh(root,updated)
                 atomic(root/'installation.json',updated)
             except (ValueError,RuntimeError,OSError) as error:
                 result['registration_error']=str(error)
-        if operation=='uninstall' and record.get('windows_registration'):
-            from .windows_installation import helper_cleanup, unregister
+        if operation=='uninstall' and (record.get('windows_registration') or record.get('linux_registration')):
+            from .platform_installation import helper_cleanup, unregister
             result['retained_registration']=unregister(root,record)
             result['helper_cleanup']=helper_cleanup(record)
         return dict(result,installation_format=kind)

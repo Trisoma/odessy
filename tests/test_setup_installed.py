@@ -7,15 +7,20 @@ import pytest
 from odessy.setup import installed
 from odessy.setup.maintenance import digest
 
+# The installed layout is platform-specific: the record, the spec and the launcher
+# have to agree on the same relative paths.
+PYTHON_RELATIVE='Scripts/python.exe' if os.name=='nt' else 'bin/python3'
+DESKTOP_RELATIVE='desktop/odessy_desktop.exe' if os.name=='nt' else 'desktop/odessy_desktop'
+
 
 def make_installation(root, *, model=False, role='combined', configuration=None):
     version = 'a' * 32
     identity = 'b' * 32
     base = root / 'versions' / version
-    (base / 'Scripts').mkdir(parents=True)
-    (base / 'desktop').mkdir()
-    (base / 'Scripts' / 'python.exe').write_bytes(b'python')
-    (base / 'desktop' / 'odessy_desktop.exe').write_bytes(b'desktop')
+    (base / Path(PYTHON_RELATIVE).parent).mkdir(parents=True)
+    (base / Path(DESKTOP_RELATIVE).parent).mkdir()
+    (base / PYTHON_RELATIVE).write_bytes(b'python')
+    (base / DESKTOP_RELATIVE).write_bytes(b'desktop')
     selection = {'role': role}
     if model:
         selection['model'] = {'provider': 'ollama', 'name': 'llama3', 'endpoint': 'http://127.0.0.1:11434'}
@@ -37,7 +42,7 @@ def test_spec_reports_unconfigured_installation_without_starting_anything(tmp_pa
     assert info['model_configured'] is False and info['ready'] is False
     assert info['configuration_source'] == 'version'
     assert info['workspace'] == str(installed.default_workspace())
-    assert info['desktop'].endswith('odessy_desktop.exe')
+    assert info['desktop'].endswith(Path(DESKTOP_RELATIVE).name)
 
 
 def test_spec_prefers_recorded_configuration_and_requires_intact_executables(tmp_path):
@@ -50,7 +55,7 @@ def test_spec_prefers_recorded_configuration_and_requires_intact_executables(tmp
     info = installed.spec(root)
     assert info['model_configured'] and info['selection']['model']['name'] == 'qwen2.5:7b'
     assert info['configuration_source'] == 'configuration'
-    (root / 'versions' / info['version'] / 'desktop' / 'odessy_desktop.exe').write_bytes(b'tampered')
+    (root / 'versions' / info['version'] / DESKTOP_RELATIVE).write_bytes(b'tampered')
     with pytest.raises(ValueError, match='modified or damaged'):
         installed.spec(root)
 

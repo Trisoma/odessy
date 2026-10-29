@@ -16,6 +16,7 @@ import 'installed_startup.dart' show exitApp;
 import 'launch_acknowledgement.dart';
 import 'local_setup_backend.dart';
 import 'native_picker.dart';
+import 'platform_copy.dart';
 
 String? installationMode(List<String> args) => args.contains('--installed')
     ? 'installed'
@@ -260,13 +261,15 @@ class _SetupApplicationState extends State<SetupApplication> {
         SetupSection(
             title: 'Install Odessy on this computer',
             description:
-                'Setup verifies the downloaded package, installs it into a folder you choose, and creates a Start-menu entry and an Installed-apps record.',
-            child: const Column(
+                'Setup verifies the downloaded package, installs it into a folder you choose, $registrationTargetCopy',
+            child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _Bullet('Nothing is downloaded from the internet and no model is pulled.'),
-                  _Bullet('A model you already have can be selected next, or configured later.'),
-                  _Bullet('No administrator rights are requested; this is for your Windows account.'),
+                  const _Bullet(
+                      'Nothing is downloaded from the internet and no model is pulled.'),
+                  const _Bullet(
+                      'A model you already have can be selected next, or configured later.'),
+                  _Bullet(accountScopeCopy),
                 ])),
         const SetupMessage(
             text:
