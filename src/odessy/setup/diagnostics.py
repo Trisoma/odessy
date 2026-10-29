@@ -143,23 +143,19 @@ def _probe(selection,section,*,run,consent,audio,owner):
     if result.get('code')=='credentials':raise DiagnosticInputError(result['message'],'credentials')
     if section not in ('llm','stt','tts'):raise DiagnosticInputError('This component has no inference test. Use observational checks.','unsupported')
     started=time.monotonic()
-    stage='provider setup'
     try:
         owner.check()
         if section=='llm':result.update(test_model(selection))
         elif section=='stt':
-            stage='microphone capture' if not audio else 'WAV validation'
             with sample_audio(audio,voice_config(selection),owner) as path:
                 if not path.is_file() or path.stat().st_size>16000*2*30+65536:
                     raise DiagnosticInputError('Select an existing WAV of at most 30 seconds (16 kHz mono PCM).')
                 with wave.open(str(path),'rb') as wav:
                     if (wav.getnchannels(),wav.getsampwidth(),wav.getframerate())!=(1,2,16000) or wav.getnframes()>480000:
                         raise DiagnosticInputError('Input must be 16 kHz mono 16-bit PCM, at most 30 seconds.')
-                stage='STT provider initialization'
                 provider=create_stt(voice_config(selection))
                 try:
                     owner.track(lambda:cancel_provider(provider))
-                    stage='transcription'
                     owner.check();answer=provider.transcribe(path)
                     if answer.status=='failed':raise RuntimeError('STT failed; check provider assets and dependencies.')
                     result['text']=answer.text
@@ -200,6 +196,4 @@ def _probe(selection,section,*,run,consent,audio,owner):
     except Exception as error:
         # Provider exception strings can contain credentials, URLs or raw HTTP bodies.
         if isinstance(error,DiagnosticInputError):raise
-        if section=='stt':
-            raise ProviderTestError(f'Speech input failed during {stage}. Check the detected microphone in Settings > Voice, and the Whisper executable/model files. Stop wake listening before a microphone test; text remains available.') from None
         raise ProviderTestError('Provider test failed. Check credentials, endpoint, model, assets and dependencies; text interaction remains available.') from None

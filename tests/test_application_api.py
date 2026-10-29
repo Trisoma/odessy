@@ -12,6 +12,55 @@ class Agent:
     async def run_turn(self, text, **kwargs):
         return AgentTurnResult('answer:' + text, [])
 
+@pytest.mark.parametrize('path,method', [('/v1/sessions', 'POST'), ('/v1/profiles', 'GET')])
+@pytest.mark.parametrize('wrapped', [False, True])
+@pytest.mark.parametrize('asynchronous', [False, True])
+def test_missing_cloud_key_is_recoverable_service_unavailability(monkeypatch, path, method, wrapped, asynchronous):
+    from odessy.models.cloud_model import build_cloud_model
+    from odessy import cli
+
+    for name in ('DEEPSEEK_API_KEY', 'ODESSY_CLOUD_API_KEY'):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv('ODESSY_CLOUD_FAILOVER', '')
+
+    def factory():
+        if wrapped:
+            return cli._build_model(False, backend='deepseek')
+        return build_cloud_model('deepseek')
+
+    async def async_factory():
+        return factory()
+
+    async def run():
+        app = create_app(async_factory if asynchronous else factory, token='secret')
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test',
+                                     headers={'Authorization': 'Bearer secret'}) as client:
+            response = await client.request(method, path)
+            assert response.status_code == 503
+            assert 'DEEPSEEK_API_KEY' in response.json()['detail']
+            assert not app.state.sessions
+            assert (await client.get('/v1/settings')).status_code == 200
+
+    asyncio.run(run())
+
+def test_cloud_configuration_errors_are_redacted_and_other_errors_are_not_misclassified():
+    from odessy.models.cloud_model import CloudModelConfigError
+
+    async def run():
+        for error, status in [(CloudModelConfigError('API_KEY=private-value-123456'), 503),
+                              (RuntimeError('unrelated programming error'), 500)]:
+            def factory():
+                raise error
+            app = create_app(factory, token='secret')
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+                                         base_url='http://test', headers={'Authorization': 'Bearer secret'}) as client:
+                response = await client.post('/v1/sessions')
+                assert response.status_code == status
+                assert 'private-value-123456' not in response.text
+                assert not app.state.sessions
+
+    asyncio.run(run())
+
 def test_api_auth_session_turn_selection_and_no_query_credentials():
     async def run():
         app = create_app(lambda: SessionController(model_factory=lambda name: name,
@@ -322,41 +371,3 @@ assert.ok(nodes.has('question-q'));
 '''
     result = subprocess.run([node, '-e', harness + script + assertions], text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
-
-
-def test_unavailable_session_keeps_settings_and_profiles_accessible():
-    async def run():
-        def unavailable():
-            raise RuntimeError('private provider key=do-not-expose')
-        app = create_app(unavailable, token='secret', profiles={'current': {}}, settings={'enabled': False})
-        headers = {'Authorization': 'Bearer secret'}
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url='http://test', headers=headers) as client:
-            response = await client.post('/v1/sessions')
-            assert response.status_code == 503
-            assert response.json()['detail']['code'] == 'session_unavailable'
-            assert 'do-not-expose' not in response.text
-            assert (await client.get('/v1/settings')).status_code == 200
-            assert (await client.get('/v1/profiles')).status_code == 200
-            assert not app.state.sessions
-    asyncio.run(run())
-
-
-def test_cli_transport_failure_returns_recoverable_http_status(monkeypatch, tmp_path):
-    from contextlib import asynccontextmanager
-    from odessy import cli
-    from odessy.application.bootstrap import create_controller
-    from odessy.models.fake_model import FakeModel
-    @asynccontextmanager
-    async def unavailable(*args, **kwargs):
-        raise SystemExit('paired laptop revoked')
-        yield  # pragma: no cover
-    monkeypatch.setattr(cli, '_tool_servers', unavailable)
-    async def run():
-        async def factory():
-            return await create_controller(workspace=tmp_path, model=FakeModel())
-        app = create_app(factory, token='secret', profiles={'current': {}})
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url='http://test', headers={'Authorization': 'Bearer secret'}) as client:
-            assert (await client.post('/v1/sessions')).status_code == 503
-            assert (await client.get('/v1/settings')).status_code == 200
-            assert not app.state.sessions
-    asyncio.run(run())

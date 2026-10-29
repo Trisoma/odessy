@@ -187,24 +187,6 @@ Win32Window::MessageHandler(HWND hwnd,
       }
       return 0;
 
-    case WM_GETMINMAXINFO: {
-      // Let the default handler fill in the maximized size and position, then
-      // apply our logical minimum scaled for the monitor's current DPI. Doing
-      // it here keeps the constraint correct after WM_DPICHANGED as well.
-      LRESULT result = DefWindowProc(window_handle_, message, wparam, lparam);
-      if (minimum_size_.width == 0 || minimum_size_.height == 0) {
-        return result;
-      }
-      HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-      const double scale_factor = FlutterDesktopGetDpiForMonitor(monitor) / 96.0;
-      auto info = reinterpret_cast<MINMAXINFO*>(lparam);
-      info->ptMinTrackSize.x =
-          Scale(static_cast<int>(minimum_size_.width), scale_factor);
-      info->ptMinTrackSize.y =
-          Scale(static_cast<int>(minimum_size_.height), scale_factor);
-      return 0;
-    }
-
     case WM_DPICHANGED: {
       auto newRectSize = reinterpret_cast<RECT*>(lparam);
       LONG newWidth = newRectSize->right - newRectSize->left;
@@ -279,10 +261,6 @@ HWND Win32Window::GetHandle() {
 
 void Win32Window::SetQuitOnClose(bool quit_on_close) {
   quit_on_close_ = quit_on_close;
-}
-
-void Win32Window::SetMinimumSize(const Size& size) {
-  minimum_size_ = size;
 }
 
 bool Win32Window::OnCreate() {

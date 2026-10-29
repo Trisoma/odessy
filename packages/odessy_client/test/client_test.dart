@@ -5,6 +5,32 @@ import 'package:odessy_client/odessy_client.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('HTTP 503 provides model configuration guidance without server details', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final api = LocalApi(Uri.parse('http://127.0.0.1:${server.port}'), 'secret');
+    server.listen((request) async {
+      request.response.statusCode = 503;
+      request.response.write('{"detail":"private-server-diagnostic"}');
+      await request.response.close();
+    });
+    try {
+      for (final operation in [api.createSession, api.profiles]) {
+        try {
+          await operation();
+          fail('Unavailable model must not create a session or profiles');
+        } on ApiFailure catch (error) {
+          expect(error.status, 503);
+          expect(error.toString(), contains('API key'));
+          expect(error.toString(), contains('model settings'));
+          expect(error.toString(), isNot(contains('private-server-diagnostic')));
+        }
+      }
+    } finally {
+      api.close();
+      await server.close(force: true);
+    }
+  });
+
   test('SSE cancellation does not wait for another server event', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final api =
@@ -59,6 +85,25 @@ void main() {
     });
     await api.approve('s', 'a', false);
     expect(await received.future, {'approved': false});
+    api.close();
+    await server.close(force: true);
+  });
+  test('pairing approval is authenticated and carries id plus decision',
+      () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final api =
+        LocalApi(Uri.parse('http://127.0.0.1:${server.port}'), 'secret');
+    final received = Completer<Map<String, dynamic>>();
+    server.listen((request) async {
+      expect(request.headers.value('authorization'), 'Bearer secret');
+      expect(request.method, 'POST');
+      expect(request.uri.path, '/v1/pairing/approve');
+      received.complete(jsonDecode(await utf8.decoder.bind(request).join()));
+      request.response.write('{"id":"a1","accepted":false,"resolved":true}');
+      await request.response.close();
+    });
+    await api.approvePairing('a1', false);
+    expect(await received.future, {'id': 'a1', 'accepted': false});
     api.close();
     await server.close(force: true);
   });

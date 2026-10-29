@@ -101,20 +101,3 @@ async def test_composed_controller_question_continues_and_excludes_human_wait(mo
         assert time.monotonic() - started - model.deadline.elapsed > .04
     finally:
         await controller.close()
-
-
-def test_resource_startup_exit_is_an_exception_not_a_process_exit():
-    from odessy.application.bootstrap import OwnedResources
-    async def run():
-        @asynccontextmanager
-        async def unavailable():
-            raise SystemExit('paired host unavailable')
-            yield  # pragma: no cover
-        resources = OwnedResources.__new__(OwnedResources)
-        resources.ready = asyncio.get_running_loop().create_future()
-        resources.closing = asyncio.Event()
-        await resources._own(unavailable)
-        failure = resources.ready.exception()
-        assert isinstance(failure, RuntimeError)
-        assert failure.__cause__ is not None
-    asyncio.run(run())

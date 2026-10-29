@@ -22,8 +22,6 @@ def run(selection,*,workspace,host='127.0.0.1',port=8765,token=None,watch_stdin=
             raise ValueError('Supply the selected credential environment variable before starting Odessy.')
         os.environ['ODESSY_CLOUD_API_KEY']=key
     for key,value in plan.environment.items(): os.environ[key]=value
-    from odessy.execution.outbound import apply_environment
-    apply_environment(os.environ)
     from odessy.application.serve import run_server
     from odessy.application.capabilities import configuration_descriptor
     descriptor = configuration_descriptor(selection, workspace, owner=configuration_owner) if configuration_owner else None

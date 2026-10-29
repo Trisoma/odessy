@@ -7,7 +7,6 @@ import 'src/models.dart';
 export 'src/models.dart';
 export 'src/credentials.dart';
 export 'src/setup.dart';
-export 'src/pairing.dart';
 export 'src/monitoring/client.dart';
 export 'src/capabilities.dart';
 import 'src/capabilities.dart';
@@ -59,23 +58,34 @@ abstract class OdessyApi {
   void close();
 }
 
+/// Optional capability: answering a LAN pairing prompt.
+///
+/// A remote coordinator asks for access with `POST /v1/pairing/request` and
+/// waits; only the loopback client holding the bearer token may answer. Kept
+/// off [OdessyApi] so demo and offline transports stay compatible.
+abstract interface class PairingApi {
+  /// Answers the pending request [id]. The service rejects it with
+  /// [ApiFailure] when the request already timed out or was answered elsewhere.
+  Future<void> approvePairing(String id, bool accepted);
+}
+
 class ApiFailure implements Exception {
-  const ApiFailure(this.status, {this.code});
-  final String? code;
+  const ApiFailure(this.status);
   final int status;
   @override
-  String toString() => code=='model_credentials_missing' ? 'Your cloud API key is missing. Open Settings → Models and connections → Connect saved configuration to enter it for this session.' : code=='model_configuration_invalid' ? 'The model configuration is invalid. Check its provider, endpoint and model name in Settings.' : switch (status) {
+  String toString() => switch (status) {
         401 => 'Authentication failed. Check the bearer token.',
-        503 => 'Cannot start a conversation. Check the configured model and execution host in Settings or Devices. Configuration remains available.',
         404 ||
         409 ||
         410 =>
           'Request is stale, already resolved, or unavailable. Refresh the session.',
+        503 =>
+          'The coordinator could not start the model. Check your API key and model settings.',
         _ => 'Odessy service returned HTTP $status.',
       };
 }
 
-class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi, DesktopVoiceApi {
+class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi, DesktopVoiceApi, PairingApi {
   LocalApi(this.base, String token) : _token = token {
     if (!['http', 'https'].contains(base.scheme) ||
         !['localhost', '127.0.0.1', '::1'].contains(base.host) ||
@@ -116,19 +126,8 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
     }
     final response = await request.close().timeout(const Duration(seconds: 12));
     if (response.statusCode >= 300) {
-      String? code;
-      final bytes=<int>[];
-      await for(final chunk in response.timeout(const Duration(seconds:12))) {
-        if(bytes.length+chunk.length>16384)break;
-        bytes.addAll(chunk);
-      }
-      try {
-        final body=jsonDecode(utf8.decode(bytes));
-        final detail=body is Map ? body['detail'] : null;
-        final value=detail is Map ? detail['code'] : null;
-        if(const {'model_credentials_missing','model_configuration_invalid'}.contains(value))code=value as String;
-      } catch (_) { /* Never render raw server error bodies. */ }
-      throw ApiFailure(response.statusCode,code:code);
+      await response.drain<void>().timeout(const Duration(seconds: 12));
+      throw ApiFailure(response.statusCode);
     }
     return response;
   }
@@ -242,6 +241,11 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
   Future<void> answer(String sid, String id, String answer) async {
     await _json('${_session(sid)}/questions/${Uri.encodeComponent(id)}', 'POST',
         {'answer': answer});
+  }
+
+  @override
+  Future<void> approvePairing(String id, bool accepted) async {
+    await _json('/v1/pairing/approve', 'POST', {'id': id, 'accepted': accepted});
   }
 
   @override

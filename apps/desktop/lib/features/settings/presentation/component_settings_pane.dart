@@ -259,10 +259,8 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
             const Text(
                 'Audio runs on the coordinator computer. Auto uses native audio on Windows/macOS and existing ALSA commands on Linux. Leave device fields empty for the OS default.'),
             _field('audio_backend'),
-            ExpansionTile(title: const Text('Advanced audio device identifiers'), children: [
-              _field('audio_input_device'),
-              _field('audio_output_device'),
-            ]),
+            _field('audio_input_device'),
+            _field('audio_output_device'),
             _field('wake_model', browse: true),
             const Text(
                 'A wake model is optional for push-to-talk. Listening starts only when you enable it in Assistant; pretrained wake assets have separate licensing.'),

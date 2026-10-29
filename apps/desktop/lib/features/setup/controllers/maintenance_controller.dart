@@ -50,7 +50,6 @@ class MaintenanceController extends ChangeNotifier {
                 'workspace',
                 'output',
                 'capability'
-                ,'enabled','revision'
               }
             : {
                 'root',
@@ -72,7 +71,7 @@ class MaintenanceController extends ChangeNotifier {
       for (final entry in fields.entries)
         if (allowed.contains(entry.key) &&
             entry.value != '' &&
-            (entry.value != false || entry.key == 'enabled'))
+            entry.value != false)
           entry.key: entry.value
     };
     if (engine && action == 'engine:resume') {
@@ -97,7 +96,6 @@ class MaintenanceController extends ChangeNotifier {
     final parameters = _parameters(action);
     if (review && pair) parameters['review'] = true;
     if (confirm != null) parameters['confirm'] = confirm;
-    if (action == 'pair:outbound-save' && confirm != null) parameters['revision'] = result['revision'];
     final request = SetupRequest(
         id: 'native-${DateTime.now().microsecondsSinceEpoch}',
         operation: engine
@@ -141,7 +139,7 @@ class MaintenanceController extends ChangeNotifier {
           ? (action.startsWith('engine:')
               ? 'engine:review'
               : action.startsWith('pair:')
-                  ? (action == 'pair:outbound-save' ? 'pair:outbound-review' : action)
+                  ? action
                   : action == 'service-install'
                       ? 'service-plan'
                       : action == 'rollback'

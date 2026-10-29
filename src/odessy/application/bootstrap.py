@@ -37,12 +37,6 @@ class OwnedResources:
                 await self.closing.wait()
         except BaseException as exc:
             if not self.ready.done():
-                # CLI composition uses SystemExit for configuration/transport
-                # failures. It must never escape into the HTTP event loop.
-                if isinstance(exc, SystemExit):
-                    failure = RuntimeError('Conversation initialization failed; inspect model and execution-host configuration')
-                    failure.__cause__ = exc
-                    exc = failure
                 self.ready.set_exception(exc)
             else:
                 raise
@@ -132,24 +126,7 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
 
     resources = OwnedResources(lambda: cli._tool_servers(workspace, cloud=cli.model_uses_cloud(model)))
     try:
-        servers, externals, audit = await asyncio.wait_for(asyncio.shield(resources.ready), timeout=4)
-    except (Exception, SystemExit):
-        resources.task.cancel()
-        await resources.aclose()
-        if resources.ready.done() and not resources.ready.cancelled():
-            resources.ready.exception()
-        # An unavailable executor never selects a local/raw replacement.
-        # The selected model can still answer with an empty execution surface.
-        return _chat_only_controller(workspace=workspace, model_factory=model_factory,
-            profiles=profiles, selected_profile=selected_profile, resources=resources,
-            turn_lock=turn_lock, config=config, mode=mode)
-    except asyncio.CancelledError:
-        resources.task.cancel()
-        await resources.aclose()
-        if resources.ready.done() and not resources.ready.cancelled():
-            resources.ready.exception()
-        raise
-    try:
+        servers, externals, audit = await resources.ready
         # Capture context-local tool admission now; callbacks may run in later API
         # tasks. Each turn re-enters these exact scopes instead of leaking trust.
         jobs = JobManager(config.participants, remote_targets=authorized_remote_targets(servers))
@@ -207,27 +184,6 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
     except BaseException:
         await resources.aclose()
         raise
-
-
-def _chat_only_controller(*, workspace, model_factory, profiles, selected_profile,
-                          resources, turn_lock, config, mode):
-    from odessy import cli
-    from odessy.runtime.agent_loop import OdessyAgent
-
-    def agent_factory(chosen, confirm=None):
-        # Do not load workspace hooks or attach coding agents/interaction tools.
-        agent = OdessyAgent(model=chosen, policy=cli.OdessyPolicy(workspace_root=workspace),
-            mcp_server=(), max_rejections=0,
-            max_model_calls=cli._max_model_calls_from_env(cloud=cli.model_uses_cloud(chosen), mode=mode))
-        return ScopedAgent(agent, None, [], (), None)
-
-    controller = ManagedController(resources=resources, turn_lock=turn_lock,
-        model_factory=model_factory, agent_factory=agent_factory, profiles=profiles,
-        selected_profile=selected_profile or 'current', config=config,
-        collaboration=None, jobs=None)
-    controller.emit('execution_unavailable', {
-        'message': 'Chat-only: the configured execution host is unavailable. Tools and delegated jobs are blocked. Reconnect after restoring verified access.'})
-    return controller
 
 
 class ScopedAgent:

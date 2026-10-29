@@ -24,7 +24,6 @@ pub struct Advertisement {
     /// Advertised certificate fingerprint. Informational only: it is compared against
     /// the enrolled value to pick an address, never used to accept a peer.
     pub fingerprint: Option<String>,
-    pub purpose: String,
 }
 
 impl Advertisement {
@@ -95,11 +94,10 @@ pub fn from_service(
         return None;
     }
     Some(Advertisement {
-        alias: properties.get("name").filter(|name| !name.is_empty()).cloned().unwrap_or_else(|| instance.to_string()),
+        alias: instance.to_string(),
         host: host.to_string(),
         port,
         fingerprint: properties.get("fingerprint").cloned(),
-        purpose: properties.get("purpose").cloned().unwrap_or_else(||"execution".into()),
     })
 }
 
@@ -180,15 +178,19 @@ pub fn browse(window: Duration) -> Result<Vec<Advertisement>, String> {
                     .iter()
                     .map(|property| (property.key().to_string(), property.val_str().to_string()))
                     .collect();
-                for host in info.get_addresses().iter().filter(|ip| !ip.is_unspecified() && !ip.is_loopback() && !ip.is_multicast()) {
+                let host = info
+                    .get_addresses()
+                    .iter()
+                    .map(|address| address.to_string())
+                    .next()
+                    .unwrap_or_default();
                 if let Some(advertisement) = from_service(
                     info.get_fullname(),
-                    &host.to_string(),
+                    &host,
                     info.get_port(),
                     &properties,
                 ) {
-                    if !found.contains(&advertisement) { found.push(advertisement); }
-                }
+                    found.push(advertisement);
                 }
             }
             Ok(_) => {}
@@ -209,26 +211,16 @@ pub fn advertise(
     address: std::net::IpAddr,
     port: u16,
 ) -> Result<(ServiceDaemon, ServiceInfo), String> {
-    advertise_kind(installation_id,fingerprint,host_name,address,port,"execution")
-}
-
-pub fn advertise_pairing(installation_id:&str,fingerprint:&str,host_name:&str,address:std::net::IpAddr,port:u16)->Result<(ServiceDaemon,ServiceInfo),String>{
-    advertise_kind(&format!("{installation_id}-pairing"),fingerprint,host_name,address,port,"pairing")
-}
-
-fn advertise_kind(installation_id:&str,fingerprint:&str,host_name:&str,address:std::net::IpAddr,port:u16,purpose:&str)->Result<(ServiceDaemon,ServiceInfo),String>{
-    let name=sysinfo::System::host_name().unwrap_or_else(|| installation_id.to_string());
-    let properties = [("fingerprint", fingerprint), ("name", name.as_str()), ("purpose",purpose)];
+    let properties = [("fingerprint", fingerprint)];
     let info = ServiceInfo::new(
         SERVICE_TYPE,
         installation_id,
         host_name,
-        if address.is_unspecified() { String::new() } else { address.to_string() },
+        address.to_string(),
         port,
         &properties[..],
     )
     .map_err(|error| format!("cannot build mDNS advertisement: {error}"))?;
-    let info = if address.is_unspecified() { info.enable_addr_auto() } else { info };
     let daemon = ServiceDaemon::new().map_err(|error| format!("cannot start mDNS: {error}"))?;
     daemon
         .register(info.clone())
@@ -246,7 +238,6 @@ mod tests {
             host: host.to_string(),
             port,
             fingerprint: fingerprint.map(str::to_string),
-            purpose: "execution".into(),
         }
     }
 

@@ -56,7 +56,6 @@ class PairedHost:
     binary: Path
     enrolled_fingerprint: str | None = None
     grant_revision: int | None = None
-    consent_revision: str | None = None
 
     @property
     def prefix(self) -> str:
@@ -73,8 +72,6 @@ class PairedHost:
             metadata["paired_fingerprint_sha256"] = self.enrolled_fingerprint
         if self.grant_revision is not None:
             metadata["paired_grant_revision"] = str(self.grant_revision)
-        if self.consent_revision is not None:
-            metadata["outbound_consent_revision"] = self.consent_revision
         return ServerConfig(
             name=self.prefix,
             transport="stdio",
@@ -103,7 +100,6 @@ class PairedServer:
     config: ServerConfig
     sessions: object = None
     prober: object = None
-    authorizer: object = None
 
     @property
     def prefix(self) -> str:
@@ -126,9 +122,9 @@ class PairedServer:
             raise PairedTrustError(
                 f"{self.host.alias} is no longer enrolled on this machine"
             )
-        if details.get("revoked") is not False:
+        if not details.get("capability_mcp"):
             raise PairedTrustError(
-                f"{self.host.alias} is revoked or its revocation state is unknown on this machine"
+                f"{self.host.alias} no longer holds the mcp capability on this machine"
             )
         fingerprint = details.get("fingerprint_sha256")
         if not isinstance(fingerprint, str) or fingerprint != self.host.enrolled_fingerprint:
@@ -136,18 +132,11 @@ class PairedServer:
                 f"{self.host.alias} was re-enrolled (certificate changed); a new approval is required"
             )
         revision = details.get("grant_revision")
-        if type(revision) is not int or revision != self.host.grant_revision:
+        if not isinstance(revision, int) or revision != self.host.grant_revision:
             raise PairedTrustError(
                 f"local permission revision changed ({self.host.grant_revision} -> {revision}); "
                 "a new approval is required"
             )
-        from odessy.execution.outbound import authorize
-        try:
-            consent = (self.authorizer or authorize)(self.host.alias, fingerprint)
-        except PermissionError as error:
-            raise PairedTrustError(str(error)) from error
-        if consent != self.host.consent_revision:
-            raise PairedTrustError('Outbound execution consent changed; reconnect and obtain a new approval.')
 
     def _inner(self):
         # Imported here so a test can substitute the session-backed server.
@@ -169,14 +158,10 @@ class PairedServer:
 
 def configured_alias(env: Mapping[str, str] | None = None) -> str:
     source = os.environ if env is None else env
-    explicit = source.get(PAIRED_HOST_ENV, "").strip()
-    if explicit or env is not None:
-        return explicit
-    from odessy.execution.outbound import selected_alias
-    return selected_alias()
+    return source.get(PAIRED_HOST_ENV, "").strip()
 
 
-def paired_host(env: Mapping[str, str] | None = None, *, prober=None, authorizer=None) -> PairedHost | None:
+def paired_host(env: Mapping[str, str] | None = None, *, prober=None) -> PairedHost | None:
     """The configured paired host, or ``None`` when none is configured.
 
     Fails closed: if the local trust state cannot be read, or the alias is not enrolled
@@ -199,28 +184,18 @@ def paired_host(env: Mapping[str, str] | None = None, *, prober=None, authorizer
         raise PairedConfigError(
             f"{alias} is not enrolled on this machine; run `odessy-link pair add` first"
         )
-    if details.get("revoked") is not False:
-        raise PairedConfigError(
-            f"{alias} is revoked or its revocation state is unknown; review the verified identity in Devices before reconnecting"
-        )
     fingerprint = details.get("fingerprint_sha256")
     revision = details.get("grant_revision")
-    if not isinstance(fingerprint, str) or type(revision) is not int:
+    if not isinstance(fingerprint, str) or not isinstance(revision, int):
         raise PairedConfigError(
             "the trust registry did not report a certificate fingerprint and revision; "
             "approvals cannot be bound, so paired mode will not start"
         )
-    from odessy.execution.outbound import authorize
-    try:
-        consent_revision = (authorizer or authorize)(alias, fingerprint)
-    except PermissionError as error:
-        raise PairedConfigError(str(error)) from error
     return PairedHost(
         alias=alias,
         binary=binary,
         enrolled_fingerprint=fingerprint,
         grant_revision=revision,
-        consent_revision=consent_revision,
     )
 
 
@@ -246,7 +221,7 @@ def link_binary(env: Mapping[str, str] | None = None) -> Path:
         return Path(found)
     repo = Path(__file__).resolve().parents[3]
     for profile in ("release", "debug"):
-        for name in (("odessy-link.exe",) if os.name == "nt" else ("odessy-link",)):
+        for name in ("odessy-link.exe", "odessy-link"):
             candidate = repo / "native" / "odessy-link" / "target" / profile / name
             if candidate.is_file():
                 return candidate
@@ -333,7 +308,6 @@ def probe(host: PairedHost, *, timeout: float = PROBE_SECONDS) -> dict[str, obje
         configured_alias_present=enrolled is not None,
     )
     if enrolled is not None:
-        result["revoked"] = enrolled.get("revoked")
         result["fingerprint_sha256"] = enrolled.get("fingerprint_sha256")
         result["capability_mcp"] = bool(enrolled.get("capability_mcp"))
         result["workspace"] = enrolled.get("workspace")

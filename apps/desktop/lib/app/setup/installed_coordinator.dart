@@ -30,7 +30,6 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
     required this.root,
     required this.workspace,
     this.configuration,
-    this.sessionApiKey,
     this.expectedFingerprint,
     String? token,
     this.readyTimeout = const Duration(seconds: 45),
@@ -46,7 +45,6 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
 
   final String python, root, workspace, token;
   final Json? configuration;
-  final String? sessionApiKey;
   final String? expectedFingerprint;
   final Duration readyTimeout;
   final Future<int> Function() portPicker;
@@ -61,23 +59,6 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
 
   Uri? get base => port == null ? null : Uri.parse('http://127.0.0.1:$port');
   bool get running => _process != null && _exitCode == null;
-
-  static String? credentialVariable(Json spec) {
-    final model=(spec['selection'] as Map?)?['model'] as Map?;
-    const names={'deepseek':'DEEPSEEK_API_KEY','openai':'OPENAI_API_KEY','claude':'ANTHROPIC_API_KEY','qwen':'DASHSCOPE_API_KEY','kimi':'MOONSHOT_API_KEY','custom':'ODESSY_CLOUD_API_KEY'};
-    final normal=names[model?['provider']];
-    if(normal==null)return null;
-    final explicit=model?['credential_env'];
-    return explicit is String && explicit.isNotEmpty ? explicit : normal;
-  }
-  static bool hasCredential(Json spec,[Map<String,String>? environment]) {
-    final name=credentialVariable(spec);
-    if(name==null)return true;
-    final env=environment??Platform.environment;
-    final explicit=((spec['selection'] as Map?)?['model'] as Map?)?['credential_env'];
-    return (env[name]??'').trim().isNotEmpty ||
-      ((explicit==null || explicit=='') && (env['ODESSY_CLOUD_API_KEY']??'').trim().isNotEmpty);
-  }
 
   static String newToken() {
     final random = Random.secure();
@@ -163,10 +144,6 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
           launchDirectory(workspace),
           {
             'ODESSY_API_TOKEN': token,
-            if (sessionApiKey != null && configuration != null && credentialVariable(configuration!) != null) ...{
-              credentialVariable(configuration!)!: sessionApiKey!,
-              'ODESSY_CLOUD_API_KEY': sessionApiKey!,
-            },
             'PYTHONUNBUFFERED': '1',
             if (configuration?['pythonpath'] is String)
               'PYTHONPATH': configuration!['pythonpath'] as String,

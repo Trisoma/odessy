@@ -25,28 +25,10 @@ class _ProviderProbePanelState extends State<ProviderProbePanel> {
   late final c = ProviderProbeController(widget.backend);
   String audio = '';
   @override
-  void initState() {
-    super.initState();
-    if (widget.section == 'voice') {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) c.run(widget.selection, 'voice');
-      });
-    }
-  }
-  @override
   void didUpdateWidget(covariant ProviderProbePanel old) {
     super.didUpdateWidget(old);
     if (jsonEncode(old.selection) != jsonEncode(widget.selection)) {
-      final oldBackend = (old.selection['voice'] as Map?)?['audio_backend'];
-      final nextBackend = (widget.selection['voice'] as Map?)?['audio_backend'];
-      if (widget.section != 'voice' || oldBackend != nextBackend) {
-        c.invalidate();
-        if (widget.section == 'voice') {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) c.run(widget.selection, 'voice');
-          });
-        }
-      }
+      c.invalidate();
     }
   }
 
@@ -89,10 +71,6 @@ class _ProviderProbePanelState extends State<ProviderProbePanel> {
             const SizedBox(height: 20),
             const Divider(),
             const Text('Component checks'),
-            if (widget.section == 'voice') ...[
-              _devicePicker('audio_input_device', 'Microphone', 'input'),
-              _devicePicker('audio_output_device', 'Speaker', 'output'),
-            ],
             const Text(
                 'Checks use the values shown here. Editing clears the result. Saving does not run a test; passing does not prove tool compatibility.'),
             if (widget.section == 'stt')
@@ -174,7 +152,7 @@ class _ProviderProbePanelState extends State<ProviderProbePanel> {
               if (c.result['usage'] is Map)
                 Text(
                     'Diagnostic usage: ${(c.result['usage'] as Map)['prompt']} input / ${(c.result['usage'] as Map)['completion']} output tokens. Price is unknown unless configured.'),
-              for (final device in widget.section == 'voice' ? const [] : (c.result['devices'] as List? ?? []))
+              for (final device in (c.result['devices'] as List? ?? []))
                 Wrap(
                     spacing: 8,
                     crossAxisAlignment: WrapCrossAlignment.center,
@@ -193,22 +171,4 @@ class _ProviderProbePanelState extends State<ProviderProbePanel> {
                     ]),
             ],
           ]));
-
-  Widget _devicePicker(String key, String label, String kind) {
-    final selected = ((widget.selection['voice'] as Map?)?[key] as String?) ?? '';
-    final devices = <String,String>{'':'System default'};
-    for (final device in c.result['devices'] as List? ?? []) {
-      if (device is Map && device[kind] == true && device['id'] is String) {
-        devices[device['id'] as String] = '${device['name'] ?? device['id']}';
-      }
-    }
-    if (!devices.containsKey(selected)) devices[selected] = '$selected (not detected)';
-    return Padding(padding: const EdgeInsets.symmetric(vertical:8), child:DropdownButtonFormField<String>(
-      key: ValueKey('$key-$selected'), initialValue: selected, isExpanded:true,
-      decoration:InputDecoration(labelText:label),
-      items:[for (final device in devices.entries) DropdownMenuItem(value:device.key,
-        child:Text(device.value,overflow:TextOverflow.ellipsis))],
-      onChanged:c.busy ? null : (value) { if (value != null) widget.onDevice?.call(key,value); },
-    ));
-  }
 }

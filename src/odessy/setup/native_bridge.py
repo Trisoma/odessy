@@ -193,215 +193,9 @@ def bounded_native(argv,timeout=15):
         process.wait();process.stdout.close();pool.shutdown(wait=True)
 
 
-PAIRING_STATES = {'closed', 'discoverable', 'authenticating', 'awaiting_approval',
-    'enrolling', 'paired_no_access', 'authorizing_access', 'connecting', 'ready',
-    'rejected', 'expired', 'cancelled', 'failed', 'incomplete'}
-_PAIRING_ALIAS = re.compile(r'[A-Za-z0-9_-]{1,64}')
-_PAIRING_ID = re.compile(r'[A-Za-z0-9_-]{1,128}')
-_PAIRING_TOKEN = re.compile(r'[A-Za-z0-9_-]{1,256}')
-
-
-def _pairing_snapshot(text, command):
-    """Validate the native pairing document; never render a code the caller sent."""
-    try:
-        reply = json.loads(text)
-    except (TypeError, ValueError):
-        raise ValueError('Pairing component returned an unreadable response; update odessy-link.') from None
-    if (not isinstance(reply, dict) or reply.get('schema_version') != 1
-            or type(reply.get('supported')) is not bool or reply.get('state') not in PAIRING_STATES
-            or (reply.get('supported') is False and reply.get('state') != 'closed')):
-        raise ValueError('Pairing component returned an unsupported state; update odessy-link.')
-    for key, limit in (('session_id', 128), ('review_token', 256), ('reason', 200)):
-        value = reply.get(key)
-        if value is not None and (not isinstance(value, str) or len(value) > limit):
-            raise ValueError('Pairing component returned an invalid field; update odessy-link.')
-        reply[key] = value or ''
-    if reply['supported'] and reply['state'] != 'closed' and not reply['session_id']:
-        raise ValueError('Pairing component reported a state without a session; update odessy-link.')
-    if command != 'begin':
-        # Only the host's own status window shows a code, and only when it opened one.
-        reply.pop('code', None)
-    reply['component_available'] = True
-    return reply
-
-
-def _unavailable_pairing(detail=''):
-    return {'schema_version': 1, 'supported': False, 'state': 'closed',
-        'reason': 'component_unavailable', 'session_id': '', 'review_token': '',
-        'component_available': False,
-        'message': 'The pairing component could not be run. Install or repair odessy-link; '
-                   'existing paired devices and execution-target review still work.' + (
-                       ' ' + detail.strip()[:200] if detail.strip() else '')}
-
-
-def _native_json(argv,timeout,stdin_text=None):
-    """Run a fixed native command, bounded in time and output, without a shell."""
-    import queue
-    import threading
-    import time
-    process=subprocess.Popen(argv,stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
-        stdout=subprocess.PIPE,stderr=subprocess.PIPE,
-        **({'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}))
-    replies=[queue.Queue(maxsize=1),queue.Queue(maxsize=1)]
-    oversized=threading.Event()
-    def drain(stream,limit,target):
-        kept=bytearray()
-        try:
-            while True:
-                chunk=stream.read(8192)
-                if not chunk:break
-                room=limit-len(kept)
-                if len(chunk)>room:oversized.set()
-                kept.extend(chunk[:max(0,room)])
-        finally:
-            target.put(bytes(kept))
-            stream.close()
-    for stream,limit,target in zip((process.stdout,process.stderr),(262144,65536),replies):
-        threading.Thread(target=drain,args=(stream,limit,target),daemon=True).start()
-    if stdin_text is not None:
-        try:process.stdin.write(stdin_text.encode('utf-8'));process.stdin.close()
-        except BrokenPipeError:pass
-    deadline=time.monotonic()+timeout
-    failure=None
-    while process.poll() is None:
-        if oversized.is_set():failure='The pairing component returned too much data.';break
-        if time.monotonic()>=deadline:
-            failure='The pairing component did not respond in time. Inspect both devices before retrying.';break
-        time.sleep(.01)
-    if failure:
-        process.kill()
-        try:process.wait(timeout=.5)
-        except subprocess.TimeoutExpired:pass
-        # Never wait for inherited descendant pipes on timeout. Drain threads retain
-        # fixed caps only, and exit when those handles close.
-        raise ValueError(failure)
-    try:
-        stdout=replies[0].get(timeout=.5)
-        stderr=replies[1].get(timeout=.5)
-    except queue.Empty:
-        raise ValueError('Pairing output is incomplete. Inspect the operation before retrying.') from None
-    if oversized.is_set():raise ValueError('The pairing component returned too much data.')
-    return process.returncode,stdout.decode('utf-8','replace'),stderr.decode('utf-8','replace')
-
-
-
-def _short_code(data,*,runner=None):
-    """Drive the native enrollment sessions; no code is derived, compared or stored here."""
-    command=data.get('command')
-    if command not in ('status','begin','join','confirm','cancel'):
-        raise ValueError('Unsupported pairing-session command.')
-    profile=data.get('profile')
-    if profile not in (None,'','test-adapter'):
-        raise ValueError('Unsupported pairing profile.')
-    try:
-        from odessy.tools.paired import link_binary
-        binary=guard(data['link']) if data.get('link') else link_binary().resolve()
-    except (ValueError,OSError) as error:
-        return _unavailable_pairing(str(error))
-    if not binary.is_file():
-        return _unavailable_pairing('the connection component is missing')
-    argv=[str(binary),'pairing',command]
-    stdin_text=None
-    if profile=='test-adapter':argv+=['--profile','test-adapter']
-    if command=='begin':
-        workspace=(data.get('workspace') or '').strip()
-        if workspace:
-            path=guard(workspace)
-            if not path.is_dir():raise ValueError('Choose an existing folder to share with the other device.')
-            argv+=['--workspace',str(path)]
-    elif command=='join':
-        address=(data.get('address') or '').strip()
-        if not address or len(address)>512 or any(character.isspace() for character in address):
-            raise ValueError('Choose a nearby device before entering its code.')
-        code=str(data.get('code') or '')
-        if not re.fullmatch(r'[0-9]{6}',code):
-            raise ValueError('Enter the six digits exactly as the other computer shows them.')
-        # The code travels on stdin: a command line is visible to other local users on
-        # some platforms, and the native side reads exactly one bounded JSON line.
-        argv+=['--address',address,'--code-stdin']
-        stdin_text=json.dumps({'code':code})
-    elif command=='confirm':
-        session=data.get('session_id') or ''
-        token=data.get('review_token') or ''
-        if not _PAIRING_ID.fullmatch(session) or not _PAIRING_TOKEN.fullmatch(token):
-            raise ValueError('This pairing request is stale; review it again on this computer.')
-        argv+=['--session-id',session,'--review-token',token]
-        workspace=(data.get('workspace') or '').strip()
-        if workspace:
-            path=guard(workspace)
-            if not path.is_dir():raise ValueError('Choose an existing folder to share with the other device.')
-            argv+=['--workspace',str(path)]
-    elif command=='cancel':
-        session=data.get('session_id') or ''
-        if session:
-            if not _PAIRING_ID.fullmatch(session):raise ValueError('Unknown pairing session.')
-            argv+=['--session-id',session]
-    timeout=30 if command=='join' else 15
-    try:
-        if runner is not None:
-            return _pairing_snapshot(runner(argv,stdin_text),command)
-        status,stdout,_stderr=_native_json(argv,timeout,stdin_text)
-    except (OSError,subprocess.SubprocessError) as error:
-        return _unavailable_pairing(str(error))
-    if status!=0:
-        try:
-            return _pairing_snapshot(stdout,command)
-        except ValueError:
-            if isinstance(stdout,str) and stdout.strip().endswith('}'):
-                raise
-        raise ValueError('The pairing component refused the request. Inspect the component status before retrying.')
-    return _pairing_snapshot(stdout,command)
-
-
-def _discovery_devices(devices):
-    """One untrusted candidate per advertised identity, with pairing endpoints first."""
-    import ipaddress
-    grouped={}
-    def rank(item):
-        address=item.get('address') or ''
-        host=address.rsplit(':',1)[0].strip('[]')
-        try: version=ipaddress.ip_address(host).version
-        except ValueError: version=9
-        return (item.get('purpose')!='pairing',version,address)
-    for item in devices:
-        if not isinstance(item,dict) or not item.get('usable') or not isinstance(item.get('address'),str):continue
-        fingerprint=item.get('advertised_fingerprint')
-        key=fingerprint.lower() if isinstance(fingerprint,str) and re.fullmatch('[a-fA-F0-9]{64}',fingerprint) else item['address']
-        candidate=dict(item,trusted=False)
-        if key not in grouped or rank(candidate)<rank(grouped[key]):grouped[key]=candidate
-    return sorted(grouped.values(),key=lambda item:(item.get('name',''),item['address']))
-
-
 def pair(parameters,*,runner=None):
-    data=fields(parameters,{'action','link','alias','certificate','fingerprint','address','workspace','output','review','confirm','capability','enabled','revision','command','code','session_id','review_token','profile'},'pairing')
+    data=fields(parameters,{'action','link','alias','certificate','fingerprint','address','workspace','output','review','confirm','capability'},'pairing')
     action=data.get('action')
-    if action=='short-code':
-        return _short_code(data,runner=runner)
-    if action=='outbound-inspect':
-        from odessy.execution.outbound import read
-        return read()
-    if action in ('outbound-review','outbound-save'):
-        from odessy.execution import outbound
-        from odessy.tools.paired import link_binary, PairedConfigError
-        try: binary=guard(data['link']) if data.get('link') else link_binary().resolve()
-        except PairedConfigError:
-            if data.get('enabled') is not False:raise
-            binary=None
-        prober=None
-        if runner is not None:
-            def prober(host):
-                listing=json.loads(runner([str(host.binary),'peers','list','--json']))
-                peer=next((item for item in listing.get('peers',[]) if item.get('alias')==host.alias),None)
-                return dict(ok=True,configured_alias_present=peer is not None,
-                    grant_revision=listing.get('grant_revision'),
-                    fingerprint_sha256=peer.get('fingerprint_sha256') if peer else None,
-                    revoked=peer.get('revoked') if peer else None)
-        if action=='outbound-review':
-            result=outbound.review(data.get('alias'),data.get('enabled'),binary,prober=prober)
-            return dict(result,operation='outbound-consent',arguments=[
-                ('Enable' if result['enabled'] else 'Disable')+' outbound tools for '+result['alias'],
-                'Verified certificate: '+result['fingerprint_sha256'],result['message']])
-        return outbound.save(data.get('alias'),data.get('enabled'),binary,data.get('revision'),data.get('confirm'),prober=prober)
     if data.get('link'):link=guard(data['link'])
     else:
         from odessy.tools.paired import link_binary
@@ -412,7 +206,7 @@ def pair(parameters,*,runner=None):
     if action in ('enroll','grant','revoke') and not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_-]{0,63}',alias): raise ValueError('invalid peer alias')
     certificate_hash=None
     if action=='list': argv+=['peers','list','--json']
-    elif action=='discover': argv+=['discover','--seconds','2','--json']
+    elif action=='discover': argv+=['discover','--seconds','2']
     elif action=='init':argv+=['init']
     elif action=='export':
         output=guard(data.get('output',''))
@@ -452,17 +246,6 @@ def pair(parameters,*,runner=None):
     if runner is None:
         text=bounded_native(argv)
     else:text=runner(argv)
-    result={'operation':action,'link':str(link),'peers':json.loads(text) if action=='list' else None,'message':text if action not in ('list','discover') else '', 'grants_changed':action in ('grant','revoke'),'node_local_only':True}
-    if action=='list':
-        from odessy.execution.outbound import read
-        try:result['outbound']=read()
-        except ValueError:result['outbound']={'enabled':False,'error':'Execution consent requires inspection; no outbound authority is inferred.'}
-    if action=='discover':
-        discovery=json.loads(text)
-        if not isinstance(discovery,dict) or discovery.get('schema_version')!=1 or not isinstance(discovery.get('devices'),list) or len(discovery['devices'])>256:
-            raise ValueError('Unsupported discovery response; update odessy-link.')
-        result['devices']=_discovery_devices(discovery['devices'])
-        result['message']='Nearby advertisements are unverified. Selecting a device never enrolls it or grants access.'
-    return result
+    return {'operation':action,'link':str(link),'peers':json.loads(text) if action=='list' else None,'message':text if action!='list' else '', 'grants_changed':action in ('grant','revoke'),'node_local_only':True}
 
 
