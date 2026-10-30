@@ -38,6 +38,8 @@ Four events, each a list of programs, and declarative rules
 The file is fingerprinted the first time a process reads it. If it, or a script a
 hook names, changes or disappears afterwards, every tool call is denied until
 Odessy restarts: an agent that rewrote its own hooks must not be screened by them.
+The fingerprint is compared again before each hook starts, so a command that edits
+a script cannot have its edit run, outside the sandbox, by the hook that follows it.
 
 The file lives with the user's config (``~/.config/odessy/hooks.toml``, or
 ``ODESSY_HOOKS_FILE``), never in the workspace: a repository must not be able to run
@@ -164,6 +166,9 @@ class HookRun:
     stdout: str = ""
     stderr: str = ""
     error: str | None = None
+    #: Not started, because the hooks changed since they were read. Unlike a failure
+    #: this is never left to ``on_error``.
+    tampered: bool = False
 
 
 def tighten(decision: PolicyDecision, verdict: HookVerdict) -> PolicyDecision:
@@ -215,8 +220,9 @@ class HookSet:
     def verify(self) -> "HookSet":
         """This set, or a tampered copy if the file or a script changed since it was loaded.
 
-        An agent built once (text mode) calls this every turn: a script runs fresh
-        each time, so an edit to it would otherwise take effect unnoticed.
+        The agent calls this each turn and around each tool call, and ``run`` before
+        each hook: a script runs fresh each time, so an edit to it would otherwise
+        take effect unnoticed.
         """
 
         if self.tampered is not None or self.fingerprint is None or self.source is None:
@@ -262,8 +268,9 @@ class HookSet:
         ``context`` (execution, session, request) is added to the hook's JSON.
         """
 
-        if self.tampered is not None:
-            return HookVerdict("deny", self.tampered, "integrity", ({"hook": "integrity", "decision": "deny", "reason": self.tampered},))
+        tampered = self.verify().tampered
+        if tampered is not None:
+            return HookVerdict("deny", tampered, "integrity", ({"hook": "integrity", "decision": "deny", "reason": tampered},))
         verdict = ALLOW
         results: list[dict[str, Any]] = []
         for rule, action in evaluate_rules(self.rules, request, decision.risk, self.workspace_root, state):
@@ -397,6 +404,9 @@ class HookSet:
         return failures
 
     async def run(self, hook: Hook, payload: Mapping[str, Any]) -> HookRun:
+        tampered = self.verify().tampered
+        if tampered is not None:
+            return HookRun(error=tampered, tampered=True)
         return await run_hook(hook, payload, cwd=self.workspace_root, environ=self.environ)
 
 
@@ -519,6 +529,8 @@ def _pre_tool_answer(hook: Hook, run: HookRun) -> tuple[str, str]:
     decided by ``on_error``.
     """
 
+    if run.tampered:
+        return "deny", run.error or "the hooks changed after Odessy read them"
     if run.error is None and run.code == 2:
         return "deny", _short(run.stderr or run.stdout, MAX_REASON_CHARS) or "denied"
     if run.error is None and run.code == 0:
@@ -717,8 +729,11 @@ def load_hooks(
         if required:
             raise HookConfigError(f"{target}: {HOOKS_REQUIRED_ENV} is set, but no hook or rule applies to {workspace_root}")
         return None
+    # Unlike the process baseline, this set belongs to one workspace, so it can also
+    # cover scripts named relative to it.
+    watched = tuple(dict.fromkeys((*fingerprinted, *scripts)))
     return HookSet(hooks, workspace_root, target, source, rules=rules, scripts=scripts,
-                   fingerprint=_fingerprint(target, fingerprinted), fingerprinted=fingerprinted)
+                   fingerprint=_fingerprint(target, watched), fingerprinted=watched)
 
 
 def _tampered(workspace_root: Path, target: Path, environ: Mapping[str, str], why: str) -> HookSet:

@@ -4,6 +4,7 @@ sandbox.toml, per-target isolation and ``auto``, the doctor, and ACE cleanup."""
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from odessy.config.sandbox import (
     SandboxConfigError,
     SandboxSettings,
     TargetSettings,
+    parse_sandbox,
     read_sandbox_settings,
 )
 from odessy.execution.contract import (
@@ -132,6 +134,73 @@ def test_extra_writable_roots_refuse_home_and_filesystem_roots(tmp_path, monkeyp
     cache.mkdir()
     anchor = os.path.abspath(os.sep)
     assert extra_writable_roots(("~/cache", "~/missing", str(tmp_path), anchor)) == (str(cache.resolve()),)
+
+
+def link_folder(link: Path, target: Path) -> None:
+    """A folder link, by a junction where Windows withholds the symlink privilege."""
+
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        if os.name != "nt":
+            raise
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
+
+
+def test_a_link_to_a_hidden_folder_is_refused_when_the_file_is_read(tmp_path):
+    secret, alias = tmp_path / "secret", tmp_path / "cache"
+    secret.mkdir()
+    link_folder(alias, secret)
+    with pytest.raises(SandboxConfigError, match="overlaps the hidden path"):
+        parse_sandbox(Path("sandbox.toml"), {"hidden_paths": [str(secret)], "extra_writable": [str(alias)]})
+
+
+def test_a_link_to_a_folder_holding_a_hidden_path_is_refused_when_the_file_is_read(tmp_path):
+    outer, alias = tmp_path / "outer", tmp_path / "cache"
+    (outer / "secret").mkdir(parents=True)
+    link_folder(alias, outer)
+    with pytest.raises(SandboxConfigError, match="overlaps the hidden path"):
+        parse_sandbox(Path("sandbox.toml"), {"hidden_paths": [str(outer / "secret")], "extra_writable": [str(alias)]})
+
+
+def test_a_link_to_a_forbidden_folder_is_refused_when_the_file_is_read(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    (tmp_path / ".ssh").mkdir()
+    link_folder(tmp_path / "cache", tmp_path / ".ssh")
+    with pytest.raises(SandboxConfigError, match="cannot include"):
+        parse_sandbox(Path("sandbox.toml"), {"default_hidden": False, "extra_writable": [str(tmp_path / "cache")]})
+
+
+def test_a_link_made_after_the_file_was_read_is_dropped_for_the_command(tmp_path):
+    workspace, secret, alias = tmp_path / "work", tmp_path / "secret", tmp_path / "cache"
+    workspace.mkdir()
+    secret.mkdir()
+    settings = parse_sandbox(Path("sandbox.toml"), {"hidden_paths": [str(secret)], "extra_writable": [str(alias)]})
+    link_folder(alias, secret)
+    hidden = hidden_roots(settings.hidden_paths, str(workspace))
+    assert hidden and extra_writable_roots(settings.extra_writable, hidden) == ()
+
+
+def test_the_bridge_never_sends_a_path_both_hidden_and_writable(tmp_path, monkeypatch):
+    workspace, secret, plain, alias = tmp_path / "work", tmp_path / "secret", tmp_path / "plain", tmp_path / "cache"
+    for folder in (workspace, secret, plain):
+        folder.mkdir()
+    link_folder(alias, secret)
+    shapes = []
+    monkeypatch.setattr(CommandBridge, "_confine",
+                        lambda self, argv, mode, isolation, shape: (shapes.append(shape), (argv, {}))[1])
+    CommandBridge(workspace).run(command="echo ok", hidden_paths=[str(secret)], extra_writable=[str(alias), str(plain)])
+    assert shapes[0]["hidden_paths"] == (str(secret.resolve()),)
+    assert shapes[0]["extra_writable"] == (str(plain.resolve()),)
+
+
+def test_a_link_to_a_forbidden_folder_is_dropped_for_the_command(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    (tmp_path / ".config").mkdir()
+    link_folder(tmp_path / "cache", tmp_path / ".config")
+    assert extra_writable_roots((str(tmp_path / "cache"),)) == ()
 
 
 # --- the Python windows-acl provider ---------------------------------------------

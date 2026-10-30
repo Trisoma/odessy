@@ -134,14 +134,15 @@ export function confinementFromRegistry(
   registry: ProviderRegistry,
   shape: ConfinementShape = {},
 ): Confinement {
+  const hiddenPaths = hiddenRoots(shape.hidden_paths ?? [], workspaceRoot);
   const selection = registry.select({
     policy: {
       mode,
       workspaceRoot,
       deviceGrants: [],
       network: shape.network === "deny" ? "deny" : "allow",
-      hiddenPaths: hiddenRoots(shape.hidden_paths ?? [], workspaceRoot),
-      extraWritable: extraWritableRoots(shape.extra_writable ?? []),
+      hiddenPaths,
+      extraWritable: extraWritableRoots(shape.extra_writable ?? [], hiddenPaths),
     },
     isolation,
     capabilities: ["process-exec"],

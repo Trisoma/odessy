@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from odessy.execution.limits import DEFAULT_LIMITS, ResourceLimits
+from odessy.execution.roots import FORBIDDEN_WRITABLE, canonical_path
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -88,10 +89,6 @@ DEFAULT_HIDDEN_PATHS: tuple[str, ...] = (
     "~/AppData/Local/Microsoft/Edge/User Data",
     "~/AppData/Roaming/Mozilla/Firefox",
 )
-
-#: Never accepted as an extra writable folder: writing there would reach the
-#: protections themselves, or everything.
-_FORBIDDEN_WRITABLE = ("~", "~/.config", "~/.config/odessy", "~/.ssh", "~/.local", "~/AppData", "~/Library")
 
 
 class SandboxConfigError(ValueError):
@@ -157,12 +154,13 @@ def _paths(where: str, key: str, value: Any) -> tuple[str, ...]:
 
 
 def _normal(path: str) -> str:
-    expanded = os.path.expanduser(path)
-    return os.path.normcase(os.path.normpath(expanded)).rstrip("\\/")
+    """The real location, so that a link to a hidden folder is seen for what it is."""
+
+    return os.path.normcase(os.path.normpath(canonical_path(os.path.expanduser(path)))).rstrip("\\/")
 
 
 def _check_writable(where: str, writable: tuple[str, ...], hidden: tuple[str, ...]) -> None:
-    forbidden = {_normal(path) for path in _FORBIDDEN_WRITABLE}
+    forbidden = {_normal(path) for path in FORBIDDEN_WRITABLE}
     hidden_normal = [_normal(path) for path in hidden]
     for item in writable:
         normal = _normal(item)

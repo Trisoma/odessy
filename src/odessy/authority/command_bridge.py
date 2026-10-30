@@ -131,10 +131,11 @@ class CommandBridge:
 
         resolved_cwd = self.resolve_cwd(cwd)
         effective_timeout = min(max(1, timeout), self.max_timeout)
+        hidden = hidden_roots(tuple(hidden_paths or ()), str(self.workspace_root))
         shape = {
             "network": "deny" if network == "deny" else "allow",
-            "hidden_paths": hidden_roots(tuple(hidden_paths or ()), str(self.workspace_root)),
-            "extra_writable": extra_writable_roots(tuple(extra_writable or ())),
+            "hidden_paths": hidden,
+            "extra_writable": extra_writable_roots(tuple(extra_writable or ()), hidden),
         }
         resource_limits = ResourceLimits.from_arguments(limits)
         # Confinement happens before anything is spawned, and it raises rather than

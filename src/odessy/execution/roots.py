@@ -18,10 +18,14 @@ import tempfile
 
 from odessy.execution.contract import ExecutionPolicy
 
-__all__ = ["canonical_path", "extra_writable_roots", "hidden_roots", "writable_roots"]
+__all__ = ["FORBIDDEN_WRITABLE", "canonical_path", "extra_writable_roots", "hidden_roots", "writable_roots"]
 
 #: Bound on symlink expansion, mirroring the kernel's own limit for ELOOP.
 _MAX_SYMLINK_HOPS = 40
+
+#: Never accepted as an extra writable folder: writing there would reach the
+#: protections themselves, or everything.
+FORBIDDEN_WRITABLE = ("~", "~/.config", "~/.config/odessy", "~/.ssh", "~/.local", "~/AppData", "~/Library")
 
 
 def _strip_extended_prefix(path: str) -> str:
@@ -191,18 +195,29 @@ def hidden_roots(patterns: tuple[str, ...] | list[str], workspace_root: str) -> 
     return tuple(roots)
 
 
-def extra_writable_roots(patterns: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+def extra_writable_roots(
+    patterns: tuple[str, ...] | list[str], hidden: tuple[str, ...] | list[str] = ()
+) -> tuple[str, ...]:
     """Extra writable folders: absolute after ``~`` expansion, existing, and never a
-    filesystem root or the home folder itself."""
+    filesystem root, a forbidden folder, or anything overlapping a ``hidden_roots``
+    entry. A writable bind over a hidden path would uncover it.
 
-    home = canonical_path(os.path.expanduser("~"))
+    ``sandbox.toml`` checks this when it is read, but a link can be created or
+    retargeted later, and the laptop's links are not visible from the Jetson. So
+    this runs for every command, on the canonical paths the backend will use. Same
+    rule as the TypeScript ``extraWritableRoots``.
+    """
+
+    forbidden = {os.path.normcase(canonical_path(_expand(path))) for path in FORBIDDEN_WRITABLE}
     roots: dict[str, None] = {}
     for pattern in patterns:
         expanded = _expand(pattern)
         if not os.path.isabs(expanded) or not os.path.isdir(expanded):
             continue
         resolved = canonical_path(expanded)
-        if os.path.normcase(resolved) == os.path.normcase(home) or os.path.dirname(resolved) == resolved:
+        if os.path.normcase(resolved) in forbidden or os.path.dirname(resolved) == resolved:
+            continue
+        if any(_inside(resolved, secret) or _inside(secret, resolved) for secret in hidden):
             continue
         roots.setdefault(resolved, None)
     return tuple(roots)

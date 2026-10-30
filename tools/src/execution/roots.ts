@@ -59,6 +59,18 @@ export function writableRoots(policy: ExecutionPolicy): string[] {
   ];
 }
 
+/**
+ * Never accepted as an extra writable folder: writing there would reach the
+ * protections themselves, or everything.
+ */
+const FORBIDDEN_WRITABLE = ["~", "~/.config", "~/.config/odessy", "~/.ssh", "~/.local", "~/AppData", "~/Library"];
+
+function expandHome(pattern: string): string {
+  return pattern === "~" || pattern.startsWith("~/") || pattern.startsWith("~\\")
+    ? path.join(homedir(), pattern.slice(1))
+    : pattern;
+}
+
 function inside(child: string, parent: string): boolean {
   const relative = path.relative(parent, child);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
@@ -76,10 +88,7 @@ export function hiddenRoots(patterns: readonly string[], workspaceRoot: string):
   const workspace = canonicalPath(workspaceRoot);
   const roots: string[] = [];
   for (const pattern of patterns) {
-    const expanded =
-      pattern === "~" || pattern.startsWith("~/") || pattern.startsWith("~\\")
-        ? path.join(homedir(), pattern.slice(1))
-        : pattern;
+    const expanded = expandHome(pattern);
     if (!path.isAbsolute(expanded) || !existsSync(expanded)) continue;
     const resolved = canonicalPath(expanded);
     if (inside(workspace, resolved) || inside(resolved, workspace)) continue;
@@ -90,16 +99,23 @@ export function hiddenRoots(patterns: readonly string[], workspaceRoot: string):
 
 /**
  * Extra writable folders from the authority layer: absolute after `~` expansion,
- * existing, and never a filesystem root or the home folder itself.
+ * existing, and never a filesystem root, a forbidden folder, or anything overlapping
+ * a `hiddenRoots` entry. A writable bind over a hidden path would uncover it.
+ *
+ * The authority layer checks its own file, but it cannot see this host's links, and
+ * a link can be created or retargeted later. So this runs for every command, on the
+ * canonical paths the backend will use. Same rule as the Python `extra_writable_roots`.
  */
-export function extraWritableRoots(patterns: readonly string[]): string[] {
-  const home = canonicalPath(homedir());
+export function extraWritableRoots(patterns: readonly string[], hidden: readonly string[] = []): string[] {
+  const forbidden = FORBIDDEN_WRITABLE.map((item) => canonicalPath(expandHome(item)));
   const roots: string[] = [];
   for (const pattern of patterns) {
-    const expanded = pattern.startsWith("~/") || pattern.startsWith("~\\") ? path.join(homedir(), pattern.slice(2)) : pattern;
+    const expanded = expandHome(pattern);
     if (!path.isAbsolute(expanded) || !existsSync(expanded)) continue;
     const resolved = canonicalPath(expanded);
-    if (resolved === home || path.dirname(resolved) === resolved) continue;
+    if (path.dirname(resolved) === resolved) continue;
+    if (forbidden.some((item) => inside(resolved, item) && inside(item, resolved))) continue;
+    if (hidden.some((secret) => inside(resolved, secret) || inside(secret, resolved))) continue;
     if (!roots.includes(resolved)) roots.push(resolved);
   }
   return roots;

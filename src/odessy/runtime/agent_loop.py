@@ -408,6 +408,8 @@ class OdessyAgent:
         """
 
         decision = self._policy.evaluate(request)
+        if self._hooks is not None:
+            self._hooks = self._hooks.verify()
         if self._hooks is not None and decision.action != "deny" and id(request) not in self._hook_verdicts:
             self._call_index += 1
             context = self._hook_context(request, decision)
@@ -490,12 +492,22 @@ class OdessyAgent:
         Notes go beside the tool's own fields. A taint marks the turn for later rules
         and hooks; ``quarantine`` replaces what the model sees with a notice (the
         result itself stays in the turn log); ``stop`` ends the turn after this call.
+        Hooks changed by this call do not run, and it ends the turn: the result cannot
+        be screened, and nothing after it could be.
         """
 
         if self._hooks is None:
             return
         decision = self._policy.evaluate(request)
         state = self._turn_state
+        self._hooks = self._hooks.verify()
+        if self._hooks.tampered is not None:
+            ids = {"call_id": call_id} if call_id else {}
+            log.append(LogEntry("hook_failed", {"event": "post_tool", "name": request.name, "hook": "integrity",
+                                                "error": self._hooks.tampered, **ids}))
+            if state.stop is None:
+                state.stop = ("integrity", self._hooks.tampered)
+            return
         records = await self._hooks.post_tool(request, result, decision.risk, self._hook_context(request, decision), state)
         ids = {"call_id": call_id} if call_id else {}
         notes = []

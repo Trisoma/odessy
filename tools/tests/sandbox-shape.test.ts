@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -8,7 +8,8 @@ import type { ExecutionPolicy } from "../src/execution/contract.js";
 import { limitArgv, normalizeLimits } from "../src/execution/limits.js";
 import { bwrapProfileArgs, landlockProfileArgs, seatbeltProfileArgs } from "../src/execution/profiles.js";
 import { extraWritableRoots, hiddenRoots, writableRoots } from "../src/execution/roots.js";
-import { confineArgv } from "../src/execution/seam.js";
+import { ProviderRegistry } from "../src/execution/registry.js";
+import { confineArgv, confinementFromRegistry } from "../src/execution/seam.js";
 import { UnconfinedProvider } from "../src/execution/providers/unconfined.js";
 
 function policy(mode: ExecutionPolicy["mode"], extra: Partial<ExecutionPolicy> = {}): ExecutionPolicy {
@@ -63,6 +64,48 @@ test("extra writable roots refuse filesystem roots and missing folders", () => {
   const cache = mkdtempSync(join(tmpdir(), "odessy-cache-"));
   const root = process.platform === "win32" ? "C:\\" : "/";
   assert.equal(extraWritableRoots([cache, root, join(cache, "missing")]).length, 1);
+});
+
+test("a link to a hidden folder, or to a folder holding one, is never writable", () => {
+  const base = mkdtempSync(join(tmpdir(), "odessy-alias-"));
+  const outer = join(base, "outer");
+  const secret = join(outer, "secret");
+  mkdirSync(secret, { recursive: true });
+  const plain = join(base, "plain");
+  mkdirSync(plain);
+  const direct = join(base, "direct");
+  const parent = join(base, "parent");
+  symlinkSync(secret, direct, "junction");
+  symlinkSync(outer, parent, "junction");
+  const hidden = hiddenRoots([secret], join(base, "work"));
+  assert.equal(hidden.length, 1);
+  const roots = extraWritableRoots([direct, parent, plain], hidden);
+  assert.equal(roots.length, 1);
+  assert.ok(roots[0]!.endsWith("plain"));
+});
+
+test("confinement built from the shape never holds a path both hidden and writable", () => {
+  const base = mkdtempSync(join(tmpdir(), "odessy-shape-alias-"));
+  const secret = join(base, "secret");
+  const alias = join(base, "cache");
+  mkdirSync(secret);
+  symlinkSync(secret, alias, "junction");
+  const { policy: built } = confinementFromRegistry(
+    "workspace-write",
+    "not-required",
+    join(base, "work"),
+    new ProviderRegistry([new UnconfinedProvider()]),
+    { hidden_paths: [secret], extra_writable: [alias] },
+  );
+  assert.equal(built.hiddenPaths?.length, 1);
+  assert.deepEqual(built.extraWritable, []);
+});
+
+test("a link to a forbidden folder is never writable", () => {
+  const base = mkdtempSync(join(tmpdir(), "odessy-forbidden-"));
+  const alias = join(base, "cache");
+  symlinkSync(homedir(), alias, "junction");
+  assert.deepEqual(extraWritableRoots([alias]), []);
 });
 
 test("an unconfined run never claims a cut network", () => {
