@@ -85,7 +85,7 @@ escalation = "workspace-write-only"
 | `network.workspace_write` | Network for commands you confirmed. Default `allow`; with `deny`, a package install (`pip install`, `npm install`, ...) still keeps its network |
 | `hidden_paths` | Extra paths no command may read, absolute or `~/`. `~` is the home of the machine that runs the command, and a path that does not exist there is skipped |
 | `default_hidden` | `false` drops the built-in list (below) |
-| `extra_writable` | Folders `workspace-write` may also write, such as package caches. Never `~` itself, `~/.config`, `~/.ssh` or anything overlapping a hidden path. The windows-acl backend does not grant them |
+| `extra_writable` | Folders `workspace-write` may also write, such as package caches. Never `~` itself, `~/.config`, `~/.ssh` or anything overlapping a hidden path, compared by real location, so a link to one counts as that folder. The file is refused when read; a link that appears later, or on the laptop, drops that folder from the command. The windows-acl backend does not grant them |
 | `limits` | Per-command resource limits, below |
 
 At most 64 hidden paths (the built-in list included) and 16 extra writable folders.

@@ -371,6 +371,91 @@ async def test_an_agent_built_once_notices_an_edited_script_on_its_next_turn(wor
         await agent.run_turn("time again?")
 
 
+MARKS = r'''
+import os
+open(os.path.join(os.path.dirname(__file__), "ran.txt"), "w").close()
+'''
+
+
+def guarded(workspace: Path, outside: Path, event: str = "pre_tool", extra: str = "") -> tuple[HookSet, Path]:
+    """Hooks loaded from a real file, and their script, which stays harmless until edited."""
+
+    script = outside / "guard.py"
+    script.write_text("pass\n", encoding="utf-8")
+    path = outside / "hooks.toml"
+    path.write_text(f'[[{event}]]\nname = "guard"\n{extra}'
+                    f'command = ["{Path(sys.executable).as_posix()}", "{script.as_posix()}"]\n', encoding="utf-8")
+    return load_hooks(workspace, path), script
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("on_error", ["deny", "confirm"])
+async def test_an_edited_script_never_runs_and_pre_tool_denies(workspace, outside, on_error):
+    hooks, script = guarded(workspace, outside, extra=f'on_error = "{on_error}"\n')
+    script.write_text(MARKS, encoding="utf-8")
+    verdict = await hooks.pre_tool(run("pwd"), PolicyDecision("allow", "ok", "low"))
+    assert verdict.action == "deny" and verdict.hook == "integrity"
+    assert not (outside / "ran.txt").exists()
+
+
+@pytest.mark.anyio
+async def test_an_edited_script_never_runs_for_escalation_or_turn_end(workspace, outside):
+    hooks, script = guarded(workspace, outside, "pre_escalation")
+    script.write_text(MARKS, encoding="utf-8")
+    request = run("pwd", sandbox_permissions="workspace-write")
+    verdict = await hooks.pre_escalation(request, PolicyDecision("confirm", "ok", "medium"))
+    assert verdict.action == "deny" and "changed after Odessy read it" in verdict.reason
+    assert not (outside / "ran.txt").exists()
+    reset_baselines()
+    hooks, script = guarded(workspace, outside, "turn_end")
+    script.write_text(MARKS, encoding="utf-8")
+    failures = await hooks.turn_end({"outcome": "answered"})
+    assert "changed after Odessy read it" in failures[0]["error"]
+    assert not (outside / "ran.txt").exists()
+
+
+@pytest.mark.anyio
+async def test_a_command_that_edits_a_script_cannot_run_it_through_the_post_tool_hook(workspace, outside):
+    hooks, script = guarded(workspace, outside, "post_tool")
+
+    def edit_while_the_call_is_approved(decision, request) -> bool:
+        # Past the pre-tool screen and before the post-tool hook, like the command itself.
+        script.write_text(MARKS, encoding="utf-8")
+        return True
+
+    agent = OdessyAgent(model=Scripted(run("mkdir created"), run("pwd"), FinalResponse("done")),
+                        policy=OdessyPolicy(workspace_root=workspace),
+                        mcp_server=ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace)),
+                        confirm=edit_while_the_call_is_approved, hooks=hooks)
+    result = await agent.run_turn("make a folder")
+    assert not (outside / "ran.txt").exists()
+    assert len(result.tool_observations) == 1 and "Stopped by the integrity hook" in result.final_text
+    assert agent._hooks.tampered is not None
+    (entry,) = [e for e in result.log if e.event == "hook_failed"]
+    assert entry.detail["hook"] == "integrity"
+
+
+@pytest.mark.anyio
+async def test_a_changed_hooks_file_denies_a_rules_only_set_within_the_turn(workspace, outside):
+    path = outside / "hooks.toml"
+    path.write_text('[[rule]]\nname = "no-rm"\nmatch = "terminal.run"\ncommand_regex = "rm"\ndecision = "deny"\n', encoding="utf-8")
+    hooks = load_hooks(workspace, path)
+    assert (await hooks.pre_tool(run("pwd"), PolicyDecision("allow", "ok", "low"))).action == "allow"
+    path.write_text("", encoding="utf-8")
+    assert (await hooks.pre_tool(run("pwd"), PolicyDecision("allow", "ok", "low"))).hook == "integrity"
+
+
+def test_a_script_named_relative_to_the_workspace_is_watched_too(workspace, outside):
+    script = outside / "guard.py"
+    script.write_text("pass\n", encoding="utf-8")
+    path = outside / "hooks.toml"
+    path.write_text('[[pre_tool]]\nname = "guard"\ncommand = ["python", "../hooks/guard.py"]\n', encoding="utf-8")
+    hooks = load_hooks(workspace, path)
+    assert hooks.verify().tampered is None
+    script.write_text("pass  # edited\n", encoding="utf-8")
+    assert hooks.verify().tampered is not None
+
+
 def test_the_doctor_does_not_take_a_baseline(workspace, outside):
     path = outside / "hooks.toml"
     write_hooks(path, outside / "a.py")

@@ -75,7 +75,10 @@ anyone who can change them. Odessy guards them three ways:
 - **A change is noticed.** The file, and every script a hook names by an
   absolute path, is fingerprinted the first time Odessy reads it. If either
   changes or disappears while Odessy runs, every tool call is denied until you
-  restart it. Edit hooks with Odessy stopped.
+  restart it. The fingerprint is compared again before each hook starts, so an
+  edited script never runs: a pre-tool or pre-escalation check is denied whatever
+  its `on_error`, and an edit made by a tool call ends the turn after that call.
+  Edit hooks with Odessy stopped.
 - **Scripts live outside the workspace.** A hook whose command names a file
   inside the workspace (a relative name is resolved there) is refused at start:
   the repository could rewrite it.
