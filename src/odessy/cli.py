@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import contextlib
 import functools
+import json
 import logging
 import os
 import sys
@@ -56,7 +57,7 @@ from odessy.tools.node_mcp import NodeToolServerHttp, node_tool_server_dependenc
 from odessy.models.ollama_model import OllamaModel
 from odessy.authority.audit import AuditLogError, ExternalAuditLog, audit_scope
 from odessy.authority.policy import OdessyPolicy
-from odessy.config.commands import CommandsConfigError, load_preapproved_commands
+from odessy.config.commands import CommandsConfigError, commands_file, load_preapproved_commands
 from odessy.runtime.hooks import HookConfigError, load_hooks, protected_paths
 from odessy.runtime.confirmation import TerminalConfirmer, printable
 from odessy.runtime.types import PolicyDecision, ToolRequest
@@ -131,6 +132,30 @@ def _build_model(
     return LlamaCppLFMModel(model=name, endpoint=endpoint)
 
 
+def _build_policy(workspace_root: Path, hooks) -> OdessyPolicy:
+    """The policy for this workspace, from the user's config files."""
+
+    try:
+        preapproved = load_preapproved_commands(workspace_root)
+    except CommandsConfigError as error:
+        raise SystemExit(str(error)) from error
+    try:
+        sandbox = load_sandbox_settings()
+    except SandboxConfigError as error:
+        raise SystemExit(str(error)) from error
+    isolation, target_isolation = _sandbox_isolation(workspace_root, sandbox)
+    return OdessyPolicy(
+        workspace_root=workspace_root,
+        isolation=isolation,
+        target_isolation=target_isolation,
+        sandbox=sandbox,
+        preapproved_commands=preapproved,
+        # Protected like hooks.toml, whether or not they exist yet. Each may be set
+        # somewhere of its own, outside the folder the hooks file sits in.
+        protected_paths=(*protected_paths(hooks=hooks), sandbox_file(), sandbox_file().parent, commands_file()),
+    )
+
+
 def _build_agent(
     workspace_root: Path,
     model: Model,
@@ -140,31 +165,14 @@ def _build_agent(
 ) -> OdessyAgent:
     from odessy.runtime.scheduler import concurrency_from_env
     try:
-        preapproved = load_preapproved_commands(workspace_root)
-    except CommandsConfigError as error:
-        raise SystemExit(str(error)) from error
-    try:
         hooks = load_hooks(workspace_root)
     except HookConfigError as error:
         raise SystemExit(str(error)) from error
-    try:
-        sandbox = load_sandbox_settings()
-    except SandboxConfigError as error:
-        raise SystemExit(str(error)) from error
-    isolation, target_isolation = _sandbox_isolation(workspace_root, sandbox)
     confirmer = TerminalConfirmer(workspace_root)
     return OdessyAgent(
         tool_concurrency=concurrency_from_env(),
         model=model,
-        policy=OdessyPolicy(
-            workspace_root=workspace_root,
-            isolation=isolation,
-            target_isolation=target_isolation,
-            sandbox=sandbox,
-            preapproved_commands=preapproved,
-            # sandbox.toml is protected like hooks.toml, whether or not it exists yet.
-            protected_paths=(*protected_paths(hooks=hooks), sandbox_file(), sandbox_file().parent),
-        ),
+        policy=_build_policy(workspace_root, hooks),
         mcp_server=(
             mcp_servers
             if mcp_servers is not None
@@ -176,6 +184,73 @@ def _build_agent(
         max_model_calls=_max_model_calls_from_env(cloud=model_uses_cloud(model), mode=mode),
         hooks=hooks,
     )
+
+
+def _permissions_check(argv: list[str]) -> int:
+    """``permissions check``: how a call would be decided here, without running it.
+
+    The policy and the rules in hooks.toml decide. Hook programs are named, not run:
+    they are the user's code, and a check must not have effects.
+    """
+
+    from odessy.runtime.hook_rules import evaluate_rules
+    from odessy.runtime.hooks import HookVerdict, tighten
+    from odessy.runtime.types import ToolRequest
+
+    parser = argparse.ArgumentParser(prog="python -m odessy permissions check",
+                                     description="Show how a call would be decided, without running it.")
+    parser.add_argument("command", nargs="?", help="the command to check")
+    parser.add_argument("--laptop", action="store_true", help="as a command on the paired laptop")
+    parser.add_argument("--write", metavar="PATH", help="check a filesystem.write to PATH instead of a command")
+    parser.add_argument("--workspace", type=Path, default=Path.cwd(), help="the workspace (default: this folder)")
+    parser.add_argument("--json", action="store_true", help="print JSON")
+    options = parser.parse_args(argv)
+    if bool(options.command) == bool(options.write):
+        parser.error("give a command or --write PATH")
+    if options.write:
+        request = ToolRequest("filesystem.write", {"path": options.write, "content": ""})
+    else:
+        request = ToolRequest("laptop.terminal.run" if options.laptop else "terminal.run", {"command": options.command})
+    workspace = options.workspace.resolve()
+    try:
+        hooks = load_hooks(workspace, track=False)
+    except HookConfigError as error:
+        raise SystemExit(str(error)) from error
+    policy = _build_policy(workspace, hooks)
+    decision = policy.evaluate(request)
+    fired: list[str] = []
+    programs: list[str] = []
+    if hooks is not None and decision.action != "deny":
+        verdict = HookVerdict()
+        for rule, action in evaluate_rules(hooks.rules, request, decision.risk, workspace, None):
+            fired.append(rule.name)
+            if verdict.hook is None or action == "deny":
+                verdict = HookVerdict(action, rule.describe(), rule.name, risk=rule.raise_risk)
+        decision = tighten(decision, verdict)
+        programs = [hook.name for hook in hooks.matching("pre_tool", request.name, decision.risk)]
+    requirement = policy.requirement_for(request, decision)
+    report = {
+        "tool": request.name,
+        "decision": decision.action,
+        "risk": decision.risk,
+        "rule": decision.rule,
+        "reason": decision.reason,
+        "asks": decision.requires_confirmation and not decision.preapproved,
+        "typed_yes": decision.requires_confirmation and decision.risk == "high",
+        "mode": requirement.policy.mode if requirement is not None else None,
+        "network": policy.sandbox.network_for(requirement.policy.mode) if requirement is not None else None,
+        "rules_fired": fired,
+        "hook_programs": programs,
+    }
+    if options.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+    for key, value in report.items():
+        if value not in (None, [], False) or key in ("decision", "asks"):
+            print(f"{key.replace('_', ' ')}: {', '.join(value) if isinstance(value, list) else value}")
+    if programs:
+        print("hook programs were not run; they can still make this stricter")
+    return 0
 
 
 def _paired_host():
@@ -247,7 +322,9 @@ class TerminalEscalationApprover:
 
     async def ask(self, request: ApprovalRequest) -> EscalationOutcome:
         print(f"!! HIGH RISK: Odessy asks to run {request.tool_name} with a wider sandbox.")
-        print(f"Reason: {printable(request.reason)}")
+        if request.prompt:
+            print(printable(request.prompt))
+        print(f"The model's reason: {printable(request.reason)}")
         try:
             answer = await asyncio.to_thread(input, "Type 'yes' to allow the wider sandbox for this one call: ")
         except EOFError:
@@ -703,7 +780,7 @@ async def _tool_servers(workspace_root: Path, *, cloud: bool = False) -> AsyncIt
     A configured server is listed once at startup; its tools become model-facing for
     the run as ``<server>.<tool>``. A server that does not answer is reported and left
     out; it does not stop the run or affect the built-in tools. A stdio server keeps one
-    session for the run, and every third-party call is recorded in the audit log.
+    session for the run, and every call is recorded in the audit log.
     """
 
     try:
@@ -711,13 +788,14 @@ async def _tool_servers(workspace_root: Path, *, cloud: bool = False) -> AsyncIt
     except ServerConfigError as error:
         raise SystemExit(str(error)) from error
     try:
-        audit = ExternalAuditLog.open() if configs else None
+        audit = ExternalAuditLog.open()
     except AuditLogError as error:
         raise SystemExit(str(error)) from error
 
     async with _builtin_tool_servers(workspace_root) as builtins:
         if not configs:
-            yield builtins
+            with audit_scope(audit):
+                yield builtins
             return
         async with ExternalSessions() as sessions:
             servers = {config.name: NamespacedServer(config, sessions) for config in configs}
@@ -900,6 +978,8 @@ def main(argv: list[str] | None = None) -> None:
         args = parser.parse_args(argv[1:])
         _print_egress(args.limit)
         return
+    if argv[:2] == ["permissions", "check"]:
+        raise SystemExit(_permissions_check(argv[2:]))
     if argv[:2] == ["sandbox", "cleanup"]:
         parser = argparse.ArgumentParser(
             prog="python -m odessy sandbox cleanup",

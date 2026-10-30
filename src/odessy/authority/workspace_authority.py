@@ -163,6 +163,28 @@ _SENSITIVE_BASENAME_PATTERNS = {
 }
 
 
+#: Workspace files that run code later, away from the prompt that changed them: on the
+#: next commit, push, build or folder open.
+_LATER_EFFECT_PATTERNS = (
+    ".git/*",
+    ".github/*",
+    ".gitlab-ci.yml",
+    ".circleci/*",
+    "azure-pipelines.yml",
+    ".husky/*",
+    ".pre-commit-config.yaml",
+    ".devcontainer/*",
+    ".vscode/tasks.json",
+    ".vscode/launch.json",
+    ".envrc",
+)
+
+
+def is_later_effect_path(relative_path: str) -> bool:
+    path = relative_path.replace("\\", "/").lower()
+    return any(fnmatch.fnmatchcase(path, pattern) for pattern in _LATER_EFFECT_PATTERNS)
+
+
 def is_sensitive_workspace_path(relative_path: str) -> bool:
     parts = [part.lower() for part in relative_path.replace("\\", "/").split("/") if part]
     if any(part in _SENSITIVE_SEGMENTS for part in parts):

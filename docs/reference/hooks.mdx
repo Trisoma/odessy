@@ -131,6 +131,7 @@ decision = "deny"
 | `target` | Fire only for calls on `local` or the paired `laptop` |
 | `when_taint` | Fire only once the turn carries one of these taints |
 | `max_per_turn` | Let this many matching calls through each turn; the rule decides the rest |
+| `raise_risk` | On a `confirm` rule: raise the call's risk, so `"high"` needs a typed `yes`. It never lowers it. Not the same as `risk`, which is a condition |
 | `taint` | The taint a `taint` rule adds |
 | `reason` | Shown in the denial or approval prompt |
 

@@ -9,6 +9,9 @@ from copy import deepcopy
 import time
 import uuid
 
+from odessy.authority.action_approval import approval_channels
+from odessy.authority.audit import current_audit
+
 from .context import human_wait
 
 
@@ -174,11 +177,11 @@ class InteractionBroker:
         scopes = entry.get('scopes', [])
         if isinstance(scopes, str):
             scopes = [scopes]
-        strong = risk not in {'low', 'medium'} or any('escalat' in str(scope).lower() for scope in scopes)
+        channels = approval_channels(risk, escalates=any('escalat' in str(scope).lower() for scope in scopes))
         now = time.time()
         entry.update(id=identifier, turn_id=self._turn_id, kind=kind, risk=risk,
             prompt=entry.get('authoritative_prompt', entry.get('prompt', 'Approve this action?')),
-            allowed_channels=['terminal', 'authenticated_ui'] + ([] if strong else ['voice']),
+            allowed_channels=list(channels),
             created_at=now, expires_at=now + self.prompt_timeout, ready=False)
         future = asyncio.get_running_loop().create_future()
         signal = asyncio.Event()
@@ -211,7 +214,11 @@ class InteractionBroker:
                         if identifier in self._pending:
                             self._finish(identifier, False if kind == 'approval' else
                                 self._question_result(identifier, 'expired', reason='timeout'), 'expired')
-                return future.result()
+                result = future.result()
+                audit = current_audit() if kind == 'approval' else None
+                if audit is not None:
+                    audit.approval(entry, approved=result, **self._tombstones.get(identifier, {}))
+                return result
         finally:
             if identifier in self._pending:
                 self._finish(identifier, False if kind == 'approval' else

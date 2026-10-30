@@ -1,4 +1,4 @@
-"""Audit log of third-party MCP tool calls: what was asked, decided, and what happened.
+"""Audit log of every tool call: what was asked, decided, and what happened.
 
 One JSON object per line, appended to ``~/.local/state/odessy/external-audit.jsonl``
 (``ODESSY_AUDIT_FILE`` sets another path; an empty value turns the log off). Two kinds
@@ -8,12 +8,14 @@ of record, written in order:
   whether the user confirmed it. A denied or declined call has only this record.
 * ``call``: an executed call's outcome (``ok``, ``error``, ``timeout``, ``failed``)
   and duration.
+* ``approval``: a question put to a person on the desktop or by voice: its fingerprint,
+  the answer, the channel that gave it, or why it ended unanswered.
 
 Arguments are recorded as their names and the SHA-256 of each value, never the values:
 the log shows which calls repeated the same input without holding file contents or
 secrets. A hash of a short or guessable value can be reversed by guessing, so the log
-is still private to the user. Only Odessy's own built-in tools are not recorded here;
-the turn log covers them.
+is still private to the user. Odessy's own tools have ``server`` set to ``builtin``.
+The file keeps its original name, from when it held third-party calls only.
 """
 
 from __future__ import annotations
@@ -97,11 +99,12 @@ class ExternalAuditLog:
     def decision(
         self,
         *,
-        server: ServerConfig,
+        server: ServerConfig | None,
         remote_name: str,
         arguments: Mapping[str, Any],
         decision: PolicyDecision,
         confirmed: bool | None,
+        channel: str | None = None,
     ) -> None:
         self._write(
             {
@@ -111,14 +114,31 @@ class ExternalAuditLog:
                 "rule": decision.rule,
                 "risk": decision.risk,
                 "confirmed": confirmed,
+                **({"channel": channel} if channel else {}),
                 "arguments": hash_arguments(arguments),
+            }
+        )
+
+    def approval(self, entry: Mapping[str, Any], *, approved: bool, reason: str | None = None, channel: str | None = None) -> None:
+        """How one question put to a person ended. Never its text: that quotes arguments."""
+
+        self._write(
+            {
+                "event": "approval",
+                "tool": entry.get("operation"),
+                "fingerprint": entry.get("fingerprint"),
+                "risk": entry.get("risk"),
+                "scopes": list(entry.get("scopes") or []),
+                "approved": approved,
+                "ended": reason,
+                "channel": channel,
             }
         )
 
     def call(
         self,
         *,
-        server: ServerConfig,
+        server: ServerConfig | None,
         remote_name: str,
         outcome: str,
         duration_ms: float,
@@ -149,7 +169,9 @@ class ExternalAuditLog:
                     print(f"[odessy] cannot write the audit log {self.path}: {error}", file=sys.stderr)
 
 
-def _server_fields(server: ServerConfig, remote_name: str) -> dict[str, Any]:
+def _server_fields(server: ServerConfig | None, remote_name: str) -> dict[str, Any]:
+    if server is None:
+        return {"server": "builtin", "tool": remote_name}
     return {
         "server": server.name,
         "trust": server.trust,
@@ -163,7 +185,7 @@ _current: ContextVar[ExternalAuditLog | None] = ContextVar("external_audit", def
 
 @contextmanager
 def audit_scope(log: ExternalAuditLog | None) -> Iterator[None]:
-    """Record this run's third-party calls in ``log`` (nothing outside the block)."""
+    """Record this run's calls in ``log`` (nothing outside the block)."""
 
     token = _current.set(log)
     try:

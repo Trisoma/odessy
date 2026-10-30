@@ -34,6 +34,15 @@ def _plain(value: Any) -> Any:
     raise ValueError(f'Unsupported approval identity: {type(value).__name__}')
 
 
+def approval_channels(risk: str, *, escalates: bool) -> tuple[str, ...]:
+    """Where one approval may be answered. High risk and every sandbox widening need
+    the keyboard or the authenticated UI: a spoken phrase is an intent, not identity."""
+
+    if risk in ('low', 'medium') and not escalates:
+        return ('voice', 'terminal', 'authenticated_ui')
+    return ('terminal', 'authenticated_ui')
+
+
 def _json(value: Any) -> str:
     return json.dumps(_plain(value), sort_keys=True, separators=(',', ':'), ensure_ascii=True, allow_nan=False)
 
@@ -101,7 +110,7 @@ def build_action_approval(request, decision, policy, *, call_id: str, execution_
         for key, value in selected.items():
             resolved = policy.authority.resolve_path(value, must_exist=False)
             paths[key] = str(resolved.resolved)
-    policy_data = {'policy': _plain(policy), 'external_tool': external_binding}
+    policy_data = {'policy': _plain(policy.identity()), 'external_tool': external_binding}
     policy_binding = _hash(_json(policy_data))
     scopes = []
     if decision.action != 'deny':
@@ -109,7 +118,7 @@ def build_action_approval(request, decision, policy, *, call_id: str, execution_
             scopes.append('authorization')
         if 'sandbox_permissions' in args:
             scopes.append('escalation')
-    channels = () if decision.action == 'deny' else (('terminal', 'authenticated_ui') if decision.risk == 'high' or 'sandbox_permissions' in args else ('voice', 'terminal', 'authenticated_ui'))
+    channels = () if decision.action == 'deny' else approval_channels(decision.risk, escalates='sandbox_permissions' in args)
     canonical = _json({'call_id': call_id, 'operation': request.name, 'arguments': args, 'resolved_paths': paths, 'workspace': str(policy.authority.workspace_root), 'host': host, 'target_identity': target, 'decision': _plain(decision), 'policy': policy_data, 'scopes': scopes, 'allowed_channels': channels})
     fingerprint = _hash(canonical)
     prompt = f'Approve {request.name} on {host} for this action only. Risk: {decision.risk}.'

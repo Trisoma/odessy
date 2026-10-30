@@ -15,6 +15,7 @@
     match = "filesystem.write"
     path_glob = [".github/**", "*.lock"]
     decision = "confirm"
+    raise_risk = "high"
 
     [[rule]]
     name = "mark-secret-reads"
@@ -35,6 +36,8 @@ decision stricter. Every condition it names must hold. ``max_per_turn`` turns a 
 into a limit: the matching calls up to that count pass, the ones after it get the
 rule's decision. A ``taint`` rule decides nothing; it marks the turn once a matching
 call has run, and ``when_taint`` makes another rule apply only after that.
+``raise_risk`` on a confirming rule raises the call's risk, so that it needs a typed
+``yes``; it can never lower it. (``risk`` is a condition: the levels the rule runs for.)
 
 Rules see the call's arguments as the model wrote them, unredacted: they never leave
 this process, unlike the JSON a hook program reads.
@@ -94,6 +97,7 @@ class Rule:
     taint: str | None = None
     reason: str = ""
     preset: str | None = None
+    raise_risk: str | None = None
 
     def applies(self, request: ToolRequest, risk: str, workspace: Path, taints: set[str]) -> bool:
         """Every condition but ``max_per_turn``, which needs the turn's count."""
@@ -230,10 +234,10 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
          "reason": "changes to the registry, scheduled tasks or services outlive the turn"},
         {"name": "confirm-history-rewrite", "match": _COMMAND_TOOLS, "decision": "confirm",
          "command_regex": r"\bgit\s+(reset\s+--hard|clean\s+-\S*f|checkout\s+--\s|restore\s+(--source|--staged|\.)|rebase\b|filter-(branch|repo)\b|branch\s+-D\b|stash\s+(drop|clear)\b)",
-         "reason": "discards local work or rewrites history"},
+         "raise_risk": "high", "reason": "discards local work or rewrites history"},
         {"name": "confirm-ci-and-hooks-edits", "match": "filesystem.write", "decision": "confirm",
          "path_glob": [".github/*", ".gitlab-ci.yml", ".git/*", ".husky/*", ".pre-commit-config.yaml"],
-         "reason": "CI and git hook files run code on other machines or on every commit"},
+         "raise_risk": "high", "reason": "CI and git hook files run code on other machines or on every commit"},
         {"name": "no-full-access-on-laptop", "match": "laptop.terminal.run", "decision": "deny",
          "escalation": ["danger-full-access"],
          "reason": "the laptop never runs a command without its sandbox"},
@@ -245,7 +249,7 @@ PRESETS: dict[str, list[dict[str, Any]]] = {
 
 _KEYS = {
     "name", "match", "risk", "workspace", "command_regex", "arguments", "path_glob", "escalation",
-    "target", "when_taint", "max_per_turn", "decision", "taint", "reason",
+    "target", "when_taint", "max_per_turn", "decision", "taint", "reason", "raise_risk",
 }
 
 
@@ -290,6 +294,11 @@ def parse_rule(where: str, entry: Any, *, preset: str | None = None) -> tuple[Ru
     risk = _strings(where, "risk", entry.get("risk", []), allow_empty=True)
     if not set(risk) <= set(_RISKS):
         raise RuleConfigError(f"{where}: risk must list some of {list(_RISKS)}")
+    raise_risk = entry.get("raise_risk")
+    if raise_risk is not None and raise_risk not in _RISKS:
+        raise RuleConfigError(f"{where}: raise_risk must be one of {list(_RISKS)}")
+    if raise_risk is not None and decision != "confirm":
+        raise RuleConfigError(f"{where}: raise_risk goes with decision = \"confirm\"")
     arguments = entry.get("arguments", {})
     if not isinstance(arguments, dict) or not all(isinstance(key, str) and key for key in arguments):
         raise RuleConfigError(f"{where}: arguments must be a table of argument name = regular expression")
@@ -325,6 +334,7 @@ def parse_rule(where: str, entry: Any, *, preset: str | None = None) -> tuple[Ru
         taint=taint,
         reason=reason[:300],
         preset=preset,
+        raise_risk=raise_risk,
     )
     return rule, Path(workspace).expanduser() if workspace else None
 

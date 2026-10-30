@@ -112,6 +112,11 @@ _INHERITED_ENV = (
 )
 
 _STRICTNESS = {"allow": 0, "confirm": 1, "deny": 2}
+_RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
+
+
+def _higher_risk(*risks: str | None) -> str:
+    return max((risk for risk in risks if risk), key=_RISK_ORDER.__getitem__)
 
 
 class HookConfigError(ValueError):
@@ -153,6 +158,8 @@ class HookVerdict:
     hook: str | None = None
     #: Every hook that ran and what it decided, for the turn log.
     results: tuple[dict[str, Any], ...] = ()
+    #: The risk a confirming rule asked for (``raise_risk``).
+    risk: str | None = None
 
 
 ALLOW = HookVerdict()
@@ -175,7 +182,9 @@ def tighten(decision: PolicyDecision, verdict: HookVerdict) -> PolicyDecision:
     """The policy decision made stricter by the hooks' verdict, never looser.
 
     A call the policy allowed and a hook wants confirmed keeps the policy's sandbox
-    mode (``mode_outcome``): confirming a read-only command must not let it write.
+    mode (``mode_outcome``): confirming a read-only command must not let it write. It
+    is at least medium risk: a question worth asking is not a low-risk one. A rule can
+    raise that further (``raise_risk``), never lower it.
     """
 
     if verdict.hook is None or decision.action == "deny" or verdict.action == "allow":
@@ -192,6 +201,7 @@ def tighten(decision: PolicyDecision, verdict: HookVerdict) -> PolicyDecision:
         rule=rule,
         preapproved=False,
         mode_outcome=decision.mode_outcome or decision.action,
+        risk=_higher_risk(decision.risk, verdict.risk, "medium"),
     )
 
 
@@ -273,15 +283,18 @@ class HookSet:
             return HookVerdict("deny", tampered, "integrity", ({"hook": "integrity", "decision": "deny", "reason": tampered},))
         verdict = ALLOW
         results: list[dict[str, Any]] = []
+        raised: str | None = None
         for rule, action in evaluate_rules(self.rules, request, decision.risk, self.workspace_root, state):
             results.append({"hook": rule.name, "kind": "rule", "decision": action, "reason": rule.describe()})
+            if rule.raise_risk is not None:
+                raised = _higher_risk(raised, rule.raise_risk)
             if _STRICTNESS[action] > _STRICTNESS[verdict.action] or verdict.hook is None:
                 verdict = HookVerdict(action, rule.describe(), rule.name)
             if action == "deny":
                 return replace(verdict, results=tuple(results))
         hooks = self.matching("pre_tool", request.name, decision.risk)
         if not hooks:
-            return replace(verdict, results=tuple(results))
+            return replace(verdict, results=tuple(results), risk=raised)
         payload = {
             "event": "pre_tool",
             "tool": request.name,
@@ -298,7 +311,7 @@ class HookSet:
                 verdict = HookVerdict(action, reason, hook.name)
             if action == "deny":
                 break
-        return replace(verdict, results=tuple(results))
+        return replace(verdict, results=tuple(results), risk=raised)
 
     async def pre_escalation(
         self,

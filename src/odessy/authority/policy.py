@@ -23,11 +23,23 @@ from odessy.execution.escalation import (
     approve_escalation,
     validate_escalation_args,
 )
+from odessy.authority.command_rules import (
+    CHAINING,
+    FILE_READERS,
+    classify_command,
+    matches_allow,
+    matches_confirm,
+    matches_install,
+)
 from odessy.config.commands import matches_preapproved
 from odessy.config.sandbox import DEFAULT_SETTINGS, SandboxSettings
 from odessy.tools.external_tools import ExternalTool, external_tool
 from odessy.runtime.types import PolicyDecision, ToolRequest
-from odessy.authority.workspace_authority import WorkspaceAuthority, WorkspaceAuthorityError
+from odessy.authority.workspace_authority import (
+    WorkspaceAuthority,
+    WorkspaceAuthorityError,
+    is_later_effect_path,
+)
 
 #: The tools whose action spawns a process, and which therefore have an *execution*
 #: isolation mode at all.
@@ -58,7 +70,12 @@ _MODE_BY_OUTCOME: dict[str, Mode] = {
 
 @dataclass(frozen=True)
 class OdessyPolicy:
-    """Deny-by-default v0.1.0 policy gate for model-proposed tool calls."""
+    """Deny-by-default v0.1.0 policy gate for model-proposed tool calls.
+
+    Every decision names its ``rule``: a stable identifier for the turn log, the audit
+    log and ``python -m odessy permissions check``, unlike the reason, which may quote
+    arguments.
+    """
 
     workspace_root: Path
     allowed_tools: set[str] | None = None
@@ -74,8 +91,9 @@ class OdessyPolicy:
     #: ``commands.toml`` (``odessy.config.commands``). Only ``terminal.run``.
     preapproved_commands: tuple[tuple[str, ...], ...] = ()
     #: Files and folders the agent may not change: the hooks file, its folder and the
-    #: hook scripts (``odessy.runtime.hooks.protected_paths``). A hook runs as the
-    #: user outside the sandbox, so writing one would be a way out of it.
+    #: hook scripts (``odessy.runtime.hooks.protected_paths``), ``sandbox.toml`` and
+    #: ``commands.toml``. A hook runs as the user outside the sandbox and the other two
+    #: decide what is asked, so writing any of them would be a way out.
     protected_paths: tuple[Path, ...] = ()
     #: Isolation for the paired laptop's commands when it differs from ``isolation``
     #: (``sandbox.toml`` ``[targets.laptop]``, or ``auto`` resolved per target).
@@ -83,6 +101,11 @@ class OdessyPolicy:
     #: How commands are confined beyond their mode (``sandbox.toml``): network,
     #: hidden paths, extra writable folders, limits, and whether escalation is asked.
     sandbox: SandboxSettings = DEFAULT_SETTINGS
+
+    def identity(self) -> "OdessyPolicy":
+        """What an approval binds to. A wrapper delegates this to the policy it wraps."""
+
+        return self
 
     def isolation_for(self, tool_name: str) -> IsolationRequirement:
         """The isolation requirement for a command on the tool's target."""
@@ -100,7 +123,7 @@ class OdessyPolicy:
         network = self.sandbox.network_for(mode)
         command = request.arguments.get("command")
         if network == "deny" and mode == "workspace-write" and isinstance(command, str):
-            if _matches_install_rule(command.strip().lower().replace("\\", "/").split()):
+            if matches_install(command.strip().lower().replace("\\", "/").split()):
                 network = "allow"
         arguments: dict[str, Any] = {"network": network, "hidden_paths": list(self.sandbox.hidden_paths)}
         if self.sandbox.extra_writable:
@@ -117,7 +140,7 @@ class OdessyPolicy:
         external = external_tool(request.name)
         if external is not None:
             return self._evaluate_external(external, request)
-        allowed_tools = self.allowed_tools or {
+        allowed_tools = self.allowed_tools if self.allowed_tools is not None else {
             "time.now",
             "user.ask",
             "terminal.run",
@@ -140,36 +163,37 @@ class OdessyPolicy:
                 action="deny",
                 reason=f"Tool is not allowed: {request.name}",
                 risk="high",
+                rule="tool_not_allowed",
             )
         if request.name == "user.ask":
             from odessy.interaction.context import current_interactions
             if _ESCALATION_ARGUMENT_NAMES & set(request.arguments):
-                return PolicyDecision("deny", "Clarification cannot request sandbox permissions", "high")
+                return PolicyDecision("deny", "Clarification cannot request sandbox permissions", "high", rule="sandbox_arguments")
             if current_interactions() is None:
-                return PolicyDecision("deny", "No clarification interaction is available", "low")
-            return PolicyDecision("allow", "Ask for information; answers grant no authority", "low")
+                return PolicyDecision("deny", "No clarification interaction is available", "low", rule="no_interaction")
+            return PolicyDecision("allow", "Ask for information; answers grant no authority", "low", rule="user_ask")
         if request.name in {"model.consult", "agent.delegate", "agent.job_status", "agent.cancel"}:
             if _ESCALATION_ARGUMENT_NAMES & set(request.arguments):
-                return PolicyDecision("deny", "Collaboration tools do not accept sandbox escalation arguments", "high")
+                return PolicyDecision("deny", "Collaboration tools do not accept sandbox escalation arguments", "high", rule="sandbox_arguments")
             from odessy.collaboration.context import current_service
             service = current_service()
             if service is None or not service.config.settings.enabled:
-                return PolicyDecision("deny", "Collaboration is not enabled", "medium")
+                return PolicyDecision("deny", "Collaboration is not enabled", "medium", rule="collaboration_off")
             if request.name in {"agent.job_status", "agent.cancel"}:
-                return PolicyDecision("allow", "Inspect or cancel an authorized collaboration job", "low")
+                return PolicyDecision("allow", "Inspect or cancel an authorized collaboration job", "low", rule="collaboration_job")
             participant = request.arguments.get("participant") or service.config.settings.default_participant
             profile = service.config.participants.get(participant)
             capability = "consult" if request.name == "model.consult" else "delegate"
             if profile is None or capability not in profile.capabilities:
-                return PolicyDecision("deny", "Participant or capability is not configured", "medium")
+                return PolicyDecision("deny", "Participant or capability is not configured", "medium", rule="collaboration_participant")
             if capability == "consult":
                 if not service.config.settings.automatic:
-                    return PolicyDecision("deny", "Automatic consultation is disabled; request it explicitly", "medium")
-                return PolicyDecision("allow", "Consultation enabled by user settings; advice only", "low")
+                    return PolicyDecision("deny", "Automatic consultation is disabled; request it explicitly", "medium", rule="collaboration_consult")
+                return PolicyDecision("allow", "Consultation enabled by user settings; advice only", "low", rule="collaboration_consult")
             mode = request.arguments.get("mode", "advice")
             if mode not in profile.allowed_modes:
-                return PolicyDecision("deny", "Delegation mode is not allowed for this participant", "high")
-            return PolicyDecision("confirm", "Delegate work using the configured child-agent permissions", "medium" if mode == "advice" else "high")
+                return PolicyDecision("deny", "Delegation mode is not allowed for this participant", "high", rule="collaboration_mode")
+            return PolicyDecision("confirm", "Delegate work using the configured child-agent permissions", "medium" if mode == "advice" else "high", rule="collaboration_delegate")
         if request.name not in _PROCESS_TOOL_NAMES:
             # A silent no-op would be worse than a refusal: a model that asks to widen
             # the sandbox on an action the sandbox does not govern would otherwise be
@@ -184,12 +208,14 @@ class OdessyPolicy:
                     f"{request.name} does not accept {name}: sandbox modes govern "
                     "process-spawning actions, and this action spawns no process",
                     "medium",
+                    rule="sandbox_arguments",
                 )
         if request.name == "time.now" and request.arguments:
             return PolicyDecision(
                 action="deny",
                 reason="time.now does not accept arguments",
                 risk="low",
+                rule="tool_arguments",
             )
         if request.name == "calculator.eval":
             expression = request.arguments.get("expression")
@@ -198,17 +224,20 @@ class OdessyPolicy:
                     action="deny",
                     reason="calculator.eval accepts only an expression argument",
                     risk="low",
+                    rule="tool_arguments",
                 )
             if not isinstance(expression, str) or not expression.strip():
                 return PolicyDecision(
                     action="deny",
                     reason="calculator.eval requires a non-empty expression",
                     risk="low",
+                    rule="tool_arguments",
                 )
             return PolicyDecision(
                 action="allow",
                 reason="calculator.eval allowed as a read-only arithmetic tool",
                 risk="low",
+                rule="read_only_tool",
             )
         if request.name in _READ_ONLY_TOOL_NAMES:
             return self._evaluate_read_only_tool(request)
@@ -218,35 +247,46 @@ class OdessyPolicy:
             return self._evaluate_filesystem_write(request)
         if request.name == "log.append":
             return self._evaluate_log_append(request)
-        return PolicyDecision(
-            action="allow",
-            reason=f"Tool is allowed: {request.name}",
-            risk="low",
-        )
+        if request.name == "time.now":
+            return PolicyDecision("allow", "time.now reads the clock", "low", rule="read_only_tool")
+        # A tool on the list that no rule above knows has no decision to give it.
+        return PolicyDecision("deny", f"No policy rule covers {request.name}", "high", rule="tool_without_rule")
 
     def _evaluate_terminal_run(self, request: ToolRequest) -> PolicyDecision:
+        """The command's decision, then the timeout, which can only make it stricter.
+
+        The timeout comes from the model. Judged first, it decided a call before any
+        other rule looked at it, so `rm -rf .` with a timeout of 31 was only confirmed.
+        """
+
+        decision = self._judge_command(request)
+        timeout = request.arguments.get("timeout", self.normal_timeout)
+        if decision.action == "deny" or timeout <= self.max_timeout:
+            return decision
+        reason = f"{request.name} timeout {timeout} exceeds the normal execution scope"
+        if decision.action == "allow":
+            # Confirming a long read must not let it write.
+            return PolicyDecision("confirm", reason, "medium", rule="command_timeout", mode_outcome="allow")
+        return replace(decision, reason=f"{decision.reason}; {reason}", preapproved=False)
+
+    def _judge_command(self, request: ToolRequest) -> PolicyDecision:
         tool_name = request.name
         command = request.arguments.get("command")
         cwd = request.arguments.get("cwd", ".")
         timeout = request.arguments.get("timeout", self.normal_timeout)
 
         if not isinstance(command, str) or not command.strip():
-            return PolicyDecision("deny", f"{tool_name} requires a non-empty command", "high")
+            return PolicyDecision("deny", f"{tool_name} requires a non-empty command", "high", rule="tool_arguments")
         if not isinstance(cwd, str) or not cwd.strip():
-            return PolicyDecision("deny", f"{tool_name} requires a valid cwd", "high")
+            return PolicyDecision("deny", f"{tool_name} requires a valid cwd", "high", rule="tool_arguments")
         if not isinstance(timeout, int):
-            return PolicyDecision("deny", f"{tool_name} timeout must be an integer", "high")
+            return PolicyDecision("deny", f"{tool_name} timeout must be an integer", "high", rule="tool_arguments")
         if timeout < 1:
             return PolicyDecision(
                 "deny",
                 f"{tool_name} timeout must be between 1 and the maximum execution scope",
                 "high",
-            )
-        if timeout > self.max_timeout:
-            return PolicyDecision(
-                "confirm",
-                f"{tool_name} timeout {timeout} exceeds the normal execution scope",
-                "medium",
+                rule="tool_arguments",
             )
 
         escalation_denial = self._check_escalation_arguments(request.arguments)
@@ -264,42 +304,19 @@ class OdessyPolicy:
         if tool_name == "terminal.run" and _names_protected_path(lowered, self.protected_paths):
             return PolicyDecision(
                 "deny",
-                f"{tool_name} denied because it names Odessy's hooks configuration, which the agent may not change",
+                f"{tool_name} denied because it names Odessy's own configuration, which the agent may not change",
                 "high",
                 rule="protected_config",
             )
 
-        if _matches_background_or_detach_rule(lowered, tokens):
+        finding = classify_command(command)
+        if finding is not None:
+            if finding.action == "deny":
+                return PolicyDecision("deny", f"{tool_name} denied because {finding.reason}", "high", rule=finding.rule)
             return PolicyDecision(
-                "deny",
-                f"{tool_name} denied because background or detached execution is outside the request lifecycle",
-                "high",
+                "confirm", f"{tool_name} requires confirmation because {finding.reason}", "high", rule=finding.rule
             )
-        if _matches_remote_execution_rule(lowered):
-            return PolicyDecision(
-                "deny",
-                f"{tool_name} denied because it runs code downloaded from the network",
-                "high",
-            )
-        if _matches_system_write_rule(lowered):
-            return PolicyDecision(
-                "deny",
-                f"{tool_name} denied because it writes to an operating-system location",
-                "high",
-            )
-        if _matches_deny_rule(lowered, tokens):
-            return PolicyDecision(
-                "deny",
-                f"{tool_name} denied because the command is destructive or credential-seeking",
-                "high",
-            )
-        if _matches_install_rule(tokens):
-            return PolicyDecision(
-                "confirm",
-                f"{tool_name} requires confirmation because it installs packages from the network",
-                "high",
-            )
-        read_only = _matches_allow_rule(lowered, tokens) or self._reads_workspace_files(command, cwd, tokens)
+        read_only = matches_allow(lowered, tokens) or self._reads_workspace_files(command, cwd, tokens)
         if (
             tool_name == "terminal.run"
             and not read_only
@@ -309,24 +326,28 @@ class OdessyPolicy:
                 "confirm",
                 f"{tool_name} approved in advance for this workspace in commands.toml",
                 "medium",
+                rule="command_preapproved",
                 preapproved=True,
             )
-        if _matches_confirm_rule(lowered, tokens):
+        if matches_confirm(lowered, tokens):
             return PolicyDecision(
                 "confirm",
                 f"{tool_name} requires confirmation because the command may modify state",
                 "medium",
+                rule="command_write",
             )
         if read_only:
             return PolicyDecision(
                 "allow",
                 f"{tool_name} allowed as a read-only workspace command",
                 "low",
+                rule="command_read_only",
             )
         return PolicyDecision(
             "confirm",
             f"{tool_name} requires confirmation because the command is outside the low-risk allow rules",
             "medium",
+            rule="command_default",
         )
 
     def _reads_workspace_files(self, command: str, cwd: str, tokens: list[str]) -> bool:
@@ -338,7 +359,7 @@ class OdessyPolicy:
         left to the confirmation rule, not denied.
         """
 
-        if not tokens or tokens[0] not in _FILE_READERS or _CHAINING.search(command.lower()):
+        if not tokens or tokens[0] not in FILE_READERS or CHAINING.search(command.lower()):
             return False
         arguments = [part.strip("'\"") for part in command.split()[1:]]
         paths = [part for part in arguments if part and not part.startswith("-")]
@@ -370,22 +391,23 @@ class OdessyPolicy:
             return None
         if target is not None and not isinstance(target, str):
             return PolicyDecision(
-                "deny", "invalid escalation: sandbox_permissions must be a mode string", "medium"
+                "deny", "invalid escalation: sandbox_permissions must be a mode string", "medium", rule="sandbox_arguments"
             )
         if justification is not None and not isinstance(justification, str):
             return PolicyDecision(
-                "deny", "invalid escalation: justification must be a sentence", "medium"
+                "deny", "invalid escalation: justification must be a sentence", "medium", rule="sandbox_arguments"
             )
         try:
             validate_escalation_args(target, justification)
         except EscalationArgumentError as exc:
-            return PolicyDecision("deny", str(exc), "medium")
+            return PolicyDecision("deny", str(exc), "medium", rule="sandbox_arguments")
         if target not in ESCALATION_TARGETS:
             # The schema advertises the closed vocabulary; this is the per-call truth.
             return PolicyDecision(
                 "deny",
                 f"unknown sandbox_permissions target: {target}",
                 "medium",
+                rule="sandbox_arguments",
             )
         return None
 
@@ -571,6 +593,7 @@ class OdessyPolicy:
                 "deny",
                 f"{tool_name} denied because cwd is outside the allowed workspace",
                 "high",
+                rule="outside_workspace",
             )
         return None
 
@@ -584,6 +607,7 @@ class OdessyPolicy:
             "allow",
             f"{request.name} allowed as a read-only workspace tool",
             "low",
+            rule="read_only_tool",
         )
 
     def _check_workspace_path(self, candidate_path: str, tool_name: str) -> PolicyDecision | None:
@@ -594,12 +618,14 @@ class OdessyPolicy:
                 "deny",
                 f"{tool_name} denied because path is outside the allowed workspace",
                 "high",
+                rule="outside_workspace",
             )
         if resolved.sensitive:
             return PolicyDecision(
                 "deny",
                 f"{tool_name} denied because the path targets credentials or secrets",
                 "high",
+                rule="sensitive_path",
             )
         return None
 
@@ -609,13 +635,14 @@ class OdessyPolicy:
                 "deny",
                 "filesystem.write accepts only path and content arguments",
                 "high",
+                rule="tool_arguments",
             )
         path_value = request.arguments.get("path")
         content = request.arguments.get("content")
         if not isinstance(path_value, str) or not path_value.strip():
-            return PolicyDecision("deny", "filesystem.write requires a valid path", "high")
+            return PolicyDecision("deny", "filesystem.write requires a valid path", "high", rule="tool_arguments")
         if not isinstance(content, str):
-            return PolicyDecision("deny", "filesystem.write requires string content", "high")
+            return PolicyDecision("deny", "filesystem.write requires string content", "high", rule="tool_arguments")
 
         path_decision = self._check_workspace_path(path_value, "filesystem.write")
         if path_decision is not None:
@@ -623,15 +650,23 @@ class OdessyPolicy:
         if _is_protected_path(Path(self.workspace_root), path_value, self.protected_paths):
             return PolicyDecision(
                 "deny",
-                "filesystem.write denied because the path is Odessy's hooks configuration",
+                "filesystem.write denied because the path is Odessy's own configuration",
                 "high",
                 rule="protected_config",
+            )
+        if is_later_effect_path(self.authority.resolve_path(path_value, must_exist=False).relative):
+            return PolicyDecision(
+                "confirm",
+                "filesystem.write changes a file that runs code later (git hooks, CI, editor tasks)",
+                "high",
+                rule="write_later_effect",
             )
 
         return PolicyDecision(
             "confirm",
             "filesystem.write modifies the workspace and requires confirmation",
             "medium",
+            rule="workspace_write",
         )
 
     def _evaluate_log_append(self, request: ToolRequest) -> PolicyDecision:
@@ -640,126 +675,24 @@ class OdessyPolicy:
                 "deny",
                 "log.append accepts only a content argument",
                 "high",
+                rule="tool_arguments",
             )
         content = request.arguments.get("content")
         if not isinstance(content, str) or not content.strip():
-            return PolicyDecision("deny", "log.append requires non-empty string content", "high")
+            return PolicyDecision("deny", "log.append requires non-empty string content", "high", rule="tool_arguments")
         return PolicyDecision(
             "allow",
             "log.append allowed because its destination is fixed and internal",
             "low",
+            rule="internal_log",
         )
-
-#: Read-only commands allowed without confirmation, in both shells. PowerShell's own
-#: names were missing, so on the Windows laptop the idiomatic `Get-ChildItem` needed a
-#: confirmation that `ls` did not.
-_ALLOWED_FIRST_TOKENS = frozenset(
-    {
-        "pwd", "ls", "dir", "get-childitem", "gci", "get-location", "gl",
-        # Where a program is: prints a path, runs nothing.
-        "which", "where", "where.exe", "get-command", "gcm",
-    }
-)
-
-#: Commands that print files. Allowed unasked only for files inside the workspace;
-#: see ``OdessyPolicy._reads_workspace_files``.
-_FILE_READERS = frozenset({"cat", "type", "get-content", "gc", "head", "tail", "wc"})
-
-#: Well-known programs whose ``--version`` / ``--help`` prints and exits. A named list,
-#: not "anything with --version": a script in the workspace runs its own code first.
-_VERSION_PROGRAMS = frozenset(
-    {
-        "python", "python3", "py", "pip", "pip3", "node", "npm", "pnpm", "yarn", "deno", "bun",
-        "git", "go", "cargo", "rustc", "java", "javac", "dotnet", "uv", "gcc", "g++", "clang",
-        "cmake", "make", "ruby", "perl", "php", "ollama", "pwsh", "powershell",
-    }
-)
-_VERSION_FLAGS = frozenset({"--version", "-version", "--help"})
-
-#: Read-only git subcommands. Options that write a file, run an external diff program,
-#: or read outside the repository are excluded.
-_GIT_READS = frozenset({"status", "log", "show", "diff", "branch"})
-_GIT_UNSAFE_OPTION_PREFIXES = ("--output", "--ext-diff", "--textconv", "--no-index")
-_GIT_BRANCH_LIST_OPTIONS = frozenset(
-    {"-a", "-r", "-v", "-vv", "--list", "--all", "--remotes", "--verbose", "--show-current"}
-)
-
-#: Anything that runs a second command. The allow rule looks at the first word only, so
-#: without this `ls && python evil.py` was "low risk" because it began with `ls`.
-# Parentheses and braces can evaluate commands in PowerShell, even without a
-# separator. Treat expression syntax conservatively rather than parsing shells.
-_CHAINING = re.compile(r"[;&|`\n(){}]")
-
-
-def _is_git_read(tokens: list[str]) -> bool:
-    """``git status|log|show|diff|branch`` without options that write or reach out.
-
-    ``git -C dir log`` and ``git -c key=value log`` do not match: the subcommand must
-    come first. Like ``git status`` before it, a repository's own config can still run
-    a program (a filter or hook); allowed commands run in read-only mode.
-    """
-
-    if len(tokens) < 2 or tokens[0] != "git" or tokens[1] not in _GIT_READS:
-        return False
-    rest = tokens[2:]
-    if any(token.startswith(_GIT_UNSAFE_OPTION_PREFIXES) for token in rest):
-        return False
-    if tokens[1] == "branch":
-        # `git branch name` creates a branch; only listing options are reads.
-        return all(token in _GIT_BRANCH_LIST_OPTIONS for token in rest)
-    return True
-
-
-def _is_version_query(tokens: list[str]) -> bool:
-    return len(tokens) == 2 and tokens[0] in _VERSION_PROGRAMS and tokens[1] in _VERSION_FLAGS
-
-
-def _matches_allow_rule(command: str, tokens: list[str]) -> bool:
-    if not tokens or _CHAINING.search(command):
-        return False
-    if tokens[0] in _ALLOWED_FIRST_TOKENS:
-        return True
-    if _is_version_query(tokens):
-        return True
-    if tokens[0] == "echo" and not any(mark in command for mark in ("$", "%")):
-        # Without variables: `echo $env:API_KEY` would print a secret into the turn.
-        return True
-    return _is_git_read(tokens)
-
-
-_INSTALLERS = frozenset({"pip", "pip3", "npm", "pnpm", "yarn", "uv", "cargo", "go"})
-
-
-def _matches_install_rule(tokens: list[str]) -> bool:
-    """Installing packages: code from the network that runs on this machine."""
-
-    if not tokens:
-        return False
-    if tokens[0] in _INSTALLERS and ("install" in tokens or "add" in tokens[1:2]):
-        return True
-    return tokens[:3] in (["python", "-m", "pip"], ["python3", "-m", "pip"]) and "install" in tokens
-
-def _matches_confirm_rule(command: str, tokens: list[str]) -> bool:
-    if not tokens:
-        return False
-    write_commands = {
-        "touch",
-        "mkdir",
-        "copy",
-        "cp",
-        "move",
-        "mv",
-        "set-content",
-        "new-item",
-    }
-    if ">" in command or ">>" in command:
-        return True
-    if tokens[0] == "git" and not (_is_git_read(tokens) or _is_version_query(tokens)):
-        return True
-    return tokens[0] in write_commands
 
 def _target(tool_name: str) -> str:
     return "laptop" if tool_name.startswith("laptop.") else "local"
+
+
+#: Files named on their own in a command are matched by name as well as by path.
+_CONFIG_NAMES = frozenset({"hooks.toml", "sandbox.toml", "commands.toml"})
 
 
 @functools.lru_cache(maxsize=32)
@@ -781,8 +714,8 @@ def _protected_spellings(paths: tuple[Path, ...]) -> tuple[str, ...]:
         except OSError:
             absolute = Path(path)
         spellings.add(absolute.as_posix().lower())
-        if absolute.name.lower() == "hooks.toml":
-            spellings.add("hooks.toml")
+        if absolute.name.lower() in _CONFIG_NAMES:
+            spellings.add(absolute.name.lower())
         if home is not None:
             try:
                 relative = absolute.relative_to(home).as_posix().lower()
@@ -819,109 +752,6 @@ def _is_protected_path(workspace_root: Path, candidate: str, paths: tuple[Path, 
             return True
     return False
 
-
-def _matches_deny_rule(command: str, tokens: list[str]) -> bool:
-    if not tokens:
-        return True
-    secret_terms = {
-        ".env",
-        ".ssh",
-        "id_rsa",
-        "credentials",
-        "credential",
-        "secret",
-        "token",
-        "password",
-        ".aws",
-        ".netrc",
-    }
-    destructive_patterns = {
-        "rm -rf",
-        "rm -fr",
-        "del /s",
-        "erase /s",
-        "rmdir /s",
-        "rd /s",
-        "format ",
-        "shutdown",
-        "reboot",
-        "git reset --hard",
-        "git clean",
-        "remove-item -recurse",
-    }
-    if any(term in command for term in secret_terms):
-        return True
-    if any(pattern in command for pattern in destructive_patterns):
-        return True
-    return False
-
-#: Something that fetches from the network...
-_DOWNLOADER = r"(?:curl|wget|iwr|irm|invoke-webrequest|invoke-restmethod|\(new-object\s+net\.webclient\)\.downloadstring)"
-#: ...and something that runs what it is given.
-_INTERPRETER = r"(?:sh|bash|zsh|dash|ksh|fish|python3?|perl|ruby|node|iex|invoke-expression|powershell|pwsh|cmd)"
-_REMOTE_EXECUTION = (
-    # curl https://x/install.sh | sh,  iwr https://x | iex
-    re.compile(rf"\b{_DOWNLOADER}\b[^|;&]*\|\s*(?:sudo\s+)?{_INTERPRETER}(?:\.exe)?\b"),
-    # bash <(curl ...),  sh -c "$(curl ...)",  iex (iwr ...)
-    re.compile(rf"\b{_INTERPRETER}\b[^;&|]*(?:<\(|\$\(|\()\s*{_DOWNLOADER}\b"),
-)
-
-
-def _matches_remote_execution_rule(command: str) -> bool:
-    """Download-and-run: the payload is chosen by whoever controls the URL.
-
-    The first evaluation runs showed models proposing ``curl ... | sh`` when asked to
-    "install the helper tool", and it was only *confirmed*: one "yes" from the user
-    ran a script nobody had seen. Downloading a file is still allowed through the
-    normal rules; piping it straight into an interpreter is not.
-    """
-
-    return any(pattern.search(command) for pattern in _REMOTE_EXECUTION)
-
-
-#: Operating-system locations, in the slash-normalized, lowercased command.
-#: POSIX roots must start a path ("src/lib/x" is the workspace, "/lib/x" is not).
-_SYSTEM_LOCATION = (
-    r"(?:(?<![\w./-])(?:/etc|/usr|/bin|/sbin|/boot|/lib|/system/library)/"
-    r"|(?<![\w./-])(?:[a-z]:/windows|/c/windows)\b|%systemroot%|\$env:systemroot)"
-)
-#: Write verbs and redirections, in the same normalized command.
-_WRITE = r"(?:>>?|\btee\b|\bcp\b|\bmv\b|\binstall\b|\bset-content\b|\badd-content\b|\bout-file\b|\bnew-item\b|\bcopy-item\b|\bmove-item\b|\bcopy\b|\bmove\b|\bxcopy\b|\brobocopy\b)"
-_SYSTEM_WRITE = re.compile(rf"{_WRITE}[^;&|]*{_SYSTEM_LOCATION}")
-
-
-def _matches_system_write_rule(command: str) -> bool:
-    """A write whose target is an operating-system directory.
-
-    Heuristic, like every command rule here (there is no shell parser): a write verb or
-    redirection followed, in the same simple command, by a system location. Reading
-    such a location is unaffected. The workspace is the only place Odessy writes to.
-    """
-
-    return _SYSTEM_WRITE.search(command.replace("\\", "/")) is not None
-
-
-def _matches_background_or_detach_rule(command: str, tokens: list[str]) -> bool:
-    if not tokens:
-        return True
-    detached_terms = {
-        "disown",
-        "nohup",
-        "schtasks",
-        "setsid",
-        "start-job",
-        "start-process",
-    }
-    if tokens[0] in detached_terms:
-        return True
-    padded = f" {command} "
-    if tokens[:2] in (["cmd", "/c"], ["cmd.exe", "/c"]) and " start " in padded:
-        return True
-    if " --detach" in command or " -d " in padded:
-        return True
-    if command.endswith(" &") or " & " in command or " 2>&1 &" in command:
-        return True
-    return False
 
 _READ_ONLY_TOOL_NAMES = {
     "filesystem.read",

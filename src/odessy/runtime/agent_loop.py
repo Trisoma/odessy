@@ -690,7 +690,7 @@ class OdessyAgent:
                         batch_observations = [ToolObservation(c.request, {"status": "skipped", "reason": "64-call turn limit reached"}, c.call_id) for c in action.calls]
                         stopped = "64-call turn limit reached"
                     else:
-                        answers = await self._ask_batch(action.calls, log)
+                        answers = await self._ask_batch(action.calls, tool_registry, log)
                         def safe(call):
                             request = call.request
                             decision = self._evaluate(request)
@@ -703,7 +703,8 @@ class OdessyAgent:
                                 reminders[call.call_id] = reminder
                                 log.append(LogEntry("repeat_tool_reminder", {"name": call.request.name}))
                             try:
-                                args = await self._prepare_call(call.request, tool_registry, log, metrics, answer=answers.get(id(call)), call_id=call.call_id)
+                                answer, plan = answers.get(id(call), (None, None))
+                                args = await self._prepare_call(call.request, tool_registry, log, metrics, answer=answer, call_id=call.call_id, plan=plan)
                             except EscalationDeniedError as exc:
                                 raise PermissionError(str(exc)) from exc
                             dispatched += 1
@@ -968,108 +969,126 @@ class OdessyAgent:
                 )
             action = next_action
 
-    async def _prepare_call(self, action, tool_registry, log, metrics, answer: bool | None = None, call_id=None):
-        """Authorize one call. ``answer`` is the user's reply already given in a batch prompt."""
+    async def _prepare_call(self, action, registry, log, metrics, answer: bool | None = None, call_id=None, plan=None):
+        """Authorize one call and prepare its arguments for one dispatch.
+
+        Every call takes this path, whichever channel a person answers on: a snapshot of
+        the action (``build_action_approval``) binds the exact arguments, target, scopes
+        and policy; the answer applies to that snapshot, and the action is checked
+        against it again after the answer and at dispatch. ``answer`` and ``plan`` are a
+        reply already given in a batch prompt and the snapshot it was given about.
+        """
+        from odessy.authority.action_approval import build_action_approval
         policy_started = time.perf_counter()
         decision = self._evaluate(action)
         _add_ms(metrics, "policy_validation_ms", _elapsed_ms(policy_started))
         if decision.action == "deny":
             self._audit_decision(action, decision, confirmed=None)
             raise PermissionError(f"Policy denied request: {decision.reason}")
-        if self._confirm_action is not None:
-            return await self._prepare_bound_call(action, decision, tool_registry, log, call_id=call_id)
+        self._assert_execution_target(action.name, registry)
+        self._policy.preflight_execution_mode(action, decision)
+        answered_before = plan is not None
+        if plan is None:
+            plan = build_action_approval(action, decision, self._policy,
+                call_id=call_id or uuid.uuid4().hex,
+                execution_target=self._target_identity(action, registry))
+
+        stop_event = getattr(self, '_turn_stop_event', None)
+        def revalidate():
+            if self._stop_requested(stop_event):
+                raise PermissionError('Turn stopped before dispatch')
+            self._assert_execution_target(action.name, registry)
+            self._validate_tool_request(action, registry)
+            current = self._evaluate(action)
+            if not plan.matches(action, current, self._policy,
+                    execution_target=self._target_identity(action, registry)):
+                raise PermissionError('Action, execution target or policy changed; a new authorization decision is required')
+            self._policy.preflight_execution_mode(action, current)
+
+        if answered_before:
+            revalidate()
+        await self._authorize(action, decision, plan, answer, log)
+        # A stop during the question is not a refusal: the turn ends at its own check.
+        if plan.scopes and not self._stop_requested(stop_event):
+            revalidate()
+        channel = None if self._confirm_action is not None or 'authorization' not in plan.scopes else 'terminal'
         if decision.requires_confirmation:
-            log.append(
-                LogEntry(
-                    "policy_requires_confirmation",
-                    {
-                        "name": action.name,
-                        "risk": decision.risk,
-                        "reason": decision.reason,
-                    },
-                )
-            )
-            if decision.preapproved:
-                confirmed = True
-                log.append(LogEntry("policy_preapproved", {"name": action.name, "reason": decision.reason}))
-            elif answer is not None:
-                confirmed = answer
-            else:
-                reply = self._confirm(decision, action) if callable(self._confirm) else self._confirm
-                confirmed = bool(await reply) if inspect.isawaitable(reply) else bool(reply)
-            if not confirmed:
-                self._audit_decision(action, decision, confirmed=False)
-                raise PermissionError(
-                    f"Policy requires confirmation before execution: {decision.reason}"
-                )
-            log.append(
-                LogEntry(
-                    "policy_confirmed",
-                    {
-                        "name": action.name,
-                        "risk": decision.risk,
-                        "reason": decision.reason,
-                    },
-                )
-            )
-            self._audit_decision(action, decision, confirmed=True)
-        if not decision.allowed and not decision.requires_confirmation:
-            raise PermissionError(decision.reason)
-        if decision.allowed:
+            self._audit_decision(action, decision, confirmed=True, channel=channel)
+            log.append(LogEntry('policy_preapproved' if decision.preapproved else 'policy_confirmed',
+                                {'name': action.name, 'risk': decision.risk, 'reason': decision.reason, 'scopes': list(plan.scopes)}))
+        else:
             self._audit_decision(action, decision, confirmed=None)
-            log.append(
-                LogEntry(
-                    "policy_allowed",
-                    {
-                        "name": action.name,
-                        "risk": decision.risk,
-                        "reason": decision.reason,
-                    },
-                )
-            )
-
-        self._assert_execution_target(action.name, tool_registry)
-
-        # Isolation is resolved HERE, on the authority side, before anything
-        # executes. The granted mode travels with the call; the model never sets
-        # it, because a model-settable mode would make escalation bypassable in a
-        # single argument.
-        call_arguments = dict(action.arguments)
+            log.append(LogEntry('policy_allowed', {'name': action.name, 'risk': decision.risk, 'reason': decision.reason}))
+        arguments = deepcopy(action.arguments)
+        # Isolation is resolved HERE, on the authority side, before anything executes.
+        # The granted mode travels with the call; the model never sets it, because a
+        # model-settable mode would make escalation bypassable in a single argument.
         if self._policy.requirement_for(action, decision) is not None:
-            resolved_mode = await self._policy.resolve_execution_mode(
-                action,
-                decision,
-                approval=EscalationApproval(
-                    approver=self._approver,
-                    agent=self,
-                    call_id=uuid.uuid4().hex[:12],
-                    tool_name=action.name,
-                ),
-            )
-            # `sandbox_permissions` and `justification` are the escalating
-            # requester's vocabulary and stay on this side. Only the GRANTED mode
-            # crosses to the executor, so the executor never re-decides and never
-            # even sees what was asked for.
-            call_arguments.pop("sandbox_permissions", None)
-            call_arguments.pop("justification", None)
-            call_arguments["mode"] = resolved_mode
-            # The requirement travels WITH the mode. Sending only the mode would
-            # leave the executor to infer how strict this side is, and inferring
-            # permissively would be the executor weakening the authority layer's
-            # requirement -- a `required` demand silently satisfied by a `partial`
-            # backend. They are a pair, like the escalation arguments themselves.
-            call_arguments["isolation"] = self._policy.isolation_for(action.name)
+            agent = self
+            class OneUseApprover:
+                used = False
+                async def ask(inner, request):
+                    revalidate()
+                    if inner.used or 'escalation' not in plan.scopes or request.call_id != plan.call_id or request.tool_name != action.name:
+                        return 'rejected'
+                    inner.used = True
+                    if agent._confirm_action is None:
+                        outcome = await agent._approver.ask(request)
+                        if outcome != 'allowed-once':
+                            return outcome
+                        revalidate()
+                    log.append(LogEntry('sandbox_escalation_confirmed', {'name': action.name, 'call_id': plan.call_id, 'scopes': ['escalation']}))
+                    return 'allowed-once'
+            # A missing approver fails closed in approve_escalation, with its own message.
+            approver = OneUseApprover() if self._confirm_action is not None or self._approver is not None else None
+            mode = await self._policy.resolve_execution_mode(action, decision,
+                approval=EscalationApproval(approver, self, plan.call_id, action.name, plan.authoritative_prompt))
+            # `sandbox_permissions` and `justification` are the escalating requester's
+            # vocabulary and stay on this side. Only the GRANTED mode crosses to the
+            # executor, so the executor never re-decides and never even sees what was
+            # asked for.
+            arguments.pop('sandbox_permissions', None)
+            arguments.pop('justification', None)
+            # The requirement travels WITH the mode. Sending only the mode would leave
+            # the executor to infer how strict this side is, and inferring permissively
+            # would be the executor weakening the authority layer's requirement -- a
+            # `required` demand silently satisfied by a `partial` backend.
+            arguments.update(mode=mode, isolation=self._policy.isolation_for(action.name))
             # The rest of the sandbox decision (sandbox.toml) travels the same way and
             # overwrites anything of the same name, so the model can never set it.
-            call_arguments.update(self._policy.execution_arguments(action, resolved_mode))
-            log.append(
-                LogEntry(
-                    "execution_mode_resolved",
-                    {"name": action.name, "mode": resolved_mode},
-                )
-            )
+            arguments.update(self._policy.execution_arguments(action, mode))
+            log.append(LogEntry('execution_mode_resolved', {'name': action.name, 'mode': mode}))
+        return _BoundArguments(arguments, revalidate)
 
-        return call_arguments
+    async def _authorize(self, action, decision, plan, answer: bool | None, log) -> None:
+        """Put the question to a person, on whichever channel this agent has.
+
+        ``confirm_action`` (a session) answers the whole plan at once, escalation
+        included. ``confirm`` (the terminal) answers ``authorization`` only: an
+        escalation is asked separately, as a typed ``yes``, in ``_prepare_call``.
+        """
+
+        if self._confirm_action is not None:
+            if not plan.scopes:
+                return
+            log.append(LogEntry('approval_requested', plan.public_dict()))
+            if not await self._confirm_action(plan.public_dict()):
+                self._audit_decision(action, decision, confirmed=False)
+                raise PermissionError('The action was not approved')
+            return
+        if not decision.requires_confirmation:
+            return
+        log.append(LogEntry('policy_requires_confirmation', {'name': action.name, 'risk': decision.risk, 'reason': decision.reason}))
+        if 'authorization' not in plan.scopes:
+            return
+        if answer is not None:
+            confirmed = answer
+        else:
+            reply = self._confirm(decision, action) if callable(self._confirm) else self._confirm
+            confirmed = bool(await reply) if inspect.isawaitable(reply) else bool(reply)
+        if not confirmed:
+            self._audit_decision(action, decision, confirmed=False, channel='terminal')
+            raise PermissionError(f"Policy requires confirmation before execution: {decision.reason}")
 
     def _target_identity(self, action, registry):
         name = action.name
@@ -1090,60 +1109,6 @@ class OdessyAgent:
                 raise PermissionError('Delegation target preflight is unavailable')
             target.update(jobs.preflight_submission(**action.arguments))
         return target
-
-    async def _prepare_bound_call(self, action, decision, registry, log, *, call_id=None):
-        from odessy.authority.action_approval import build_action_approval
-        self._assert_execution_target(action.name, registry)
-        self._policy.preflight_execution_mode(action, decision)
-        plan = build_action_approval(action, decision, self._policy,
-            call_id=call_id or uuid.uuid4().hex,
-            execution_target=self._target_identity(action, registry))
-
-        stop_event = getattr(self, '_turn_stop_event', None)
-        def revalidate():
-            if self._stop_requested(stop_event):
-                raise PermissionError('Turn stopped before dispatch')
-            self._assert_execution_target(action.name, registry)
-            self._validate_tool_request(action, registry)
-            current = self._evaluate(action)
-            if not plan.matches(action, current, self._policy,
-                    execution_target=self._target_identity(action, registry)):
-                raise PermissionError('Action, execution target or policy changed; a new authorization decision is required')
-            self._policy.preflight_execution_mode(action, current)
-
-        if plan.scopes:
-            log.append(LogEntry('approval_requested', plan.public_dict()))
-            approved = await self._confirm_action(plan.public_dict())
-            if not approved:
-                self._audit_decision(action, decision, confirmed=False)
-                raise PermissionError('The action was not approved')
-            revalidate()
-        if decision.requires_confirmation:
-            self._audit_decision(action, decision, confirmed=True)
-            log.append(LogEntry('policy_preapproved' if decision.preapproved else 'policy_confirmed',
-                                {'name': action.name, 'risk': decision.risk, 'scopes': list(plan.scopes)}))
-        else:
-            self._audit_decision(action, decision, confirmed=None)
-            log.append(LogEntry('policy_allowed', {'name': action.name, 'risk': decision.risk}))
-        arguments = deepcopy(action.arguments)
-        if self._policy.requirement_for(action, decision) is not None:
-            class OneUseApprover:
-                used = False
-                async def ask(inner, request):
-                    revalidate()
-                    if inner.used or 'escalation' not in plan.scopes or request.call_id != plan.call_id or request.tool_name != action.name:
-                        return 'rejected'
-                    inner.used = True
-                    log.append(LogEntry('sandbox_escalation_confirmed', {'name': action.name, 'call_id': plan.call_id, 'scopes': ['escalation']}))
-                    return 'allowed-once'
-            mode = await self._policy.resolve_execution_mode(action, decision,
-                approval=EscalationApproval(OneUseApprover(), self, plan.call_id, action.name))
-            arguments.pop('sandbox_permissions', None)
-            arguments.pop('justification', None)
-            arguments.update(mode=mode, isolation=self._policy.isolation_for(action.name))
-            arguments.update(self._policy.execution_arguments(action, mode))
-            log.append(LogEntry('execution_mode_resolved', {'name': action.name, 'mode': mode}))
-        return _BoundArguments(arguments, revalidate)
 
     def _may_continue(
         self,
@@ -1210,12 +1175,17 @@ class OdessyAgent:
         _status(status_callback, message)
         return await self._generate("respond_to_observation", user_text, observation)
 
-    async def _ask_batch(self, calls: Sequence[ToolCall], log: list[LogEntry]) -> dict[int, bool]:
-        """One question for the calls in a batch that need confirmation, keyed by ``id(call)``.
+    async def _ask_batch(self, calls: Sequence[ToolCall], registry, log: list[LogEntry]) -> dict[int, tuple[bool, Any]]:
+        """One question for the calls in a batch that need confirmation: (reply, snapshot)
+        keyed by ``id(call)``.
 
         Asked only when two or more calls need it; a single one is asked as usual when
-        it is reached. Calls approved in advance are not asked about.
+        it is reached. Calls approved in advance are not asked about. The snapshot is
+        taken now, so a call an earlier one changed the meaning of (a link it replaced)
+        is refused when it is reached, rather than run on an answer about something else.
         """
+
+        from odessy.authority.action_approval import build_action_approval
 
         if self._confirm_action is not None or not callable(self._confirm_batch):
             return {}
@@ -1226,6 +1196,11 @@ class OdessyAgent:
                 pending.append((call, decision))
         if len(pending) < 2:
             return {}
+        plans = [
+            build_action_approval(call.request, decision, self._policy, call_id=call.call_id,
+                                  execution_target=self._target_identity(call.request, registry))
+            for call, decision in pending
+        ]
         replies = self._confirm_batch([(decision, call.request) for call, decision in pending])
         replies = list(await replies) if inspect.isawaitable(replies) else list(replies)
         if len(replies) != len(pending):
@@ -1236,7 +1211,7 @@ class OdessyAgent:
                 {"asked": len(pending), "approved": sum(reply is True for reply in replies), "deferred": sum(reply is None for reply in replies)},
             )
         )
-        return {id(call): reply for (call, _), reply in zip(pending, replies) if reply is not None}
+        return {id(call): (reply, plan) for (call, _), reply, plan in zip(pending, replies, plans) if reply is not None}
 
     @staticmethod
     def _drain_reminders(pending: list[str]) -> dict[str, Any]:
@@ -1261,25 +1236,34 @@ class OdessyAgent:
         )
 
     @staticmethod
-    def _audit_decision(request: ToolRequest, decision: Any, *, confirmed: bool | None) -> None:
-        """Record a third-party call's decision; built-in tools are in the turn log only."""
+    def _audit_decision(request: ToolRequest, decision: Any, *, confirmed: bool | None, channel: str | None = None) -> None:
+        """Record one call's decision, for any tool."""
 
         audit = current_audit()
-        tool = external_tool(request.name)
-        if audit is None or tool is None:
+        if audit is None:
             return
+        tool = external_tool(request.name)
         audit.decision(
-            server=tool.server,
-            remote_name=tool.remote_name,
+            server=tool.server if tool is not None else None,
+            remote_name=tool.remote_name if tool is not None else request.name,
             arguments=request.arguments,
             decision=decision,
             confirmed=confirmed,
+            channel=channel,
         )
 
-    def _is_confirmed(self, decision: Any, request: ToolRequest) -> bool:
-        if callable(self._confirm):
-            return bool(self._confirm(decision, request))
-        return bool(self._confirm)
+    def _audit_call(self, name: str, result: Any, started: float, error: BaseException | None = None) -> None:
+        """Record how a built-in tool's call ended. A third-party call records its own."""
+
+        audit = current_audit()
+        if audit is None or external_tool(name) is not None:
+            return
+        if error is not None or _is_error_result(result):
+            outcome = "error"
+        else:
+            outcome = str(self._extract_structured_result(result).get("status") or "ok")
+        audit.call(server=None, remote_name=name, outcome=outcome, duration_ms=round(_elapsed_ms(started), 1),
+                   error_type=type(error).__name__ if error is not None else None)
 
     def _assert_execution_target(
         self, name: str, registry: dict[str, tuple[Any, Any]]
@@ -1343,6 +1327,7 @@ class OdessyAgent:
         if entry is None:
             raise ValueError(f"Unknown MCP tool requested: {name}")
         tool, server = entry
+        started = time.perf_counter()
         # Immediately before dispatch, re-read the coordinator's own view of the peer's
         # identity and permission revision. A transport object that can do this fails
         # closed; one that cannot is a local server with nothing to re-read.
@@ -1378,8 +1363,10 @@ class OdessyAgent:
                 if structured.get('status') != 'ok':
                     reason = structured.get('error') or structured.get('reason') or structured.get('status')
                     raise PermissionError(f'Clarification ended without an answer: {reason}')
+            self._audit_call(name, result, started)
             return result
         except Exception as exc:
+            self._audit_call(name, None, started, exc)
             if name == 'user.ask':
                 raise PermissionError(f'Clarification ended without an answer: {exc}') from exc
             raise
