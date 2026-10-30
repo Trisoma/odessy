@@ -261,6 +261,17 @@ def test_an_utterance_ends_after_the_silence_run() -> None:
     assert segmenter.speech_ms >= 64
 
 
+def test_default_silence_endpoint_waits_two_and_a_half_seconds() -> None:
+    segmenter = UtteranceSegmenter()
+    segmenter.begin()
+    for _ in range(10):
+        segmenter.push(b"\x01" * VAD_FRAME_BYTES, True)
+    # 78 frames = 2496 ms; the next 32 ms frame crosses 2500 ms.
+    for _ in range(78):
+        assert segmenter.push(b"\x00" * VAD_FRAME_BYTES, False) == "recording"
+    assert segmenter.push(b"\x00" * VAD_FRAME_BYTES, False) == "ended"
+
+
 def test_a_short_noise_burst_is_not_an_utterance() -> None:
     segmenter = UtteranceSegmenter(
         SegmenterConfig(frame_ms=32, min_speech_ms=300, silence_end_ms=64)

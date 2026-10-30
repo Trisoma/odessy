@@ -143,6 +143,16 @@ def _probe(selection,section,*,run,consent,audio,owner):
     started=time.monotonic()
     try:
         owner.check()
+        if section in ('stt', 'tts'):
+            from .voice_assets import check_voice_paths
+            selector = getattr(selection.voice, section + '_provider')
+            keys = {'whisper.cpp': ('whisper_bin', 'whisper_model'),
+                    'kokoro': ('kokoro_model', 'kokoro_voices')}.get(
+                        selector, (section + '_executable', section + '_model'))
+            selected = {'voice': {key: getattr(selection.voice, key) for key in keys}}
+            for issue in check_voice_paths(selected).values():
+                if issue['blocking']:
+                    raise DiagnosticInputError(issue['message'])
         if section=='llm':result.update(test_model(selection))
         elif section=='stt':
             with sample_audio(audio,voice_config(selection),owner) as path:
