@@ -131,7 +131,9 @@ async def request_pairing(host: str, port: int, coordinator_name: str, *, device
         if not valid:
             raise PairingFailed('The execution endpoint changed; refresh discovery and reconnect')
         return {'credential': token, 'url': url, 'workspace': data.get('workspace'), 'device_id': device_id}
-    return {'token': token, 'url': url}  # Legacy CLI compatibility; new UI never prints tokens.
+    # One shape for every caller: a coordinator without a device id still gets a
+    # credential, it simply skips the endpoint-changed check above.
+    return {'credential': token, 'url': url, 'workspace': data.get('workspace'), 'device_id': None}
 
 
 def _exchange(request: urllib.request.Request) -> bytes:
