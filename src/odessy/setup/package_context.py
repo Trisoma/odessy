@@ -84,6 +84,20 @@ def validate_components(manifest,role,*,runtime=False):
     return {'copy':selected,'absent':absent}
 
 
+def _dormant(root):
+    """A record whose owned files are gone is an uninstalled folder, not a live one.
+
+    Uninstalling keeps the record so management can report what happened, but it
+    must not read as "Odessy is already installed here" on the next install: the
+    folder is empty and reusable, and the record is reused for the new version.
+    """
+    record=read_json(root/'installation.json')
+    if record.get('active'): return False
+    versions=root/'versions'
+    if not versions.is_dir(): return True
+    return not any(path.is_file() for path in versions.rglob('*'))
+
+
 def context(*,payload=None,local_app_data=None,root=None):
     payload=guard(payload or os.environ.get('ODESSY_SETUP_PAYLOAD') or Path(sys.executable).parent)
     manifest=read_json(payload/'setup-context.json')
@@ -100,6 +114,7 @@ def context(*,payload=None,local_app_data=None,root=None):
     target=guard(root or base/'Odessy'/'App')
     from .lifecycle import format_of
     format_=format_of(target)
+    if format_=='versioned' and _dormant(target): format_=None
     selection=None
     workspace=None
     installation_id=None
@@ -111,7 +126,7 @@ def context(*,payload=None,local_app_data=None,root=None):
         record=ManagedInstallation(target).record()
         installation_id=record.get('id')
         active=record.get('active')
-        registration=record.get('windows_registration',{}).get('state','none')
+        registration=(record.get('windows_registration') or record.get('linux_registration') or {}).get('state','none')
         selection=record.get('selection')
         if (target/'configuration.json').is_file():
             configuration_recorded=True

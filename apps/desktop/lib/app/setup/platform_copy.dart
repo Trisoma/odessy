@@ -24,3 +24,14 @@ String get registrationRewrittenCopy => Platform.isWindows
 String get serviceAccountCopy => Platform.isWindows
     ? 'The service runs for this Windows account.'
     : 'The service runs as a systemd user unit for this account.';
+
+String get openFromMenuCopy => Platform.isWindows
+    ? 'Open it now, or finish and open it from the Start menu. Setup closes after Odessy reports that it is ready.'
+    : 'Open it now, or finish and open it from the application menu. Setup closes after Odessy reports that it is ready.';
+
+String get registrationRowLabel =>
+    Platform.isWindows ? 'Start menu' : 'Application menu';
+
+String get registrationTileLabel => Platform.isWindows
+    ? 'Start menu / Installed apps'
+    : 'Application menu / installed apps';

@@ -23,4 +23,16 @@ add_definitions(-DAPPLICATION_ID="${APPLICATION_ID}")
 target_link_libraries(${BINARY_NAME} PRIVATE flutter)
 target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::GTK)
 
+# Impeller's software fallback has to be detected before the view is created.
+# Epoxy is a hard dependency of libgtk-3-dev (gtkglarea.h includes it), so it needs
+# no new package; EGL itself comes from the same mesa runtime Flutter requires.
+# Without epoxy the probe is skipped and Impeller stays on, as before.
+pkg_check_modules(ODESSY_EPOXY IMPORTED_TARGET epoxy)
+if(ODESSY_EPOXY_FOUND)
+  target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::ODESSY_EPOXY)
+  target_compile_definitions(${BINARY_NAME} PRIVATE ODESSY_HAVE_EPOXY=1)
+else()
+  message(WARNING "epoxy not found: software-renderer detection is disabled")
+endif()
+
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")

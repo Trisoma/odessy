@@ -35,6 +35,13 @@ def test_review_consent_no_downloads_and_external_models_preserved(tmp_path):
     report=manager.uninstall(confirm=manager.identity())
     assert (external/'q8').read_bytes()==b'model' and (root/'user.txt').read_text()=='keep'
     assert report['removed']
+    # The record stays so management can report the uninstall, but the folder is
+    # reusable: the next install reuses that record instead of refusing it.
+    assert manager.record()['active'] is None
+    again=ManagedInstallation(root,runner=fake_runner)
+    plan=again.plan(source,SetupSelection(role='execution'))
+    again.install(source,SetupSelection(role='execution'),plan['plan_id'])
+    assert again.record()['active']
 
 
 def test_failed_upgrade_preserves_active_installation(tmp_path):
