@@ -12,8 +12,9 @@
  * instead; this side gets the correct behaviour from the runtime.
  */
 
-import { realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, realpathSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import path from "node:path";
 
 import type { ExecutionPolicy } from "./contract.js";
 
@@ -51,5 +52,55 @@ export function writableRoots(policy: ExecutionPolicy): string[] {
   if (policy.mode !== "workspace-write") {
     return [];
   }
-  return [...new Set([policy.workspaceRoot, "/tmp", tmpdir()].map(canonicalPath))];
+  return [
+    ...new Set(
+      [policy.workspaceRoot, "/tmp", tmpdir(), ...(policy.extraWritable ?? [])].map(canonicalPath),
+    ),
+  ];
+}
+
+function inside(child: string, parent: string): boolean {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+/**
+ * The paths to hide from one confined run, from patterns the authority layer sent.
+ *
+ * `~` is this host's home. A path that does not exist is dropped (nothing to hide),
+ * and so is one that contains the workspace or lies inside it: hiding the workspace
+ * would break the run, and a workspace file is the workspace's business. Same rule
+ * as the Python `hidden_roots`.
+ */
+export function hiddenRoots(patterns: readonly string[], workspaceRoot: string): string[] {
+  const workspace = canonicalPath(workspaceRoot);
+  const roots: string[] = [];
+  for (const pattern of patterns) {
+    const expanded =
+      pattern === "~" || pattern.startsWith("~/") || pattern.startsWith("~\\")
+        ? path.join(homedir(), pattern.slice(1))
+        : pattern;
+    if (!path.isAbsolute(expanded) || !existsSync(expanded)) continue;
+    const resolved = canonicalPath(expanded);
+    if (inside(workspace, resolved) || inside(resolved, workspace)) continue;
+    if (!roots.includes(resolved)) roots.push(resolved);
+  }
+  return roots;
+}
+
+/**
+ * Extra writable folders from the authority layer: absolute after `~` expansion,
+ * existing, and never a filesystem root or the home folder itself.
+ */
+export function extraWritableRoots(patterns: readonly string[]): string[] {
+  const home = canonicalPath(homedir());
+  const roots: string[] = [];
+  for (const pattern of patterns) {
+    const expanded = pattern.startsWith("~/") || pattern.startsWith("~\\") ? path.join(homedir(), pattern.slice(2)) : pattern;
+    if (!path.isAbsolute(expanded) || !existsSync(expanded)) continue;
+    const resolved = canonicalPath(expanded);
+    if (resolved === home || path.dirname(resolved) === resolved) continue;
+    if (!roots.includes(resolved)) roots.push(resolved);
+  }
+  return roots;
 }

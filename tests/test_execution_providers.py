@@ -361,4 +361,5 @@ def test_the_default_provider_list_is_ordered_by_strength() -> None:
         "bwrap",
         "landlock",
         "seatbelt",
+        "windows-acl",
     ]

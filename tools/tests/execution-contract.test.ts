@@ -13,6 +13,7 @@ import {
   ESCALATION_TARGETS,
   ISOLATION_REQUIREMENTS,
   LIMITATIONS,
+  NETWORK_POLICIES,
   MODES,
   PROVIDER_UNAVAILABLE,
   ProviderContractError,
@@ -50,6 +51,7 @@ const EXPECTED_TOP_LEVEL_KEYS = [
   "escalation_subjects",
   "enforcement_levels",
   "isolation_requirements",
+  "network_policies",
   "capabilities",
   "device_capabilities",
   "limitations",
@@ -75,6 +77,7 @@ test("vocabulary matches contract.json", () => {
   assert.deepEqual(CONTRACT.escalation_subjects, [...ESCALATION_SUBJECTS]);
   assert.deepEqual(CONTRACT.enforcement_levels, [...ENFORCEMENT_LEVELS]);
   assert.deepEqual(CONTRACT.isolation_requirements, [...ISOLATION_REQUIREMENTS]);
+  assert.deepEqual(CONTRACT.network_policies, [...NETWORK_POLICIES]);
   assert.deepEqual(CONTRACT.capabilities, [...CAPABILITIES]);
   assert.deepEqual(CONTRACT.device_capabilities, [...DEVICE_CAPABILITIES]);
   assert.deepEqual(CONTRACT.limitations, [...LIMITATIONS]);

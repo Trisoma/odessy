@@ -1,0 +1,142 @@
+---
+title: Sandbox
+---
+
+Every command the agent runs (`terminal.run`, `laptop.terminal.run`) runs in a
+sandbox chosen per call. The policy decides the **mode**: a command it allows
+without asking runs `read-only`; one you confirmed runs `workspace-write` (the
+workspace and the temp folder are writable); anything wider needs an escalation
+you approve, once. The sandbox then decides **how** the mode is enforced on the
+machine that runs the command.
+
+`python -m odessy doctor` shows, for this machine, which backend each mode gets,
+how complete it is, whether it cuts the network and hides credential folders,
+the limits, and what `auto` resolved to. Every command's result says the same in
+its `sandbox` field, and the session's `tool` events carry the backend and
+enforcement so the desktop can show an unconfined run differently.
+
+## Backends
+
+| Backend | Where | Enforcement | Network cut | Paths hidden | Limits |
+|---|---|---|---|---|---|
+| bwrap | Linux (Jetson) | full | yes (`--unshare-net`) | yes (tmpfs / `/dev/null` over them) | `setrlimit` / `prlimit` |
+| landlock | Linux | full on ABI 3+, else partial | no | no | `setrlimit` / `prlimit` |
+| seatbelt | macOS | full | yes (`deny network*`) | yes (`deny file-read*`) | `setrlimit` (no `prlimit`: the Node side reports them not applied) |
+| windows-acl | Windows (Python side needs the Node tool server built) | partial | no | no | job object (Python side) |
+| unconfined | anywhere | none | no | no | as above |
+
+"Partial" means some promised file effect is not governed: on Windows a
+write-restricted token cannot stop writes to files whose ACL lets Everyone write,
+and an NTFS hard link aliases a file object rather than a path. A backend that
+cannot cut the network or hide a path keeps reporting `cannot_restrict_network` /
+`cannot_hide_paths`, and the result's `sandbox.network` says `open` and
+`sandbox.hidden_paths` says `0`: the sandbox never claims what it did not do.
+
+## Isolation
+
+`ODESSY_ISOLATION` (or `isolation` in `sandbox.toml`; the environment wins):
+
+- `auto` (default): `required` where this machine can fully confine both modes,
+  `preferred` elsewhere. The paired laptop is a different machine this side cannot
+  probe, so `auto` is `preferred` there; set `[targets.laptop]` to change it.
+- `required`: a command whose mode no backend fully enforces is refused, and
+  `danger-full-access` is never granted.
+- `preferred`: the best backend available, falling back to no sandbox. When local
+  commands would run with no sandbox at all, Odessy says so once at start.
+- `not-required`: the same selection, for deployments that state they need none.
+
+The network and hidden paths are best effort under every setting: `required`
+governs file effects.
+
+## sandbox.toml
+
+`~/.config/odessy/sandbox.toml`, or the path in `ODESSY_SANDBOX_FILE`. Like
+`hooks.toml` it is never read from the workspace, and the agent may not change it:
+a local command that names it, or a `filesystem.write` to it, is denied, even
+before it exists. It is read once per process; restart Odessy after editing it.
+
+```toml
+isolation = "auto"                       # auto | required | preferred | not-required
+escalation = "ask"                       # ask | never | workspace-write-only
+extra_writable = ["~/.cache/pip", "~/.npm"]
+hidden_paths = ["~/work/other-client"]   # added to the built-in list
+default_hidden = true
+
+[network]
+read_only = "deny"                       # default
+workspace_write = "allow"                # default
+
+[limits]                                 # 0 turns one off
+memory_mb = 4096
+processes = 256
+file_size_mb = 4096
+cpu_seconds = 120
+
+[targets.laptop]
+isolation = "preferred"
+escalation = "workspace-write-only"
+```
+
+| Key | Meaning |
+|---|---|
+| `isolation` | As above; `[targets.laptop] isolation` overrides it for the laptop |
+| `escalation` | `ask` (default): a wider mode is put to you. `never`: refused before anyone is asked. `workspace-write-only`: `danger-full-access` is refused |
+| `network.read_only` | Network for commands run without asking. Default `deny` |
+| `network.workspace_write` | Network for commands you confirmed. Default `allow`; with `deny`, a package install (`pip install`, `npm install`, ...) still keeps its network |
+| `hidden_paths` | Extra paths no command may read, absolute or `~/`. `~` is the home of the machine that runs the command, and a path that does not exist there is skipped |
+| `default_hidden` | `false` drops the built-in list (below) |
+| `extra_writable` | Folders `workspace-write` may also write, such as package caches. Never `~` itself, `~/.config`, `~/.ssh` or anything overlapping a hidden path. The windows-acl backend does not grant them |
+| `limits` | Per-command resource limits, below |
+
+At most 64 hidden paths (the built-in list included) and 16 extra writable folders.
+A hidden path that contains the workspace or lies inside it is skipped, since
+hiding it would break the command.
+
+### Hidden by default
+
+`~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.azure`, `~/.kube`, `~/.docker`, `~/.netrc`,
+`~/.pypirc`, `~/.npmrc`, `~/.git-credentials`, `~/.config/gcloud`, `~/.config/gh`,
+`~/.config/odessy`, `~/.local/share/keyrings`, `~/.password-store`, the Firefox,
+Chrome, Chromium, Brave and Edge profiles, the macOS keychains, and the Windows
+credential and DPAPI folders. A confirmed `npm install` from a private registry
+needs `~/.npmrc`; drop it with `default_hidden = false` and list the rest.
+
+### Limits
+
+Applied to the command and every process it starts:
+
+- **Linux and macOS**: `setrlimit` before the command runs (Python side) or
+  util-linux `prlimit` (Node side): `memory_mb` as the data segment, `file_size_mb`,
+  `cpu_seconds`. `processes` is not applied: the kernel counts every process of the
+  user, so a limit low enough to stop a fork bomb would stop your desktop.
+- **Windows** (Python side): a job object joined before the command starts:
+  `memory_mb` per process, `processes`, and `cpu_seconds` for the job. There is no
+  file-size limit.
+
+A command killed by a CPU-time or file-size limit has `sandbox.limit_exceeded`
+set. The Node side on Windows does not apply limits and says so in
+`sandbox.limits.not_applied`.
+
+## Leftover ACEs on Windows
+
+The windows-acl runner leaves its workspace grant in place between sessions (a
+read-only run is unaffected by it). List and remove them:
+
+```bash
+python -m odessy sandbox cleanup --workspace D:/projects/app
+```
+
+```bash
+python -m odessy sandbox cleanup --workspace D:/projects/app --apply
+```
+
+## Checking it on a real kernel
+
+CI's `sandbox-live` job installs bubblewrap and runs `tests/test_sandbox_live.py`
+and `tools/tests/sandbox-live.test.ts` with `ODESSY_SANDBOX_LIVE=1`: nothing is
+written outside the workspace, the network is cut when denied, hidden paths cannot
+be read, limits apply. Run the same on the Jetson before a release:
+
+```bash
+ODESSY_SANDBOX_LIVE=1 python -m pytest -q tests/test_sandbox_live.py
+```

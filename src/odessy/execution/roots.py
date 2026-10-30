@@ -18,7 +18,7 @@ import tempfile
 
 from odessy.execution.contract import ExecutionPolicy
 
-__all__ = ["canonical_path", "writable_roots"]
+__all__ = ["canonical_path", "extra_writable_roots", "hidden_roots", "writable_roots"]
 
 #: Bound on symlink expansion, mirroring the kernel's own limit for ELOOP.
 _MAX_SYMLINK_HOPS = 40
@@ -151,6 +151,58 @@ def writable_roots(policy: ExecutionPolicy) -> list[str]:
         return []
 
     deduplicated: dict[str, None] = {}
-    for candidate in (policy.workspace_root, "/tmp", tempfile.gettempdir()):
+    for candidate in (policy.workspace_root, "/tmp", tempfile.gettempdir(), *policy.extra_writable):
         deduplicated.setdefault(canonical_path(candidate), None)
     return list(deduplicated)
+
+
+def _expand(pattern: str) -> str:
+    if pattern == "~" or pattern.startswith(("~/", "~\\")):
+        return os.path.join(os.path.expanduser("~"), pattern[2:]) if len(pattern) > 1 else os.path.expanduser("~")
+    return pattern
+
+
+def _inside(child: str, parent: str) -> bool:
+    try:
+        return os.path.commonpath([os.path.normcase(child), os.path.normcase(parent)]) == os.path.normcase(parent)
+    except ValueError:  # different drives
+        return False
+
+
+def hidden_roots(patterns: tuple[str, ...] | list[str], workspace_root: str) -> tuple[str, ...]:
+    """The paths to hide from one confined run, from patterns the authority layer sent.
+
+    ``~`` is this host's home. A path that does not exist is dropped (there is
+    nothing to hide), and so is one that contains the workspace or lies inside it:
+    hiding the workspace would break the run, and a workspace file is the
+    workspace's business. Same rule as the TypeScript ``hiddenRoots``.
+    """
+
+    workspace = canonical_path(workspace_root)
+    roots: dict[str, None] = {}
+    for pattern in patterns:
+        expanded = _expand(pattern)
+        if not os.path.isabs(expanded) or not os.path.exists(expanded):
+            continue
+        resolved = canonical_path(expanded)
+        if _inside(workspace, resolved) or _inside(resolved, workspace):
+            continue
+        roots.setdefault(resolved, None)
+    return tuple(roots)
+
+
+def extra_writable_roots(patterns: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    """Extra writable folders: absolute after ``~`` expansion, existing, and never a
+    filesystem root or the home folder itself."""
+
+    home = canonical_path(os.path.expanduser("~"))
+    roots: dict[str, None] = {}
+    for pattern in patterns:
+        expanded = _expand(pattern)
+        if not os.path.isabs(expanded) or not os.path.isdir(expanded):
+            continue
+        resolved = canonical_path(expanded)
+        if os.path.normcase(resolved) == os.path.normcase(home) or os.path.dirname(resolved) == resolved:
+            continue
+        roots.setdefault(resolved, None)
+    return tuple(roots)

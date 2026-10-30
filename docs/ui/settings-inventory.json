@@ -773,6 +773,7 @@
       "apply_timing": "runtime startup",
       "validation": {
         "choices": [
+          "auto",
           "required",
           "preferred",
           "not-required"
@@ -1303,6 +1304,21 @@
       }
     },
     {
+      "name": "ODESSY_SANDBOX_FILE",
+      "kind": "path",
+      "summary": "the sandbox settings file (default ~/.config/odessy/sandbox.toml)",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
       "name": "ODESSY_SERVERS_FILE",
       "kind": "file",
       "summary": "the third-party MCP servers file",
@@ -1390,6 +1406,21 @@
         "choices": [],
         "minimum": 1,
         "maximum": 8
+      }
+    },
+    {
+      "name": "ODESSY_TOOL_SERVER_TOKEN",
+      "kind": "secret",
+      "summary": "bearer token returned by the paired laptop's tool server",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
       }
     },
     {

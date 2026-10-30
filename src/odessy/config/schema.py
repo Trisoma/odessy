@@ -195,7 +195,8 @@ SETTINGS: tuple[Setting, ...] = (
     _s("ODESSY_TOOL_CONCURRENCY", "int", "tools allowed to overlap, from 1 to 8",
        minimum=1, maximum=8),
     _s("ODESSY_ISOLATION", "enum", "how strict this deployment is about isolation",
-       choices=("required", "preferred", "not-required")),
+       choices=("auto", "required", "preferred", "not-required")),
+    _s("ODESSY_SANDBOX_FILE", "path", "the sandbox settings file (default ~/.config/odessy/sandbox.toml)"),
     # -- automatic model selection -----------------------------------------
     _s("ODESSY_AUTO_FAST_MODEL", "model", "the model used for fast text-only requests"),
     _s("ODESSY_AUTO_CAPABLE_BACKEND", "enum", "the backend used for capable requests",

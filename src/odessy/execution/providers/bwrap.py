@@ -62,13 +62,12 @@ class BwrapProvider(ConfiningProvider):
         return bwrap.availability in _USABLE, bwrap.detail
 
     def limitations(self, policy: ExecutionPolicy) -> frozenset[Limitation]:
-        return frozenset(
-            {
-                "cannot_restrict_reads",
-                "cannot_restrict_network",
-                "host_kernel_shared",
-            }
-        )
+        # Reads stay unrestricted outside the hidden paths, which bwrap does hide;
+        # the network is cut when the policy asks (`--unshare-net`).
+        limitations: set[Limitation] = {"cannot_restrict_reads", "host_kernel_shared"}
+        if policy.network != "deny":
+            limitations.add("cannot_restrict_network")
+        return frozenset(limitations)
 
     def wrap(self, argv: Sequence[str], policy: ExecutionPolicy) -> Sequence[str]:
         executable = self._executable or self._host().bwrap.path

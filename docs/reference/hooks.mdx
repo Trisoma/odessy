@@ -68,7 +68,8 @@ anyone who can change them. Odessy guards them three ways:
 
 - **The agent may not touch them.** A local `terminal.run` that names the hooks
   file, its folder or a hook's script is denied, and so is a `filesystem.write`
-  to them. This holds before the file exists: an agent that created one could
+  to them. `sandbox.toml` is protected the same way, and bwrap and seatbelt hide
+  `~/.config/odessy` from confined commands altogether. This holds before the file exists: an agent that created one could
   run anything it liked. (A command is text, so this is a screen, not a
   boundary; the next point catches a change made another way.)
 - **A change is noticed.** The file, and every script a hook names by an

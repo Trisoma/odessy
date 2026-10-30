@@ -823,7 +823,13 @@ def public_event(entry: Any) -> tuple[str, dict[str, Any]] | None:
     if event == "tool_observation":
         result = detail.get("result")
         status = result.get("status", "ok") if isinstance(result, dict) else "ok"
-        return "tool", {"phase": "finished", "name": detail.get("name"), "status": status, **ids}
+        finished = {"phase": "finished", "name": detail.get("name"), "status": status, **ids}
+        sandbox = result.get("sandbox") if isinstance(result, dict) else None
+        if isinstance(sandbox, dict):
+            # Which backend ran the command and how completely: a client shows an
+            # unconfined run differently from a confined one.
+            finished["sandbox"] = {key: sandbox[key] for key in ("provider_id", "enforcement", "network") if key in sandbox}
+        return "tool", finished
     outcomes = {
         "policy_allowed": "allowed",
         "policy_confirmed": "confirmed",

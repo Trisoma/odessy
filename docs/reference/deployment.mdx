@@ -8,10 +8,12 @@ calculator, time, and `terminal.run` on this computer.
 
 Without the Node dependencies, only `time.now`, `calculator.eval`, and the Python
 `terminal.run` are mounted and advertised. Model tool schemas and repair prompts use
-the same available set. The Python `terminal.run` selects bwrap, landlock or seatbelt
-per call where the host has one; on Windows none exists, so commands run unconfined,
-results report `enforcement: "none"`, and `ODESSY_ISOLATION=required` refuses them.
-Run `python -m odessy doctor` for setup steps.
+the same available set. The Python `terminal.run` selects bwrap, landlock, seatbelt or
+windows-acl per call where the host has one. windows-acl needs the Node tool server
+built (it reuses its runner), so without Node on Windows commands run unconfined,
+results report `enforcement: "none"`, Odessy says so at start, and
+`ODESSY_ISOLATION=required` refuses them. Run `python -m odessy doctor` for setup
+steps; the sandbox itself is described in `docs/reference/sandbox.mdx`.
 
 Set `ODESSY_DEPLOYMENT=split` for the Jetson/laptop layout. Configure
 `ODESSY_TOOL_SERVER_URL` (or `ODESSY_MCP_SERVER_URLS`) for the remote Node server.

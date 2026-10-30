@@ -446,7 +446,7 @@ class OdessyAgent:
             "execution": {
                 "target": call_target(request.name),
                 "mode": requirement.policy.mode if requirement is not None else None,
-                "isolation": self._policy.isolation,
+                "isolation": self._policy.isolation_for(request.name),
                 "escalation": escalation,
             },
             "session": {"turn_id": self._turn_id, "call_index": self._call_index},
@@ -1046,7 +1046,10 @@ class OdessyAgent:
             # permissively would be the executor weakening the authority layer's
             # requirement -- a `required` demand silently satisfied by a `partial`
             # backend. They are a pair, like the escalation arguments themselves.
-            call_arguments["isolation"] = self._policy.isolation
+            call_arguments["isolation"] = self._policy.isolation_for(action.name)
+            # The rest of the sandbox decision (sandbox.toml) travels the same way and
+            # overwrites anything of the same name, so the model can never set it.
+            call_arguments.update(self._policy.execution_arguments(action, resolved_mode))
             log.append(
                 LogEntry(
                     "execution_mode_resolved",
@@ -1125,7 +1128,8 @@ class OdessyAgent:
                 approval=EscalationApproval(OneUseApprover(), self, plan.call_id, action.name))
             arguments.pop('sandbox_permissions', None)
             arguments.pop('justification', None)
-            arguments.update(mode=mode, isolation=self._policy.isolation)
+            arguments.update(mode=mode, isolation=self._policy.isolation_for(action.name))
+            arguments.update(self._policy.execution_arguments(action, mode))
             log.append(LogEntry('execution_mode_resolved', {'name': action.name, 'mode': mode}))
         return _BoundArguments(arguments, revalidate)
 

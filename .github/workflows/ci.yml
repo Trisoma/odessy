@@ -96,6 +96,61 @@ jobs:
           echo "$output"
           [[ "$output" == "Directory entries: "*"pyproject.toml"* ]]
 
+  sandbox-live:
+    # The unit tests check the bwrap argv; this job checks that the boundary holds on a
+    # real kernel: no write outside the workspace, the network cut when denied, hidden
+    # paths unreadable, limits applied. ODESSY_SANDBOX_LIVE=1 makes an unusable bwrap a
+    # failure instead of a skip. Run the same two commands on the Jetson before a release.
+    name: Sandbox, live bwrap (ubuntu)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      ODESSY_CONFIG_FILE: ${{ github.workspace }}/.ci-no-config.env
+      PYTHONUTF8: "1"
+      ODESSY_SANDBOX_LIVE: "1"
+    steps:
+      - uses: actions/checkout@v5
+
+      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor, which
+      # bwrap needs; a Jetson running an older Ubuntu has them on already.
+      - name: Install bubblewrap and allow unprivileged user namespaces
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap util-linux
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          bwrap --ro-bind / / --dev /dev --unshare-pid --unshare-net --proc /proc true
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/package-lock.json
+
+      - name: Build Node tool server
+        working-directory: tools
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Install Odessy
+        run: python -m pip install -e ".[test]"
+
+      - name: Live sandbox (Python executor)
+        run: python -m pytest -q tests/test_sandbox_live.py
+
+      - name: Live sandbox (Node executor)
+        working-directory: tools
+        run: node --test dist/tests/sandbox-live.test.js
+
+      - name: Doctor reports the sandbox
+        run: python -m odessy doctor | tee doctor.txt; grep -q "read-only: bwrap (full; network cut, credentials hidden)" doctor.txt
+
   rust:
     name: odessy-link (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
