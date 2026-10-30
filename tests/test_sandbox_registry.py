@@ -170,7 +170,7 @@ def test_a_fixed_provider_and_a_registry_together_are_rejected(tmp_path: Path) -
 def test_the_cli_offers_the_shipped_backends_then_the_fallback() -> None:
     from odessy.cli import execution_registry
 
-    assert [p.provider_id for p in execution_registry().providers()] == ["bwrap", "landlock", "seatbelt", "unconfined"]
+    assert [p.provider_id for p in execution_registry().providers()] == ["bwrap", "landlock", "seatbelt", "windows-acl", "unconfined"]
 
 
 def test_every_cli_tool_server_with_a_terminal_gets_the_registry() -> None:

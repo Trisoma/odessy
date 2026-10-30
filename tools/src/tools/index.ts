@@ -22,7 +22,8 @@ import { prepareOutput, redactResult } from "../output/prepare.js";
 import { redactText } from "../output/redaction.js";
 import { SpillStore } from "../output/spill.js";
 import { confineArgv, type Confinement, type SandboxReport } from "../execution/seam.js";
-import { ISOLATION_REQUIREMENTS, MODES } from "../execution/contract.js";
+import { ISOLATION_REQUIREMENTS, MODES, NETWORK_POLICIES } from "../execution/contract.js";
+import { exceededLimit, limitArgv, normalizeLimits, type ResourceLimits } from "../execution/limits.js";
 import type { WorkspaceGuard } from "../workspace/path-guard.js";
 
 const execFileAsync = promisify(execFile);
@@ -90,6 +91,20 @@ export const laptopTerminalRunInputSchema = {
   /** How strict the peer is about isolation. `required` cannot be satisfied by a
    * mode that provides no confinement. */
   isolation: z.enum(ISOLATION_REQUIREMENTS).optional(),
+  /** The rest of the authority layer's sandbox decision (sandbox.toml), sent the
+   * same way: whether to cut the network, paths to hide, extra writable folders,
+   * and resource limits. */
+  network: z.enum(NETWORK_POLICIES).optional(),
+  hidden_paths: z.array(z.string()).max(64).optional(),
+  extra_writable: z.array(z.string()).max(16).optional(),
+  limits: z
+    .object({
+      memory_mb: z.number().int().positive().optional(),
+      processes: z.number().int().positive().optional(),
+      file_size_mb: z.number().int().positive().optional(),
+      cpu_seconds: z.number().int().positive().optional(),
+    })
+    .optional(),
 };
 
 export const filesystemWriteInputSchema = {
@@ -300,7 +315,7 @@ export async function gitLog(
 
 export async function laptopTerminalRun(
   guard: WorkspaceGuard,
-  input: { command: string; cwd?: string; timeout?: number },
+  input: { command: string; cwd?: string; timeout?: number; limits?: ResourceLimits },
   confinement?: Confinement,
 ): Promise<TerminalRunResult> {
   const resolvedCwd = await guard.resolveExisting(input.cwd ?? ".");
@@ -312,6 +327,7 @@ export async function laptopTerminalRun(
     effectiveTimeout,
     confinement,
     guard.root,
+    normalizeLimits(input.limits),
   );
   const duration = (Date.now() - start) / 1000;
   // One store per call, shared by both streams, so a run's captured output lands
@@ -428,6 +444,7 @@ async function runShellCommand(
   timeoutSeconds: number,
   confinement: Confinement | undefined,
   workspaceRoot: string,
+  limits?: ResourceLimits,
 ): Promise<{
   stdout: string;
   stderr: string;
@@ -446,7 +463,10 @@ async function runShellCommand(
   // unconfined run instead, because the record would be indistinguishable from one
   // where the boundary held. The argv below is the one `confineArgv` returned.
   const confined = confineArgv(confinement, [shell, ...shellArgs], workspaceRoot);
-  const [executable, ...args] = confined.argv;
+  const limited = limitArgv(limits, confined.argv);
+  let sandbox: SandboxReport =
+    limits === undefined ? confined.sandbox : { ...confined.sandbox, limits: limited.report };
+  const [executable, ...args] = limited.argv;
   if (executable === undefined) {
     throw new Error("confinement returned an empty argv");
   }
@@ -484,7 +504,7 @@ async function runShellCommand(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ ...result, sandbox: confined.sandbox });
+      resolve({ ...result, sandbox });
     };
 
     child.on("error", (error) => {
@@ -494,7 +514,9 @@ async function runShellCommand(
       reject(error);
     });
 
-    child.on("exit", (code) => {
+    child.on("exit", (code, signal) => {
+      const hit = limits === undefined ? undefined : exceededLimit(code, signal);
+      if (hit !== undefined) sandbox = { ...sandbox, limit_exceeded: hit };
       finish({
         stdout,
         stderr,

@@ -10,6 +10,7 @@ from odessy.execution.providers.bwrap import BwrapProvider
 from odessy.execution.providers.landlock import LandlockProvider
 from odessy.execution.providers.seatbelt import SeatbeltProvider
 from odessy.execution.providers.unconfined import UnconfinedProvider
+from odessy.execution.providers.windows_acl import WindowsAclProvider
 
 __all__ = [
     "BwrapProvider",
@@ -17,6 +18,7 @@ __all__ = [
     "LandlockProvider",
     "SeatbeltProvider",
     "UnconfinedProvider",
+    "WindowsAclProvider",
     "default_execution_providers",
 ]
 
@@ -35,4 +37,4 @@ def default_execution_providers() -> list[ConfiningProvider]:
     failure.
     """
 
-    return [BwrapProvider(), LandlockProvider(), SeatbeltProvider()]
+    return [BwrapProvider(), LandlockProvider(), SeatbeltProvider(), WindowsAclProvider()]

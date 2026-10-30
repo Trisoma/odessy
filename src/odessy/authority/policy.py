@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import functools
 import re
-from dataclasses import dataclass, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from odessy.execution.escalation import (
     validate_escalation_args,
 )
 from odessy.config.commands import matches_preapproved
+from odessy.config.sandbox import DEFAULT_SETTINGS, SandboxSettings
 from odessy.tools.external_tools import ExternalTool, external_tool
 from odessy.runtime.types import PolicyDecision, ToolRequest
 from odessy.authority.workspace_authority import WorkspaceAuthority, WorkspaceAuthorityError
@@ -75,6 +77,37 @@ class OdessyPolicy:
     #: hook scripts (``odessy.runtime.hooks.protected_paths``). A hook runs as the
     #: user outside the sandbox, so writing one would be a way out of it.
     protected_paths: tuple[Path, ...] = ()
+    #: Isolation for the paired laptop's commands when it differs from ``isolation``
+    #: (``sandbox.toml`` ``[targets.laptop]``, or ``auto`` resolved per target).
+    target_isolation: Mapping[str, IsolationRequirement] = field(default_factory=dict)
+    #: How commands are confined beyond their mode (``sandbox.toml``): network,
+    #: hidden paths, extra writable folders, limits, and whether escalation is asked.
+    sandbox: SandboxSettings = DEFAULT_SETTINGS
+
+    def isolation_for(self, tool_name: str) -> IsolationRequirement:
+        """The isolation requirement for a command on the tool's target."""
+
+        return self.target_isolation.get(_target(tool_name), self.isolation)
+
+    def execution_arguments(self, request: ToolRequest, mode: Mode) -> dict[str, Any]:
+        """The rest of the sandbox decision for one command, sent with its mode.
+
+        A command the policy ran without asking gets ``network.read_only`` (deny by
+        default); one you confirmed gets ``network.workspace_write``, except that a
+        package install always keeps the network it exists to use.
+        """
+
+        network = self.sandbox.network_for(mode)
+        command = request.arguments.get("command")
+        if network == "deny" and mode == "workspace-write" and isinstance(command, str):
+            if _matches_install_rule(command.strip().lower().replace("\\", "/").split()):
+                network = "allow"
+        arguments: dict[str, Any] = {"network": network, "hidden_paths": list(self.sandbox.hidden_paths)}
+        if self.sandbox.extra_writable:
+            arguments["extra_writable"] = list(self.sandbox.extra_writable)
+        if self.sandbox.limits is not None:
+            arguments["limits"] = self.sandbox.limits.to_arguments()
+        return arguments
 
     @property
     def authority(self) -> WorkspaceAuthority:
@@ -392,7 +425,7 @@ class OdessyPolicy:
                 mode=mode,
                 workspace_root=str(self.workspace_root),
             ),
-            isolation=self.isolation,
+            isolation=self.isolation_for(request.name),
         )
 
     def preflight_execution_mode(
@@ -413,7 +446,15 @@ class OdessyPolicy:
             raise EscalationDeniedError("This action has no execution mode to escalate")
         if target not in ESCALATION_TARGETS:
             raise EscalationArgumentError(f"unknown sandbox_permissions target: {target}")
-        if target == "danger-full-access" and self.isolation == "required":
+        setting = self.sandbox.escalation_for(_target(request.name))
+        if setting == "never":
+            raise EscalationDeniedError("sandbox escalation is turned off in sandbox.toml (escalation = \"never\")")
+        if setting == "workspace-write-only" and target == "danger-full-access":
+            raise EscalationDeniedError(
+                'sandbox escalation to "danger-full-access" is turned off in sandbox.toml '
+                '(escalation = "workspace-write-only")'
+            )
+        if target == "danger-full-access" and self.isolation_for(request.name) == "required":
             raise EscalationDeniedError(
                 f'sandbox escalation to "{target}" is refused because isolation is '
                 "required and this mode provides no confinement"
@@ -716,6 +757,10 @@ def _matches_confirm_rule(command: str, tokens: list[str]) -> bool:
     if tokens[0] == "git" and not (_is_git_read(tokens) or _is_version_query(tokens)):
         return True
     return tokens[0] in write_commands
+
+def _target(tool_name: str) -> str:
+    return "laptop" if tool_name.startswith("laptop.") else "local"
+
 
 @functools.lru_cache(maxsize=32)
 def _protected_spellings(paths: tuple[Path, ...]) -> tuple[str, ...]:

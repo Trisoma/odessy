@@ -26,7 +26,15 @@ from odessy.config.deployment import (
     model_tool_scope,
     remote_tool_server_urls,
 )
-from odessy.execution.contract import ISOLATION_REQUIREMENTS, IsolationRequirement
+from odessy.config.sandbox import (
+    ISOLATION_SETTINGS,
+    SandboxConfigError,
+    SandboxSettings,
+    load_sandbox_settings,
+    sandbox_file,
+)
+from odessy.execution.contract import IsolationRequirement
+from odessy.execution.posture import host_posture, resolve_isolation
 from odessy.execution.providers import default_execution_providers
 from odessy.execution.registry import ProviderRegistry, with_unconfined_fallback
 from odessy.execution.escalation import ApprovalRequest, EscalationDeniedError, EscalationOutcome
@@ -139,15 +147,23 @@ def _build_agent(
         hooks = load_hooks(workspace_root)
     except HookConfigError as error:
         raise SystemExit(str(error)) from error
+    try:
+        sandbox = load_sandbox_settings()
+    except SandboxConfigError as error:
+        raise SystemExit(str(error)) from error
+    isolation, target_isolation = _sandbox_isolation(workspace_root, sandbox)
     confirmer = TerminalConfirmer(workspace_root)
     return OdessyAgent(
         tool_concurrency=concurrency_from_env(),
         model=model,
         policy=OdessyPolicy(
             workspace_root=workspace_root,
-            isolation=_isolation_from_env(),
+            isolation=isolation,
+            target_isolation=target_isolation,
+            sandbox=sandbox,
             preapproved_commands=preapproved,
-            protected_paths=protected_paths(hooks=hooks),
+            # sandbox.toml is protected like hooks.toml, whether or not it exists yet.
+            protected_paths=(*protected_paths(hooks=hooks), sandbox_file(), sandbox_file().parent),
         ),
         mcp_server=(
             mcp_servers
@@ -252,21 +268,49 @@ def execution_registry() -> ProviderRegistry:
     return with_unconfined_fallback(default_execution_providers())
 
 
-def _isolation_from_env() -> IsolationRequirement:
-    """How strict this deployment is about isolation.
+def _isolation_from_env() -> str | None:
+    """``ODESSY_ISOLATION``, validated, or None when it is not set.
 
-    Defaults to ``preferred``, which is the behaviour every existing caller already has.
-    It is deliberately **not** ``required`` by default: a host with no confinement backend
-    would then refuse every process-spawning command, including on this machine, where
-    the Python side has no Windows backend. Raising it is a deployment decision, so it is
-    configuration rather than a constant.
+    ``auto`` (the default when neither this nor ``sandbox.toml`` says otherwise) is
+    resolved per target by :func:`_sandbox_isolation`.
     """
 
-    raw = (os.environ.get("ODESSY_ISOLATION") or "preferred").strip().lower()
-    if raw not in ISOLATION_REQUIREMENTS:
-        allowed = ", ".join(ISOLATION_REQUIREMENTS)
+    raw = (os.environ.get("ODESSY_ISOLATION") or "").strip().lower()
+    if not raw:
+        return None
+    if raw not in ISOLATION_SETTINGS:
+        allowed = ", ".join(ISOLATION_SETTINGS)
         raise SystemExit(f"ODESSY_ISOLATION must be one of: {allowed} (got {raw!r})")
-    return cast(IsolationRequirement, raw)
+    return raw
+
+
+_WARNED_UNCONFINED = False
+
+
+def _sandbox_isolation(
+    workspace_root: Path, sandbox: SandboxSettings
+) -> tuple[IsolationRequirement, dict[str, IsolationRequirement]]:
+    """The isolation for local commands, and for the laptop's when it differs.
+
+    ``auto`` is ``required`` where this host can fully confine both modes (bwrap,
+    seatbelt, landlock on a recent kernel) and ``preferred`` elsewhere; on the
+    laptop, which this side cannot probe, it is ``preferred``. When local commands
+    would run with no sandbox at all, that is said once, on stderr.
+    """
+
+    global _WARNED_UNCONFINED
+    setting = _isolation_from_env() or sandbox.isolation or "auto"
+    registry = execution_registry()
+    local = resolve_isolation(setting, registry, str(workspace_root))
+    laptop_setting = sandbox.isolation_setting_for("laptop") or setting
+    laptop = resolve_isolation(laptop_setting, registry, str(workspace_root), target="laptop")
+    if local != "required" and not _WARNED_UNCONFINED:
+        read_only = host_posture(registry, str(workspace_root))[0]
+        if read_only.provider_id in ("unconfined", "none"):
+            _WARNED_UNCONFINED = True
+            print("[odessy] No sandbox backend is usable here: Python-side commands run unconfined. "
+                  "`python -m odessy doctor` shows why and how to add one.", file=sys.stderr, flush=True)
+    return local, ({"laptop": laptop} if laptop != local else {})
 
 
 def _confirm_tool_call(decision: PolicyDecision, request: ToolRequest) -> bool:
@@ -856,6 +900,17 @@ def main(argv: list[str] | None = None) -> None:
         args = parser.parse_args(argv[1:])
         _print_egress(args.limit)
         return
+    if argv[:2] == ["sandbox", "cleanup"]:
+        parser = argparse.ArgumentParser(
+            prog="python -m odessy sandbox cleanup",
+            description="List (and with --apply remove) the write ACEs the windows-acl sandbox leaves on a workspace.",
+        )
+        parser.add_argument("--workspace", type=Path, default=Path.cwd(), help="The workspace folder (default: here).")
+        parser.add_argument("--apply", action="store_true", help="Remove the ACEs instead of only listing them.")
+        args = parser.parse_args(argv[2:])
+        from odessy.execution.acl_cleanup import main as cleanup_main
+
+        raise SystemExit(cleanup_main(args.workspace.resolve(), apply=args.apply))
     if argv[:1] == ["doctor"]:
         parser = argparse.ArgumentParser(
             prog="python -m odessy doctor",

@@ -427,7 +427,8 @@ async def test_the_observer_sees_entries_as_they_happen(tmp_path):
     assert events.index("tool_dispatch") < events.index("mcp_tool_called") < events.index("tool_observation")
     public = [public_event(entry) for entry in seen if public_event(entry)]
     assert ("tool", {"phase": "started", "name": "terminal.run"}) in public
-    assert ("tool", {"phase": "finished", "name": "terminal.run", "status": "ok"}) in public
+    sandbox = {"provider_id": "unconfined", "enforcement": "none"}
+    assert ("tool", {"phase": "finished", "name": "terminal.run", "status": "ok", "sandbox": sandbox}) in public
     assert ("policy", {"name": "terminal.run", "outcome": "allowed", "risk": "low"}) in public
 
 

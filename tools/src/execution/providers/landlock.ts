@@ -81,7 +81,7 @@ export class LandlockProvider extends ConfiningProvider {
     return [true, launcher.detail];
   }
 
-  protected limitations(_policy: ExecutionPolicy): readonly Limitation[] {
+  protected limitations(policy: ExecutionPolicy): readonly Limitation[] {
     const abi = this.host().landlock.abi;
 
     // Scope notes: properties of the grants this provider emits, true at every
@@ -95,6 +95,10 @@ export class LandlockProvider extends ConfiningProvider {
       "cannot_restrict_process_visibility",
       "host_kernel_shared",
     ];
+    // `--ro /` cannot carve a path back out, so hidden paths stay visible.
+    if ((policy.hiddenPaths ?? []).length > 0) {
+      limitations.push("cannot_hide_paths");
+    }
 
     // Gaps: rights the negotiated ABI does not govern.
     if (abi === null || abi < LandlockProvider.TRUNCATE_ABI) {

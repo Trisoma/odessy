@@ -19,8 +19,18 @@
  * reverse.
  */
 
+import { statSync } from "node:fs";
+
 import { isConfinedMode, type ExecutionPolicy } from "./contract.js";
 import { writableRoots } from "./roots.js";
+
+function isDirectory(target: string): boolean {
+  try {
+    return statSync(target).isDirectory();
+  } catch {
+    return false;
+  }
+}
 
 function requireConfined(policy: ExecutionPolicy, backend: string): void {
   if (!isConfinedMode(policy.mode)) {
@@ -54,9 +64,24 @@ export function bwrapProfileArgs(policy: ExecutionPolicy): string[] {
     "/proc",
     "--die-with-parent",
   ];
+  // Network: a private namespace with only loopback. Hidden paths: a folder is
+  // covered by an empty tmpfs, a file by /dev/null, before the writable binds.
+  if (policy.network === "deny") {
+    args.push("--unshare-net");
+  }
+  for (const hidden of policy.hiddenPaths ?? []) {
+    if (isDirectory(hidden)) {
+      args.push("--tmpfs", hidden);
+    } else {
+      args.push("--ro-bind", "/dev/null", hidden);
+    }
+  }
   if (policy.mode === "workspace-write") {
     args.push("--tmpfs", "/tmp");
     args.push("--bind", policy.workspaceRoot, policy.workspaceRoot);
+    for (const extra of policy.extraWritable ?? []) {
+      args.push("--bind", extra, extra);
+    }
   }
   return args;
 }
@@ -75,6 +100,9 @@ export function landlockProfileArgs(policy: ExecutionPolicy): string[] {
   const args = ["--ro", "/", "--rw", "/dev/null"];
   if (policy.mode === "workspace-write") {
     args.push("--rw", "/tmp", "--rw", policy.workspaceRoot);
+    for (const extra of policy.extraWritable ?? []) {
+      args.push("--rw", extra);
+    }
   }
   return args;
 }
@@ -104,6 +132,12 @@ export function seatbeltProfileArgs(policy: ExecutionPolicy): string[] {
     "(deny file-write*)",
     `(allow file-write* (literal ${sbplString("/dev/null")}))`,
   ];
+  if (policy.network === "deny") {
+    forms.push("(deny network*)");
+  }
+  for (const hidden of policy.hiddenPaths ?? []) {
+    forms.push(`(deny file-read* (${isDirectory(hidden) ? "subpath" : "literal"} ${sbplString(hidden)}))`);
+  }
 
   const roots = writableRoots(policy);
   if (roots.length > 0) {

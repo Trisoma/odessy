@@ -98,6 +98,10 @@ def build_odessy_mcp_server(
         timeout: int = 10,
         mode: str | None = None,
         isolation: str | None = None,
+        network: str | None = None,
+        hidden_paths: list[str] | None = None,
+        extra_writable: list[str] | None = None,
+        limits: dict[str, int] | None = None,
     ) -> TerminalRunResult:
         """Run a workspace-bound command and return structured output.
 
@@ -105,7 +109,8 @@ def build_odessy_mcp_server(
         resolved for this call, and they travel as a pair. Neither is a model-settable
         argument: the agent loop injects them after policy and escalation, which is what
         keeps the mode out of the model's reach and stops this side inferring a
-        requirement the authority layer never expressed.
+        requirement the authority layer never expressed. ``network``, ``hidden_paths``,
+        ``extra_writable`` and ``limits`` come the same way, from ``sandbox.toml``.
         """
 
         try:
@@ -115,6 +120,10 @@ def build_odessy_mcp_server(
                 timeout=timeout,
                 mode=mode,  # type: ignore[arg-type]
                 isolation=isolation,  # type: ignore[arg-type]
+                network=network,
+                hidden_paths=hidden_paths,
+                extra_writable=extra_writable,
+                limits=limits,
             )
         except ProviderError as exc:
             # A refusal is RETURNED, not raised. Raising would let it cross the MCP

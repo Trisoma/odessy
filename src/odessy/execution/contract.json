@@ -21,6 +21,7 @@
 
   "enforcement_levels": ["full", "partial", "none"],
   "isolation_requirements": ["required", "preferred", "not-required"],
+  "network_policies": ["allow", "deny"],
 
   "capabilities": ["process-exec", "fs-read", "fs-write", "network", "process-visibility"],
   "device_capabilities": ["gpio", "pwm", "adc", "serial", "spi", "i2c", "can", "usb", "camera"],
@@ -36,7 +37,8 @@
     "cannot_restrict_hardlink_alias",
     "reliance_on_everyone_ace",
     "no_console_isolation",
-    "host_kernel_shared"
+    "host_kernel_shared",
+    "cannot_hide_paths"
   ],
 
   "markers": {

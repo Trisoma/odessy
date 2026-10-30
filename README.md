@@ -203,6 +203,13 @@ confirmation, never allow more than the policy does; a post-tool hook can add a
 note, mark the turn for later rules, stop it, or withhold a result from the model.
 See [hooks](docs/reference/hooks.mdx).
 
+Commands run in a per-call sandbox (bwrap on Linux, seatbelt on macOS, a partial
+windows-acl boundary on Windows). By default a command run without asking has no
+network and cannot read credential folders such as `~/.ssh` (where the backend can
+enforce it), and every command gets memory, file-size and CPU limits.
+`~/.config/odessy/sandbox.toml` tunes this, and `python -m odessy doctor` shows what
+this machine enforces. See [sandbox](docs/reference/sandbox.mdx).
+
 `ODESSY_MAX_MODEL_CALLS` caps the model calls in one turn, counting corrections and
 follow-up steps. With a cloud backend (about 2 s a call) the default is 8 for a spoken
 turn and 20 for a typed turn or the session API; with a local one (about 30 s a call

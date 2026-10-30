@@ -130,7 +130,7 @@ export class WindowsAclProvider extends ConfiningProvider {
    * but unreferenced — correct for a vocabulary awaiting the semantics that give it
    * meaning.
    */
-  protected limitations(_policy: ExecutionPolicy): readonly Limitation[] {
+  protected limitations(policy: ExecutionPolicy): readonly Limitation[] {
     return [
       // `WRITE_RESTRICTED` intersects write accesses only. A confined child can
       // read any file its caller can read, and can open sockets.
@@ -142,6 +142,8 @@ export class WindowsAclProvider extends ConfiningProvider {
       // shares the host console.
       "no_console_isolation",
       "host_kernel_shared",
+      // Reads are not governed, so nothing can be hidden either.
+      ...((policy.hiddenPaths ?? []).length > 0 ? (["cannot_hide_paths"] as const) : []),
       ...this.gapLimitations,
     ];
   }

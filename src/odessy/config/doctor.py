@@ -135,6 +135,7 @@ def run_checks(
     checks.extend(_server_checks(backend or source.get("ODESSY_MODEL_BACKEND") or "lfm", source, probes))
     checks.extend(_commands_checks(source))
     checks.extend(_hooks_checks(source))
+    checks.extend(_sandbox_checks(source))
     checks.extend(_voice_checks(source, probes))
     if voice:
         checks.extend(_wake_checks(source, probes))
@@ -185,6 +186,77 @@ def _hooks_checks(env: Mapping[str, str]) -> list[Check]:
         return [Check("Hooks", "warn", f"{detail}; program not found: {', '.join(missing)}",
                       "Use the program's full path in command; a pre_tool hook that cannot start denies the call.")]
     return [Check("Hooks", "ok", detail)]
+
+
+_SANDBOX_FIX = {
+    "linux": "Install bubblewrap (apt install bubblewrap) and allow unprivileged user namespaces "
+             "(on Ubuntu 24.04: sysctl kernel.apparmor_restrict_unprivileged_userns=0).",
+    "win32": "Install the Node tool server (cd tools && npm ci && npm run build): it adds the windows-acl "
+             "sandbox (partial; it confines writes only).",
+    "darwin": "sandbox-exec should be at /usr/bin/sandbox-exec; check that it runs.",
+}
+
+
+def _sandbox_checks(env: Mapping[str, str], registry=None) -> list[Check]:
+    """What a command's sandbox is on this machine: per mode, the backend, how
+    complete it is, whether it cuts the network and hides credential folders, and
+    what ``auto`` resolves to. The Node tool server and the laptop choose their own
+    backends from the same rules; their results report what they used."""
+
+    from odessy.config.sandbox import SandboxConfigError, read_sandbox_settings, sandbox_file
+    from odessy.execution.posture import host_posture, resolve_isolation
+    from odessy.execution.providers import default_execution_providers
+    from odessy.execution.registry import with_unconfined_fallback
+
+    path = sandbox_file(env)
+    try:
+        settings = read_sandbox_settings(path)
+    except SandboxConfigError as error:
+        return [Check("Sandbox", "fail", str(error), f"Correct {path}; see docs/reference/sandbox.mdx.")]
+    registry = registry or with_unconfined_fallback(default_execution_providers())
+    workspace = str(Path.cwd())
+    setting = (env.get("ODESSY_ISOLATION") or "").strip().lower() or settings.isolation or "auto"
+    if setting not in ("auto", "required", "preferred", "not-required"):
+        return [Check("Sandbox", "fail", f"ODESSY_ISOLATION is {setting!r}",
+                      "Use auto, required, preferred or not-required.")]
+    local = resolve_isolation(setting, registry, workspace)
+    laptop = resolve_isolation(settings.isolation_setting_for("laptop") or setting, registry, workspace, target="laptop")
+    parts = [f"isolation {setting}: local commands {local}, laptop commands {laptop}"]
+    unconfined = False
+    for posture in host_posture(registry, workspace):
+        if posture.provider_id in ("unconfined", "none"):
+            unconfined = True
+            parts.append(f"{posture.mode}: no sandbox")
+            continue
+        extras = []
+        extras.append("network cut" if "cannot_restrict_network" not in _limitations_with(registry, posture, "deny")
+                      else "network open")
+        extras.append("credentials hidden" if "cannot_hide_paths" not in _limitations_with(registry, posture, "deny")
+                      else "credentials visible")
+        parts.append(f"{posture.mode}: {posture.provider_id} ({posture.enforcement}; {', '.join(extras)})")
+    limits = settings.limits.to_arguments() if settings.limits is not None else {}
+    parts.append("limits: " + (", ".join(f"{k}={v}" for k, v in limits.items()) or "off"))
+    parts.append(f"escalation: {settings.escalation}")
+    if settings.source is not None:
+        parts.append(f"from {settings.source}")
+    summary = "; ".join(parts)
+    if unconfined:
+        return [Check("Sandbox", "warn", summary, _SANDBOX_FIX.get(sys.platform, _SANDBOX_FIX["linux"]))]
+    return [Check("Sandbox", "ok", summary)]
+
+
+def _limitations_with(registry, posture, network: str) -> frozenset[str]:
+    """The limitations the posture's backend reports for a policy that cuts the
+    network and hides a path: what it can do, not what it does by default."""
+
+    from odessy.execution.contract import ExecutionPolicy
+
+    for provider in registry.providers():
+        if provider.provider_id == posture.provider_id and hasattr(provider, "limitations"):
+            policy = ExecutionPolicy(mode=posture.mode, workspace_root=str(Path.cwd()), network=network,
+                                     hidden_paths=(str(Path.home() / ".ssh"),))
+            return frozenset(provider.limitations(policy))
+    return frozenset({"cannot_restrict_network", "cannot_hide_paths"})
 
 
 def _missing_program(program: str) -> bool:
