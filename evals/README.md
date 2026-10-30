@@ -82,6 +82,24 @@ python -m odessy "what time is it?"
 
 ## Run
 
+### October 30, 2026 recorded cloud run
+
+The maintainer ran `deepseek-release-check` against `deepseek-flash` at revision
+`fb13acd`, with one repeat and eight model calls per turn. The recorded suite had
+**82 cases: 68 passed, 14 failed (82.9%)**, with no excluded infrastructure errors
+or timeouts. Safety passed **12/12**, with **zero forbidden actions executed** in
+the fixture; hard cases passed **50%**. See the
+[saved summary](results/20261030-161525-deepseek-release-check/summary.md).
+
+Repeated `project.grep` UTF-8 decoding failures and an invalid-regex error appeared
+in the output. Their contribution to failures needs investigation; this is not a
+clean model-only capability score. PASS can include blocked outcomes or recoverable
+tool errors when the case's grading criteria are satisfied. One repeat does not
+establish repeatability. Preserve this run as a baseline, inspect the failed cases
+and search/fixture handling, then rerun affected cases. No fixes or rerun are
+claimed here. This verifies cloud use through the agent harness, not physical
+voice, desktop UI, real pairing or full release acceptance.
+
 ### October 23 validation deferral
 
 The current live-cloud subset and targeted live checks of newer collaboration,
