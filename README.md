@@ -163,6 +163,12 @@ Voice (`python -m odessy voice`) currently needs Whisper.cpp, Kokoro, and the Li
 
 ## Configuration
 
+For the current experimental headless LAN executor, follow the
+[Jetson + Windows step-by-step guide](docs/setup/jetson-windows-lan-execution.md).
+It covers dependencies, Wi-Fi/Ethernet selection, terminal Y/N approval and an
+actual remote tool check. This trusted-LAN HTTP prototype is separate from the
+Rust/mTLS enrollment flow below.
+
 Optional authenticated split deployment uses `ODESSY_PAIRED_HOST=<enrolled-alias>`
 and the Rust `odessy-link` transport. Enroll both hosts, then grant the permitted
 workspace on the execution host; see [host pairing](docs/reference/host-pairing.mdx).

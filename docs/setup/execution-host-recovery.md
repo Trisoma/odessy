@@ -1,5 +1,8 @@
 # Conversation and execution-host recovery
 
+For the complete connection procedure and recorded terminal approval, see
+[Jetson + Windows LAN execution](jetson-windows-lan-execution.md).
+
 The model/coordinator and the optional execution host have separate lifecycles.
 A failed or stopped execution host must not prevent starting a conversation or
 using tools explicitly addressed to this computer.
