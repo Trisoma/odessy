@@ -31,6 +31,29 @@ void main() {
     expect(backend.sourceRoot, isEmpty);
   });
 
+  test('a packaged setup folder runs its own payload without a system Python', () {
+    final root = Directory.systemTemp.createTempSync('odessy-packaged-');
+    addTearDown(() => root.deleteSync(recursive: true));
+    final payload = Directory('${root.path}/payload')..createSync();
+    File('${payload.path}/setup-context.json').writeAsStringSync('{}');
+    final bridge = File('${payload.path}/bootstrap/odessy/setup/bridge.py');
+    bridge.parent.createSync(recursive: true);
+    bridge.writeAsStringSync('');
+    final separator = Platform.pathSeparator;
+    final interpreterPath = Platform.isWindows
+        ? 'runtime${separator}python.exe'
+        : 'runtime${separator}bin${separator}python3';
+    final python = File('${payload.path}$separator$interpreterPath');
+    python.parent.createSync(recursive: true);
+    python.writeAsStringSync('');
+    final executable = File('${root.path}/OdessySetup')..writeAsStringSync('');
+    final backend = LocalSetupBackend(executablePath: executable.path);
+    // Compare as URIs so the assertion does not depend on how a path was joined.
+    expect(Directory(backend.sourceRoot).absolute.uri, payload.absolute.uri);
+    expect(File(backend.python).absolute.uri, python.absolute.uri);
+    expect(Directory(backend.payloadRoot).absolute.uri, payload.absolute.uri);
+  });
+
   test('intentionally disconnected startup is not a failed connection attempt', () async {
     final session = DesktopSession(DisconnectedApi());
     addTearDown(session.dispose);

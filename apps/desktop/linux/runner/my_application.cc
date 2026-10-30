@@ -8,6 +8,11 @@
 #include <gdk/gdkx.h>
 #endif
 
+#ifdef ODESSY_HAVE_EPOXY
+#include <epoxy/egl.h>
+#include <epoxy/gl.h>
+#endif
+
 #include "flutter/generated_plugin_registrant.h"
 
 struct _MyApplication {
@@ -64,6 +69,28 @@ bool IsSetupSurface(LaunchMode mode) {
          mode == LaunchMode::kUninstall;
 }
 
+// A distributed setup folder keeps its payload beside the executable. Launching
+// that folder with no arguments installs, so the window has to look like the
+// installer from the first frame. An installation never has this sibling.
+bool PackagedPayloadBesideExecutable() {
+  g_autofree gchar* executable = g_file_read_link("/proc/self/exe", nullptr);
+  if (executable == nullptr) return false;
+  g_autofree gchar* directory = g_path_get_dirname(executable);
+  g_autofree gchar* marker =
+      g_build_filename(directory, "payload", "setup-context.json", nullptr);
+  return g_file_test(marker, G_FILE_TEST_IS_REGULAR);
+}
+
+// The arguments the native layer sees before Flutter rewrites them, plus the
+// packaged folder, which is what a double-click actually runs.
+LaunchMode ResolveLaunchMode(char** arguments) {
+  const LaunchMode mode = LaunchModeFor(arguments);
+  if (mode == LaunchMode::kApplication && PackagedPayloadBesideExecutable()) {
+    return LaunchMode::kSetup;
+  }
+  return mode;
+}
+
 const char* TitleFor(LaunchMode mode) {
   switch (mode) {
     case LaunchMode::kSetup:
@@ -104,6 +131,89 @@ bool EnvironmentFlagEnabled(const char* name) {
          g_ascii_strcasecmp(value, "off") != 0;
 }
 
+#ifdef ODESSY_HAVE_EPOXY
+// Impeller draws through OpenGL ES. A software rasteriser answers every call but
+// produces incomplete frames, so the window opens with a painted header and an
+// empty body, which reads as a broken installer. Ask the driver which renderer it
+// picked, through a 1x1 pbuffer, so no window has to exist yet.
+bool SoftwareRendering() {
+  static const bool software = [] {
+    EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    if (display == EGL_NO_DISPLAY) {
+      g_printerr("odessy: renderer probe: no EGL display\n");
+      return false;
+    }
+    EGLint major = 0;
+    EGLint minor = 0;
+    if (!eglInitialize(display, &major, &minor)) {
+      g_printerr("odessy: renderer probe: EGL did not initialize\n");
+      return false;
+    }
+    eglBindAPI(EGL_OPENGL_ES_API);
+    const EGLint config_attributes[] = {EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
+                                        EGL_RENDERABLE_TYPE,
+                                        EGL_OPENGL_ES2_BIT, EGL_NONE};
+    EGLConfig config = nullptr;
+    EGLint count = 0;
+    if (!eglChooseConfig(display, config_attributes, &config, 1, &count) ||
+        count < 1) {
+      g_printerr("odessy: renderer probe: no ES2 pbuffer configuration\n");
+      return false;
+    }
+    const EGLint surface_attributes[] = {EGL_WIDTH, 1, EGL_HEIGHT, 1, EGL_NONE};
+    EGLSurface surface =
+        eglCreatePbufferSurface(display, config, surface_attributes);
+    if (surface == EGL_NO_SURFACE) {
+      g_printerr("odessy: renderer probe: no pbuffer surface\n");
+      return false;
+    }
+    const EGLint context_attributes[] = {EGL_CONTEXT_CLIENT_VERSION, 2,
+                                         EGL_NONE};
+    EGLContext context =
+        eglCreateContext(display, config, EGL_NO_CONTEXT, context_attributes);
+    if (context == EGL_NO_CONTEXT) {
+      g_printerr("odessy: renderer probe: no ES2 context\n");
+      eglDestroySurface(display, surface);
+      return false;
+    }
+    bool detected = false;
+    if (!eglMakeCurrent(display, surface, surface, context)) {
+      g_printerr("odessy: renderer probe: context could not be made current\n");
+    } else {
+      const GLubyte* name = glGetString(GL_RENDERER);
+      g_autofree gchar* reported =
+          g_ascii_strdown(name == nullptr
+                              ? ""
+                              : reinterpret_cast<const gchar*>(name),
+                          -1);
+      // "svga" is the VMware adapter: accelerated when the host has a GPU, a
+      // fallback otherwise. Losing Impeller there costs frames; drawing nothing
+      // at all is not usable, so it is treated as software.
+      static const char* const kSoftwareTokens[] = {
+          "llvmpipe", "softpipe", "swrast", "software", "svga"};
+      for (const char* token : kSoftwareTokens) {
+        if (g_strrstr(reported, token) != nullptr) {
+          detected = true;
+          break;
+        }
+      }
+      g_printerr("odessy: renderer '%s'; %s\n", reported,
+                 detected ? "using Skia" : "keeping Impeller");
+      eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    }
+    eglDestroyContext(display, context);
+    eglDestroySurface(display, surface);
+    return detected;
+  }();
+  return software;
+}
+#else
+bool SoftwareRendering() {
+  g_printerr("odessy: renderer probe unavailable (built without epoxy)\n");
+  return false;
+}
+#endif
+
 }  // namespace
 
 // Called when first Flutter frame received.
@@ -134,7 +244,7 @@ static void my_application_activate(GApplication* application) {
     }
   }
 #endif
-  const LaunchMode launch_mode = LaunchModeFor(self->dart_entrypoint_arguments);
+  const LaunchMode launch_mode = ResolveLaunchMode(self->dart_entrypoint_arguments);
   const char* title = TitleFor(launch_mode);
 
   if (use_header_bar) {
@@ -158,9 +268,10 @@ static void my_application_activate(GApplication* application) {
       project, self->dart_entrypoint_arguments);
   // Impeller renders through OpenGL ES and produces incomplete frames on
   // graphics stacks without working acceleration (virtual machines, remote
-  // desktops, older drivers). Set ODESSY_DISABLE_IMPELLER to fall back to Skia
-  // without rebuilding Flutter. The opt-out is explicit and off by default.
-  if (EnvironmentFlagEnabled("ODESSY_DISABLE_IMPELLER")) {
+  // desktops, older drivers). A software renderer is detected here; the
+  // environment variable stays as an explicit override for anything the probe
+  // cannot see. The opt-out is otherwise off by default.
+  if (EnvironmentFlagEnabled("ODESSY_DISABLE_IMPELLER") || SoftwareRendering()) {
     fl_dart_project_set_enable_impeller(project, FALSE);
   }
 

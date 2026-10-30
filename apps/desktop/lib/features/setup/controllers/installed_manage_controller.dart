@@ -86,7 +86,13 @@ class InstalledManageController extends ChangeNotifier {
   }
 
   Future<void> load() async {
-    if (busy || _disposed || root.isEmpty) return;
+    if (busy || _disposed) return;
+    // Returning silently left the page showing empty tiles and no explanation.
+    if (root.isEmpty) {
+      error = 'This window has no installation folder to manage.';
+      notifyListeners();
+      return;
+    }
     final epoch = ++_epoch;
     _begin();
     try {

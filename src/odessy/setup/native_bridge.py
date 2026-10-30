@@ -93,10 +93,11 @@ def _packaged(parameters,*,cancelled=lambda:False):
         data,root=_versioned_root(parameters,'packaged registration')
         manager=ManagedInstallation(root)
         record=manager.record()
-        payload=data.get('payload') or (record.get('windows_registration') or {}).get('helper')
+        payload=data.get('payload') or (record.get('windows_registration') or record.get('linux_registration') or {}).get('helper')
         register(root,record,payload=payload or None)
         atomic(root/'installation.json',record)
-        return {'registered':True,'state':record.get('windows_registration',{}).get('state','none')}
+        state=(record.get('windows_registration') or record.get('linux_registration') or {}).get('state','none')
+        return {'registered':True,'state':state}
     if action in ('package-rollback-review','package-rollback'):
         from .lifecycle import dispatch
         data,root=_versioned_root(parameters,'packaged rollback')
