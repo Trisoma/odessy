@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/app/setup/setup_application.dart';
 import 'package:odessy_desktop/features/setup/controllers/package_setup_controller.dart';
 
@@ -53,6 +54,30 @@ void main() {
     await tester.tap(find.text('Install'));
     await settle(tester);
   }
+
+  // A failed review writes nothing, so the step has to say why. Before this the
+  // button looked unresponsive: no plan, Install disabled, no explanation.
+  testWidgets('a failed review explains itself and keeps Install disabled',
+      (tester) async {
+    await pumpSetup(tester, _FailingReviewBackend());
+    await tester.tap(find.text('Continue'));
+    await settle(tester);
+    await tester.tap(find.text('Continue'));
+    await settle(tester);
+    await tester.tap(find.text('Continue'));
+    await settle(tester);
+    await tester.tap(find.text('Review this installation'));
+    await settle(tester);
+    // The reason appears in the message and again in its details.
+    expect(find.textContaining('setup payload lacks required components'),
+        findsWidgets);
+    expect(find.text('Review again'), findsOneWidget);
+    expect(
+        tester
+            .widget<FilledButton>(find.widgetWithText(FilledButton, 'Install'))
+            .onPressed,
+        isNull);
+  });
 
   testWidgets('browse fills the folder; a cancelled dialog changes nothing',
       (tester) async {
@@ -197,4 +222,21 @@ void main() {
             .where((line) => line.contains('no longer in the bounded journal')),
         hasLength(1));
   });
+}
+
+/// Every other action succeeds; only the review step fails, as a payload that
+/// cannot satisfy the chosen role would.
+class _FailingReviewBackend extends FlowBackend {
+  @override
+  Future<SetupReply> execute(SetupRequest request) async {
+    if (request.parameters['action'] == 'package-review') {
+      requests.add(request);
+      return SetupReply.fromJson({
+        'id': request.id,
+        'status': 'error',
+        'reason': 'setup payload lacks required components: desktop',
+      }, request.id);
+    }
+    return super.execute(request);
+  }
 }

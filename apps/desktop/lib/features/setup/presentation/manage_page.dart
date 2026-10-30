@@ -107,10 +107,17 @@ class ManagePage extends StatelessWidget {
                       tilePadding: EdgeInsets.zero,
                       title: const Text('Diagnostics'),
                       children: [
-                        SelectableText(
-                            const JsonEncoder.withIndent('  ')
-                                .convert(c.status),
-                            style: const TextStyle(fontSize: 12)),
+                        // A selectable block needs its own bounded height: the page
+                        // already scrolls, and an unbounded child fails to build.
+                        SizedBox(
+                            height: 220,
+                            child: SingleChildScrollView(
+                                child: SelectionArea(
+                                    child: Text(
+                                        const JsonEncoder.withIndent('  ')
+                                            .convert(c.status),
+                                        style:
+                                            const TextStyle(fontSize: 12))))),
                         if (onOpenMaintenance != null)
                           TextButton(
                               onPressed: onOpenMaintenance,
@@ -154,7 +161,7 @@ class ManagePage extends StatelessWidget {
       _tile(context, 'Configuration', '$role · $model'),
       _tile(context, 'Workspace',
           (configuration['workspace'] as String?) ?? 'not recorded'),
-      _tile(context, 'Start menu / Installed apps', registration),
+      _tile(context, registrationTileLabel, registration),
       _tile(context, 'Background service', service),
     ]);
   }

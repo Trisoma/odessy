@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:odessy_client/odessy_client.dart';
 import 'session_model_credentials.dart';
 
+import 'payload_locator.dart';
+
 /// Launches only the configured Python interpreter and fixed setup module.
 class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
   @override
@@ -12,18 +14,39 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
       sourceRoot: sourceRoot,
       payloadRoot: payloadRoot,
       timeout: timeout);
-  LocalSetupBackend(
+  LocalSetupBackend._(
+      {required this.python,
+      required this.sourceRoot,
+      required this.payloadRoot,
+      required this.timeout});
+  factory LocalSetupBackend(
       {String python = const String.fromEnvironment('ODESSY_SETUP_PYTHON'),
       String sourceRoot = const String.fromEnvironment('ODESSY_SETUP_ROOT'),
       String? executablePath,
-      this.payloadRoot = '',
-      this.timeout = const Duration(seconds: 30)})
-      : python = python.isNotEmpty
-            ? python
-            : (_bundledPython(executablePath) ?? _installedPython(executablePath) ??
-                _sourcePython(sourceRoot.isNotEmpty ? sourceRoot : _sourceRoot(executablePath)) ?? 'python'),
-        sourceRoot = sourceRoot.isNotEmpty ? sourceRoot :
-            (_bundledRoot(executablePath).isNotEmpty ? _bundledRoot(executablePath) : _sourceRoot(executablePath));
+      String payloadRoot = '',
+      Duration timeout = const Duration(seconds: 30)}) {
+    // A distributed setup folder ships its own interpreter and modules, so a
+    // payload beside the executable decides both. Nothing on the machine, not
+    // even a system Python, has to exist for the installer to work there.
+    final payload = payloadRoot.isNotEmpty
+        ? payloadRoot
+        : discoverPayloadRoot(executablePath: executablePath);
+    final bundled = _bundledRoot(executablePath, payload);
+    final root = sourceRoot.isNotEmpty
+        ? sourceRoot
+        : (bundled.isNotEmpty ? bundled : _sourceRoot(executablePath));
+    final interpreter = python.isNotEmpty
+        ? python
+        : (_bundledInterpreter(root) ??
+            _installedPython(executablePath) ??
+            _sourcePython(root) ??
+            'python');
+    return LocalSetupBackend._(
+        python: interpreter,
+        sourceRoot: root,
+        payloadRoot: payload,
+        timeout: timeout);
+  }
 
   // A raw Flutter release remains a checkout build, not a portable distribution.
   // Locate only a verified ancestor project, never an arbitrary working folder.
@@ -52,29 +75,37 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
     return candidate.existsSync() ? candidate.path : null;
   }
 
-  static String _bundledRoot([String? executablePath]) {
+  // A bundled root keeps a portable interpreter beside either the bootstrap
+  // modules of a payload or the manifest of a portable distribution.
+  static bool _isBundledRoot(String path) =>
+      (Directory('$path${Platform.pathSeparator}bootstrap').existsSync() ||
+          File('$path${Platform.pathSeparator}portable-manifest.json')
+              .existsSync()) &&
+      Directory('$path${Platform.pathSeparator}runtime').existsSync();
+
+  static String _bundledRoot(String? executablePath, String payload) {
+    if (payload.isNotEmpty && _isBundledRoot(payload)) return payload;
     var candidate = File(executablePath ?? Platform.resolvedExecutable).parent;
     for (var depth = 0; depth < 7; depth++) {
-      if ((Directory('${candidate.path}${Platform.pathSeparator}bootstrap')
-                  .existsSync() ||
-              File('${candidate.path}${Platform.pathSeparator}portable-manifest.json')
-                  .existsSync()) &&
-          Directory('${candidate.path}${Platform.pathSeparator}runtime')
-              .existsSync()) {
-        return candidate.path;
-      }
+      if (_isBundledRoot(candidate.path)) return candidate.path;
       if (candidate.parent.path == candidate.path) break;
       candidate = candidate.parent;
     }
     return '';
   }
 
-  static String? _bundledPython([String? executablePath]) {
-    final root = _bundledRoot(executablePath);
-    if (root.isEmpty) return null;
-    final relative =
-        Platform.isWindows ? 'runtime/python.exe' : 'runtime/bin/python3';
-    return '$root${Platform.pathSeparator}$relative';
+  /// The interpreter inside a bundled root, which needs no system Python.
+  static String? _bundledInterpreter(String root) {
+    if (root.isEmpty || !_isBundledRoot(root)) return null;
+    final String relative;
+    if (Platform.isWindows) {
+      relative = 'runtime${Platform.pathSeparator}python.exe';
+    } else {
+      relative = 'runtime${Platform.pathSeparator}bin'
+          '${Platform.pathSeparator}python3';
+    }
+    final candidate = File('$root${Platform.pathSeparator}$relative');
+    return candidate.existsSync() ? candidate.path : null;
   }
 
   /// An installed version keeps its owned interpreter beside the desktop build.
@@ -169,6 +200,11 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
       }
       await sessionModelCredentials.accept(request, reply);
       return reply;
+    } on ProcessException catch (failure) {
+      // The operating system writes this detail in the machine's own language,
+      // so report a stable English reason and keep the command for diagnosis.
+      throw StateError('The setup helper could not start. Command: '
+          '${failure.executable} ${failure.arguments.join(' ')}');
     } finally {
       if (process != null) {
         process.kill();

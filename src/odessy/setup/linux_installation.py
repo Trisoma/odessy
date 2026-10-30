@@ -23,6 +23,9 @@ from .maintenance import ManagedInstallation, digest, guard, read_json
 
 DISPLAY_VERSION='0.5.0.dev0'
 DESKTOP_NAME='desktop/odessy_desktop'
+# Must stay equal to APPLICATION_ID in apps/desktop/linux/CMakeLists.txt: the
+# runner reports it as WM_CLASS and the menu entry matches on it.
+WM_CLASS='com.trisoma.odessy'
 _IDENTITY=re.compile('[a-f0-9]{32}')
 _DIGEST=re.compile('[a-f0-9]{64}')
 
@@ -70,7 +73,13 @@ def _menu_entry(identity):
 
 
 def _cache_root():
-    return _data_home()/'odessy'/'maintenance'
+    """Fixed per-user cache, deliberately outside any installation root.
+
+    Uninstall runs from here. A bootstrap that lives inside the installation cannot
+    remove the files it is executing, so this must not sit under the install root;
+    it mirrors %LOCALAPPDATA%\\OdessyMaintenance on Windows.
+    """
+    return _data_home()/'odessy-maintenance'
 
 
 def _active_desktop(root,record):
@@ -114,27 +123,48 @@ def _quote_exec(value):
     return value
 
 
-def _entry_text(launcher,helper):
-    base=_quote_exec(str(launcher))
-    payload=(' --payload '+_quote_exec(str(helper))) if helper else ''
+def _exec_line(argv):
+    return ' '.join(_quote_exec(str(item)) for item in argv)
+
+
+def _actions(launcher,helper,root):
+    """The registered Manage and Uninstall commands.
+
+    Uninstall has to run from the cached maintenance payload, mirroring the Windows
+    adapter: a desktop binary inside the installation cannot remove the files it is
+    executing, and the bootstrap refuses that explicitly.
+    """
+    if helper is not None:
+        desktop=guard(Path(helper)/DESKTOP_NAME)
+        common=['--payload',str(helper),'--install-root',str(root)]
+        return ([str(desktop),'--manage',*common],[str(desktop),'--uninstall',*common])
+    return ([str(launcher),'--manage'],[str(launcher),'--uninstall'])
+
+
+def _entry_text(launcher,helper,root):
+    manage,uninstall=_actions(launcher,helper,root)
     return '\n'.join([
         '[Desktop Entry]',
         'Type=Application',
         'Version=1.0',
         'Name=Odessy',
         'Comment=Local assistant owned by you',
-        'Exec='+base,
+        'Exec='+_exec_line([str(launcher)]),
         'Terminal=false',
         'Categories=Utility;',
+        # The runner sets its program name to the application ID, so the window
+        # reports that as WM_CLASS. Without this line the shell cannot match the
+        # running window to this entry and shows a second, generic icon.
+        'StartupWMClass='+WM_CLASS,
         'Actions=Manage;Uninstall;',
         '',
         '[Desktop Action Manage]',
         'Name=Manage Odessy',
-        'Exec='+base+' --manage'+payload,
+        'Exec='+_exec_line(manage),
         '',
         '[Desktop Action Uninstall]',
         'Name=Uninstall Odessy',
-        'Exec='+base+' --uninstall'+payload,
+        'Exec='+_exec_line(uninstall),
         '',
     ])
 
@@ -192,7 +222,7 @@ def register(root,record,payload=None):
     launcher.write_text(_LAUNCHER,encoding='utf-8')
     launcher.chmod(0o755)
     entry.parent.mkdir(parents=True,exist_ok=True)
-    entry.write_text(_entry_text(launcher,helper),encoding='utf-8')
+    entry.write_text(_entry_text(launcher,helper,root),encoding='utf-8')
     entry.chmod(0o644)
     resources={'schema_version':1,'installation_id':identity,'version':version,
                'files':{str(launcher):digest(launcher),str(entry):digest(entry)},
@@ -216,7 +246,7 @@ def refresh(root,record):
     helper=resources.get('helper')
     helper=guard(Path(helper)) if isinstance(helper,str) and helper else None
     entry.parent.mkdir(parents=True,exist_ok=True)
-    entry.write_text(_entry_text(guard(Path(resources['launcher'])),helper),encoding='utf-8')
+    entry.write_text(_entry_text(guard(Path(resources['launcher'])),helper,root),encoding='utf-8')
     entry.chmod(0o644)
     resources.setdefault('files',{})[str(entry)]=digest(entry)
     resources['desktop_exec']=str(desktop)

@@ -7,11 +7,15 @@ import 'package:odessy_client/odessy_client.dart';
 import 'app/setup/installed_startup.dart';
 import 'app/setup/instance_guard.dart';
 import 'app/setup/native_picker.dart';
+import 'app/setup/payload_locator.dart';
 import 'app/setup/setup_application.dart';
 import 'app/theme.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
+  // A distributed setup folder keeps the payload beside the executable, so the
+  // installer needs no internal path and a plain double-click still installs.
+  arguments = resolveLaunchArguments(arguments);
   final mode = installationMode(arguments);
   if (mode == null) {
     runApp(applicationFor(arguments));

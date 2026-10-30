@@ -23,6 +23,11 @@ from .contracts import SetupSelection, public
 class Cancelled(RuntimeError):
     pass
 
+# One installed version is described by every file it owns, digests included, which
+# is roughly 1.5 MiB for a full desktop installation. History is kept so rollback
+# works, so the ceiling has to allow several versions rather than a couple.
+MAX_RECORD_BYTES=16*1024*1024
+
 def digest(path):
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest() if hasattr(hashlib, 'file_digest') else _digest(stream)
@@ -84,8 +89,8 @@ def atomic(path,data):
 
 def read_json(path):
     guard(path)
-    with Path(path).open('rb') as stream: raw=stream.read(4*1024*1024+1)
-    if len(raw)>4*1024*1024: raise ValueError('setup record exceeds limit')
+    with Path(path).open('rb') as stream: raw=stream.read(MAX_RECORD_BYTES+1)
+    if len(raw)>MAX_RECORD_BYTES: raise ValueError('setup record exceeds limit')
     def unique(pairs):
         result={}
         for k,v in pairs:
@@ -377,7 +382,7 @@ class ManagedInstallation:
                 'steps_done':(operation or {}).get('steps_done',0),
                 'steps_total':(operation or {}).get('steps_total',0),
                 'files_written':written,'configuration':configuration,
-                'registration':record.get('windows_registration',{}).get('state','none'),
+                'registration':(record.get('windows_registration') or record.get('linux_registration') or {}).get('state','none'),
                 'service_recorded':(self.root/'service.json').exists(),'ready':False}
 
     def rollback(self,version,*,confirm,expected_state=None,expected_operation=...):
@@ -414,22 +419,33 @@ class ManagedInstallation:
             atomic(self.root/'operation.json',journal)
             removed=[];retained=[]
             try:
+                # A fully removed version is forgotten: its file inventory is the
+                # bulk of this record, and keeping it grew the record past its
+                # 4 MiB limit after a couple of uninstall/install cycles.
+                remaining_versions={}
                 for version,files in record['versions'].items():
                     base=self.root/'versions'/version
+                    kept={}
                     for name,sha in files.items():
                         if cancelled():raise KeyboardInterrupt()
                         path=guard(base/name)
                         if path.is_file() and digest(path)==sha: path.unlink();removed.append(f'{version}/{name}')
-                        elif path.exists(): retained.append(f'{version}/{name}')
+                        elif path.exists(): retained.append(f'{version}/{name}');kept[name]=sha
+                    if kept: remaining_versions[version]=kept
+                remaining_runtimes={}
                 for runtime_id,files in record.get('runtimes',{}).items():
                     if not re.fullmatch('[a-f0-9]{32}',runtime_id):raise ValueError('invalid runtime ownership identity')
+                    kept={}
                     for name,sha in files.items():
                         if cancelled():raise KeyboardInterrupt()
                         relative=Path(name)
                         if relative.is_absolute() or '..' in relative.parts or ':' in name or chr(92) in name or not re.fullmatch('[a-f0-9]{64}',str(sha)):raise ValueError('invalid runtime ownership path')
                         path=guard(self.root/'runtimes'/runtime_id/name)
                         if path.is_file() and digest(path)==sha:path.unlink();removed.append('runtimes/'+runtime_id+'/'+name)
-                        elif path.exists():retained.append('runtimes/'+runtime_id+'/'+name)
+                        elif path.exists():retained.append('runtimes/'+runtime_id+'/'+name);kept[name]=sha
+                    if kept: remaining_runtimes[runtime_id]=kept
+                record['versions']=remaining_versions
+                if 'runtimes' in record: record['runtimes']=remaining_runtimes
                 record['active']=None;atomic(self.root/'installation.json',record)
                 journal.update(finished_at=time.time(),status='completed',removed_files=len(removed),retained_files=len(retained));atomic(self.root/'operation.json',journal)
             except BaseException as error:
