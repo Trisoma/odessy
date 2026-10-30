@@ -137,8 +137,9 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
     return response;
   }
 
-  Future<Json> _json(String path, [String method = 'GET', Json? data]) async {
-    final response = await _open(path, method, data);
+  Future<Json> _json(String path, [String method = 'GET', Json? data,
+      Duration responseTimeout = const Duration(seconds: 12)]) async {
+    final response = await _open(path, method, data, null, responseTimeout);
     if (response.statusCode == 204) return {};
     final bytes = <int>[];
     await for (final chunk in response.timeout(const Duration(seconds: 12))) {
@@ -204,7 +205,7 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
 
   @override
   Future<Session> createSession() async =>
-      Session.fromJson(await _json('/v1/sessions', 'POST'));
+      Session.fromJson(await _json('/v1/sessions', 'POST', null, const Duration(seconds: 90)));
   @override
   Future<Session> snapshot(String sid) async =>
       Session.fromJson(await _json(_session(sid)));

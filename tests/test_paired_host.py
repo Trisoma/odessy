@@ -356,9 +356,7 @@ def test_an_unreachable_paired_host_never_falls_back(monkeypatch, tmp_path):
         raise ConnectionError("peer unreachable")
 
     collect = _paired_cli(monkeypatch, boom)
-    with _pytest.raises(SystemExit) as raised:
-        collect(tmp_path)
-    message = str(raised.value)
-    assert "Paired host 'jetson' is unavailable" in message
-    assert "No legacy transport is used instead" in message
+    servers = collect(tmp_path)
+    assert len(servers) == 1, 'Only local execution remains; no legacy remote substitution'
+    assert not hasattr(servers[0].server, 'config')
 

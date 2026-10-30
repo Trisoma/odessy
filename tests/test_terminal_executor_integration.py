@@ -78,6 +78,8 @@ def test_real_terminal_approval_connects_tools_and_policy(tmp_path):
             from odessy.runtime.types import ToolRequest, FinalResponse
             class Model:
                 def propose(self, text, **kwargs):
+                    if 'on this computer' in text:
+                        return ToolRequest('terminal.run', {'command':'echo odessy-local > local-approved.txt'})
                     return ToolRequest('laptop.terminal.run', {'command':'echo odessy-connected > approved.txt'})
                 def respond_to_observation(self, text, observation, **kwargs):
                     return FinalResponse('observed: ' + str(observation))
@@ -102,6 +104,16 @@ def test_real_terminal_approval_connects_tools_and_policy(tmp_path):
             raw = (workspace / 'approved.txt').read_bytes()
             written = raw.decode('utf-16') if raw[:2] in (b'\xff\xfe', b'\xfe\xff') else raw.decode('utf-8')
             assert written.strip() == 'odessy-connected', turn.final_text
+            # Stop the real remote, leaving it selected. A reviewed command
+            # explicitly addressed to this coordinator must still run locally.
+            process.stdin.write('\n')
+            process.stdin.flush()
+            await asyncio.to_thread(process.wait, timeout=10)
+            local_turn = await controller.run_turn('Run the reviewed echo on this computer')
+            local_raw = (tmp_path / 'local-approved.txt').read_bytes()
+            local_text = local_raw.decode('utf-16') if local_raw[:2] in (b'\xff\xfe', b'\xfe\xff') else local_raw.decode('utf-8')
+            assert local_text.strip() == 'odessy-local', local_turn.final_text
+            assert not (workspace / 'local-approved.txt').exists()
             clear()
         finally:
             if controller:

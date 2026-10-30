@@ -27,6 +27,7 @@ class LanConnection:
     url: str
     workspace: str
     credential: str = field(repr=False)
+    tools: tuple = field(default=(), repr=False, compare=False)
 
     def headers(self):
         return {'Authorization': 'Bearer ' + self.credential}
@@ -61,10 +62,11 @@ class LanServer:
             raise PermissionError('Execution target changed. Reconnect and review the action again.')
 
     async def list_tools(self):
-        self._check()
-        async with self.connection.client() as client:
-            result = await client.list_tools()
-        return getattr(result, 'tools', result)
+        # The Connect operation already authenticated and fetched these schemas.
+        # Never put a remote network round-trip on chat/session admission.
+        if current() is not self.connection:
+            return []
+        return list(self.connection.tools)
 
     async def call_tool(self, name, arguments, *, before_dispatch=None):
         self._check()
@@ -73,3 +75,37 @@ class LanServer:
             if before_dispatch:
                 before_dispatch()
             return await client.call_tool(name, dict(arguments))
+
+
+class OptionalExecutionServer:
+    """Cache a configured remote's schemas; dispatch stays bound to that remote."""
+    def __init__(self, server, *, local=False):
+        self.server = server
+        self.local = local
+        self.prefix = getattr(server, 'prefix', '')
+        self.config = getattr(server, 'config', None)
+        self.tools = []
+
+    async def discover(self):
+        from mcp import Client
+        if callable(getattr(self.server, 'list_tools', None)):
+            result = await self.server.list_tools()
+        else:
+            async with Client(self.server) as client:
+                result = await client.list_tools()
+        self.tools = list(getattr(result, 'tools', result))
+
+    async def list_tools(self):
+        return self.tools
+
+    async def call_tool(self, name, arguments, *, before_dispatch=None):
+        from mcp import Client
+        if callable(getattr(self.server, 'call_tool', None)):
+            return await self.server.call_tool(name, arguments, before_dispatch=before_dispatch)
+        async with Client(self.server) as client:
+            if before_dispatch:
+                before_dispatch()
+            return await client.call_tool(name, dict(arguments))
+
+    def __getattr__(self, name):
+        return getattr(self.server, name)

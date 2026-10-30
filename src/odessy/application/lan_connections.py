@@ -43,6 +43,8 @@ class Connections:
             if self.selection_path.is_symlink():
                 raise ValueError('Saved execution host selection must not be a symbolic link')
             self.selection_path.write_text(json.dumps(host, indent=2), encoding='utf-8')
+            from dataclasses import replace
+            connection = replace(connection, tools=tuple(getattr(tools, 'tools', tools)))
             select(connection)
             self.stage = 'connected'
             return {'state': 'connected', 'host': connection.public(), 'tools': count}

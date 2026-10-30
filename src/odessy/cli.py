@@ -693,93 +693,95 @@ async def _tool_servers(workspace_root: Path, *, cloud: bool = False) -> AsyncIt
 
 @asynccontextmanager
 async def _builtin_tool_servers(workspace_root: Path) -> AsyncIterator[tuple[object, ...]]:
-    """The MCP servers for this deployment, kept running for the duration of the block.
+    """Local tools are independent of optional, explicitly configured remotes.
 
-    Each is wrapped in `ExecutionTarget` because this IS the authorization act: the
-    composition root names the servers it means to execute on. A server that is merely
-    reachable -- discovered, or supplied by a future dynamic source -- is not executable,
-    so trust is never inherited from construction.
+    Unavailable remote targets are omitted, never replaced by another remote or
+    mapped to local execution. Commands still pass the same policy/approval gates.
     """
-
-    from odessy.tools.lan_executor import current as current_lan_execution
-    connection = current_lan_execution()
-    if connection is not None:
-        server = connection.server()
-        try:
-            await asyncio.wait_for(server.list_tools(), timeout=15)
-        except Exception:
-            # A stopped execution host must never prevent model-only conversation.
-            yield (ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root, registry=execution_registry())),)
-        else:
-            yield (ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root, registry=execution_registry())),
-                   ExecutionTarget(server))
-        return
-
+    from odessy.tools.lan_executor import current as current_lan_execution, OptionalExecutionServer
     try:
         mode = deployment_mode()
     except DeploymentConfigError as error:
         raise SystemExit(str(error)) from error
-
-    if mode == "split":
-        paired = _paired_host()
-        if paired is not None:
-            # Only the paired transport is offered. A paired host that cannot answer is
-            # an error, never a reason to use a legacy remote URL instead.
-            async with ExternalSessions() as sessions:
-                server = paired.server(sessions)
-                try:
-                    tools = await asyncio.wait_for(
-                        server.list_tools(), timeout=paired.server_config().timeout
-                    )
-                except Exception as error:  # noqa: BLE001 - reported, not swallowed
-                    raise SystemExit(
-                        f"Paired host {paired.alias!r} is unavailable: {error}\n"
-                        "Run `odessy-link connect --peer " + paired.alias + "` to test it, or "
-                        "`python -m odessy doctor`. No legacy transport is used instead."
-                    ) from error
-                print(
-                    f"[odessy] paired host {paired.alias}: {len(tools)} tools over mTLS",
-                    file=sys.stderr,
-                )
-                yield (
-                    ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root, registry=execution_registry())),
-                    ExecutionTarget(server),
-                )
+    connection = current_lan_execution()
+    # A LAN target is additive: retain the native local Node backend when present.
+    async with _local_tool_servers(workspace_root, use_node=mode == "single" or connection is not None,
+                                   terminal_only=connection is not None) as local:
+        if connection is not None:
+            yield (*local, ExecutionTarget(connection.server()))
             return
-        yield (
-            ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root, registry=execution_registry())),
-            *(ExecutionTarget(url) for url in remote_tool_server_urls()),
-        )
-        return
+        if mode != "split":
+            yield local
+            return
 
-    if not node_tool_server_dependencies_installed():
-        print(_NO_NODE_WARNING, file=sys.stderr)
-        server = build_odessy_mcp_server(workspace_root=workspace_root, registry=execution_registry())
-        async with Client(server) as client:
-            tools = await client.list_tools()
-        with model_tool_scope(tool.name for tool in getattr(tools, "tools", tools)):
-            yield (ExecutionTarget(server),)
-        return
+        async def optional(server):
+            wrapper = OptionalExecutionServer(server)
+            try:
+                await asyncio.wait_for(wrapper.discover(), timeout=2)
+            except Exception:
+                print("[odessy] Execution host unavailable; chat and local tools remain available. Remote commands will not run locally.", file=sys.stderr)
+                return None
+            return ExecutionTarget(wrapper)
 
-    # Loopback only, on a free port, for this run only. The Node server registers its
-    # command tool as `terminal.run` in single mode, so the Python server leaves it out.
-    node = NodeToolServerHttp(workspace_root, host="127.0.0.1", extra_env={DEPLOYMENT_ENV: "single"})
-    try:
-        url = await node.__aenter__()
-    except (RuntimeError, TimeoutError) as error:
-        raise SystemExit(
-            f"Could not start the local Node tool server: {error}\n"
-            "Run `python -m odessy doctor` to check the setup."
-        ) from error
-    try:
-        yield (
-            ExecutionTarget(
-                build_odessy_mcp_server(workspace_root=workspace_root, include_terminal=False)
-            ),
-            ExecutionTarget(url),
-        )
-    finally:
-        await node.__aexit__(None, None, None)
+        try:
+            paired = await asyncio.wait_for(asyncio.to_thread(_paired_host), timeout=2)
+        except (Exception, SystemExit):
+            # Invalid/unavailable legacy enrollment disables only that remote.
+            # Do not try an unrelated legacy URL as a replacement.
+            print("[odessy] Paired execution configuration unavailable; only local tools are offered.", file=sys.stderr)
+            yield local
+            return
+        if paired is not None:
+            async with ExternalSessions() as sessions:
+                remote = await optional(paired.server(sessions))
+                yield (*local, remote) if remote is not None else local
+            return
+        remotes = await asyncio.gather(*(optional(url) for url in remote_tool_server_urls()))
+        yield (*local, *(target for target in remotes if target is not None))
+
+
+@asynccontextmanager
+async def _local_tool_servers(workspace_root: Path, *, use_node=True, terminal_only=False):
+    """Keep chat/local execution available if optional Node startup fails."""
+    node = None
+    if use_node and node_tool_server_dependencies_installed():
+        node = NodeToolServerHttp(workspace_root, host="127.0.0.1", extra_env={DEPLOYMENT_ENV: "single"})
+        try:
+            url = await node.__aenter__()
+        except (RuntimeError, TimeoutError, OSError):
+            # NodeToolServerHttp cleans up an interrupted __aenter__ itself.
+            node = None
+            print("[odessy] Local Node tools unavailable; using the local Python tool backend. Run doctor for details.", file=sys.stderr)
+        else:
+            try:
+                local_target = url
+                if terminal_only:
+                    from odessy.tools.lan_executor import OptionalExecutionServer
+                    local_target = OptionalExecutionServer(url, local=True)
+                    schema_server = build_odessy_mcp_server(workspace_root=workspace_root)
+                    async with Client(schema_server) as schema_client:
+                        schemas = await schema_client.list_tools()
+                    # Mixed-host mode already exposes the remote's filesystem/git
+                    # names. Keep native local terminal.run without shadowing them.
+                    local_target.tools = [tool for tool in getattr(schemas, 'tools', schemas) if tool.name == 'terminal.run']
+                yield (ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root, include_terminal=False)),
+                       ExecutionTarget(local_target))
+            finally:
+                await node.__aexit__(None, None, None)
+            return
+    local = build_odessy_mcp_server(workspace_root=workspace_root, registry=execution_registry())
+    if use_node:
+        from odessy.tools.lan_executor import current
+        connection = current()
+        names = ['time.now', 'calculator.eval', 'terminal.run']
+        if connection is not None:
+            names.extend(tool.name for tool in connection.tools)
+        if node is None:
+            print(_NO_NODE_WARNING, file=sys.stderr)
+        with model_tool_scope(names):
+            yield (ExecutionTarget(local),)
+    else:
+        yield (ExecutionTarget(local),)
 
 
 def _quiet_transport_logs() -> None:
