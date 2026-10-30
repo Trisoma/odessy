@@ -68,7 +68,9 @@ anyone who can change them. Odessy guards them three ways:
 
 - **The agent may not touch them.** A local `terminal.run` that names the hooks
   file, its folder or a hook's script is denied, and so is a `filesystem.write`
-  to them. `sandbox.toml` is protected the same way, and bwrap and seatbelt hide
+  to them. A bare file name is only protected from being changed: a repository can
+  have a `hooks.toml` of its own. `sandbox.toml` and `commands.toml` are protected
+  the same way, and bwrap and seatbelt hide
   `~/.config/odessy` from confined commands altogether. This holds before the file exists: an agent that created one could
   run anything it liked. (A command is text, so this is a screen, not a
   boundary; the next point catches a change made another way.)
@@ -77,11 +79,22 @@ anyone who can change them. Odessy guards them three ways:
   changes or disappears while Odessy runs, every tool call is denied until you
   restart it. The fingerprint is compared again before each hook starts, so an
   edited script never runs: a pre-tool or pre-escalation check is denied whatever
-  its `on_error`, and an edit made by a tool call ends the turn after that call.
-  Edit hooks with Odessy stopped.
+  its `on_error`, and an edit made by a tool call ends the turn after that call, in
+  a batch as well. `sandbox.toml` and `commands.toml` are fingerprinted the same way.
+  Edit them with Odessy stopped.
 - **Scripts live outside the workspace.** A hook whose command names a file
   inside the workspace (a relative name is resolved there) is refused at start:
-  the repository could rewrite it.
+  the repository could rewrite it. So is a script in an `extra_writable` folder,
+  which a sandboxed command can write. Keep scripts out of the temp folder too: on
+  most backends commands can write there, and an edit would stop the session.
+- **The program is never the workspace's.** A bare name such as `ruff` is looked
+  up on PATH, skipping the workspace and any folder inside it, such as a virtual
+  environment; Windows would otherwise try the working directory first. The file it
+  finds is fingerprinted with the rest.
+- **Workspace code runs in the sandbox.** A hook that runs the workspace's own code
+  (`python -m`, `python -c`, `npx`, `npm test`, `pytest`, `make`, `cargo`, `go test`)
+  is refused at start unless it says `sandbox = "read-only"`. It then runs read-only
+  with no network and the credentials hidden, and fails if this host has no sandbox.
 
 ## Rules
 
@@ -131,11 +144,40 @@ decision = "deny"
 | `target` | Fire only for calls on `local` or the paired `laptop` |
 | `when_taint` | Fire only once the turn carries one of these taints |
 | `max_per_turn` | Let this many matching calls through each turn; the rule decides the rest |
+| `raise_risk` | On a `confirm` rule: raise the call's risk, so `"high"` needs a typed `yes`. It never lowers it. Not the same as `risk`, which is a condition |
 | `taint` | The taint a `taint` rule adds |
 | `reason` | Shown in the denial or approval prompt |
 
 Rules see the arguments as the model wrote them: they never leave the process.
 At most 64 rules, presets included. Taints last for one turn.
+
+A `confirm` rule can raise the call's risk with `raise_risk = "high"`, which needs a
+typed `yes`. `policy_rule` matches the policy's own rule for the call
+([permissions](permissions.mdx)), so a rule need not repeat what the policy recognised:
+
+```toml
+[[rule]]
+name = "no-uploads"
+match = ["terminal.run", "laptop.terminal.run"]
+policy_rule = ["command_exfiltration", "command_publish"]
+decision = "deny"
+```
+
+`decision = "restrict"` with `network = "deny"` asks nothing, and the call runs with no
+network. With `when_taint` it cuts the network for the rest of a turn that read
+something sensitive:
+
+```toml
+[[rule]]
+name = "no-network-after-secrets"
+match = ["terminal.run", "laptop.terminal.run"]
+when_taint = "secret-read"
+decision = "restrict"
+network = "deny"
+```
+
+Rules see a batch in order: a call is screened again if an earlier call in the batch
+marked the turn, and a post-tool hook that stops the turn stops the calls after it.
 
 ### Presets
 

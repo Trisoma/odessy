@@ -207,7 +207,9 @@ same file deny or confirm calls by pattern without a program, and
 shell, publishing packages and the like. They can deny a call or ask for
 confirmation, never allow more than the policy does; a post-tool hook can add a
 note, mark the turn for later rules, stop it, or withhold a result from the model.
-See [hooks](docs/reference/hooks.mdx).
+See [hooks](docs/reference/hooks.mdx) and [permissions](docs/reference/permissions.mdx);
+`python -m odessy permissions check "<command>"` shows how a call would be decided
+without running it.
 
 Commands run in a per-call sandbox (bwrap on Linux, seatbelt on macOS, a partial
 windows-acl boundary on Windows). By default a command run without asking has no

@@ -416,9 +416,9 @@ def test_download_and_run_is_denied(tmp_path: Path, command: str) -> None:
     ],
 )
 def test_downloads_and_pipes_without_execution_are_not_denied_by_that_rule(tmp_path: Path, command: str) -> None:
-    from odessy.authority.policy import _matches_remote_execution_rule
+    from odessy.authority.command_rules import matches_remote_execution
 
-    assert not _matches_remote_execution_rule(command.lower())
+    assert not matches_remote_execution(command.lower())
     assert _decide(tmp_path, "terminal.run", command=command) != "deny"
 
 
@@ -457,9 +457,9 @@ def test_writes_to_system_locations_are_denied(tmp_path: Path, command: str) -> 
     ],
 )
 def test_reads_and_workspace_writes_are_not_system_writes(tmp_path: Path, command: str) -> None:
-    from odessy.authority.policy import _matches_system_write_rule
+    from odessy.authority.command_rules import matches_system_write
 
-    assert not _matches_system_write_rule(command.lower())
+    assert not matches_system_write(command.lower())
 
 
 @pytest.mark.parametrize(

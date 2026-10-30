@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from odessy.authority.secret_paths import CREDENTIAL_PATHS
 from odessy.execution.limits import DEFAULT_LIMITS, ResourceLimits
 from odessy.execution.roots import FORBIDDEN_WRITABLE, canonical_path
 
@@ -55,40 +56,8 @@ ISOLATION_SETTINGS: tuple[str, ...] = ("auto", "required", "preferred", "not-req
 ESCALATION_SETTINGS: tuple[str, ...] = ("ask", "never", "workspace-write-only")
 TARGETS = ("local", "laptop")
 
-#: Folders and files no confined command needs to read: credentials, keys, browser
-#: profiles, and Odessy's own configuration. ``~`` is the executing host's home.
-#: A path that does not exist on that host is skipped there.
-DEFAULT_HIDDEN_PATHS: tuple[str, ...] = (
-    "~/.ssh",
-    "~/.gnupg",
-    "~/.aws",
-    "~/.azure",
-    "~/.kube",
-    "~/.docker",
-    "~/.netrc",
-    "~/.pypirc",
-    "~/.npmrc",
-    "~/.git-credentials",
-    "~/.config/gcloud",
-    "~/.config/gh",
-    "~/.config/odessy",
-    "~/.local/share/keyrings",
-    "~/.password-store",
-    "~/.mozilla",
-    "~/.config/google-chrome",
-    "~/.config/chromium",
-    "~/.config/BraveSoftware",
-    "~/.config/microsoft-edge",
-    "~/Library/Keychains",
-    "~/Library/Application Support/Google/Chrome",
-    "~/Library/Application Support/Firefox",
-    "~/AppData/Roaming/Microsoft/Credentials",
-    "~/AppData/Local/Microsoft/Credentials",
-    "~/AppData/Roaming/Microsoft/Protect",
-    "~/AppData/Local/Google/Chrome/User Data",
-    "~/AppData/Local/Microsoft/Edge/User Data",
-    "~/AppData/Roaming/Mozilla/Firefox",
-)
+#: The built-in hidden paths: the same list the policy refuses commands for.
+DEFAULT_HIDDEN_PATHS: tuple[str, ...] = CREDENTIAL_PATHS
 
 
 class SandboxConfigError(ValueError):

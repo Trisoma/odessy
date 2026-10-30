@@ -165,6 +165,8 @@ class PolicyDecision:
     #: (``odessy.runtime.hooks``): a hook asking to confirm an allowed command must
     #: not widen it from read-only to workspace-write. None means ``action``.
     mode_outcome: Literal["allow", "confirm"] | None = None
+    #: A rule cut this call's network (``decision = "restrict"``). None: ``sandbox.toml``.
+    network: Literal["deny"] | None = None
 
     @property
     def allowed(self) -> bool:

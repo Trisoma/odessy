@@ -25,6 +25,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from odessy.runtime.hook_rules import parse_rules
+from odessy.runtime.hooks import HookSet
 from odessy.runtime.agent_loop import ExecutionTarget, OdessyAgent
 from odessy.execution.escalation import ApprovalRequest, EscalationDeniedError
 from odessy.models.ollama_model import _OllamaStreamTimeout
@@ -263,9 +265,14 @@ async def run_attempt(
             if case.history
             else None
         )
+        hooks = None
+        if case.hook_rules:
+            rules = parse_rules(Path(case.id), {"rule": list(case.hook_rules)})
+            hooks = HookSet((), workspace, rules=tuple(rule for rule, _ in rules))
         agent = OdessyAgent(
             model=recording_model,
             policy=policy,  # type: ignore[arg-type]
+            hooks=hooks,
             mcp_server=(ExecutionTarget(server), *(ExecutionTarget(external) for external in externals)),
             confirm=decline,
             approver=approver,

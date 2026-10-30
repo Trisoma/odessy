@@ -141,9 +141,10 @@ async def test_the_agent_runs_an_approved_command_without_asking(tmp_path: Path)
     def never(decision: Any, request: Any) -> bool:
         raise AssertionError("asked")
 
-    agent = OdessyAgent(model=FakeModel(), policy=_policy(tmp_path, "pytest"), mcp_server=(), confirm=never)
+    server = object()
+    agent = OdessyAgent(model=FakeModel(), policy=_policy(tmp_path, "pytest"), mcp_server=(ExecutionTarget(server),), confirm=never)
     log: list[Any] = []
-    arguments = await agent._prepare_call(_run("pytest -q"), {}, log, AgentTurnMetrics())
+    arguments = await agent._prepare_call(_run("pytest -q"), {"terminal.run": (None, server)}, log, AgentTurnMetrics())
     assert arguments["mode"] == "workspace-write"
     assert [entry.event for entry in log][:2] == ["policy_requires_confirmation", "policy_preapproved"]
 

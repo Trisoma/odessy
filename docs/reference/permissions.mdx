@@ -1,0 +1,138 @@
+---
+title: Permissions
+---
+
+Every tool call the model proposes gets one of three decisions before anything runs.
+
+| Decision | Meaning | Sandbox mode for a command |
+|---|---|---|
+| `deny` | It does not run, and no one can approve it | none |
+| `confirm` | It runs if a person says yes | `workspace-write` |
+| `allow` | It runs without asking | `read-only` |
+
+Each decision has a risk and names the rule that made it. See what would happen to a
+call without running it:
+
+```bash
+python -m odessy permissions check "git push --force origin main"
+```
+
+```bash
+python -m odessy permissions check --write .github/workflows/ci.yml
+```
+
+`--laptop` checks a command on the paired laptop, `--workspace` another folder, and
+`--json` prints JSON. Rules in `hooks.toml` apply; hook programs are named but not run,
+so they can still make the answer stricter.
+
+## Risk
+
+| Risk | Who can answer | Session answers | `commands.toml` |
+|---|---|---|---|
+| `high` | A typed `yes` at the keyboard, or the authenticated UI | Never | Never |
+| `medium` | The above, or `y`, or by voice | `a` for the exact command, `f` for a folder of writes | Yes |
+| `low` | Not asked | | |
+
+A sandbox widening always needs the keyboard or the authenticated UI, whatever the
+call's risk.
+
+## Commands
+
+The policy reads a command as its simple commands, honouring quotes, and judges each
+by its program and arguments. It looks inside `sudo`, `env`, `xargs`, `find -exec`,
+`bash -c`, `powershell -Command`, `cmd /c` and `$(...)`. This is a screen, not a
+boundary: there is no shell parser, a program can do anything, and `python -c` is
+opaque. The sandbox is what holds.
+
+`names credentials` below means the paths in one list that the sandbox also hides
+([sandbox](sandbox.mdx#hidden-by-default)), so a host whose backend cannot hide a path
+is still covered.
+
+**Refused:**
+
+| Rule | Examples |
+|---|---|
+| `command_background` | `nohup`, a trailing `&`, `Start-Process`, `docker run -d`, `--daemon` |
+| `command_remote_execution` | `curl ... \| sh`, `iex (iwr ...)` |
+| `command_system_write` | A write to `/etc`, `/usr`, `C:\Windows` |
+| `command_destructive` | `rm -rf` in any spelling, `del /s`, `Remove-Item -Recurse`, `git reset --hard`, `git clean` without `-n`, `shutdown`, `format` |
+| `command_credentials` | Any credential path anywhere in the command (`~/.ssh`, `~/.config/gh`, `~/.password-store`, a browser profile), `.env`, `id_rsa`; a program that prints or copies a file named like a secret or token; `$API_TOKEN`; `gh auth token` |
+| `protected_config` | Names the path of `hooks.toml`, `sandbox.toml` or `commands.toml` or their folder, or changes a file with one of those names (local commands only) |
+
+**High risk:**
+
+| Rule | Examples |
+|---|---|
+| `command_privilege` | `sudo`, `doas`, `runas` |
+| `command_disk` | `dd`, `mkfs`, `parted`, `shred` |
+| `command_recursive` | `rm -r`, `find -delete`, `chmod -R`, `chmod 777` |
+| `command_git_shared` | `git push --force`, `git filter-branch`, `git config core.hooksPath` |
+| `command_publish` | `npm publish`, `twine upload`, `docker push` |
+| `command_exfiltration` | `ssh`, `scp`, remote `rsync`, `curl -T`, `curl -F`, `curl -d @file`, `git remote add` |
+| `command_encoded` | `powershell -enc`, `-ExecutionPolicy Bypass`, `base64 -d \| sh` |
+| `command_persistence` | `crontab`, `systemctl enable`, `reg add`, a write to `.bashrc` |
+| `command_download_then_run` | `curl ... -o a.sh && sh a.sh` |
+| `command_install` | `pip install`, `npm install`, in any part of a chain |
+
+Everything else needs a confirmation (`command_write`, `command_default`), unless it
+is a read-only command (`command_read_only`; see
+[current limitations](current-limitations.mdx)) or listed in `commands.toml`
+(`command_preapproved`).
+
+Where this machine has no sandbox at all, `git` reads are asked about
+(`command_unconfined_read`): a repository's git config can make one run a program, and
+allowing it unasked rests on read-only mode.
+
+On the paired laptop, this machine cannot see the files. A folder is held to the
+laptop's own grant there, and only a relative path that climbs out is refused here. A
+file reader is asked about, because a link on the laptop is not visible from here.
+
+A `timeout` above the limit (`command_timeout`) only ever adds a question. A command
+that would have run unasked still runs in `read-only` mode, and a listed command is
+asked about. It never changes a refusal.
+
+## File writes
+
+`filesystem.write` always needs a confirmation (`workspace_write`). Files that run code
+later are high risk (`write_later_effect`), because the effect comes after the prompt
+that allowed it: `.git/`, `.github/`, `.gitlab-ci.yml`, `.circleci/`,
+`azure-pipelines.yml`, `.husky/`, `.pre-commit-config.yaml`, `.devcontainer/`,
+`.vscode/tasks.json`, `.vscode/launch.json` and `.envrc`.
+
+In the terminal, `f` answers for every write under the file's folder until Odessy
+exits. It is not offered for the workspace root, and it never covers a high-risk file
+inside that folder.
+
+## Hooks and rules
+
+A rule or hook can only make a decision stricter ([hooks](hooks.mdx)). When one asks
+for a confirmation the risk is at least `medium`, and `raise_risk = "high"` on a rule
+needs a typed `yes`. A session answer never covers a confirmation that a rule or hook
+asked for: if you wrote a rule to be asked, you are asked.
+
+## Approval
+
+Every call takes the same path, on every channel. The call is snapshotted (exact
+arguments, resolved paths, target, scopes, policy, and where it would run); a person
+answers about that snapshot, shown the authority's own description and never only the
+model's reason. The prompt says what the sandbox will do: the mode, the network, the
+backend, or that there is none. The call is compared with the snapshot again after the
+answer and at dispatch, and if anything changed it needs a new decision. In a batch,
+the snapshot is taken when the batch is shown.
+
+## Audit
+
+The audit log records every call, one JSON object per line
+([format](external-servers.mdx#audit-log)): the decision and its rule, where a command
+would run, whether a person confirmed it and on which channel, how the call ended and
+which backend ran it. Arguments are recorded as hashes. Odessy's own tools have
+`"server": "builtin"`. A question answered on the desktop or by voice adds an `approval`
+record with its fingerprint and channel, and a change to the hooks or the config while
+Odessy runs adds an `integrity` record.
+
+## What is outside
+
+The policy, the rules and the sandbox govern Odessy's own tools. A delegated coding
+agent runs its own tools, with its own permissions, and only its changed files are
+checked afterwards. A third-party tool server runs as you. Neither runs under
+`sandbox.toml`; `python -m odessy doctor` says so.

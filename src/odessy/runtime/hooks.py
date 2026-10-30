@@ -44,14 +44,18 @@ a script cannot have its edit run, outside the sandbox, by the hook that follows
 The file lives with the user's config (``~/.config/odessy/hooks.toml``, or
 ``ODESSY_HOOKS_FILE``), never in the workspace: a repository must not be able to run
 programs of its own choosing. A hook runs as you, outside the sandbox, with the
-workspace as its working directory and an environment without API keys. It reads one
-JSON object on stdin; ``docs/reference/hooks.mdx`` describes the protocol.
+workspace as its working directory and an environment without API keys. So its program
+is never one in the workspace, however it is named, and a tool that runs the
+workspace's own code (``python -m``, ``npx``, ``pytest``) needs ``sandbox = "read-only"``,
+which runs the hook read-only with no network. It reads one JSON object on stdin;
+``docs/reference/hooks.mdx`` describes the protocol.
 """
 
 from __future__ import annotations
 
 import asyncio
 import fnmatch
+import functools
 import hashlib
 import json
 import os
@@ -64,6 +68,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
+from odessy.authority.command_rules import program_name
 from odessy.authority.redaction import redact_text, redact_value
 from odessy.runtime.hook_rules import (
     Rule,
@@ -112,6 +117,11 @@ _INHERITED_ENV = (
 )
 
 _STRICTNESS = {"allow": 0, "confirm": 1, "deny": 2}
+_RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
+
+
+def _higher_risk(*risks: str | None) -> str:
+    return max((risk for risk in risks if risk), key=_RISK_ORDER.__getitem__)
 
 
 class HookConfigError(ValueError):
@@ -137,6 +147,8 @@ class Hook:
     #: Pre-tool hooks only: the decision when the hook fails, times out, or prints
     #: something that is not a decision. A failing hook never allows a call.
     on_error: Literal["deny", "confirm"] = "deny"
+    #: Run the hook itself in the sandbox: for a tool that runs the workspace's code.
+    sandbox: Literal["read-only"] | None = None
 
     def applies(self, tool: str, risk: str) -> bool:
         if self.risk and risk not in self.risk:
@@ -153,6 +165,10 @@ class HookVerdict:
     hook: str | None = None
     #: Every hook that ran and what it decided, for the turn log.
     results: tuple[dict[str, Any], ...] = ()
+    #: The risk a confirming rule asked for (``raise_risk``).
+    risk: str | None = None
+    #: A rule cut this call's network.
+    network: str | None = None
 
 
 ALLOW = HookVerdict()
@@ -175,9 +191,13 @@ def tighten(decision: PolicyDecision, verdict: HookVerdict) -> PolicyDecision:
     """The policy decision made stricter by the hooks' verdict, never looser.
 
     A call the policy allowed and a hook wants confirmed keeps the policy's sandbox
-    mode (``mode_outcome``): confirming a read-only command must not let it write.
+    mode (``mode_outcome``): confirming a read-only command must not let it write. It
+    is at least medium risk: a question worth asking is not a low-risk one. A rule can
+    raise that further (``raise_risk``), never lower it.
     """
 
+    if verdict.network == "deny" and decision.action != "deny":
+        decision = replace(decision, network="deny")
     if verdict.hook is None or decision.action == "deny" or verdict.action == "allow":
         return decision
     rule = f"hook:{verdict.hook}"
@@ -192,6 +212,7 @@ def tighten(decision: PolicyDecision, verdict: HookVerdict) -> PolicyDecision:
         rule=rule,
         preapproved=False,
         mode_outcome=decision.mode_outcome or decision.action,
+        risk=_higher_risk(decision.risk, verdict.risk, "medium"),
     )
 
 
@@ -273,20 +294,27 @@ class HookSet:
             return HookVerdict("deny", tampered, "integrity", ({"hook": "integrity", "decision": "deny", "reason": tampered},))
         verdict = ALLOW
         results: list[dict[str, Any]] = []
-        for rule, action in evaluate_rules(self.rules, request, decision.risk, self.workspace_root, state):
+        raised: str | None = None
+        network: str | None = None
+        for rule, action in evaluate_rules(self.rules, request, decision.risk, self.workspace_root, state, policy_rule=decision.rule):
             results.append({"hook": rule.name, "kind": "rule", "decision": action, "reason": rule.describe()})
+            if rule.raise_risk is not None:
+                raised = _higher_risk(raised, rule.raise_risk)
+            network = network or rule.network
+            if action == "restrict":
+                continue
             if _STRICTNESS[action] > _STRICTNESS[verdict.action] or verdict.hook is None:
                 verdict = HookVerdict(action, rule.describe(), rule.name)
             if action == "deny":
                 return replace(verdict, results=tuple(results))
         hooks = self.matching("pre_tool", request.name, decision.risk)
         if not hooks:
-            return replace(verdict, results=tuple(results))
+            return replace(verdict, results=tuple(results), risk=raised, network=network)
         payload = {
             "event": "pre_tool",
             "tool": request.name,
             "arguments": redact_value(dict(request.arguments)),
-            "policy": {"decision": decision.action, "risk": decision.risk},
+            "policy": {"decision": decision.action, "risk": decision.risk, "rule": decision.rule},
             "workspace": str(self.workspace_root),
             **(context or {}),
             "taints": sorted(state.taints) if state is not None else [],
@@ -298,7 +326,7 @@ class HookSet:
                 verdict = HookVerdict(action, reason, hook.name)
             if action == "deny":
                 break
-        return replace(verdict, results=tuple(results))
+        return replace(verdict, results=tuple(results), risk=raised, network=network)
 
     async def pre_escalation(
         self,
@@ -324,7 +352,7 @@ class HookSet:
                 "requested": requested,
                 "justification": redact_text(str(request.arguments.get("justification") or "")),
             },
-            "policy": {"decision": decision.action, "risk": decision.risk},
+            "policy": {"decision": decision.action, "risk": decision.risk, "rule": decision.rule},
             "workspace": str(self.workspace_root),
             **(context or {}),
         }
@@ -390,6 +418,8 @@ class HookSet:
         for path in paths:
             request = ToolRequest("filesystem.write", {"path": path})
             for rule, action in evaluate_rules(self.rules, request, "medium", self.workspace_root, None):
+                if action == "restrict":
+                    continue
                 findings.append({"path": path, "rule": rule.name, "decision": action, "reason": rule.describe()})
         return findings
 
@@ -410,11 +440,82 @@ class HookSet:
         return await run_hook(hook, payload, cwd=self.workspace_root, environ=self.environ)
 
 
+def _outside(path: Path, root: Path) -> bool:
+    resolved = path.resolve()
+    return resolved != root and root not in resolved.parents
+
+
+def find_program(name: str, workspace: Path, environ: Mapping[str, str]) -> str | None:
+    """The file a hook's program name means, never one in the workspace.
+
+    The operating system's own lookup will not do. On Windows it tries the current
+    folder first, which for a hook is the workspace, so a repository's ``ruff.exe``
+    would run as you, outside the sandbox, in place of yours. A workspace folder on
+    PATH (a virtual environment) is skipped for the same reason.
+    """
+
+    root = workspace.resolve()
+    if os.path.dirname(name):
+        path = Path(name).expanduser()
+        path = path if path.is_absolute() else root / path
+        return str(path) if _outside(path, root) else None
+    names = [name]
+    if os.name == "nt":
+        extensions = [ext for ext in environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";") if ext]
+        if not any(name.lower().endswith(ext.lower()) for ext in extensions):
+            names = [name + ext for ext in extensions] + names
+    for folder in (environ.get("PATH") or os.defpath).split(os.pathsep):
+        if not folder or not os.path.isabs(folder) or not _outside(Path(folder), root):
+            continue
+        for candidate in names:
+            path = Path(folder) / candidate
+            if path.is_file() and (os.name == "nt" or os.access(path, os.X_OK)):
+                return str(path)
+    return None
+
+
+class HookSandboxError(RuntimeError):
+    """A hook asked to run in the sandbox, and this host has none to give it."""
+
+
+@functools.lru_cache(maxsize=1)
+def _sandbox_registry():
+    from odessy.execution.providers import default_execution_providers
+    from odessy.execution.registry import with_unconfined_fallback
+
+    return with_unconfined_fallback(default_execution_providers())
+
+
+def confine_hook(argv: tuple[str, ...], workspace: Path, environ: Mapping[str, str]) -> tuple[str, ...]:
+    """``argv`` in read-only mode, with no network and the credentials hidden.
+
+    A hook is asked for this because it runs the workspace's code, so running it with
+    nothing around it is the one outcome that is not acceptable: no backend is an error.
+    """
+
+    from odessy.config.sandbox import SandboxConfigError, load_sandbox_settings
+    from odessy.execution.contract import ExecutionPolicy, Requirement
+    from odessy.execution.roots import hidden_roots
+
+    try:
+        hidden = load_sandbox_settings(environ).hidden_paths
+    except SandboxConfigError as error:
+        raise HookSandboxError(str(error)) from error
+    policy = ExecutionPolicy(mode="read-only", workspace_root=str(workspace), network="deny",
+                             hidden_paths=hidden_roots(hidden, str(workspace)))
+    selection = _sandbox_registry().select(Requirement(policy=policy, isolation="preferred"))
+    if selection.evaluation.enforcement == "none":
+        raise HookSandboxError("this host has no sandbox to run it in")
+    return tuple(selection.provider.confine(list(argv), selection.requirement.policy).argv)
+
+
 def hook_environment(environ: Mapping[str, str], *, event: str, workspace: Path) -> dict[str, str]:
     env = {name: environ[name] for name in _INHERITED_ENV if name in environ}
     env.update(
         PYTHONIOENCODING="utf-8",
         PYTHONUTF8="1",
+        # Python 3.11+: `-m` and `-c` do not import from the working directory.
+        PYTHONSAFEPATH="1",
         ODESSY_HOOK_EVENT=event,
         ODESSY_WORKSPACE=str(workspace),
     )
@@ -430,9 +531,18 @@ async def run_hook(
 ) -> HookRun:
     """Run one hook with ``payload`` as JSON on stdin, within its timeout."""
 
-    env = hook_environment(os.environ if environ is None else environ, event=hook.event, workspace=cwd)
+    source = os.environ if environ is None else environ
+    env = hook_environment(source, event=hook.event, workspace=cwd)
     data = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
-    command = hook.command
+    program = find_program(hook.command[0], cwd, env)
+    if program is None:
+        return HookRun(error=f"cannot start {hook.command[0]!r}: not found outside the workspace")
+    command = (program, *hook.command[1:])
+    if hook.sandbox is not None:
+        try:
+            command = confine_hook(command, cwd, source)
+        except HookSandboxError as error:
+            return HookRun(error=f"cannot sandbox {hook.command[0]!r}: {error}")
     if os.name == "nt":
         # The supervisor joins a kill-on-close job before spawning the hook.
         command = (sys.executable, "-I", str(Path(__file__).with_name("_hook_host.py")), *command)
@@ -659,6 +769,48 @@ def _script_paths(hooks: tuple[Hook, ...], workspace_root: Path, where: Path) ->
     return tuple(scripts), tuple(absolute)
 
 
+#: Programs that run code the workspace supplies. ``python`` with a script of yours does
+#: not, but ``python -m`` and ``-c`` read the working directory on Python 3.10.
+_WORKSPACE_RUNNERS = frozenset({"npx", "pnpx", "bunx", "make", "pytest", "tox", "nox", "gradle", "mvn", "rake", "cargo"})
+_SCRIPT_RUNNERS = frozenset({"npm", "pnpm", "yarn", "bun"})
+
+
+def _runs_workspace_code(command: tuple[str, ...]) -> bool:
+    name, arguments = program_name(command[0]), command[1:]
+    if re.fullmatch(r"(python|py)(\d+(\.\d+)*)?", name):
+        return bool({"-m", "-c"} & set(arguments)) and not {"-I", "-P"} & set(arguments)
+    if name in _SCRIPT_RUNNERS:
+        return bool({"run", "run-script", "test", "exec", "x"} & set(arguments))
+    if name == "go":
+        return bool({"run", "test", "generate"} & set(arguments))
+    return name in _WORKSPACE_RUNNERS
+
+
+def _check_commands(hooks: tuple[Hook, ...], scripts: tuple[Path, ...], where: Path, environ: Mapping[str, str]) -> None:
+    """Refuse what would hand the workspace or a sandboxed command a way out."""
+
+    from odessy.config.sandbox import SandboxConfigError, load_sandbox_settings
+    from odessy.execution.roots import canonical_path, extra_writable_roots
+
+    for hook in hooks:
+        if hook.sandbox is None and _runs_workspace_code(hook.command):
+            raise HookConfigError(
+                f"{where}: the {hook.name} hook runs {hook.command[0]!r}, which runs the workspace's own code; "
+                'add sandbox = "read-only", or it would run that code outside the sandbox'
+            )
+    try:
+        writable = extra_writable_roots(load_sandbox_settings(environ).extra_writable)
+    except SandboxConfigError:
+        return  # Reported where the sandbox settings are loaded.
+    for script in scripts:
+        for folder in writable:
+            if Path(folder) == Path(canonical_path(str(script))) or Path(folder) in Path(canonical_path(str(script))).parents:
+                raise HookConfigError(
+                    f"{where}: {script} is inside {folder}, which extra_writable lets commands write; "
+                    "keep hook scripts where a sandboxed command cannot change them"
+                )
+
+
 def _is_interpreter(program: Path) -> bool:
     """A general program (python, node, a shell): fingerprinted, but not protected,
     since protecting it would stop the agent running it for its own work."""
@@ -720,6 +872,7 @@ def load_hooks(
     except RuleConfigError as error:
         raise HookConfigError(str(error)) from error
     scripts, fingerprinted = _script_paths(hooks, workspace_root, target)
+    _check_commands(hooks, scripts, target, source)
     if track:
         fingerprint = _fingerprint(target, fingerprinted)
         baseline = _BASELINES.setdefault(key, fingerprint)
@@ -730,8 +883,9 @@ def load_hooks(
             raise HookConfigError(f"{target}: {HOOKS_REQUIRED_ENV} is set, but no hook or rule applies to {workspace_root}")
         return None
     # Unlike the process baseline, this set belongs to one workspace, so it can also
-    # cover scripts named relative to it.
-    watched = tuple(dict.fromkeys((*fingerprinted, *scripts)))
+    # cover scripts named relative to it, and the programs PATH finds for it.
+    programs = (find_program(hook.command[0], workspace_root, source) for hook in hooks)
+    watched = tuple(dict.fromkeys((*fingerprinted, *scripts, *(Path(path) for path in programs if path))))
     return HookSet(hooks, workspace_root, target, source, rules=rules, scripts=scripts,
                    fingerprint=_fingerprint(target, watched), fingerprinted=watched)
 
@@ -776,7 +930,7 @@ def parse_hooks(target: Path, data: dict[str, Any] | None = None) -> list[tuple[
 
 
 def _parse_entry(where: str, event: Event, entry: Any) -> tuple[Hook, Path | None]:
-    allowed = {"name", "command", "timeout", "workspace"}
+    allowed = {"name", "command", "timeout", "workspace", "sandbox"}
     if event != "turn_end":
         allowed |= {"match", "risk"}
     if event in ("pre_tool", "pre_escalation"):
@@ -812,6 +966,9 @@ def _parse_entry(where: str, event: Event, entry: Any) -> tuple[Hook, Path | Non
     workspace = entry.get("workspace")
     if workspace is not None and (not isinstance(workspace, str) or not workspace.strip()):
         raise HookConfigError(f"{where}: workspace must be a folder path")
+    sandbox = entry.get("sandbox")
+    if sandbox not in (None, "read-only"):
+        raise HookConfigError(f"{where}: sandbox must be \"read-only\"")
     hook = Hook(
         event=event,
         name=name,
@@ -820,6 +977,7 @@ def _parse_entry(where: str, event: Event, entry: Any) -> tuple[Hook, Path | Non
         risk=frozenset(risk),
         timeout=float(timeout),
         on_error=on_error,
+        sandbox=sandbox,
     )
     return hook, Path(workspace).expanduser() if workspace else None
 
@@ -889,6 +1047,7 @@ __all__ = [
     "HookRun",
     "HookSet",
     "HookVerdict",
+    "find_program",
     "hook_environment",
     "hooks_file",
     "load_hooks",

@@ -44,6 +44,8 @@ MODEL
 | DENY means no execution | A denied request must not reach `tools/call`. |
 | CONFIRM means human approval | The model cannot approve its own action. |
 | Only authorized targets execute | A server must be explicitly marked an `ExecutionTarget` before any tool call reaches it. Holding one *is* the authorization; there is no default target set. |
+| DENY cannot be argued with | Every refusal is judged before anything the model can vary changes the question. A long `timeout` only ever adds a confirmation. See [permissions](permissions.mdx). |
+| One answer for where a call runs | The prompt, its snapshot, the hooks, the audit log and `permissions check` all read the same execution plan: the mode, the network, and the backend this machine can provide. A rule can cut the network; nothing can open one. |
 | Hooks only tighten | A rule or pre-tool hook can deny a call or require confirmation, and a pre-escalation hook can refuse an escalation; none can allow a denied call, skip a required confirmation, or widen a command's sandbox mode. The agent may not change the hooks file or its scripts, and a change while Odessy runs denies every call until a restart. |
 | Requesting a wider mode is not self-granting | A denied `danger-full-access` request does not fall back to a wider mode, and can never satisfy a `required` isolation requirement. |
 
@@ -146,7 +148,13 @@ Pre-dispatch argument comparison preserves JSON value types, including nested
 values such as `1` versus `true`. Coding-job adapter identity is checked again
 after awaited patch-worktree creation, immediately before command construction.
 
-Ordinary confirmation and sandbox expansion share a combined request, with the
+The terminal uses the same snapshot and the same checks. It asks about a sandbox
+expansion separately, as a typed `yes`, and shows the exact command there as well as
+the model's justification. A session answer covers one rule's question for one exact
+command or one folder of writes; it never covers high risk, or a question a hook or
+rule asked.
+
+On a session, ordinary confirmation and sandbox expansion share a combined request, with the
 strongest required channel. Both authority and sandbox validation still run and
 retain their audit/log records. A grant covers only its listed scopes and one
 dispatch. It cannot weaken child-agent permissions or host authorization.

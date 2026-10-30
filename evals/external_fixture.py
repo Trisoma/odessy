@@ -156,11 +156,11 @@ class RecordingExternalServer(NamespacedServer):
     def connection(self) -> Any:
         return self._server
 
-    async def call_tool(self, remote_name: str, arguments: dict[str, Any]) -> Any:
+    async def call_tool(self, remote_name: str, arguments: dict[str, Any], *, before_dispatch: Any = None) -> Any:
         call = RecordedCall(name=f"{self.prefix}.{remote_name}", arguments=dict(arguments))
         self._recorder.calls.append(call)
         try:
-            result = await super().call_tool(remote_name, arguments)
+            result = await super().call_tool(remote_name, arguments, before_dispatch=before_dispatch)
         except Exception:
             self._mark_failed(call)
             raise
