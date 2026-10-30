@@ -26,39 +26,6 @@ void main() {
     expect(c.profiles, contains('current'));
     c.dispose();
   });
-  test('LAN pairing request is held, sanitized, and answered exactly once',
-      () async {
-    final api = PairingTransport();
-    final c = DesktopSession(api);
-    await c.start();
-    api.emit(SessionEvent(1, 'pairing_request',
-        {'id': 'a1', 'name': 'Jetson\u0007', 'ip': '192.168.1.50'}));
-    await Future<void>.delayed(Duration.zero);
-    expect(c.pairing?.id, 'a1');
-    expect(c.pairing?.name, 'Jetson', reason: 'control characters are stripped');
-    expect(await c.answerPairing('a1', true), true);
-    expect(api.answers, {'a1': true});
-    expect(c.pairing, isNull);
-    expect(await c.answerPairing('gone', false), false,
-        reason: 'a request that is no longer held is not re-sent');
-    expect(api.answers, {'a1': true});
-    c.dispose();
-  });
-
-  test('a transport that cannot answer pairing refuses instead of pretending',
-      () async {
-    final api = ReconnectApi();
-    final c = DesktopSession(api);
-    await c.start();
-    api.first.add(SessionEvent(
-        1, 'pairing_request', {'id': 'a1', 'name': 'Jetson', 'ip': '10.0.0.2'}));
-    await Future<void>.delayed(Duration.zero);
-    expect(c.pairing?.id, 'a1');
-    expect(await c.answerPairing('a1', true), false);
-    expect(c.error, isNotEmpty);
-    c.dispose();
-  });
-
   test('shutdown is awaitable and idempotent', () async {
     final api = LifecycleApi();
     final c = DesktopSession(api);
@@ -148,28 +115,6 @@ void main() {
 class FailedStopApi extends DemoApi {
   @override
   Future<void> stop(String sid) async => throw const ApiFailure(500);
-}
-
-class PairingTransport extends DemoApi implements PairingApi {
-  PairingTransport() : super(delay: const Duration(milliseconds: 20));
-  final _events = StreamController<SessionEvent>.broadcast();
-  final answers = <String, bool>{};
-
-  void emit(SessionEvent event) => _events.add(event);
-
-  @override
-  Stream<SessionEvent> events(String sid, int after) => _events.stream;
-
-  @override
-  Future<void> approvePairing(String id, bool accepted) async {
-    answers[id] = accepted;
-  }
-
-  @override
-  void close() {
-    unawaited(_events.close());
-    super.close();
-  }
 }
 
 class ReconnectApi extends DemoApi {

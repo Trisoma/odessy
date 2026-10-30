@@ -18,7 +18,7 @@ import pytest
 from odessy.setup import cli, lan_pair
 
 SERVICE_NAME = 'Jetson.' + lan_pair.SERVICE_TYPE
-PAIRED = {'token': 'abc', 'url': 'http://192.168.1.10:8765'}
+PAIRED = {'credential': 'abc', 'url': 'http://192.168.1.10:8765'}
 
 
 def _fake_zeroconf(monkeypatch, info, name=SERVICE_NAME):
@@ -118,7 +118,7 @@ def test_request_pairing_accepted():
     with _host() as server:
         result = asyncio.run(lan_pair.request_pairing('127.0.0.1', server.server_port, 'Jetson'))
 
-    assert result == PAIRED
+    assert {key: result[key] for key in PAIRED} == PAIRED
     assert _Handler.seen == [('/v1/pairing/request', {'name': 'Jetson'})]
 
 
@@ -152,7 +152,7 @@ def test_environment_proxies_do_not_intercept_a_pairing(monkeypatch):
     with _host() as server:
         result = asyncio.run(lan_pair.request_pairing('127.0.0.1', server.server_port, 'Jetson'))
 
-    assert result == PAIRED
+    assert {key: result[key] for key in PAIRED} == PAIRED
 
 
 @pytest.mark.parametrize('host, port, name', [
@@ -178,7 +178,7 @@ def test_pair_host_writes_a_create_only_record(tmp_path, capsys, monkeypatch):
     assert json.loads(written.out)['paired'] is True
     assert 'ODESSY_TOOL_SERVER_URL=http://192.168.1.10:8765' in written.err
     assert json.loads(record.read_text()) == {'tool_server_url': PAIRED['url'],
-                                              'tool_server_token': PAIRED['token']}
+                                              'tool_server_token': PAIRED['credential']}
 
 
 def test_pair_host_reports_a_decline_without_writing(tmp_path, capsys, monkeypatch):

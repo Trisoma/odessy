@@ -158,8 +158,11 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
             server = target.server if isinstance(target, ExecutionTarget) else target
             if isinstance(server, NamespacedServer):
                 continue
-            async with Client(server) as client:
-                tools = await client.list_tools()
+            if callable(getattr(server, 'list_tools', None)) and not isinstance(server, str):
+                tools = await server.list_tools()
+            else:
+                async with Client(server) as client:
+                    tools = await client.list_tools()
             names.extend(tool.name for tool in getattr(tools, "tools", tools))
 
         def agent_factory(chosen, confirm=None):

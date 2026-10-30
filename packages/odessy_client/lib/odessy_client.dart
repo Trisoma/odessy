@@ -59,15 +59,19 @@ abstract class OdessyApi {
   void close();
 }
 
-/// Optional capability: answering a LAN pairing prompt.
-///
-/// A remote coordinator asks for access with `POST /v1/pairing/request` and
-/// waits; only the loopback client holding the bearer token may answer. Kept
-/// off [OdessyApi] so demo and offline transports stay compatible.
-abstract interface class PairingApi {
-  /// Answers the pending request [id]. The service rejects it with
-  /// [ApiFailure] when the request already timed out or was answered elsewhere.
-  Future<void> approvePairing(String id, bool accepted);
+/// Local coordinator commands. Remote credentials stay entirely inside Python.
+abstract interface class ExecutionHostsApi {
+  Future<Json> scanExecutionHosts();
+  Future<Json> executionHostStatus();
+  Future<Json> connectExecutionHost(String id);
+  Future<void> disconnectExecutionHost();
+}
+
+class ExecutionConnectionFailure implements Exception {
+  const ExecutionConnectionFailure(this.message);
+  final String message;
+  @override
+  String toString() => message;
 }
 
 class ApiFailure implements Exception {
@@ -86,7 +90,7 @@ class ApiFailure implements Exception {
       };
 }
 
-class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi, DesktopVoiceApi, PairingApi {
+class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi, DesktopVoiceApi, ExecutionHostsApi {
   LocalApi(this.base, String token) : _token = token {
     if (!['http', 'https'].contains(base.scheme) ||
         !['localhost', '127.0.0.1', '::1'].contains(base.host) ||
@@ -114,7 +118,7 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
   @override
   String get identity => base.origin;
   Future<HttpClientResponse> _open(String path, String method,
-      [Json? data, HttpClient? client]) async {
+      [Json? data, HttpClient? client, Duration responseTimeout = const Duration(seconds: 12)]) async {
     final request = await (client ?? _http)
         .openUrl(method, base.resolve(path))
         .timeout(const Duration(seconds: 8));
@@ -125,7 +129,7 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
       request.headers.contentType = ContentType.json;
       request.write(jsonEncode(data));
     }
-    final response = await request.close().timeout(const Duration(seconds: 12));
+    final response = await request.close().timeout(responseTimeout);
     if (response.statusCode >= 300) {
       await response.drain<void>().timeout(const Duration(seconds: 12));
       throw ApiFailure(response.statusCode);
@@ -133,8 +137,9 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
     return response;
   }
 
-  Future<Json> _json(String path, [String method = 'GET', Json? data]) async {
-    final response = await _open(path, method, data);
+  Future<Json> _json(String path, [String method = 'GET', Json? data,
+      Duration responseTimeout = const Duration(seconds: 12)]) async {
+    final response = await _open(path, method, data, null, responseTimeout);
     if (response.statusCode == 204) return {};
     final bytes = <int>[];
     await for (final chunk in response.timeout(const Duration(seconds: 12))) {
@@ -143,6 +148,35 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
       bytes.addAll(chunk);
     }
     return jsonDecode(utf8.decode(bytes)) as Json;
+  }
+
+  @override
+  Future<Json> scanExecutionHosts() => _json('/v1/execution-hosts');
+  @override
+  Future<Json> executionHostStatus() => _json('/v1/execution-hosts/status');
+  @override
+  Future<void> disconnectExecutionHost() async {
+    await _json('/v1/execution-hosts/disconnect', 'POST');
+  }
+  @override
+  Future<Json> connectExecutionHost(String id) async {
+    try {
+      final response = await _open('/v1/execution-hosts/connect', 'POST', {'id': id}, null,
+          const Duration(seconds: 90));
+      final bytes = <int>[];
+      await for (final chunk in response.timeout(const Duration(seconds: 12))) {
+        bytes.addAll(chunk);
+        if (bytes.length > 65536) throw const FormatException('Connection response exceeds 64 KiB');
+      }
+      return jsonDecode(utf8.decode(bytes)) as Json;
+    } on ApiFailure catch (error) {
+      throw ExecutionConnectionFailure(switch (error.status) {
+        403 => 'The execution host declined or did not answer. Press Connect to ask again.',
+        409 => 'Stop any active turn, disconnect the current host, or refresh nearby hosts before retrying.',
+        503 => 'The execution host could not connect its tools. Restart sharing there and retry. Chat remains available.',
+        _ => 'Connection request failed. Check the local coordinator and execution host.',
+      });
+    }
   }
 
   String _session(String sid) => '/v1/sessions/${Uri.encodeComponent(sid)}';
@@ -171,7 +205,7 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
 
   @override
   Future<Session> createSession() async =>
-      Session.fromJson(await _json('/v1/sessions', 'POST'));
+      Session.fromJson(await _json('/v1/sessions', 'POST', null, const Duration(seconds: 90)));
   @override
   Future<Session> snapshot(String sid) async =>
       Session.fromJson(await _json(_session(sid)));
@@ -242,11 +276,6 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
   Future<void> answer(String sid, String id, String answer) async {
     await _json('${_session(sid)}/questions/${Uri.encodeComponent(id)}', 'POST',
         {'answer': answer});
-  }
-
-  @override
-  Future<void> approvePairing(String id, bool accepted) async {
-    await _json('/v1/pairing/approve', 'POST', {'id': id, 'accepted': accepted});
   }
 
   @override

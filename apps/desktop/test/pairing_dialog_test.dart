@@ -3,99 +3,65 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/app/app.dart';
+import 'package:odessy_desktop/app/execution_hosts_controller.dart';
+import 'package:odessy_desktop/app/session_controller.dart';
 
-const request = 'Incoming connection request';
-
-Future<void> _open(WidgetTester tester, PairingTransport api) async {
-  tester.view.physicalSize = const Size(1200, 850);
-  tester.view.devicePixelRatio = 1;
-  addTearDown(tester.view.resetPhysicalSize);
-  addTearDown(tester.view.resetDevicePixelRatio);
-  await tester.pumpWidget(OdessyApp(api: api));
-  await tester.pumpAndSettle();
+// The executor terminal owns Y/N approval. Legacy session events must neither
+// reopen the retired approval dialog nor authorize a connection.
+class HostTransport extends DemoApi implements ExecutionHostsApi {
+  HostTransport() : super(delay: const Duration(milliseconds: 20));
+  final incoming = StreamController<SessionEvent>.broadcast();
+  @override
+  Stream<SessionEvent> events(String sid, int after) => incoming.stream;
+  @override
+  Future<Json> scanExecutionHosts() async => {'hosts': <Json>[]};
+  @override
+  Future<Json> executionHostStatus() async => {'state': 'disconnected'};
+  @override
+  Future<Json> connectExecutionHost(String id) async =>
+      throw const ExecutionConnectionFailure('Executor unavailable');
+  @override
+  Future<void> disconnectExecutionHost() async {}
+  @override
+  void close() {
+    unawaited(incoming.close());
+    super.close();
+  }
 }
 
 void main() {
-  testWidgets('a LAN pairing request asks before it is trusted',
+  testWidgets('retired pairing events cannot open an assistant approval dialog',
       (tester) async {
-    final api = PairingTransport();
-    await _open(tester, api);
-    api.emit(SessionEvent(
-        1, 'pairing_request', {'id': 'a1', 'name': 'Jetson', 'ip': '192.168.1.50'}));
+    tester.view.physicalSize = const Size(1200, 850);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = HostTransport();
+    await tester.pumpWidget(OdessyApp(api: api));
     await tester.pumpAndSettle();
-    expect(find.text(request), findsOneWidget);
-    expect(
-        find.textContaining(
-            'Jetson (192.168.1.50) wants to connect to this computer as your coordinator.'),
-        findsOneWidget);
-    await tester.tap(find.widgetWithText(FilledButton, 'Accept'));
+    api.incoming.add(SessionEvent(1, 'pairing_request',
+        {'id': 'old', 'name': 'Unverified device', 'ip': '192.168.1.50'}));
     await tester.pumpAndSettle();
-    expect(api.answers, {'a1': true});
-    expect(find.text(request), findsNothing);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.text('Incoming connection request'), findsNothing);
+    expect(find.text('Assistant'), findsWidgets);
+    await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('declining tells the waiting coordinator no', (tester) async {
-    final api = PairingTransport();
-    await _open(tester, api);
-    api.emit(SessionEvent(
-        1, 'pairing_request', {'id': 'a1', 'name': 'Jetson', 'ip': '192.168.1.50'}));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(TextButton, 'Decline'));
-    await tester.pumpAndSettle();
-    expect(api.answers, {'a1': false});
-    expect(find.text(request), findsNothing);
+  test('failed host connection preserves an already usable conversation', () async {
+    final api = HostTransport();
+    final chat = DesktopSession(api);
+    final hosts = ExecutionHostsController(api);
+    await chat.start();
+    final sessionId = chat.session!.id;
+    await hosts.connect('offline-host');
+    expect(hosts.busy, false);
+    expect(hosts.message, contains('unavailable'));
+    expect(chat.connected, true);
+    expect(chat.session!.id, sessionId);
+    expect(await chat.send('Hello without an executor'), true);
+    hosts.dispose();
+    await chat.shutdown();
+    chat.dispose();
   });
-
-  testWidgets('a request answered elsewhere closes the prompt without answering',
-      (tester) async {
-    final api = PairingTransport();
-    await _open(tester, api);
-    api.emit(SessionEvent(
-        1, 'pairing_request', {'id': 'a1', 'name': 'Jetson', 'ip': '192.168.1.50'}));
-    await tester.pumpAndSettle();
-    expect(find.text(request), findsOneWidget);
-    api.emit(SessionEvent(2, 'pairing_resolved', {'id': 'a1', 'accepted': true}));
-    await tester.pumpAndSettle();
-    expect(find.text(request), findsNothing);
-    expect(api.answers, isEmpty,
-        reason: 'the second window must not answer an already resolved request');
-    // The page underneath the dialog is still there, not an empty navigator.
-    expect(find.widgetWithText(ListTile, 'Settings'), findsOneWidget);
-  });
-
-  testWidgets('a second request is not stacked behind the open prompt',
-      (tester) async {
-    final api = PairingTransport();
-    await _open(tester, api);
-    api.emit(SessionEvent(
-        1, 'pairing_request', {'id': 'a1', 'name': 'Jetson', 'ip': '192.168.1.50'}));
-    await tester.pumpAndSettle();
-    api.emit(SessionEvent(
-        2, 'pairing_request', {'id': 'a1', 'name': 'Jetson', 'ip': '192.168.1.50'}));
-    await tester.pumpAndSettle();
-    expect(find.text(request), findsOneWidget);
-  });
-}
-
-/// A loopback transport that can raise pairing events on demand.
-class PairingTransport extends DemoApi implements PairingApi {
-  PairingTransport() : super(delay: const Duration(milliseconds: 20));
-  final _events = StreamController<SessionEvent>.broadcast();
-  final answers = <String, bool>{};
-
-  void emit(SessionEvent event) => _events.add(event);
-
-  @override
-  Stream<SessionEvent> events(String sid, int after) => _events.stream;
-
-  @override
-  Future<void> approvePairing(String id, bool accepted) async {
-    answers[id] = accepted;
-  }
-
-  @override
-  void close() {
-    unawaited(_events.close());
-    super.close();
-  }
 }

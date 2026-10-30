@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -230,13 +230,37 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
+/**
+ * Constant-time comparison for the execution credential: the tool surface must not
+ * reveal its secret through response timing.
+ */
+function credentialMatches(supplied: string | string[] | undefined, expected: string): boolean {
+  const value = Array.isArray(supplied) ? supplied[0] : supplied;
+  const prefix = "Bearer ";
+  if (typeof value !== "string" || !value.startsWith(prefix)) return false;
+  const given = Buffer.from(value.slice(prefix.length), "utf8");
+  const wanted = Buffer.from(expected, "utf8");
+  return given.length === wanted.length && timingSafeEqual(given, wanted);
+}
+
 async function runHttpServer(): Promise<void> {
   const host = process.env.ODESSY_MCP_HOST || "127.0.0.1";
   const port = Number.parseInt(process.env.ODESSY_MCP_PORT || "8765", 10);
   const transports = new Map<string, StreamableHTTPServerTransport>();
+  // Set only when this server is hosted for a paired coordinator. A loopback-only
+  // server leaves it unset; an accepted pairing starts it with a credential, so a
+  // caller that cannot present it learns nothing -- not even the tool list.
+  const executionToken = process.env.ODESSY_MCP_TOKEN?.trim() || "";
 
   const httpServer = createServer(async (request: IncomingMessage, response: ServerResponse) => {
     try {
+      if (executionToken && !credentialMatches(request.headers.authorization, executionToken)) {
+        // Consume the body first: rejecting a request the peer is still writing
+        // resets the socket instead of returning a clean 401.
+        request.resume();
+        response.writeHead(401, { "WWW-Authenticate": "Bearer", Connection: "close" }).end();
+        return;
+      }
       const url = new URL(request.url || "/", `http://${request.headers.host || host}`);
       if (url.pathname !== "/mcp") {
         response.writeHead(404).end("Not found");

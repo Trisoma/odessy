@@ -87,8 +87,12 @@ def _pair_host(argv: list[str], *, stdin, stdout, stderr) -> int:
         chosen = hosts[index - 1]
         target = Path(args.output).expanduser() if args.output else _pair_record_path()
         try:
+            # The device ID comes from the advertisement. Without it the host
+            # cannot tell a current request from one aimed at its previous run,
+            # and refuses with 409 rather than prompting its user.
             paired = asyncio.run(request_pairing(chosen['host'], chosen['port'],
-                                                 args.coordinator_name.strip() or socket.gethostname()))
+                                                 args.coordinator_name.strip() or socket.gethostname(),
+                                                 device_id=chosen.get('id')))
         except PairingDeclined:
             print('The laptop user declined or did not respond.', file=stderr)
             return 1
@@ -96,11 +100,11 @@ def _pair_host(argv: list[str], *, stdin, stdout, stderr) -> int:
             print(f'Pairing failed: {error}', file=stderr)
             return 1
         _write_pair_record(target, {'tool_server_url': paired['url'],
-                                    'tool_server_token': paired['token']})
+                                    'tool_server_token': paired['credential']})
         # Printed once, because the operator has to export it; the machine-readable
         # result below never repeats the token.
         print(f'Paired. Set ODESSY_TOOL_SERVER_URL={paired["url"]} and '
-              f'ODESSY_TOOL_SERVER_TOKEN={paired["token"]} to use this host.', file=stderr)
+              f'ODESSY_TOOL_SERVER_TOKEN={paired["credential"]} to use this host.', file=stderr)
         print(json.dumps({'paired': True, 'host': chosen, 'url': paired['url'],
                           'record': str(target)}, indent=2), file=stdout)
         return 0
