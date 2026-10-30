@@ -132,8 +132,11 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
         def review_job(job):
             # Loaded per review, so a hooks file changed since start-up is caught here
             # too (load_hooks reports it as tampered, and the review blocks the job).
+            from pathlib import Path
             from odessy.runtime.hooks import load_hooks
-            hooks = load_hooks(workspace)
+            # A remote job's folder is not on this machine; its rules apply as here.
+            where = Path(job.get('workspace') or workspace)
+            hooks = load_hooks(where if where.is_dir() else workspace)
             return hooks.review_changes(job['changed_files']) if hooks is not None else []
 
         jobs = JobManager(config.participants, remote_targets=authorized_remote_targets(servers), review=review_job)

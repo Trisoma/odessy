@@ -280,7 +280,7 @@ async def test_pre_tool_answers(tmp_path, mode, action, reason):
     assert reason in verdict.reason
     (payload,) = records(tmp_path)
     assert payload["tool"] == "terminal.run" and payload["arguments"]["command"] == "pwd"
-    assert payload["policy"] == {"decision": "allow", "risk": "low"}
+    assert payload["policy"] == {"decision": "allow", "risk": "low", "rule": None}
 
 
 @pytest.mark.anyio

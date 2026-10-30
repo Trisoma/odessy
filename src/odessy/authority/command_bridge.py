@@ -21,6 +21,7 @@ from odessy.execution.contract import (
 from odessy.execution.limits import ResourceLimits, exceeded_limit, limit_report, posix_preexec, windows_limit_argv
 from odessy.execution.providers import UnconfinedProvider
 from odessy.execution.registry import ProviderRegistry
+from odessy.execution.diagnostics import matches_signature
 from odessy.execution.roots import extra_writable_roots, hidden_roots
 from odessy.authority.output_retention import TextRetainer, format_retention_notice
 from odessy.authority.redaction import looks_like_secret_name, redact_text
@@ -144,6 +145,7 @@ class CommandBridge:
         # `danger-full-access` refusal, and a policy that no backend satisfies all
         # therefore propagate out of `run()`.
         argv, sandbox = self._confine(_shell_command(command), mode, isolation, shape)
+        signatures = sandbox.pop("denial_signatures", ())
         if resource_limits is not None:
             sandbox["limits"] = limit_report(resource_limits)
         argv = windows_limit_argv(resource_limits, argv)
@@ -178,6 +180,8 @@ class CommandBridge:
             )
             exit_code = process.returncode
             status = "ok" if exit_code == 0 else "failed"
+            if matches_signature(exit_code, stderr, signatures):
+                sandbox["denied"] = True
             return {
                 "stdout": stdout,
                 "stderr": stderr,
@@ -402,6 +406,7 @@ def _sandbox_report(result: ConfineResult, policy: ExecutionPolicy | None = None
         "provider_id": result.provider_id,
         "enforcement": result.enforcement,
         "limitations": sorted(result.limitations),
+        "denial_signatures": result.denial_signatures,
     }
     if policy is not None:
         confined = result.enforcement != "none"

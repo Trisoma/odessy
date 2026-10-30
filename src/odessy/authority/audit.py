@@ -4,10 +4,12 @@ One JSON object per line, appended to ``~/.local/state/odessy/external-audit.jso
 (``ODESSY_AUDIT_FILE`` sets another path; an empty value turns the log off). Two kinds
 of record, written in order:
 
-* ``decision``: the policy decision for a proposed call, the rule that made it, and
-  whether the user confirmed it. A denied or declined call has only this record.
+* ``decision``: the policy decision for a proposed call, the rule that made it,
+  whether the user confirmed it, and for a command where it would run. A denied or
+  declined call has only this record.
 * ``call``: an executed call's outcome (``ok``, ``error``, ``timeout``, ``failed``)
-  and duration.
+  and duration, and for a command the backend that ran it.
+* ``integrity``: the hooks or the config changed while Odessy was running.
 * ``approval``: a question put to a person on the desktop or by voice: its fingerprint,
   the answer, the channel that gave it, or why it ended unanswered.
 
@@ -105,6 +107,7 @@ class ExternalAuditLog:
         decision: PolicyDecision,
         confirmed: bool | None,
         channel: str | None = None,
+        execution: Mapping[str, Any] | None = None,
     ) -> None:
         self._write(
             {
@@ -115,9 +118,15 @@ class ExternalAuditLog:
                 "risk": decision.risk,
                 "confirmed": confirmed,
                 **({"channel": channel} if channel else {}),
+                **({"execution": dict(execution)} if execution else {}),
                 "arguments": hash_arguments(arguments),
             }
         )
+
+    def integrity(self, reason: str) -> None:
+        """The hooks or the config changed while Odessy was running."""
+
+        self._write({"event": "integrity", "reason": reason})
 
     def approval(self, entry: Mapping[str, Any], *, approved: bool, reason: str | None = None, channel: str | None = None) -> None:
         """How one question put to a person ended. Never its text: that quotes arguments."""
@@ -143,6 +152,7 @@ class ExternalAuditLog:
         outcome: str,
         duration_ms: float,
         error_type: str | None = None,
+        sandbox: Mapping[str, Any] | None = None,
     ) -> None:
         record: dict[str, Any] = {
             "event": "call",
@@ -152,6 +162,8 @@ class ExternalAuditLog:
         }
         if error_type is not None:
             record["error_type"] = error_type
+        if sandbox:
+            record["sandbox"] = {key: sandbox[key] for key in ("provider_id", "enforcement", "network") if key in sandbox}
         self._write(record)
 
     def _write(self, record: dict[str, Any]) -> None:

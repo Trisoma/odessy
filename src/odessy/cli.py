@@ -12,6 +12,7 @@ import sys
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -58,6 +59,7 @@ from odessy.models.ollama_model import OllamaModel
 from odessy.authority.audit import AuditLogError, ExternalAuditLog, audit_scope
 from odessy.authority.policy import OdessyPolicy
 from odessy.config.commands import CommandsConfigError, commands_file, load_preapproved_commands
+from odessy.config.guard import ConfigGuard
 from odessy.runtime.hooks import HookConfigError, load_hooks, protected_paths
 from odessy.runtime.confirmation import TerminalConfirmer, printable
 from odessy.runtime.types import PolicyDecision, ToolRequest
@@ -144,11 +146,13 @@ def _build_policy(workspace_root: Path, hooks) -> OdessyPolicy:
     except SandboxConfigError as error:
         raise SystemExit(str(error)) from error
     isolation, target_isolation = _sandbox_isolation(workspace_root, sandbox)
+    posture = host_posture(execution_registry(), str(workspace_root))
     return OdessyPolicy(
         workspace_root=workspace_root,
         isolation=isolation,
         target_isolation=target_isolation,
         sandbox=sandbox,
+        posture={"local": {item.mode: (item.provider_id, item.enforcement) for item in posture}},
         preapproved_commands=preapproved,
         # Protected like hooks.toml, whether or not they exist yet. Each may be set
         # somewhere of its own, outside the folder the hooks file sits in.
@@ -173,6 +177,7 @@ def _build_agent(
         tool_concurrency=concurrency_from_env(),
         model=model,
         policy=_build_policy(workspace_root, hooks),
+        config_guard=ConfigGuard((sandbox_file(), commands_file())),
         mcp_server=(
             mcp_servers
             if mcp_servers is not None
@@ -222,13 +227,15 @@ def _permissions_check(argv: list[str]) -> int:
     programs: list[str] = []
     if hooks is not None and decision.action != "deny":
         verdict = HookVerdict()
-        for rule, action in evaluate_rules(hooks.rules, request, decision.risk, workspace, None):
+        for rule, action in evaluate_rules(hooks.rules, request, decision.risk, workspace, None, policy_rule=decision.rule):
             fired.append(rule.name)
-            if verdict.hook is None or action == "deny":
-                verdict = HookVerdict(action, rule.describe(), rule.name, risk=rule.raise_risk)
+            if rule.network:
+                verdict = replace(verdict, network=rule.network)
+            if action != "restrict" and (verdict.hook is None or action == "deny"):
+                verdict = HookVerdict(action, rule.describe(), rule.name, risk=rule.raise_risk, network=verdict.network)
         decision = tighten(decision, verdict)
         programs = [hook.name for hook in hooks.matching("pre_tool", request.name, decision.risk)]
-    requirement = policy.requirement_for(request, decision)
+    plan = policy.execution_plan(request, decision) or {}
     report = {
         "tool": request.name,
         "decision": decision.action,
@@ -237,8 +244,10 @@ def _permissions_check(argv: list[str]) -> int:
         "reason": decision.reason,
         "asks": decision.requires_confirmation and not decision.preapproved,
         "typed_yes": decision.requires_confirmation and decision.risk == "high",
-        "mode": requirement.policy.mode if requirement is not None else None,
-        "network": policy.sandbox.network_for(requirement.policy.mode) if requirement is not None else None,
+        "mode": plan.get("mode"),
+        "network": plan.get("network"),
+        "provider": plan.get("provider"),
+        "enforcement": plan.get("enforcement"),
         "rules_fired": fired,
         "hook_programs": programs,
     }

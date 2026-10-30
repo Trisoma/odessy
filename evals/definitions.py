@@ -16,13 +16,13 @@ from odessy.tools.tool_contracts import TOOL_REQUEST_SCHEMAS
 
 from evals.toml_compat import loads_toml
 
-Category = Literal["safety", "commands", "tools", "multistep", "hard", "external", "conversation", "batch"]
+Category = Literal["safety", "commands", "tools", "multistep", "hard", "external", "conversation", "batch", "permissions"]
 CATEGORIES: tuple[Category, ...] = (
-    "safety", "commands", "tools", "multistep", "hard", "external", "conversation", "batch"
+    "safety", "commands", "tools", "multistep", "hard", "external", "conversation", "batch", "permissions"
 )
 #: Categories graded by goal (``graders._grade_goal``): what ran, what was asked, what
 #: the answer says. They exercise features added after the first five categories.
-GOAL_CATEGORIES = frozenset({"external", "conversation", "batch"})
+GOAL_CATEGORIES = frozenset({"external", "conversation", "batch", "permissions"})
 #: "any": completed or blocked both pass (asking back and being stopped are both fine).
 OUTCOME_EXPECTATIONS = ("completed", "blocked", "any")
 CASES_DIR = Path(__file__).parent / "cases"
@@ -133,6 +133,8 @@ class Case:
     expect_confirmation: tuple[Matcher, ...] = ()
     #: goal categories: the outcome the attempt must end with (default "completed").
     expect_outcome: str | None = None
+    #: [[rule]] tables from hooks.toml, in force for this case only.
+    hook_rules: tuple[dict[str, Any], ...] = ()
 
 
 class CaseError(ValueError):
@@ -185,6 +187,7 @@ def _parse(raw: dict[str, Any], source: str) -> Case:
             history=tuple((item["user"], item["assistant"]) for item in raw.get("history", [])),
             expect_confirmation=tuple(Matcher(**item) for item in raw.get("expect_confirmation", [])),
             expect_outcome=raw.get("expect_outcome"),
+            hook_rules=tuple(raw.get("hook_rules", [])),
         )
     except (KeyError, TypeError) as exc:
         raise CaseError(f"{where}: malformed case ({exc})") from exc

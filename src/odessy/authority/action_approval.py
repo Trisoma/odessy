@@ -85,6 +85,19 @@ class ActionApprovalPlan:
             return False
 
 
+def _describe_execution(execution: Mapping[str, Any]) -> str:
+    """Where the command would run, for the person deciding: part of what they approve."""
+
+    if execution['enforcement'] == 'none':
+        return 'Runs with NO SANDBOX: nothing limits what it can read, change or send.'
+    network = 'network on' if execution['network'] == 'allow' else 'network off'
+    if execution['enforcement'] is None:
+        where = 'the sandbox is chosen on that machine'
+    else:
+        where = f"{execution['provider']} sandbox, {execution['enforcement']} enforcement"
+    return f"Runs {execution['mode']}, {network}, {where}."
+
+
 def build_action_approval(request, decision, policy, *, call_id: str, execution_target) -> ActionApprovalPlan:
     if not isinstance(request.name, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,128}', request.name):
         raise ValueError('Invalid approval tool name')
@@ -119,7 +132,8 @@ def build_action_approval(request, decision, policy, *, call_id: str, execution_
         if 'sandbox_permissions' in args:
             scopes.append('escalation')
     channels = () if decision.action == 'deny' else approval_channels(decision.risk, escalates='sandbox_permissions' in args)
-    canonical = _json({'call_id': call_id, 'operation': request.name, 'arguments': args, 'resolved_paths': paths, 'workspace': str(policy.authority.workspace_root), 'host': host, 'target_identity': target, 'decision': _plain(decision), 'policy': policy_data, 'scopes': scopes, 'allowed_channels': channels})
+    execution = policy.execution_plan(request, decision)
+    canonical = _json({'call_id': call_id, 'operation': request.name, 'arguments': args, 'resolved_paths': paths, 'workspace': str(policy.authority.workspace_root), 'host': host, 'target_identity': target, 'decision': _plain(decision), 'policy': policy_data, 'scopes': scopes, 'allowed_channels': channels, 'execution': execution})
     fingerprint = _hash(canonical)
     prompt = f'Approve {request.name} on {host} for this action only. Risk: {decision.risk}.'
     if request.name in {'terminal.run', 'laptop.terminal.run'} and isinstance(args.get('command'), str):
@@ -132,7 +146,9 @@ def build_action_approval(request, decision, policy, *, call_id: str, execution_
         prompt += f' Confirmation asked for by your {_display(decision.rule[5:])} hook.'
     if 'escalation' in scopes:
         prompt += f' Includes sandbox escalation to {_display(args.get("sandbox_permissions"))}.'
-    public = {'authoritative_prompt': prompt, 'risk': decision.risk, 'allowed_channels': list(channels), 'scopes': scopes, 'call_id': call_id, 'operation': request.name, 'host': host, 'arguments': _display(args), 'resolved_paths': _display(paths), 'target_identity': _display(target), 'policy_binding': policy_binding, 'fingerprint': fingerprint}
+    if execution is not None:
+        prompt += ' ' + _describe_execution(execution)
+    public = {'authoritative_prompt': prompt, 'risk': decision.risk, 'allowed_channels': list(channels), 'scopes': scopes, 'call_id': call_id, 'operation': request.name, 'host': host, 'arguments': _display(args), 'resolved_paths': _display(paths), 'target_identity': _display(target), 'policy_binding': policy_binding, 'fingerprint': fingerprint, 'execution': execution}
     if isinstance(args.get('justification'), str):
         public['model_reason'] = _display(args['justification'])
     return ActionApprovalPlan(call_id, decision.risk, channels, tuple(scopes), prompt, fingerprint, canonical, _json(public))

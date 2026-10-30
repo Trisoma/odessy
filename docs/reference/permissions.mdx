@@ -44,6 +44,10 @@ by its program and arguments. It looks inside `sudo`, `env`, `xargs`, `find -exe
 boundary: there is no shell parser, a program can do anything, and `python -c` is
 opaque. The sandbox is what holds.
 
+`names credentials` below means the paths in one list that the sandbox also hides
+([sandbox](sandbox.mdx#hidden-by-default)), so a host whose backend cannot hide a path
+is still covered.
+
 **Refused:**
 
 | Rule | Examples |
@@ -52,8 +56,8 @@ opaque. The sandbox is what holds.
 | `command_remote_execution` | `curl ... \| sh`, `iex (iwr ...)` |
 | `command_system_write` | A write to `/etc`, `/usr`, `C:\Windows` |
 | `command_destructive` | `rm -rf` in any spelling, `del /s`, `Remove-Item -Recurse`, `git reset --hard`, `git clean` without `-n`, `shutdown`, `format` |
-| `command_credentials` | `.ssh`, `.aws`, `.env`, `id_rsa` anywhere in the command; a program that prints or copies a file named like a secret or token; `$API_TOKEN`; `gh auth token` |
-| `protected_config` | Names `hooks.toml`, `sandbox.toml` or `commands.toml`, or their folder (local commands only) |
+| `command_credentials` | Any credential path anywhere in the command (`~/.ssh`, `~/.config/gh`, `~/.password-store`, a browser profile), `.env`, `id_rsa`; a program that prints or copies a file named like a secret or token; `$API_TOKEN`; `gh auth token` |
+| `protected_config` | Names the path of `hooks.toml`, `sandbox.toml` or `commands.toml` or their folder, or changes a file with one of those names (local commands only) |
 
 **High risk:**
 
@@ -74,6 +78,14 @@ Everything else needs a confirmation (`command_write`, `command_default`), unles
 is a read-only command (`command_read_only`; see
 [current limitations](current-limitations.mdx)) or listed in `commands.toml`
 (`command_preapproved`).
+
+Where this machine has no sandbox at all, `git` reads are asked about
+(`command_unconfined_read`): a repository's git config can make one run a program, and
+allowing it unasked rests on read-only mode.
+
+On the paired laptop, this machine cannot see the files. A folder is held to the
+laptop's own grant there, and only a relative path that climbs out is refused here. A
+file reader is asked about, because a link on the laptop is not visible from here.
 
 A `timeout` above the limit (`command_timeout`) only ever adds a question. A command
 that would have run unasked still runs in `read-only` mode, and a listed command is
@@ -101,16 +113,26 @@ asked for: if you wrote a rule to be asked, you are asked.
 ## Approval
 
 Every call takes the same path, on every channel. The call is snapshotted (exact
-arguments, resolved paths, target, scopes, policy); a person answers about that
-snapshot, shown the authority's own description and never only the model's reason. The
-call is compared with the snapshot again after the answer and at dispatch, and if
-anything changed it needs a new decision. In a batch, the snapshot is taken when the
-batch is shown.
+arguments, resolved paths, target, scopes, policy, and where it would run); a person
+answers about that snapshot, shown the authority's own description and never only the
+model's reason. The prompt says what the sandbox will do: the mode, the network, the
+backend, or that there is none. The call is compared with the snapshot again after the
+answer and at dispatch, and if anything changed it needs a new decision. In a batch,
+the snapshot is taken when the batch is shown.
 
 ## Audit
 
 The audit log records every call, one JSON object per line
-([format](external-servers.mdx#audit-log)): the decision and its rule, whether a person
-confirmed it and on which channel, and how the call ended. Arguments are recorded as
-hashes. Odessy's own tools have `"server": "builtin"`. A question answered on the
-desktop or by voice adds an `approval` record with its fingerprint and channel.
+([format](external-servers.mdx#audit-log)): the decision and its rule, where a command
+would run, whether a person confirmed it and on which channel, how the call ended and
+which backend ran it. Arguments are recorded as hashes. Odessy's own tools have
+`"server": "builtin"`. A question answered on the desktop or by voice adds an `approval`
+record with its fingerprint and channel, and a change to the hooks or the config while
+Odessy runs adds an `integrity` record.
+
+## What is outside
+
+The policy, the rules and the sandbox govern Odessy's own tools. A delegated coding
+agent runs its own tools, with its own permissions, and only its changed files are
+checked afterwards. A third-party tool server runs as you. Neither runs under
+`sandbox.toml`; `python -m odessy doctor` says so.

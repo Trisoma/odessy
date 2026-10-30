@@ -5,6 +5,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
+from odessy.authority.secret_paths import SENSITIVE_SEGMENTS
+
 
 class WorkspaceAuthorityError(PermissionError):
     """Raised when Odessy cannot safely authorize a workspace path."""
@@ -133,23 +135,6 @@ class WorkspaceAuthority:
         return text if text else "."
 
 
-_SENSITIVE_SEGMENTS = {
-    ".aws",
-    ".azure",
-    ".docker",
-    ".git-credentials",
-    ".gnupg",
-    ".kube",
-    ".netrc",
-    ".npmrc",
-    ".pypirc",
-    ".ssh",
-    "id_dsa",
-    "id_ecdsa",
-    "id_ed25519",
-    "id_rsa",
-}
-
 _SENSITIVE_BASENAME_PATTERNS = {
     ".env",
     ".env.*",
@@ -187,7 +172,7 @@ def is_later_effect_path(relative_path: str) -> bool:
 
 def is_sensitive_workspace_path(relative_path: str) -> bool:
     parts = [part.lower() for part in relative_path.replace("\\", "/").split("/") if part]
-    if any(part in _SENSITIVE_SEGMENTS for part in parts):
+    if any(part in SENSITIVE_SEGMENTS for part in parts):
         return True
     basename = parts[-1] if parts else ""
     return any(fnmatch.fnmatchcase(basename, pattern) for pattern in _SENSITIVE_BASENAME_PATTERNS)

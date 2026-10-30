@@ -13,7 +13,7 @@ from typing import Any, Protocol
 from mcp import Client
 from mcp.server import MCPServer
 
-from odessy.execution.escalation import EscalationApproval, EscalationApprover, EscalationDeniedError
+from odessy.execution.escalation import EscalationApproval, EscalationApprover, EscalationDeniedError, escalation_hint
 from odessy.authority.audit import current_audit
 from odessy.authority.redaction import redact_value
 from odessy.tools.external_tools import NamespacedServer, external_tool, public_name
@@ -198,6 +198,7 @@ class OdessyAgent:
         tool_concurrency: int = 1,
         confirm_action: Callable | None = None,
         hooks: HookSet | None = None,
+        config_guard: Any = None,
     ) -> None:
         if not 1 <= tool_concurrency <= 8:
             raise ValueError("tool_concurrency must be from 1 to 8")
@@ -258,9 +259,12 @@ class OdessyAgent:
         self._timeouts = timeouts or ToolTimeoutPolicy()
         #: Programs the user configured in hooks.toml (``odessy.runtime.hooks``).
         self._hooks = hooks
+        #: Watches sandbox.toml and commands.toml (``odessy.config.guard``).
+        self._config_guard = config_guard
         #: Pre-tool verdicts for this turn's calls, keyed by ``id(request)``; the
         #: request is kept with its verdict so the id cannot be reused.
-        self._hook_verdicts: dict[int, tuple[ToolRequest, HookVerdict]] = {}
+        self._hook_verdicts: dict[int, tuple[ToolRequest, HookVerdict, frozenset[str]]] = {}
+        self._audited_integrity: str | None = None
         #: Turn-end hooks still running; they do not hold up the answer.
         self._background: set[asyncio.Task] = set()
         #: What the hooks learned this turn (taints, rule counts, a stop), and what a
@@ -422,11 +426,27 @@ class OdessyAgent:
                     verdict = replace(escalation, results=verdict.results + escalation.results)
                 else:
                     verdict = replace(verdict, results=verdict.results + escalation.results)
-            self._hook_verdicts[id(request)] = (request, verdict)
+            self._hook_verdicts[id(request)] = (request, verdict, frozenset(self._turn_state.taints))
             ids = {"call_id": call_id} if call_id else {}
             for item in verdict.results:
                 log.append(LogEntry("hook_decision", {"name": request.name, **item, **ids}))
         return self._evaluate(request)
+
+    async def _rescreen(self, request: ToolRequest, log: list[LogEntry], *, call_id: str | None = None) -> None:
+        """Screen a call again if the turn learned something since it was screened.
+
+        A batch is screened before any of it runs, so a rule waiting for a taint, or a
+        hook reading the taints, had not seen what the calls before this one did. A
+        ``max_per_turn`` rule counts such a call twice, which only makes it stricter.
+        """
+
+        if self._hooks is None:
+            return
+        self._hooks = self._hooks.verify()
+        entry = self._hook_verdicts.get(id(request))
+        if entry is not None and entry[2] != frozenset(self._turn_state.taints):
+            del self._hook_verdicts[id(request)]
+            await self._screen(request, log, call_id=call_id)
 
     def _hook_context(self, request: ToolRequest, decision: PolicyDecision) -> dict[str, Any]:
         """Where a call runs and where it sits in the session, for a hook's JSON.
@@ -438,6 +458,7 @@ class OdessyAgent:
         from odessy.authority.redaction import redact_text
 
         requirement = self._policy.requirement_for(request, decision)
+        plan = self._policy.execution_plan(request, decision) or {}
         escalation = None
         if "sandbox_permissions" in request.arguments:
             escalation = {
@@ -449,6 +470,9 @@ class OdessyAgent:
                 "target": call_target(request.name),
                 "mode": requirement.policy.mode if requirement is not None else None,
                 "isolation": self._policy.isolation_for(request.name),
+                "network": plan.get("network"),
+                "provider": plan.get("provider"),
+                "enforcement": plan.get("enforcement"),
                 "escalation": escalation,
             },
             "session": {"turn_id": self._turn_id, "call_index": self._call_index},
@@ -463,6 +487,12 @@ class OdessyAgent:
         """
 
         decision = self._policy.evaluate(request)
+        if self._config_guard is not None and decision.action != "deny":
+            changed = self._config_guard.changed()
+            if changed is not None:
+                self._audit_integrity(changed)
+                return replace(decision, action="deny", reason=f"the configuration cannot be trusted: {changed}",
+                               rule="config:integrity", preapproved=False)
         if self._hooks is None or decision.action == "deny":
             return decision
         if self._hooks.tampered is not None:
@@ -502,6 +532,7 @@ class OdessyAgent:
         state = self._turn_state
         self._hooks = self._hooks.verify()
         if self._hooks.tampered is not None:
+            self._audit_integrity(self._hooks.tampered)
             ids = {"call_id": call_id} if call_id else {}
             log.append(LogEntry("hook_failed", {"event": "post_tool", "name": request.name, "hook": "integrity",
                                                 "error": self._hooks.tampered, **ids}))
@@ -697,6 +728,9 @@ class OdessyAgent:
                             return is_concurrency_safe(request) and decision.allowed and self._policy.requirement_for(request, decision) is None
                         async def prepare(call):
                             nonlocal dispatched
+                            # An earlier call's post-tool hook may have ended the turn.
+                            if self._hook_stop_text() is not None:
+                                raise PermissionError(self._hook_stop_text())
                             reminder = guard.observe(call.request.name, call.request.arguments)
                             log.append(LogEntry("model_tool_request", {"name": call.request.name, "arguments": call.request.arguments, "call_id": call.call_id, "batch_id": batch_id}))
                             if reminder:
@@ -715,11 +749,16 @@ class OdessyAgent:
                             try:
                                 result = await self._call_tool(call.request.name, args, tool_registry)
                                 structured = {"status": "error", "error": redact_value(_error_text(result))} if _is_error_result(result) else self._extract_structured_result(result)
+                                self._hint_escalation(call.request, structured)
                             except PermissionError:
                                 raise
                             except Exception as exc:
                                 structured = {"status": "error", "error": redact_value(str(exc))}
-                            return {**structured, "_dispatch_timing": {"started": started, "completed": time.perf_counter()}}
+                            completed = time.perf_counter()
+                            # Here, not after the batch: what a hook says about this
+                            # call has to reach the calls after it.
+                            await self._post_tool_hooks(call.request, structured, log, call_id=call.call_id)
+                            return {**structured, "_dispatch_timing": {"started": started, "completed": completed}}
                         batch_observations, stopped = await schedule_calls(action, limit=self._tool_concurrency, safe=safe, prepare=prepare, dispatch=dispatch, stop=stop_event)
                 for index, observation in enumerate(batch_observations):
                     if observation.call_id in reminders:
@@ -730,7 +769,6 @@ class OdessyAgent:
                     timing = observation.result.pop("_dispatch_timing", None)
                     if timing:
                         log.append(LogEntry("mcp_tool_called", {"name": observation.request.name, "call_id": observation.call_id, "batch_id": batch_id, "index": index, **timing}))
-                        await self._post_tool_hooks(observation.request, observation.result, log, call_id=observation.call_id)
                         last_request, last_result = observation.request, observation.result
                         _add_ms(metrics, "mcp_execution_ms", (timing["completed"]-timing["started"])*1000)
                     log.append(LogEntry("tool_observation", {"name": observation.request.name, "call_id": observation.call_id, "batch_id": batch_id, "index": index, "result": observation.result}))
@@ -895,6 +933,7 @@ class OdessyAgent:
                 log.append(LogEntry("tool_error", {"name": action.name, "error": structured_result["error"]}))
             else:
                 structured_result = self._extract_structured_result(result)
+                self._hint_escalation(action, structured_result)
             _add_ms(metrics, "mcp_execution_ms", _elapsed_ms(mcp_started))
             last_request = action
             last_result = structured_result
@@ -979,6 +1018,7 @@ class OdessyAgent:
         reply already given in a batch prompt and the snapshot it was given about.
         """
         from odessy.authority.action_approval import build_action_approval
+        await self._rescreen(action, log, call_id=call_id)
         policy_started = time.perf_counter()
         decision = self._evaluate(action)
         _add_ms(metrics, "policy_validation_ms", _elapsed_ms(policy_started))
@@ -1056,7 +1096,7 @@ class OdessyAgent:
             arguments.update(mode=mode, isolation=self._policy.isolation_for(action.name))
             # The rest of the sandbox decision (sandbox.toml) travels the same way and
             # overwrites anything of the same name, so the model can never set it.
-            arguments.update(self._policy.execution_arguments(action, mode))
+            arguments.update(self._policy.execution_arguments(action, mode, decision))
             log.append(LogEntry('execution_mode_resolved', {'name': action.name, 'mode': mode}))
         return _BoundArguments(arguments, revalidate)
 
@@ -1235,8 +1275,28 @@ class OdessyAgent:
             elapsed_seconds=float(elapsed) if isinstance(elapsed, (int, float)) else 0.0,
         )
 
-    @staticmethod
-    def _audit_decision(request: ToolRequest, decision: Any, *, confirmed: bool | None, channel: str | None = None) -> None:
+    def _hint_escalation(self, request: ToolRequest, result: dict[str, Any]) -> None:
+        """Tell the model a command failed at the sandbox's edge, and that it may ask.
+
+        Without this a read-only `touch` looks like a broken command. Not offered where
+        ``sandbox.toml`` turned escalation off: the model would only be refused.
+        """
+
+        sandbox = result.get("sandbox")
+        if not isinstance(sandbox, dict) or not sandbox.get("denied"):
+            return
+        if self._policy.sandbox.escalation_for(call_target(request.name)) != "never":
+            result["sandbox_hint"] = escalation_hint("command")
+
+    def _audit_integrity(self, reason: str) -> None:
+        """Record once that the hooks or the config changed under a running agent."""
+
+        audit = current_audit()
+        if audit is not None and reason != self._audited_integrity:
+            audit.integrity(reason)
+        self._audited_integrity = reason
+
+    def _audit_decision(self, request: ToolRequest, decision: Any, *, confirmed: bool | None, channel: str | None = None) -> None:
         """Record one call's decision, for any tool."""
 
         audit = current_audit()
@@ -1250,6 +1310,7 @@ class OdessyAgent:
             decision=decision,
             confirmed=confirmed,
             channel=channel,
+            execution=self._policy.execution_plan(request, decision),
         )
 
     def _audit_call(self, name: str, result: Any, started: float, error: BaseException | None = None) -> None:
@@ -1258,12 +1319,15 @@ class OdessyAgent:
         audit = current_audit()
         if audit is None or external_tool(name) is not None:
             return
+        sandbox = None
         if error is not None or _is_error_result(result):
             outcome = "error"
         else:
-            outcome = str(self._extract_structured_result(result).get("status") or "ok")
+            structured = self._extract_structured_result(result)
+            outcome = str(structured.get("status") or "ok")
+            sandbox = structured.get("sandbox")
         audit.call(server=None, remote_name=name, outcome=outcome, duration_ms=round(_elapsed_ms(started), 1),
-                   error_type=type(error).__name__ if error is not None else None)
+                   error_type=type(error).__name__ if error is not None else None, sandbox=sandbox)
 
     def _assert_execution_target(
         self, name: str, registry: dict[str, tuple[Any, Any]]

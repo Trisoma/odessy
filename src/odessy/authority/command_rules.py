@@ -24,6 +24,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from odessy.authority.secret_paths import names_credential_path
 from odessy.authority.workspace_authority import is_sensitive_workspace_path
 
 
@@ -246,6 +247,41 @@ def matches_install(tokens: list[str]) -> bool:
     return tokens[:3] in (["python", "-m", "pip"], ["python3", "-m", "pip"]) and "install" in tokens
 
 
+def only_installs(command: str) -> bool:
+    """Whether every part of ``command`` is a package install (or a ``cd`` to get there).
+
+    A network cut is lifted for an install because it needs one, and only then: the
+    rest of a chain must not get a network by standing next to one.
+    """
+
+    simple, background = _split(command.replace("\\", "/"))
+    if background or not simple:
+        return False
+    parts = [[word.lower() for word in _peel(words)[0]] for words in simple]
+    return any(matches_install(words) for words in parts) and all(
+        matches_install(words) or words[:1] == ["cd"] for words in parts
+    )
+
+
+_FILE_CHANGERS = _PROFILE_WRITERS | frozenset({
+    "rm", "del", "erase", "remove-item", "ri", "sed", "touch", "truncate", "new-item", "ren", "rename", "rename-item",
+})
+
+
+def changes_file_named(command: str, name: str) -> bool:
+    """Whether ``command`` writes to or removes a file called ``name``. Reading one
+    is not a change: a repository may have its own ``hooks.toml``."""
+
+    for words in _split(command.replace("\\", "/"))[0]:
+        peeled = _peel(words)[0]
+        if not peeled:
+            continue
+        named = any(word.lower().rsplit("/", 1)[-1] == name for word in peeled[1:])
+        if named and (">" in peeled or program_name(peeled[0]) in _FILE_CHANGERS):
+            return True
+    return False
+
+
 def _flags(arguments: list[str]) -> set[str]:
     """Short options as single letters (lowercased), and long options whole."""
 
@@ -262,6 +298,8 @@ def _names_credentials(name: str, lowered: list[str]) -> bool:
     """A word that is a credential path, wherever it appears in the command."""
 
     for word in lowered:
+        if names_credential_path(word):
+            return True
         if "$" in word or "%" in word:
             if _SECRET_WORD.search(word):
                 return True
@@ -599,5 +637,7 @@ __all__ = [
     "matches_install",
     "matches_remote_execution",
     "matches_system_write",
+    "changes_file_named",
+    "only_installs",
     "program_name",
 ]

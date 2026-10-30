@@ -239,6 +239,9 @@ def _sandbox_checks(env: Mapping[str, str], registry=None) -> list[Check]:
     parts.append(f"escalation: {settings.escalation}")
     if settings.source is not None:
         parts.append(f"from {settings.source}")
+    # sandbox.toml reaches Odessy's own commands only, and saying so here is the only
+    # place someone reading this line would learn it.
+    parts.append("delegated coding agents and third-party tool servers run outside this sandbox")
     summary = "; ".join(parts)
     if unconfined:
         return [Check("Sandbox", "warn", summary, _SANDBOX_FIX.get(sys.platform, _SANDBOX_FIX["linux"]))]

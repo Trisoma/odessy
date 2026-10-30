@@ -26,10 +26,11 @@ from odessy.execution.escalation import (
 from odessy.authority.command_rules import (
     CHAINING,
     FILE_READERS,
+    changes_file_named,
     classify_command,
     matches_allow,
     matches_confirm,
-    matches_install,
+    only_installs,
 )
 from odessy.config.commands import matches_preapproved
 from odessy.config.sandbox import DEFAULT_SETTINGS, SandboxSettings
@@ -101,6 +102,10 @@ class OdessyPolicy:
     #: How commands are confined beyond their mode (``sandbox.toml``): network,
     #: hidden paths, extra writable folders, limits, and whether escalation is asked.
     sandbox: SandboxSettings = DEFAULT_SETTINGS
+    #: What the sandbox can do on each target: ``{target: {mode: (provider, enforcement)}}``
+    #: (``odessy.execution.posture``). A target missing here is one this side cannot
+    #: probe, such as the paired laptop.
+    posture: Mapping[str, Mapping[str, tuple[str, str]]] = field(default_factory=dict)
 
     def identity(self) -> "OdessyPolicy":
         """What an approval binds to. A wrapper delegates this to the policy it wraps."""
@@ -112,25 +117,58 @@ class OdessyPolicy:
 
         return self.target_isolation.get(_target(tool_name), self.isolation)
 
-    def execution_arguments(self, request: ToolRequest, mode: Mode) -> dict[str, Any]:
+    def execution_arguments(
+        self, request: ToolRequest, mode: Mode, decision: PolicyDecision | None = None
+    ) -> dict[str, Any]:
         """The rest of the sandbox decision for one command, sent with its mode.
 
         A command the policy ran without asking gets ``network.read_only`` (deny by
         default); one you confirmed gets ``network.workspace_write``, except that a
-        package install always keeps the network it exists to use.
+        package install keeps the network it exists to use. A rule that cut this
+        call's network (``decision.network``) has the last word.
         """
 
         network = self.sandbox.network_for(mode)
         command = request.arguments.get("command")
         if network == "deny" and mode == "workspace-write" and isinstance(command, str):
-            if matches_install(command.strip().lower().replace("\\", "/").split()):
+            if only_installs(command):
                 network = "allow"
+        if decision is not None and decision.network == "deny":
+            network = "deny"
         arguments: dict[str, Any] = {"network": network, "hidden_paths": list(self.sandbox.hidden_paths)}
         if self.sandbox.extra_writable:
             arguments["extra_writable"] = list(self.sandbox.extra_writable)
         if self.sandbox.limits is not None:
             arguments["limits"] = self.sandbox.limits.to_arguments()
         return arguments
+
+    def execution_plan(self, request: ToolRequest, decision: PolicyDecision) -> dict[str, Any] | None:
+        """Where this call would run, or None when it spawns no process.
+
+        The one answer the approval prompt and its snapshot, the hooks, the audit log and
+        ``permissions check`` all read. ``provider`` and ``enforcement`` are a forecast
+        (the host decides at the call), and None on a target this side cannot probe.
+        """
+
+        mode = self._effective_mode(request, decision)
+        if mode is None:
+            return None
+        target = request.arguments.get("sandbox_permissions")
+        if target in ESCALATION_TARGETS:
+            mode = target
+        host = _target(request.name)
+        forecast = self.posture.get(host, {}).get(mode)
+        if mode == "danger-full-access":
+            forecast = ("unconfined", "none")
+        provider, enforcement = forecast if forecast is not None else (None, None)
+        return {
+            "target": host,
+            "mode": mode,
+            "isolation": self.isolation_for(request.name),
+            "network": self.execution_arguments(request, mode, decision)["network"],
+            "provider": provider,
+            "enforcement": enforcement,
+        }
 
     @property
     def authority(self) -> WorkspaceAuthority:
@@ -293,7 +331,9 @@ class OdessyPolicy:
         if escalation_denial is not None:
             return escalation_denial
 
-        cwd_decision = self._check_workspace_cwd(cwd, tool_name)
+        cwd_decision = (
+            self._check_workspace_cwd(cwd, tool_name) if tool_name == "terminal.run" else _check_foreign_cwd(cwd, tool_name)
+        )
         if cwd_decision is not None:
             return cwd_decision
 
@@ -316,7 +356,11 @@ class OdessyPolicy:
             return PolicyDecision(
                 "confirm", f"{tool_name} requires confirmation because {finding.reason}", "high", rule=finding.rule
             )
-        read_only = matches_allow(lowered, tokens) or self._reads_workspace_files(command, cwd, tokens)
+        # This side cannot see the laptop's files: a link there is not visible here, so
+        # whether a reader stays in that workspace is for a person to judge.
+        read_only = matches_allow(lowered, tokens) or (
+            tool_name == "terminal.run" and self._reads_workspace_files(command, cwd, tokens)
+        )
         if (
             tool_name == "terminal.run"
             and not read_only
@@ -336,6 +380,16 @@ class OdessyPolicy:
                 "medium",
                 rule="command_write",
             )
+        if read_only and tokens[0] == "git" and self._read_only_is_unconfined(tool_name):
+            # A repository's own config can make a git read run a program. Allowing one
+            # unasked rests on read-only mode, and this host cannot enforce it.
+            return PolicyDecision(
+                "confirm",
+                f"{tool_name} requires confirmation because no sandbox here can keep a repository's git config read-only",
+                "medium",
+                rule="command_unconfined_read",
+                mode_outcome="allow",
+            )
         if read_only:
             return PolicyDecision(
                 "allow",
@@ -349,6 +403,10 @@ class OdessyPolicy:
             "medium",
             rule="command_default",
         )
+
+    def _read_only_is_unconfined(self, tool_name: str) -> bool:
+        forecast = self.posture.get(_target(tool_name), {}).get("read-only")
+        return forecast is not None and forecast[1] == "none"
 
     def _reads_workspace_files(self, command: str, cwd: str, tokens: list[str]) -> bool:
         """A file-printing command (``cat``, ``Get-Content``, ...) whose files are all here.
@@ -727,10 +785,34 @@ def _protected_spellings(paths: tuple[Path, ...]) -> tuple[str, ...]:
 
 
 def _names_protected_path(command: str, paths: tuple[Path, ...]) -> bool:
+    """A path is protected wherever it appears. A bare file name is only protected
+    from being changed: a repository can have a ``hooks.toml`` of its own."""
+
     if not paths:
         return False
     text = command.replace("\\", "/").replace('"', "").replace("'", "")
-    return any(spelling in text for spelling in _protected_spellings(tuple(paths)))
+    return any(
+        spelling in text if "/" in spelling else changes_file_named(command, spelling)
+        for spelling in _protected_spellings(tuple(paths))
+    )
+
+
+def _check_foreign_cwd(cwd: str, tool_name: str) -> PolicyDecision | None:
+    """A working directory on a host this side has no view of.
+
+    Its folders do not exist here, so resolving it here would refuse them all. The
+    host holds the path to its own grant before it runs anything; all this side can
+    say is that a relative path must not climb out.
+    """
+
+    depth = 0
+    for part in cwd.replace("\\", "/").split("/"):
+        depth += -1 if part == ".." else 0 if part in ("", ".") else 1
+        if depth < 0:
+            return PolicyDecision(
+                "deny", f"{tool_name} denied because cwd is outside the allowed workspace", "high", rule="outside_workspace"
+            )
+    return None
 
 
 def _is_protected_path(workspace_root: Path, candidate: str, paths: tuple[Path, ...]) -> bool:
