@@ -1,7 +1,7 @@
 """End-of-utterance detection.
 
 The session needs to know when the user has finished speaking, within three bounds
-the plan fixes: wait at most 10 s for speech to start, end after 800 ms of silence,
+the plan fixes: wait at most 10 s for speech to start, end after 2500 ms of silence,
 and never record more than 20 s. A turn shorter than 300 ms of speech is not a
 request, it is a cough, and submitting it would ask the model to act on noise.
 
@@ -26,7 +26,7 @@ class SegmenterConfig:
     #: Speech needed before a segment can count as a request.
     min_speech_ms: int = 300
     #: Trailing silence that ends the utterance.
-    silence_end_ms: int = 800
+    silence_end_ms: int = 2500
     #: Hard ceiling on one utterance, silence included.
     max_utterance_ms: int = 20_000
     #: How long to wait for speech to begin after the ready cue.

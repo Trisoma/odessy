@@ -3,6 +3,10 @@
 For the complete connection procedure and recorded terminal approval, see
 [Jetson + Windows LAN execution](jetson-windows-lan-execution.md).
 
+For the latest audio-device/voice preview update and hardware test instructions,
+use [Update and test voice on Jetson](jetson-voice-preview.md). Its rebuilt archive
+contains the matching Python source and dependency metadata.
+
 The model/coordinator and the optional execution host have separate lifecycles.
 A failed or stopped execution host must not prevent starting a conversation or
 using tools explicitly addressed to this computer.

@@ -64,8 +64,17 @@ def execute(request: dict) -> dict:
         from .configured import resume
         return resume()
     if operation == 'voice-discover':
-        from .voice_assets import discover_voice_assets
-        return discover_voice_assets(request.get('selection') or {})
+        from .voice_assets import check_voice_paths, discover_voice_assets
+        selection = request.get('selection') or {}
+        parameters = request.get('parameters') or {}
+        if type(parameters.get('check', False)) is not bool: raise ValueError('check must be boolean')
+        # `check` re-runs only the field checks, without walking any directory, so the
+        # UI can re-validate one edited path without paying for a scan.
+        if parameters.get('check', False):
+            return {'issues': check_voice_paths(selection)}
+        result = discover_voice_assets(selection)
+        result['issues'] = check_voice_paths(selection)
+        return result
     if operation not in ('review', 'discover', 'verify', 'save', 'recover', 'launch', 'activate'):
         raise ValueError('unsupported setup operation')
     selection = SetupSelection.from_dict(request.get('selection'))
