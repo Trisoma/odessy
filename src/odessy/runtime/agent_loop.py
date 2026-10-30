@@ -18,6 +18,7 @@ from odessy.authority.audit import current_audit
 from odessy.authority.redaction import redact_value
 from odessy.tools.external_tools import NamespacedServer, external_tool, public_name
 from odessy.authority.policy import OdessyPolicy
+from odessy.runtime.hook_rules import TurnState, call_target
 from odessy.runtime.hooks import MAX_FINAL_TEXT_CHARS, HookSet, HookVerdict, tighten
 from odessy.runtime.repeat_guard import RepeatGuard, build_guard
 from odessy.tools.tool_contracts import validate_tool_arguments
@@ -262,6 +263,12 @@ class OdessyAgent:
         self._hook_verdicts: dict[int, tuple[ToolRequest, HookVerdict]] = {}
         #: Turn-end hooks still running; they do not hold up the answer.
         self._background: set[asyncio.Task] = set()
+        #: What the hooks learned this turn (taints, rule counts, a stop), and what a
+        #: hook is told about where in the session a call sits.
+        self._turn_state = TurnState()
+        self._turn_id = ""
+        self._turn_text = ""
+        self._call_index = 0
 
     async def _generate(self, call: Callable[[], ModelAction] | str, *args: Any) -> ModelAction:
         """Run one synchronous model call without blocking the event loop.
@@ -338,6 +345,12 @@ class OdessyAgent:
         """
 
         self._hook_verdicts = {}
+        if self._hooks is not None:
+            self._hooks = self._hooks.verify()
+        self._turn_state = TurnState()
+        self._turn_id = uuid.uuid4().hex[:12]
+        self._turn_text = user_text
+        self._call_index = 0
         try:
             result = await self._run_turn(
                 user_text,
@@ -396,12 +409,49 @@ class OdessyAgent:
 
         decision = self._policy.evaluate(request)
         if self._hooks is not None and decision.action != "deny" and id(request) not in self._hook_verdicts:
-            verdict = await self._hooks.pre_tool(request, decision)
+            self._call_index += 1
+            context = self._hook_context(request, decision)
+            verdict = await self._hooks.pre_tool(request, decision, context, self._turn_state)
+            if verdict.action != "deny":
+                # The escalation is screened with the call, so every path that reads
+                # the call's verdict sees it: no approval can be asked for first.
+                escalation = await self._hooks.pre_escalation(request, decision, context)
+                if escalation.action == "deny":
+                    verdict = replace(escalation, results=verdict.results + escalation.results)
+                else:
+                    verdict = replace(verdict, results=verdict.results + escalation.results)
             self._hook_verdicts[id(request)] = (request, verdict)
             ids = {"call_id": call_id} if call_id else {}
             for item in verdict.results:
                 log.append(LogEntry("hook_decision", {"name": request.name, **item, **ids}))
         return self._evaluate(request)
+
+    def _hook_context(self, request: ToolRequest, decision: PolicyDecision) -> dict[str, Any]:
+        """Where a call runs and where it sits in the session, for a hook's JSON.
+
+        ``mode`` is the sandbox mode the policy's decision implies, before any
+        escalation; ``escalation`` is what the call asks for, if anything.
+        """
+
+        from odessy.authority.redaction import redact_text
+
+        requirement = self._policy.requirement_for(request, decision)
+        escalation = None
+        if "sandbox_permissions" in request.arguments:
+            escalation = {
+                "requested": request.arguments.get("sandbox_permissions"),
+                "justification": redact_text(str(request.arguments.get("justification") or "")),
+            }
+        return {
+            "execution": {
+                "target": call_target(request.name),
+                "mode": requirement.policy.mode if requirement is not None else None,
+                "isolation": self._policy.isolation,
+                "escalation": escalation,
+            },
+            "session": {"turn_id": self._turn_id, "call_index": self._call_index},
+            "request": redact_text(self._turn_text)[:MAX_FINAL_TEXT_CHARS],
+        }
 
     def _evaluate(self, request: ToolRequest) -> PolicyDecision:
         """The policy's current decision with this call's hook verdict applied.
@@ -413,10 +463,18 @@ class OdessyAgent:
         decision = self._policy.evaluate(request)
         if self._hooks is None or decision.action == "deny":
             return decision
+        if self._hooks.tampered is not None:
+            return replace(
+                decision,
+                action="deny",
+                reason=f"the hooks cannot be trusted: {self._hooks.tampered}",
+                rule="hook:integrity",
+                preapproved=False,
+            )
         entry = self._hook_verdicts.get(id(request))
         if entry is not None and entry[0] is request:
             return tighten(decision, entry[1])
-        if self._hooks.matching("pre_tool", request.name, decision.risk):
+        if self._hooks.screens(request, decision.risk):
             return replace(
                 decision,
                 action="deny",
@@ -427,22 +485,54 @@ class OdessyAgent:
         return decision
 
     async def _post_tool_hooks(self, request: ToolRequest, result: dict[str, Any], log: list[LogEntry], *, call_id: str | None = None) -> None:
-        """Add what the post-tool hooks print to the result, beside the tool's own fields."""
+        """Apply what the post-tool hooks and taint rules asked for.
 
-        if self._hooks is None or not self._hooks.for_event("post_tool"):
+        Notes go beside the tool's own fields. A taint marks the turn for later rules
+        and hooks; ``quarantine`` replaces what the model sees with a notice (the
+        result itself stays in the turn log); ``stop`` ends the turn after this call.
+        """
+
+        if self._hooks is None:
             return
-        records = await self._hooks.post_tool(request, result, self._policy.evaluate(request).risk)
+        decision = self._policy.evaluate(request)
+        state = self._turn_state
+        records = await self._hooks.post_tool(request, result, decision.risk, self._hook_context(request, decision), state)
         ids = {"call_id": call_id} if call_id else {}
         notes = []
         for record in records:
+            hook = record["hook"]
             if "error" in record:
                 log.append(LogEntry("hook_failed", {"event": "post_tool", "name": request.name, **record, **ids}))
                 continue
-            notes.append(record)
-            log.append(LogEntry("hook_note", {"event": "post_tool", "name": request.name, "hook": record["hook"],
-                                              "exit_code": record["exit_code"], **ids}))
+            if record.get("taint"):
+                state.taints.update(record["taint"])
+                log.append(LogEntry("hook_taint", {"name": request.name, "hook": hook, "taint": record["taint"], **ids}))
+            if record.get("quarantine") and "quarantined" not in result:
+                original = dict(result)
+                log.append(LogEntry("hook_quarantine", {"name": request.name, "hook": hook,
+                                                        "reason": record.get("reason", ""), "result": original, **ids}))
+                result.clear()
+                result.update(
+                    status=original.get("status", "ok"),
+                    quarantined=(
+                        f"The user's {hook} hook withheld this result"
+                        + (f" ({record['reason']})" if record.get("reason") else "")
+                        + ". Do not try to obtain it another way; tell the user it was withheld."
+                    ),
+                )
+            if record.get("stop") and state.stop is None:
+                state.stop = (hook, record.get("reason") or "no reason given")
+                log.append(LogEntry("hook_stop", {"name": request.name, "hook": hook, "reason": state.stop[1], **ids}))
+            if record.get("note"):
+                notes.append({"hook": hook, "exit_code": record.get("exit_code"), "note": record["note"]})
+                log.append(LogEntry("hook_note", {"event": "post_tool", "name": request.name, "hook": hook,
+                                                  "exit_code": record.get("exit_code"), **ids}))
         if notes:
             result["hook_notes"] = {"source": "the user's own hooks, not the tool", "notes": notes}
+
+    def _hook_stop_text(self) -> str | None:
+        stop = self._turn_state.stop
+        return None if stop is None else f"Stopped by the {stop[0]} hook: {stop[1]}"
 
     async def _run_turn(
         self,
@@ -632,6 +722,8 @@ class OdessyAgent:
                         _add_ms(metrics, "mcp_execution_ms", (timing["completed"]-timing["started"])*1000)
                     log.append(LogEntry("tool_observation", {"name": observation.request.name, "call_id": observation.call_id, "batch_id": batch_id, "index": index, "result": observation.result}))
                 observations.extend(batch_observations)
+                if self._hook_stop_text() is not None and not stopped:
+                    stopped = self._hook_stop_text()
                 if stopped:
                     event = "continuation_budget_exhausted" if "limit" in stopped else "batch_stopped"
                     log.append(LogEntry(event, {"reason": stopped}))
@@ -809,6 +901,16 @@ class OdessyAgent:
                     {"name": action.name, "result": structured_result},
                 )
             )
+            if self._hook_stop_text() is not None:
+                return _finish_turn_result(
+                    final_text=self._hook_stop_text(),
+                    log=log,
+                    metrics=metrics,
+                    turn_started=turn_started,
+                    tool_request=last_request,
+                    tool_result=last_result,
+                    tool_observations=observations,
+                )
 
             _status(status_callback, "Generating response")
             final_started = time.perf_counter()

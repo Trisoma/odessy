@@ -158,24 +158,29 @@ def _commands_checks(env: Mapping[str, str]) -> list[Check]:
 
 
 def _hooks_checks(env: Mapping[str, str]) -> list[Check]:
-    """Hooks (hooks.toml). Silent when there is no file."""
+    """Hooks and rules (hooks.toml). Silent when there is no file and none is required."""
 
-    from odessy.runtime.hooks import EVENTS, HookConfigError, hooks_file, load_hooks
+    from odessy.runtime.hooks import EVENTS, HOOKS_REQUIRED_ENV, HookConfigError, hooks_file, load_hooks
 
     path = hooks_file(env)
-    if not path.is_file():
+    if not path.is_file() and not env.get(HOOKS_REQUIRED_ENV):
         return []
     try:
-        hooks = load_hooks(Path.cwd(), path, env)
+        hooks = load_hooks(Path.cwd(), path, env, track=False)
     except HookConfigError as error:
         return [Check("Hooks", "fail", str(error), f"Correct {path}; see docs/reference/hooks.mdx.")]
     if hooks is None:
         return [Check("Hooks", "ok", f"none apply to this folder ({path})")]
     missing = sorted({hook.command[0] for hook in hooks.hooks if _missing_program(hook.command[0])})
-    listed = "; ".join(
+    parts = [
         f"{event}: {', '.join(hook.name for hook in hooks.for_event(event))}" for event in EVENTS if hooks.for_event(event)
-    )
-    detail = f"{listed}. They run as you, outside the sandbox"
+    ]
+    if hooks.rules:
+        presets = sorted({rule.preset for rule in hooks.rules if rule.preset})
+        parts.append(f"{len(hooks.rules)} rules" + (f" (presets: {', '.join(presets)})" if presets else ""))
+    detail = "; ".join(parts)
+    if hooks.hooks:
+        detail += ". They run as you, outside the sandbox"
     if missing:
         return [Check("Hooks", "warn", f"{detail}; program not found: {', '.join(missing)}",
                       "Use the program's full path in command; a pre_tool hook that cannot start denies the call.")]

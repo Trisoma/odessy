@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -70,6 +71,10 @@ class OdessyPolicy:
     #: Command prefixes the user approved in advance for this workspace, from
     #: ``commands.toml`` (``odessy.config.commands``). Only ``terminal.run``.
     preapproved_commands: tuple[tuple[str, ...], ...] = ()
+    #: Files and folders the agent may not change: the hooks file, its folder and the
+    #: hook scripts (``odessy.runtime.hooks.protected_paths``). A hook runs as the
+    #: user outside the sandbox, so writing one would be a way out of it.
+    protected_paths: tuple[Path, ...] = ()
 
     @property
     def authority(self) -> WorkspaceAuthority:
@@ -221,6 +226,15 @@ class OdessyPolicy:
 
         lowered = command.strip().lower()
         tokens = lowered.replace("\\", "/").split()
+
+        # The laptop has its own files; these paths are this machine's.
+        if tool_name == "terminal.run" and _names_protected_path(lowered, self.protected_paths):
+            return PolicyDecision(
+                "deny",
+                f"{tool_name} denied because it names Odessy's hooks configuration, which the agent may not change",
+                "high",
+                rule="protected_config",
+            )
 
         if _matches_background_or_detach_rule(lowered, tokens):
             return PolicyDecision(
@@ -565,6 +579,13 @@ class OdessyPolicy:
         path_decision = self._check_workspace_path(path_value, "filesystem.write")
         if path_decision is not None:
             return path_decision
+        if _is_protected_path(Path(self.workspace_root), path_value, self.protected_paths):
+            return PolicyDecision(
+                "deny",
+                "filesystem.write denied because the path is Odessy's hooks configuration",
+                "high",
+                rule="protected_config",
+            )
 
         return PolicyDecision(
             "confirm",
@@ -695,6 +716,64 @@ def _matches_confirm_rule(command: str, tokens: list[str]) -> bool:
     if tokens[0] == "git" and not (_is_git_read(tokens) or _is_version_query(tokens)):
         return True
     return tokens[0] in write_commands
+
+@functools.lru_cache(maxsize=32)
+def _protected_spellings(paths: tuple[Path, ...]) -> tuple[str, ...]:
+    """How a command might name each protected path: absolute, and relative to home.
+
+    A command is text, so this is a screen, not a boundary: the fingerprint check in
+    ``odessy.runtime.hooks`` catches a change made some other way.
+    """
+
+    try:
+        home = Path.home().resolve()
+    except (OSError, RuntimeError):
+        home = None
+    spellings: set[str] = set()
+    for path in paths:
+        try:
+            absolute = Path(path).expanduser().resolve()
+        except OSError:
+            absolute = Path(path)
+        spellings.add(absolute.as_posix().lower())
+        if absolute.name.lower() == "hooks.toml":
+            spellings.add("hooks.toml")
+        if home is not None:
+            try:
+                relative = absolute.relative_to(home).as_posix().lower()
+            except ValueError:
+                continue
+            if "/" in relative:
+                spellings.add(relative)
+    return tuple(sorted(spellings))
+
+
+def _names_protected_path(command: str, paths: tuple[Path, ...]) -> bool:
+    if not paths:
+        return False
+    text = command.replace("\\", "/").replace('"', "").replace("'", "")
+    return any(spelling in text for spelling in _protected_spellings(tuple(paths)))
+
+
+def _is_protected_path(workspace_root: Path, candidate: str, paths: tuple[Path, ...]) -> bool:
+    if not paths:
+        return False
+    target = Path(candidate).expanduser()
+    if not target.is_absolute():
+        target = workspace_root / target
+    try:
+        target = target.resolve()
+    except OSError:
+        return False
+    for path in paths:
+        try:
+            protected = Path(path).expanduser().resolve()
+        except OSError:
+            continue
+        if target == protected or protected in target.parents:
+            return True
+    return False
+
 
 def _matches_deny_rule(command: str, tokens: list[str]) -> bool:
     if not tokens:

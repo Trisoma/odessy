@@ -49,7 +49,7 @@ from odessy.models.ollama_model import OllamaModel
 from odessy.authority.audit import AuditLogError, ExternalAuditLog, audit_scope
 from odessy.authority.policy import OdessyPolicy
 from odessy.config.commands import CommandsConfigError, load_preapproved_commands
-from odessy.runtime.hooks import HookConfigError, load_hooks
+from odessy.runtime.hooks import HookConfigError, load_hooks, protected_paths
 from odessy.runtime.confirmation import TerminalConfirmer, printable
 from odessy.runtime.types import PolicyDecision, ToolRequest
 from odessy.voice.audio_io import CommandAudioIO
@@ -147,6 +147,7 @@ def _build_agent(
             workspace_root=workspace_root,
             isolation=_isolation_from_env(),
             preapproved_commands=preapproved,
+            protected_paths=protected_paths(hooks=hooks),
         ),
         mcp_server=(
             mcp_servers

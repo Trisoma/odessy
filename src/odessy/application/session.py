@@ -231,6 +231,24 @@ class SessionController:
             return False
         return await self.interactions.request_approval(details)
 
+    async def _screen_direct(self, name, arguments, risk):
+        """Screen a request that does not pass through the agent loop (a desktop job).
+
+        The same rules and pre-tool hooks apply. A hooks file that cannot be read, or
+        that changed since this process read it, fails closed.
+        """
+        from pathlib import Path
+        from odessy.runtime.hooks import HookConfigError, load_hooks, screen_request
+        from odessy.runtime.types import PolicyDecision
+        try:
+            hooks = load_hooks(Path.cwd())
+        except HookConfigError as error:
+            raise PermissionError(f'{name} refused: {error}') from error
+        decision = PolicyDecision('confirm', f'{name} requested directly', risk)
+        screened = await screen_request(hooks, ToolRequest(name, dict(arguments)), decision)
+        if screened.action == 'deny':
+            raise PermissionError(f'{name} refused: {screened.reason}')
+
     async def confirm(self, decision, request):
         # Direct job/API callers do not have runtime's canonical approval plan.
         # Describe their actual request rather than accepting a generated summary.
@@ -239,6 +257,8 @@ class SessionController:
         name = request_value.get('name', 'unknown action')
         arguments = request_value.get('arguments', {})
         risk = decision_value.get('risk', 'high')
+        if name == 'agent.delegate':
+            await self._screen_direct(name, arguments, risk)
         if name == 'agent.delegate' and hasattr(self.jobs, 'preflight_submission'):
             from pathlib import Path
             from odessy.authority.action_approval import build_action_approval

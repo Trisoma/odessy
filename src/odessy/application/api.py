@@ -561,7 +561,9 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             approved = await controller.confirm(
                 {'reason': 'Delegate a coding task in ' + mode + ' mode', 'risk': 'high'},
                 ToolRequest('agent.delegate', values))
-        except (ValueError, TypeError, PermissionError) as exc:
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc))
+        except (ValueError, TypeError) as exc:
             raise HTTPException(400, str(exc))
         if not approved:
             raise HTTPException(403, 'Job submission declined')
