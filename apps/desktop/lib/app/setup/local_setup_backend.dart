@@ -10,7 +10,9 @@ class LocalSetupBackend implements SetupBackend {
       String sourceRoot = const String.fromEnvironment('ODESSY_SETUP_ROOT'),
       this.payloadRoot = '',
       this.timeout = const Duration(seconds: 30)})
-      : python = python.isNotEmpty ? python : (_bundledPython() ?? _installedPython() ?? 'python'),
+      : python = python.isNotEmpty
+            ? python
+            : (_bundledPython() ?? _installedPython() ?? 'python'),
         sourceRoot = sourceRoot.isNotEmpty ? sourceRoot : _bundledRoot();
   static String _bundledRoot() {
     var candidate = File(Platform.resolvedExecutable).parent;
@@ -39,8 +41,10 @@ class LocalSetupBackend implements SetupBackend {
   static String? _installedPython() {
     final versionDirectory = File(Platform.resolvedExecutable).parent.parent;
     final candidate = Platform.isWindows
-        ? File('${versionDirectory.path}${Platform.pathSeparator}Scripts${Platform.pathSeparator}python.exe')
-        : File('${versionDirectory.path}${Platform.pathSeparator}bin${Platform.pathSeparator}python3');
+        ? File(
+            '${versionDirectory.path}${Platform.pathSeparator}Scripts${Platform.pathSeparator}python.exe')
+        : File(
+            '${versionDirectory.path}${Platform.pathSeparator}bin${Platform.pathSeparator}python3');
     return candidate.existsSync() ? candidate.path : null;
   }
 
@@ -88,6 +92,9 @@ class LocalSetupBackend implements SetupBackend {
           workingDirectory: sourceRoot.isEmpty ? null : sourceRoot,
           environment: {
             'PYTHONUNBUFFERED': '1',
+            if (const bool.fromEnvironment('ODESSY_LOCAL_DESKTOP'))
+              'ODESSY_LINK_STATE_DIR':
+                  '${const String.fromEnvironment('ODESSY_DESKTOP_ROOT')}/build/local-desktop/state/link',
             if (payloadRoot.isNotEmpty) 'ODESSY_SETUP_PAYLOAD': payloadRoot,
             if (sourceRoot.isNotEmpty)
               'PYTHONPATH':
@@ -169,4 +176,3 @@ class LocalSetupBackend implements SetupBackend {
     await cancel();
   }
 }
-

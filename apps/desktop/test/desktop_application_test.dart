@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_desktop/app/app.dart';
+import 'package:odessy_desktop/features/devices/presentation/devices.dart';
 import 'package:odessy_client/odessy_client.dart';
 
 void main() {
-  testWidgets('preview sends, stops and opens device settings', (tester) async {
+  testWidgets('desktop sends, stops and opens device settings', (tester) async {
     tester.view.physicalSize = const Size(1200, 850);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -13,6 +14,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('DEMO'), findsWidgets);
     await tester.enterText(find.byKey(const Key('composer')), 'Hello Odessy');
+    await tester.pump();
     await tester.tap(find.byTooltip('Send message'));
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('Hello Odessy'), findsOneWidget);
@@ -22,8 +24,12 @@ void main() {
     await tester.tap(find.text('Jetson'));
     await tester.pumpAndSettle();
     expect(find.textContaining('does not change'), findsOneWidget);
-    expect(find.text('Pairing management API is not available yet.'),
-        findsOneWidget);
+    expect(find.text('Telemetry access'), findsOneWidget);
+    expect(find.text('Allowed'), findsOneWidget);
+    await tester.tap(find.descendant(
+        of: find.byType(DevicePage), matching: find.text('Settings')));
+    await tester.pumpAndSettle();
+    expect(find.text('Device configuration is unavailable.'), findsOneWidget);
   });
   testWidgets('approval is explicit and distinct from a question',
       (tester) async {
@@ -35,6 +41,7 @@ void main() {
         OdessyApp(api: DemoApi(delay: const Duration(milliseconds: 20))));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('composer')), '/approval');
+    await tester.pump();
     await tester.tap(find.byTooltip('Send message'));
     await tester.pumpAndSettle();
     expect(find.text('Approve once'), findsOneWidget);

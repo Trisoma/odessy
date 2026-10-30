@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import shutil
+import sys
 import uuid
 from dataclasses import dataclass, field
 from importlib.util import find_spec
@@ -34,6 +35,7 @@ from typing import Any, Awaitable, Callable, cast
 from odessy.voice.capture import (
     CommandAudioStream,
     CommandPlayer,
+    WindowsNativePlayer,
     player_available,
     recorder_available,
 )
@@ -592,6 +594,11 @@ class HybridAudioAdapter:
         if self._player is None:
             if self.player_factory is not None:
                 self._player = await self._run_blocking(self.player_factory)
+            elif self.config.audio_player == 'windows-native':
+                if sys.platform != 'win32' or self.config.audio_output_device:
+                    self._fail_output(PLAYBACK, 'Native Windows playback supports the default output device only')
+                    return False
+                self._player = WindowsNativePlayer()
             elif not player_available(self.config.audio_player):
                 self._fail_output(
                     PLAYBACK,

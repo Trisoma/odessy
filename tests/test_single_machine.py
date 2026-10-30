@@ -199,11 +199,22 @@ async def test_node_startup_failure_reports_the_server_output(
     monkeypatch.setattr(node_mcp.shutil, "which", lambda name: sys.executable)
     monkeypatch.setattr(node_mcp, "_build_is_current", lambda tools_dir: True)
     monkeypatch.setattr(node_mcp, "_built_server_entry", lambda tools_dir: entry)
+    popen = node_mcp.subprocess.Popen
+    launch_options = []
+
+    def record_launch(*args, **kwargs):
+        launch_options.append(kwargs)
+        return popen(*args, **kwargs)
+
+    monkeypatch.setattr(node_mcp.subprocess, "Popen", record_launch)
 
     server = node_mcp.NodeToolServerHttp(tmp_path, extra_env={"ODESSY_DEPLOYMENT": "single"})
     with pytest.raises(RuntimeError, match="Cannot find module"):
         await server.__aenter__()
     assert server._process is None
+    assert launch_options[0]["creationflags"] == getattr(
+        node_mcp.subprocess, "CREATE_NO_WINDOW", 0
+    )
 
 
 # --- config files -----------------------------------------------------------------

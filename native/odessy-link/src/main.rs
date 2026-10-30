@@ -17,6 +17,7 @@ mod telemetry;
 
 use identity::{display_fingerprint, random_installation_id, EnrollmentBundle, Identity};
 use std::path::{Path, PathBuf};
+use std::io::Read;
 use trust::Registry;
 
 const USAGE: &str = "\
@@ -26,11 +27,11 @@ odessy-link — authenticated host pairing for Odessy
   odessy-link identity export --out <bundle>
   odessy-link pair add --alias <name> --certificate <bundle> --expect-sha256 <fingerprint> [--address <host:port>]
   odessy-link peers list [--json]
-  odessy-link peers grant <peer> --capability mcp --workspace <path>
-  odessy-link peers grant <peer> --capability telemetry.read
+  odessy-link peers grant <peer> --capability mcp --workspace <path> [--expect-sha256 <fingerprint> --expect-revision <revision>]
+  odessy-link peers grant <peer> --capability telemetry.read [--expect-sha256 <fingerprint> --expect-revision <revision>]
   odessy-link telemetry worker
   odessy-link serve --listen <address> --telemetry-only
-  odessy-link peers revoke <peer>
+  odessy-link peers revoke <peer> [--expect-sha256 <fingerprint> --expect-revision <revision> [--capability mcp|telemetry.read]]
   odessy-link serve --listen <address> --workspace <path> --node-server <entry> [--advertise]
   odessy-link connect --peer <alias> [--address <host:port>] [--discover]
   odessy-link discover [--seconds <n>]
@@ -151,16 +152,33 @@ fn export_identity(arguments: &[String]) -> Result<(), Failure> {
 fn pair_add(arguments: &[String]) -> Result<(), Failure> {
     let options = parse(
         arguments,
-        &["--alias", "--certificate", "--expect-sha256", "--address"],
+        &["--alias", "--certificate", "--expect-sha256", "--address",
+          "--expect-bundle-sha256", "--expect-existing", "--expect-revision"],
     )?;
     let alias = required(&options, "--alias")?;
     let certificate = required(&options, "--certificate")?;
     let expected = required(&options, "--expect-sha256")?;
     let address = options.get("--address").map(String::as_str);
-    let text = std::fs::read_to_string(certificate)
+    let file = std::fs::File::open(certificate)
         .map_err(|error| Failure::Runtime(format!("cannot read {certificate}: {error}")))?;
+    let mut bytes = Vec::new();
+    file.take(65537).read_to_end(&mut bytes)
+        .map_err(|error| Failure::Runtime(format!("cannot read {certificate}: {error}")))?;
+    if bytes.len() > 65536 { return Err(Failure::Runtime("identity bundle is too large".into())); }
+    let text = String::from_utf8(bytes)
+        .map_err(|_| Failure::Runtime("identity bundle is not UTF-8".into()))?;
     let registry = open_registry()?;
-    let peer = registry.add_peer(alias, &text, expected, address)?;
+    let reviewed = options.contains_key("--expect-bundle-sha256") ||
+        options.contains_key("--expect-existing") || options.contains_key("--expect-revision");
+    let peer = if reviewed {
+        let bundle_hash = trust::normalize_fingerprint(required(&options, "--expect-bundle-sha256")?)?;
+        if identity::fingerprint_sha256(text.as_bytes()) != bundle_hash {
+            return Err(Failure::Runtime("identity bundle changed; review again".into()));
+        }
+        let previous = required(&options, "--expect-existing")?;
+        let previous = if previous == "absent" { None } else { Some(previous) };
+        registry.add_peer_reviewed(alias, &text, expected, address, previous, expected_revision(&options)?)?
+    } else { registry.add_peer(alias, &text, expected, address)? };
     println!("enrolled {} ({})", peer.alias, peer.installation_id);
     println!("fingerprint: {}", display_fingerprint(&peer.fingerprint_sha256));
     println!("no capability granted yet: enrollment alone allows no execution");
@@ -260,11 +278,15 @@ fn discover_peers(arguments: &[String]) -> Result<(), Failure> {
 fn peers_grant(arguments: &[String]) -> Result<(), Failure> {    let Some(alias) = arguments.first() else {
         return Err(Failure::Usage("peers grant requires a peer".into()));
     };
-    let options = parse(&arguments[1..], &["--capability", "--workspace"])?;
+    let options = parse(&arguments[1..], &["--capability", "--workspace", "--expect-sha256", "--expect-revision"])?;
     let capability = required(&options, "--capability")?;
     let workspace = if capability == "telemetry.read" { "" } else { required(&options, "--workspace")? };
     let registry = open_registry()?;
-    let peer = registry.grant(alias, capability, workspace)?;
+    let peer = if options.contains_key("--expect-sha256") || options.contains_key("--expect-revision") {
+        let fingerprint = required(&options, "--expect-sha256")?;
+        let revision = expected_revision(&options)?;
+        registry.grant_reviewed(alias, capability, workspace, fingerprint, revision)?
+    } else { registry.grant(alias, capability, workspace)? };
     println!("granted {capability} to {} for {workspace}", peer.alias);
     Ok(())
 }
@@ -273,7 +295,19 @@ fn peers_revoke(arguments: &[String]) -> Result<(), Failure> {
     let Some(alias) = arguments.first() else {
         return Err(Failure::Usage("peers revoke requires a peer".into()));
     };
-    no_extra(&arguments[1..])?;
+    if arguments.len() > 1 {
+        let options = parse(&arguments[1..], &["--capability", "--expect-sha256", "--expect-revision"])?;
+        let fingerprint = required(&options, "--expect-sha256")?;
+        let revision = expected_revision(&options)?;
+        if let Some(capability) = options.get("--capability") {
+            let changed = open_registry()?.revoke_capability(alias, capability, fingerprint, revision)?;
+            println!("{} {capability} for {alias}", if changed { "revoked" } else { "already absent" });
+        } else {
+            open_registry()?.revoke_reviewed(alias, fingerprint, revision)?;
+            println!("revoked all capabilities for {alias}");
+        }
+        return Ok(());
+    }
     let registry = open_registry()?;
     if registry.revoke(alias)? {
         println!("revoked all capabilities for {alias}");
@@ -281,6 +315,13 @@ fn peers_revoke(arguments: &[String]) -> Result<(), Failure> {
         println!("no such peer: {alias}");
     }
     Ok(())
+}
+
+fn expected_revision(options: &std::collections::BTreeMap<String, String>) -> Result<i64, Failure> {
+    let revision = required(options, "--expect-revision")?.parse::<i64>()
+        .map_err(|_| Failure::Usage("invalid expected revision".into()))?;
+    if revision < 0 { return Err(Failure::Usage("invalid expected revision".into())); }
+    Ok(revision)
 }
 
 pub(crate) fn required<'a>(

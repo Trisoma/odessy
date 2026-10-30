@@ -191,12 +191,12 @@ def bounded_native(argv,timeout=15):
 
 
 def pair(parameters,*,runner=None):
-    data=fields(parameters,{'action','link','alias','certificate','fingerprint','address','workspace','output','review','confirm'},'pairing')
+    data=fields(parameters,{'action','link','alias','certificate','fingerprint','address','workspace','output','review','confirm','expected_peer_fingerprint','expected_peer_revision'},'pairing')
     action=data.get('action');link=guard(data.get('link',''))
     if not data.get('link') or not link.is_file(): raise ValueError('select an existing odessy-link executable')
     argv=[str(link)]
     alias=data.get('alias','')
-    if action in ('enroll','grant','revoke') and not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_-]{0,63}',alias): raise ValueError('invalid peer alias')
+    if action in ('enroll','grant','grant-telemetry','revoke','revoke-telemetry','revoke-execution') and not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_-]{0,63}',alias): raise ValueError('invalid peer alias')
     certificate_hash=None
     if action=='list': argv+=['peers','list','--json']
     elif action=='discover': argv+=['discover','--seconds','2']
@@ -220,21 +220,50 @@ def pair(parameters,*,runner=None):
         workspace=guard(data.get('workspace',''))
         if not data.get('workspace') or not workspace.is_dir():raise ValueError('explicit local workspace required')
         argv+=['peers','grant',alias,'--capability','mcp','--workspace',str(workspace)]
+    elif action=='grant-telemetry':
+        argv+=['peers','grant',alias,'--capability','telemetry.read']
     elif action=='revoke':argv+=['peers','revoke',alias]
+    elif action in ('revoke-telemetry','revoke-execution'):
+        argv+=['peers','revoke',alias,'--capability', 'telemetry.read' if action=='revoke-telemetry' else 'mcp']
     else:raise ValueError('unsupported pairing operation')
     registry_snapshot=None
-    if action in ('grant','revoke','enroll','export'):
+    if action in ('grant','grant-telemetry','revoke','revoke-telemetry','revoke-execution','enroll','export'):
         if runner is None:
             registry_snapshot=json.loads(bounded_native([str(link),'peers','list','--json'],timeout=10))
         else:registry_snapshot=json.loads(runner([str(link),'peers','list','--json']))
+    if action in ('grant','grant-telemetry','revoke','revoke-telemetry','revoke-execution'):
+        if not isinstance(registry_snapshot,dict) or not isinstance(registry_snapshot.get('peers'),list):raise ValueError('invalid peer inventory')
+        revision=registry_snapshot.get('grant_revision')
+        matches=[peer for peer in registry_snapshot['peers'] if isinstance(peer,dict) and peer.get('alias')==alias]
+        if type(revision) is not int or revision<0 or len(matches)!=1:raise ValueError('peer identity is unavailable')
+        fingerprint=matches[0].get('fingerprint_sha256')
+        if not isinstance(fingerprint,str) or not re.fullmatch('[a-f0-9]{64}',fingerprint):raise ValueError('invalid peer identity')
+        argv+=['--expect-sha256',fingerprint,'--expect-revision',str(revision)]
+    if action == 'enroll':
+        if not isinstance(registry_snapshot,dict) or not isinstance(registry_snapshot.get('peers'),list):raise ValueError('invalid peer inventory')
+        revision=registry_snapshot.get('grant_revision')
+        matches=[peer for peer in registry_snapshot['peers'] if isinstance(peer,dict) and peer.get('alias')==alias]
+        if type(revision) is not int or revision<0 or len(matches)>1:raise ValueError('peer identity is unavailable')
+        previous=matches[0].get('fingerprint_sha256') if matches else 'absent'
+        if matches and (not isinstance(previous,str) or not re.fullmatch('[a-f0-9]{64}',previous)):raise ValueError('invalid peer identity')
+        argv+=['--expect-bundle-sha256',certificate_hash,'--expect-existing',previous,'--expect-revision',str(revision)]
+    if 'expected_peer_fingerprint' in data or 'expected_peer_revision' in data:
+        expected=data.get('expected_peer_fingerprint'); expected_revision=data.get('expected_peer_revision')
+        if (action not in ('enroll','grant','grant-telemetry','revoke','revoke-telemetry','revoke-execution')
+                or not isinstance(expected,str) or not re.fullmatch('[a-f0-9]{64}',expected)
+                or type(expected_revision) is not int or expected_revision<0
+                or type(revision) is not int or revision!=expected_revision or len(matches)!=1
+                or matches[0].get('fingerprint_sha256')!=expected):
+            raise ValueError('selected peer changed; inspect again')
     payload={'registry_snapshot':registry_snapshot,'argv':argv,'binary_sha256':digest(link),'certificate_sha256':certificate_hash,'state_directory':os.environ.get('ODESSY_LINK_STATE_DIR','current-user-default')}
     plan_id=hashlib.sha256(json.dumps(payload,sort_keys=True).encode()).hexdigest()
     if data.get('review') is True:
-        return {'plan_id':plan_id,'operation':action,'arguments':argv[1:],'grants_changed':action in ('grant','revoke'),'node_local_only':True,'verification':'Compare fingerprints through an independent trusted channel before enrollment.'}
+        return {'plan_id':plan_id,'operation':action,'arguments':argv[1:],'grants_changed':action in ('grant','grant-telemetry','revoke','revoke-telemetry','revoke-execution'),'node_local_only':True,'verification':'Compare fingerprints through an independent trusted channel before enrollment.'}
     if action not in ('list','discover') and data.get('confirm')!=plan_id:raise ValueError('review exact pairing operation before confirming')
     if runner is None:
         text=bounded_native(argv)
     else:text=runner(argv)
-    return {'operation':action,'peers':json.loads(text) if action=='list' else None,'message':text if action!='list' else '', 'grants_changed':action in ('grant','revoke'),'node_local_only':True}
+    changed = text.startswith('revoked ') if action in ('revoke-telemetry','revoke-execution') else action in ('grant','grant-telemetry','revoke')
+    return {'operation':action,'peers':json.loads(text) if action=='list' else None,'message':text if action!='list' else '', 'grants_changed':changed,'node_local_only':True}
 
 

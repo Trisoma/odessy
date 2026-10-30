@@ -1037,6 +1037,113 @@
       }
     },
     {
+      "name": "ODESSY_MONITORING",
+      "kind": "flag",
+      "summary": "enable optional monitoring",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [
+          "on",
+          "off",
+          "true",
+          "false",
+          "1",
+          "0"
+        ],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_MONITOR_BIN",
+      "kind": "file",
+      "summary": "packaged Go monitoring executable",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_MONITOR_HOSTS",
+      "kind": "text",
+      "summary": "comma-separated enrolled monitoring host IDs",
+      "source": "runtime environment",
+      "screen": "Devices and deployment",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_MONITOR_LOCAL",
+      "kind": "flag",
+      "summary": "explicit local telemetry consent",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [
+          "on",
+          "off",
+          "true",
+          "false",
+          "1",
+          "0"
+        ],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_MONITOR_PRESET",
+      "kind": "enum",
+      "summary": "monitoring cadence",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [
+          "default",
+          "low-power"
+        ],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_MONITOR_STATE_DIR",
+      "kind": "path",
+      "summary": "monitoring history directory",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
       "name": "ODESSY_OLLAMA_MODEL",
       "kind": "model",
       "summary": "the model the ollama backend requests",

@@ -11,7 +11,7 @@ import 'setup_flow_fakes.dart';
 import 'setup_usability_test.dart' show FakeAck, FakePicker;
 
 /// Renders the setup surface at the sizes and Windows scaling settings named in
-/// the usability plan. Artifacts land in `build/preview` (not committed).
+/// the usability plan. Artifacts land in `build/screenshots` (not committed).
 void main() {
   testWidgets('capture setup surfaces at 720/960/1280', (tester) async {
     await (FontLoader('OdessySans')
@@ -61,8 +61,8 @@ void main() {
             key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
         final image = await boundary.toImage(pixelRatio: 1);
         final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-        await Directory('build/preview').create(recursive: true);
-        await File('build/preview/setup-review-${entry.$1}.png')
+        await Directory('build/screenshots').create(recursive: true);
+        await File('build/screenshots/setup-review-${entry.$1}.png')
             .writeAsBytes(bytes!.buffer.asUint8List());
         image.dispose();
       });

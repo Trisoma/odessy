@@ -181,6 +181,9 @@ class _InstalledApplicationState extends State<InstalledApplication> {
     _startup = (widget.startupFactory ?? _defaultStartup)(_backend);
     _startup.addListener(_changed);
     _lifecycle = AppLifecycleListener(onExitRequested: () async {
+      // The child app owns draft confirmation. Its approved-exit callback closes
+      // startup resources; stopping here would destroy a canceled live session.
+      if (_showsDesktop) return AppExitResponse.exit;
       await _startup.shutdown();
       return AppExitResponse.exit;
     });
@@ -189,6 +192,16 @@ class _InstalledApplicationState extends State<InstalledApplication> {
 
   InstalledStartup _defaultStartup(SetupBackend backend) =>
       InstalledStartup(backend: backend, installRoot: widget.installRoot);
+
+  bool get _showsDesktop =>
+      (_startup.phase == InstalledPhase.configure &&
+          _startup.spec['role'] != 'execution') ||
+      (_startup.phase == InstalledPhase.ready && _startup.api != null);
+
+  Future<void> _desktopExitApproved() async {
+    _handoffTimer?.cancel();
+    await _startup.shutdown();
+  }
 
   void _changed() {
     if (!mounted) return;
@@ -328,11 +341,17 @@ class _InstalledApplicationState extends State<InstalledApplication> {
       return OdessyApp(
           api: DisconnectedApi(),
           installed: _startup.spec,
+          managementBackend: widget.backend,
+          onExitApproved: _desktopExitApproved,
           onConfigured: () => _startup.begin());
     }
     final api = _startup.api;
     if (_startup.phase == InstalledPhase.ready && api != null) {
-      return OdessyApp(api: api, installed: _startup.spec);
+      return OdessyApp(
+          api: api,
+          installed: _startup.spec,
+          managementBackend: widget.backend,
+          onExitApproved: _desktopExitApproved);
     }
     return MaterialApp(
         navigatorKey: _navigator,

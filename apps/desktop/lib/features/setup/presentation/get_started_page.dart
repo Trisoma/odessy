@@ -39,7 +39,10 @@ class _GetStartedPageState extends State<GetStartedPage> {
   final model = TextEditingController();
   final workspace = TextEditingController();
   final credential = TextEditingController();
-  String choice = 'local', preset = 'openai';
+  final localCredential = TextEditingController();
+  String choice = 'local', preset = 'openai', localProvider = 'ollama';
+  String _savedChoice = 'local';
+  String _localEndpoint = 'http://127.0.0.1:11434', _remoteEndpoint = '';
   bool initialised = false;
   final _modelChoiceKey = GlobalKey();
   final _voiceKey = GlobalKey();
@@ -55,10 +58,22 @@ class _GetStartedPageState extends State<GetStartedPage> {
   };
 
   void _chooseModel() {
-    setState(() => choice = choice == 'remote' ? 'remote' : 'local');
+    _selectChoice(
+        choice == 'local' || choice == 'remote' ? choice : _savedChoice);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final target = _modelChoiceKey.currentContext;
       if (mounted && target != null) Scrollable.ensureVisible(target);
+    });
+  }
+
+  void _selectChoice(String value) {
+    setState(() {
+      if (choice == 'local') _localEndpoint = endpoint.text;
+      if (choice == 'remote') _remoteEndpoint = endpoint.text;
+      choice = value;
+      if (value == 'local' || value == 'remote') _savedChoice = value;
+      if (value == 'local') endpoint.text = _localEndpoint;
+      if (value == 'remote') endpoint.text = _remoteEndpoint;
     });
   }
 
@@ -85,6 +100,37 @@ class _GetStartedPageState extends State<GetStartedPage> {
     initialised = true;
     workspace.text = c.workspace;
     final selection = c.spec['selection'];
+    final savedModel = selection is Map ? selection['model'] : null;
+    if (savedModel is Map) {
+      final provider = savedModel['provider'];
+      model.text =
+          savedModel['name'] is String ? savedModel['name'] as String : '';
+      final savedEndpoint = savedModel['endpoint'] is String
+          ? savedModel['endpoint'] as String
+          : '';
+      final savedCredential = savedModel['credential_env'] is String
+          ? savedModel['credential_env'] as String
+          : '';
+      if (provider == 'ollama' || provider == 'lfm') {
+        localProvider = provider as String;
+        _localEndpoint =
+            savedEndpoint.isEmpty ? 'http://127.0.0.1:11434' : savedEndpoint;
+        localCredential.text = savedCredential;
+        _savedChoice = 'local';
+      } else if (const {
+        'openai',
+        'claude',
+        'deepseek',
+        'qwen',
+        'kimi',
+        'custom'
+      }.contains(provider)) {
+        preset = provider as String;
+        _remoteEndpoint = savedEndpoint;
+        credential.text = savedCredential;
+        _savedChoice = 'remote';
+      }
+    }
     final audio = selection is Map ? selection['voice'] : null;
     if (audio is Map) {
       voiceEnabled = audio['enabled'] == true;
@@ -108,6 +154,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
     model.dispose();
     workspace.dispose();
     credential.dispose();
+    localCredential.dispose();
     for (final controller in voicePaths.values) {
       controller.dispose();
     }
@@ -121,9 +168,11 @@ class _GetStartedPageState extends State<GetStartedPage> {
           'voice': (c.spec['selection'] as Map)['voice'],
         if (choice == 'local')
           'model': {
-            'provider': 'ollama',
+            'provider': localProvider,
             'name': model.text.trim(),
             'endpoint': endpoint.text.trim(),
+            if (localCredential.text.trim().isNotEmpty)
+              'credential_env': localCredential.text.trim(),
           },
         if (choice == 'remote')
           'model': {
@@ -137,11 +186,18 @@ class _GetStartedPageState extends State<GetStartedPage> {
       };
 
   bool get _valid => switch (choice) {
-        'local' =>
-          model.text.trim().isNotEmpty && endpoint.text.trim().isNotEmpty,
-        'remote' => model.text.trim().isNotEmpty,
+        'local' => model.text.trim().isNotEmpty &&
+            endpoint.text.trim().isNotEmpty &&
+            _validCredential(localCredential.text),
+        'remote' => model.text.trim().isNotEmpty &&
+            (preset != 'custom' || endpoint.text.trim().isNotEmpty) &&
+            _validCredential(credential.text),
         _ => true,
       };
+
+  bool _validCredential(String value) =>
+      value.trim().isEmpty ||
+      RegExp(r'^[A-Z][A-Z0-9_]{0,127}$').hasMatch(value.trim());
 
   Future<void> _browseWorkspace() async {
     final selected = await widget.picker
@@ -157,15 +213,22 @@ class _GetStartedPageState extends State<GetStartedPage> {
       return;
     }
     await c.reviewConfiguration(_selection, workspace.text.trim());
+    if (!mounted) return;
     if (c.reviewedAction == 'package-configure-review' && c.canConfirm) {
       await c.confirm();
+      if (mounted &&
+          c.error.isEmpty &&
+          c.result['configured'] == true &&
+          c.notice.isNotEmpty) {
+        widget.onStart();
+      }
     }
-    if (c.notice.isNotEmpty) widget.onStart();
   }
 
   @override
   Widget build(BuildContext context) {
     final configured = c.modelConfigured;
+    final readyToStart = configured && choice == 'done';
     return SetupShell(
         title: 'Get started with Odessy',
         subtitle: configured
@@ -174,22 +237,24 @@ class _GetStartedPageState extends State<GetStartedPage> {
         footer: SetupFooter(
             primaryLabel: choice == 'later'
                 ? 'Configure a model'
-                : configured
+                : readyToStart
                     ? 'Start chatting'
                     : 'Save and continue',
             onPrimary: c.busy
                 ? null
                 : choice == 'later'
                     ? _chooseModel
-                    : configured
+                    : readyToStart
                         ? widget.onStart
                         : (_valid ? _save : null),
             secondaryLabel: 'Configure later',
-            onSecondary: c.busy ? null : () => setState(() => choice = 'later'),
+            onSecondary: c.busy ? null : () => _selectChoice('later'),
             busy: c.busy,
-            note: configured
+            note: readyToStart
                 ? 'Start chatting is available because a model is configured and the local coordinator is ready.'
-                : 'No model is downloaded and no provider is contacted until you ask.'),
+                : configured
+                    ? 'Changes apply on the next launch; the current session keeps its configuration.'
+                    : 'No model is downloaded and no provider is contacted until you ask.'),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           if (c.error.isNotEmpty)
             SetupMessage(
@@ -222,9 +287,8 @@ class _GetStartedPageState extends State<GetStartedPage> {
                           label: Text('Configure later')),
                     ],
                     selected: {choice},
-                    onSelectionChanged: c.busy
-                        ? null
-                        : (value) => setState(() => choice = value.first))),
+                    onSelectionChanged:
+                        c.busy ? null : (value) => _selectChoice(value.first))),
             if (choice == 'local') _local(context),
             if (choice == 'remote') _remote(context),
             if (choice == 'later')
@@ -253,6 +317,16 @@ class _GetStartedPageState extends State<GetStartedPage> {
       description:
           'Odessy reads the model list from the endpoint you name. It does not install or download anything.',
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        DropdownButtonFormField<String>(
+            initialValue: localProvider,
+            decoration: const InputDecoration(labelText: 'Local backend'),
+            items: const [
+              DropdownMenuItem(value: 'ollama', child: Text('Ollama')),
+              DropdownMenuItem(value: 'lfm', child: Text('LFM')),
+            ],
+            onChanged: c.busy
+                ? null
+                : (value) => setState(() => localProvider = value!)),
         Row(children: [
           Expanded(
               child: PathField(
@@ -274,6 +348,14 @@ class _GetStartedPageState extends State<GetStartedPage> {
                 : 'Find installed models')),
         const SizedBox(height: OdessyTokens.spaceMedium),
         _models(context),
+        const SizedBox(height: OdessyTokens.spaceMedium),
+        TextField(
+            controller: localCredential,
+            enabled: !c.busy,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(
+                labelText: 'Local credential environment variable (optional)',
+                helperText: 'Variable name only; no token is stored here.')),
       ]));
 
   Widget _models(BuildContext context) {
@@ -323,8 +405,10 @@ class _GetStartedPageState extends State<GetStartedPage> {
             items: const [
               DropdownMenuItem(
                   value: 'openai', child: Text('OpenAI-compatible')),
+              DropdownMenuItem(value: 'claude', child: Text('Claude')),
               DropdownMenuItem(value: 'deepseek', child: Text('DeepSeek')),
               DropdownMenuItem(value: 'qwen', child: Text('Qwen')),
+              DropdownMenuItem(value: 'kimi', child: Text('Kimi')),
               DropdownMenuItem(value: 'custom', child: Text('Custom endpoint')),
             ],
             onChanged: c.busy
@@ -343,6 +427,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
             key: const Key('get-started-remote-endpoint'),
             controller: endpoint,
             enabled: !c.busy,
+            onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(
                 labelText: 'Endpoint (optional for presets)',
                 hintText: 'https://…')),
@@ -351,6 +436,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
             key: const Key('get-started-credential'),
             controller: credential,
             enabled: !c.busy,
+            onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(
                 labelText: 'Credential environment variable (optional)',
                 hintText: 'ODESSY_CLOUD_API_KEY',
@@ -367,6 +453,9 @@ class _GetStartedPageState extends State<GetStartedPage> {
             const Text(
                 'The local coordinator starts when you continue. If it cannot start, setup stays open and shows the reason.'),
             const SizedBox(height: OdessyTokens.spaceMedium),
+            OutlinedButton(
+                onPressed: c.busy ? null : _chooseModel,
+                child: const Text('Change model')),
             OutlinedButton(
                 onPressed: c.busy ? null : c.refreshStatus,
                 child: const Text('Re-read installation state')),

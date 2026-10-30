@@ -11,12 +11,14 @@ class SettingsFormController<T> extends ChangeNotifier {
   bool loading = false;
   bool loaded = false;
   bool _disposed = false;
+  bool _reloadRequired = false;
   String? error;
   String status = '';
   String get source => field.source;
   String get applyTiming => field.applyTiming;
   bool get dirty => field.dirty;
-  bool get canSave => loaded && !loading && dirty && field.error == null;
+  bool get canSave =>
+      loaded && !loading && !_reloadRequired && dirty && field.error == null;
   void edit(String value) {
     if (_disposed || loading) return;
     field.edit(value);
@@ -36,9 +38,11 @@ class SettingsFormController<T> extends ChangeNotifier {
       if (_disposed) return;
       field.load(next);
       loaded = true;
+      _reloadRequired = false;
     } catch (_) {
       if (!_disposed) {
-        error = 'Could not load settings. Connect the service and retry.';
+        error =
+            'Could not load settings. Connect the service and retry; safe updates require a compatible service.';
       }
     } finally {
       if (!_disposed) {
@@ -67,8 +71,9 @@ class SettingsFormController<T> extends ChangeNotifier {
       status = successMessage;
     } catch (_) {
       if (!_disposed) {
+        _reloadRequired = true;
         error =
-            'Save or reload failed. No success assumed; draft retained. Reload before retrying.';
+            'Save or reload failed, or settings changed. No success assumed; draft retained. Reload before retrying.';
       }
     } finally {
       if (!_disposed) {

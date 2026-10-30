@@ -48,6 +48,14 @@ class _MaintenancePageState extends State<MaintenancePage> {
         if (!widget.pairing && !widget.installer)
           'allow_model_downloads': allowModelDownloads
       });
+
+  void choosePeer(InspectedPeer peer) {
+    c.selectPeer(peer);
+    if (identical(c.selectedPeer, peer)) {
+      editors['alias']?.text = peer.alias;
+    }
+  }
+
   Widget field(String key, String label, bool locked) {
     final editor = editors.putIfAbsent(
         key, () => TextEditingController(text: c.fields[key] as String? ?? ''));
@@ -77,7 +85,12 @@ class _MaintenancePageState extends State<MaintenancePage> {
                     'pair:export': 'Export public identity',
                     'pair:enroll': 'Enroll verified peer',
                     'pair:grant': 'Grant this local workspace',
-                    'pair:revoke': 'Revoke local peer grant'
+                    'pair:grant-telemetry': 'Grant telemetry read access',
+                    'pair:revoke-telemetry':
+                        'Revoke telemetry read access only',
+                    'pair:revoke-execution':
+                        'Revoke workspace execution access only',
+                    'pair:revoke': 'Revoke all local peer capabilities'
                   }
                 : {
                     'install': 'Install / upgrade offline runtime',
@@ -236,6 +249,43 @@ class _MaintenancePageState extends State<MaintenancePage> {
                 Text(c.error,
                     style:
                         TextStyle(color: Theme.of(context).colorScheme.error)),
+              if (widget.pairing && c.peers != null) ...[
+                const SizedBox(height: 16),
+                Text('Enrolled peers',
+                    style: Theme.of(context).textTheme.titleMedium),
+                const Text(
+                    'Last local inspection; refresh to see later changes. Choosing a peer does not change access.'),
+                if (c.peers!.isEmpty) const Text('No enrolled peers reported.'),
+                for (final peer in c.peers!)
+                  Card(
+                      child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(peer.alias,
+                                    style:
+                                        Theme.of(context).textTheme.titleSmall),
+                                SelectableText(
+                                    'Installation ID: ${peer.installationId}'),
+                                SelectableText(
+                                    'Fingerprint: ${peer.fingerprint}'),
+                                Text(
+                                    'Telemetry grant: ${peer.telemetry ? 'Present' : 'Not present'}'),
+                                Text(
+                                    'Execution grant: ${peer.execution ? 'Present' : 'Not present'}'),
+                                Text(
+                                    'Address: ${peer.address ?? 'Not reported'}'),
+                                Text(
+                                    'Workspace: ${peer.workspace ?? 'Not reported'}'),
+                                TextButton(
+                                    onPressed:
+                                        locked ? null : () => choosePeer(peer),
+                                    child: Text(identical(c.selectedPeer, peer)
+                                        ? 'Selected: ${peer.alias}'
+                                        : 'Use peer ${peer.alias}')),
+                              ]))),
+              ],
               if (c.result.isNotEmpty)
                 SelectableText(
                     const JsonEncoder.withIndent('  ').convert(c.result)),

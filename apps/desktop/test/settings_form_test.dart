@@ -41,6 +41,11 @@ void main() {
     expect(f.value, 4);
     fail = false;
     await c.save();
+    expect(stored, 1);
+    expect(f.dirty, true);
+    await c.load();
+    c.edit('4');
+    await c.save();
     expect(f.dirty, false);
     expect(stored, 4);
     c.dispose();

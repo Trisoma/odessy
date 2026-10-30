@@ -12,6 +12,8 @@ class DesktopSession extends ChangeNotifier {
   bool connected = false, busy = false, stopping = false, _disposed = false;
   int _epoch = 0;
   Future<void>? _shutdown;
+  Json? _consultationVersion;
+  OdessyApi? _consultationTransport;
   StreamSubscription<SessionEvent>? _subscription;
   Timer? _retry;
   int get lastEvent =>
@@ -27,8 +29,9 @@ class DesktopSession extends ChangeNotifier {
     error = '';
     _notify();
     try {
-      final values = await api.profiles();
+      final legacyProfiles = await api.profiles();
       final fresh = await api.createSession();
+      final values = fresh.availableProfiles ?? legacyProfiles;
       if (_disposed || epoch != _epoch) return;
       profiles = values;
       session = fresh;
@@ -100,6 +103,9 @@ class DesktopSession extends ChangeNotifier {
       if (_disposed || captured != _epoch || version < lastEvent) return;
       if (value.id != sid) throw StateError('Session identity changed');
       session = reduceSessionSnapshot(session, value);
+      if (session!.availableProfiles != null) {
+        profiles = session!.availableProfiles!;
+      }
       if (value.running) {
         status = value.pending.isNotEmpty ? 'Waiting for you' : 'Working';
       } else if (!status.startsWith('Stopped')) {
@@ -174,11 +180,49 @@ class DesktopSession extends ChangeNotifier {
     await command((sid) => api.select(sid, profile));
   }
 
-  Future<Json> loadSettings() => api.settings();
+  Future<Json> loadSettings() async {
+    final transport = api;
+    if (transport.isDemo) return transport.settings();
+    _consultationVersion = null;
+    if (transport is! ConsultationLimitApi) {
+      throw StateError('Safe settings updates are unavailable.');
+    }
+    final epoch = _epoch;
+    final result =
+        await (transport as ConsultationLimitApi).readConsultationLimit();
+    if (_disposed || epoch != _epoch || !identical(transport, api)) {
+      throw StateError('Connection changed.');
+    }
+    _consultationVersion = result;
+    _consultationTransport = transport;
+    return {
+      'settings': {'max_consultations': result['max_consultations']}
+    };
+  }
+
   Future<void> updateConsultationLimit(int value) async {
     if (value < 0 || value > 32) throw ArgumentError('Limit must be 0–32');
     final transport = api;
     final epoch = _epoch;
+    if (!transport.isDemo) {
+      final version = _consultationVersion;
+      _consultationVersion =
+          null; // A lost response must not be retried blindly.
+      if (transport is! ConsultationLimitApi ||
+          version == null ||
+          !identical(_consultationTransport, transport)) {
+        throw StateError('Reload settings before saving.');
+      }
+      await (transport as ConsultationLimitApi).saveConsultationLimit({
+        'instance_id': version['instance_id'],
+        'revision': version['revision'],
+        'max_consultations': value,
+      });
+      if (_disposed || epoch != _epoch || !identical(transport, api)) {
+        throw StateError('Connection changed; save result is uncertain.');
+      }
+      return;
+    }
     final latest = await transport.settings();
     if (_disposed || epoch != _epoch || !identical(transport, api)) {
       throw StateError('Connection changed; settings were not saved.');
@@ -255,6 +299,43 @@ class DesktopSession extends ChangeNotifier {
     connected = false;
     busy = false;
     await start();
+  }
+
+  /// Explicitly end this idle session and load a new configuration snapshot.
+  Future<void> newSession() async {
+    if (_disposed ||
+        busy ||
+        stopping ||
+        !connected ||
+        session == null ||
+        session!.running) {
+      return;
+    }
+    final transport = api, sid = session!.id, epoch = ++_epoch;
+    busy = true;
+    connected = false;
+    error = '';
+    _retry?.cancel();
+    _retry = null;
+    _notify();
+    try {
+      await _subscription?.cancel();
+      await transport.deleteSession(sid);
+      if (_disposed || epoch != _epoch || !identical(api, transport)) return;
+      session = null;
+      profiles = [];
+      route = '';
+      busy = false;
+      await start();
+    } catch (_) {
+      if (!_disposed && epoch == _epoch) {
+        busy = false;
+        status = 'Offline';
+        error =
+            'The previous session could not be closed. Reconnect or restart the app to continue.';
+        _notify();
+      }
+    }
   }
 
   Future<void> shutdown() => _shutdown ??= _close();

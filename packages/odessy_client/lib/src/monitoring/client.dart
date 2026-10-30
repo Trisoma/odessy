@@ -75,10 +75,12 @@ class MonitoringClient {
   final String _token;
   final HttpClient _http = HttpClient();
   final Set<HttpClient> _streams = {};
+  bool _closed = false;
   static const _limit = 2 * 1024 * 1024;
 
   Future<HttpClientResponse> _open(String path,
-      {Map<String, String>? query, String? cursor, HttpClient? client}) async {
+      {Map<String, dynamic>? query, String? cursor, HttpClient? client}) async {
+    if (_closed) throw StateError('Monitoring client is closed.');
     final uri = base.resolve(path).replace(queryParameters: query);
     if (uri.origin != base.origin)
       throw const FormatException('Origin changed');
@@ -101,7 +103,7 @@ class MonitoringClient {
     return response;
   }
 
-  Future<Json> _get(String path, {Map<String, String>? query}) async {
+  Future<Json> _get(String path, {Map<String, dynamic>? query}) async {
     final response = await _open(path, query: query);
     final bytes = <int>[];
     await for (final chunk in response.timeout(const Duration(seconds: 12))) {
@@ -116,6 +118,8 @@ class MonitoringClient {
     }
     return freezeJson(value);
   }
+
+  Future<Json> getOverview() => _get('/v1/monitoring');
 
   Future<MonitoringSnapshot> listHosts({String? cursor, int limit = 20}) async {
     if (limit < 1 || limit > 32)
@@ -150,9 +154,13 @@ class MonitoringClient {
       required DateTime to,
       int step = 60,
       String series = 'cpu.utilization_percent'}) {
+    final names = series.split(',');
     if (!from.isBefore(to) ||
         step < 1 ||
         series.length > 512 ||
+        names.length > 16 ||
+        names.toSet().length != names.length ||
+        names.any((name) => !RegExp(r'^[A-Za-z0-9_.]+$').hasMatch(name)) ||
         !RegExp(r'^[A-Za-z0-9_.,]+$').hasMatch(series)) {
       throw const FormatException('Invalid history query');
     }
@@ -160,13 +168,37 @@ class MonitoringClient {
       'from': from.toUtc().toIso8601String(),
       'to': to.toUtc().toIso8601String(),
       'step': '$step',
-      'series': series
+      'series': names
     });
   }
 
-  Stream<MonitoringEvent> watchEvents({String? after}) async* {
-    final client = HttpClient();
-    _streams.add(client);
+  Stream<MonitoringEvent> watchEvents({String? after}) {
+    HttpClient? client;
+    StreamSubscription<MonitoringEvent>? subscription;
+    late final StreamController<MonitoringEvent> output;
+    output = StreamController<MonitoringEvent>(
+        onListen: () {
+          if (_closed) {
+            output.addError(StateError('Monitoring client is closed.'));
+            unawaited(output.close());
+            return;
+          }
+          client = HttpClient();
+          _streams.add(client!);
+          subscription = _readEvents(client!, after).listen(output.add,
+              onError: output.addError,
+              onDone: () => unawaited(output.close()));
+        },
+        onPause: () => subscription?.pause(),
+        onResume: () => subscription?.resume(),
+        onCancel: () async {
+          client?.close(force: true);
+          await subscription?.cancel();
+        });
+    return output.stream;
+  }
+
+  Stream<MonitoringEvent> _readEvents(HttpClient client, String? after) async* {
     try {
       final response =
           await _open('/v1/monitoring/events', cursor: after, client: client);
@@ -210,9 +242,12 @@ class MonitoringClient {
   }
 
   void close() {
+    if (_closed) return;
+    _closed = true;
     for (final client in _streams.toList()) {
       client.close(force: true);
     }
+    _streams.clear();
     _http.close(force: true);
   }
 }

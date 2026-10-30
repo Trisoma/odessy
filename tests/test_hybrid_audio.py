@@ -312,6 +312,26 @@ def build(
 
 # -- startup and degradation --------------------------------------------------
 
+def test_windows_native_output_uses_default_device_and_rejects_device_override(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from odessy.voice.capture import WindowsNativePlayer
+    import odessy.voice.hybrid as hybrid
+    monkeypatch.setattr(hybrid.sys, 'platform', 'win32')
+    async def submit(*args):
+        return ''
+    async def run():
+        config = replace(_config_with(tmp_path), audio_player='windows-native')
+        adapter = HybridAudioAdapter(config=config, submit_voice=submit, tts_factory=FakeTTS)
+        assert await adapter._prepare_output()
+        assert isinstance(adapter._player, WindowsNativePlayer)
+        await adapter.aclose()
+        config = replace(config, audio_output_device='some-device')
+        adapter = HybridAudioAdapter(config=config, submit_voice=submit, tts_factory=FakeTTS)
+        assert not await adapter._prepare_output()
+        assert adapter._player is None
+        await adapter.aclose()
+    asyncio.run(run())
+
 
 @pytest.mark.anyio
 async def test_a_missing_microphone_leaves_typed_input_usable(tmp_path):
