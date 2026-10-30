@@ -131,8 +131,12 @@ def consult_agent(profile, question, context=''):
 
 class JobManager:
     def __init__(self, profiles, event_sink=None, remote_targets=None, runner=None,
-                 adapters=None, max_log_chars=32000, max_progress=100):
+                 adapters=None, max_log_chars=32000, max_progress=100, review=None):
         self.profiles = profiles
+        #: Checks the files a finished job changed (``HookSet.review_changes``): a child
+        #: CLI runs its own tools, out of reach of the hooks, so its result is reviewed.
+        #: Returns findings, each with a ``decision`` of deny or confirm.
+        self.review = review
         self.event_sink = event_sink
         self.remote_targets = remote_targets or {}
         self.runner = runner or self._subprocess
@@ -320,12 +324,15 @@ class JobManager:
         job = dict(job_id=job_id, participant=participant, mode=mode, task=task,
                    state='queued', workspace=str(cwd), worktree=None, diff='', changed_files=[],
                    validation={'status': 'unknown', 'report': None}, result=None, error=None,
-                   progress=[], log='', usage=_cli_usage())
+                   progress=[], log='', usage=_cli_usage(), hook_review=None)
         job['remote_state_unknown'] = False
         job['binding'] = binding
         job['permissions'] = {
             'source': 'remote_coding_cli' if remote else 'coding_cli', 'adapter': profile.adapter,
             'mode': mode, 'enforcement': 'child_cli_not_verified',
+            # The hooks cannot see inside a child CLI; with a reviewer, the files it
+            # changed are checked against the write rules once it finishes.
+            'hooks': 'changes_reviewed' if self.review is not None else 'not_applied',
             'requested_sandbox': ('read-only' if mode == 'advice' else 'workspace-write')
                                  if profile.adapter == 'codex' and mode in ('advice', 'patch') else None,
             'requested_tools': ('Read,Glob,Grep' if mode == 'advice' else 'Read,Glob,Grep,Edit,Write')
@@ -480,11 +487,29 @@ class JobManager:
                     job['error'] = self._redact(job['job_id'], exc)
                     if final_state == 'completed':
                         final_state = 'needs_attention'
+            final_state = self._review_changes(job, final_state)
             job['remote_state_unknown'] = job['job_id'] in self._remote_inflight
             job['state'] = 'needs_attention' if job['remote_state_unknown'] else final_state
             if not job['remote_state_unknown']:
                 self._release(job['job_id'])
             self._emit(job)
+
+    def _review_changes(self, job, final_state):
+        """Check the changed files against the hooks' write rules; a finding needs attention."""
+        if self.review is None or not job.get('changed_files'):
+            return final_state
+        try:
+            findings = list(self.review(job) or [])
+        except Exception as exc:
+            # A review that cannot run must not read as a clean one.
+            findings = [{'path': None, 'rule': 'review', 'decision': 'deny',
+                         'reason': self._redact(job['job_id'], f'the review could not run: {exc}')}]
+        if not findings:
+            job['hook_review'] = {'status': 'clean', 'findings': []}
+            return final_state
+        blocked = any(finding.get('decision') == 'deny' for finding in findings)
+        job['hook_review'] = {'status': 'blocked' if blocked else 'confirm', 'findings': findings}
+        return 'needs_attention' if final_state == 'completed' else final_state
 
     def _safe_remote_value(self, job_id, value):
         if isinstance(value, dict):

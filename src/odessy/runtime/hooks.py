@@ -1,6 +1,7 @@
-"""Hooks: programs you configure to run at fixed points of a turn (``hooks.toml``).
+"""Hooks: programs and rules you configure to screen a turn (``hooks.toml``).
 
-Three events, each a list of programs::
+Four events, each a list of programs, and declarative rules
+(``odessy.runtime.hook_rules``)::
 
     [[pre_tool]]
     name = "no-force-push"
@@ -13,6 +14,10 @@ Three events, each a list of programs::
     workspace = "D:/projects/odessy"
     command = ["ruff", "check", "--quiet", "."]
 
+    [[pre_escalation]]
+    name = "no-full-access"
+    command = ["python", "C:/Users/me/hooks/no_full_access.py"]
+
     [[turn_end]]
     name = "notify"
     command = ["notify-send", "Odessy finished a turn"]
@@ -20,11 +25,19 @@ Three events, each a list of programs::
 * ``pre_tool`` runs after the policy has decided and before anyone is asked. It can
   only make the decision stricter: deny the call, or ask for confirmation of a call
   the policy would have allowed. It cannot allow what the policy denies, skip a
-  confirmation, or widen a command's sandbox mode.
+  confirmation, or widen a command's sandbox mode. Rules run first, in-process.
+* ``pre_escalation`` runs for a call that asks for a wider sandbox
+  (``sandbox_permissions``), before the human is asked. It can only deny.
 * ``post_tool`` runs after a call. What it prints is added to the tool result as a
-  note for the model; the tool's own result is never changed.
+  note for the model. It can also mark the turn (``taint``), end it (``"decision":
+  "stop"``), or withhold the result from the model (``quarantine``); the tool's own
+  result is kept in the turn log.
 * ``turn_end`` runs after the turn has its answer, in the background. Its output is
   ignored.
+
+The file is fingerprinted the first time a process reads it. If it, or a script a
+hook names, changes or disappears afterwards, every tool call is denied until
+Odessy restarts: an agent that rewrote its own hooks must not be screened by them.
 
 The file lives with the user's config (``~/.config/odessy/hooks.toml``, or
 ``ODESSY_HOOKS_FILE``), never in the workspace: a repository must not be able to run
@@ -37,10 +50,12 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import hashlib
 import json
 import os
 import signal
 import re
+import shutil
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -48,6 +63,15 @@ from pathlib import Path
 from typing import Any, Literal
 
 from odessy.authority.redaction import redact_text, redact_value
+from odessy.runtime.hook_rules import (
+    Rule,
+    RuleConfigError,
+    TurnState,
+    call_target,
+    evaluate_rules,
+    parse_rules,
+    taints_for,
+)
 from odessy.runtime.types import PolicyDecision, ToolRequest
 
 if sys.version_info >= (3, 11):
@@ -56,13 +80,17 @@ else:  # pragma: no cover - exercised on 3.10 only
     import tomli as tomllib
 
 HOOKS_FILE_ENV = "ODESSY_HOOKS_FILE"
+#: Set to 1 to refuse to start when the hooks file is missing or has nothing for
+#: the workspace, instead of running without hooks.
+HOOKS_REQUIRED_ENV = "ODESSY_HOOKS_REQUIRED"
 
-Event = Literal["pre_tool", "post_tool", "turn_end"]
-EVENTS: tuple[Event, ...] = ("pre_tool", "post_tool", "turn_end")
+Event = Literal["pre_tool", "pre_escalation", "post_tool", "turn_end"]
+EVENTS: tuple[Event, ...] = ("pre_tool", "pre_escalation", "post_tool", "turn_end")
+_TOP_LEVEL = (*EVENTS, "rule", "presets")
 
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 _RISKS = ("low", "medium", "high")
-_DEFAULT_TIMEOUT = {"pre_tool": 5.0, "post_tool": 10.0, "turn_end": 10.0}
+_DEFAULT_TIMEOUT = {"pre_tool": 5.0, "pre_escalation": 5.0, "post_tool": 10.0, "turn_end": 10.0}
 _MAX_TIMEOUT = 60.0
 #: Hooks per event. Every pre-tool hook runs before a matching call, so a long list
 #: makes every turn slower.
@@ -88,12 +116,18 @@ class HookConfigError(ValueError):
     """The hooks file is malformed. Raised with the file and entry named."""
 
 
+#: The fingerprint of each hooks file the first time this process read it.
+_BASELINES: dict[str, str] = {}
+#: Files larger than this are fingerprinted by size and modification time.
+_HASHED_BYTES = 1 << 20
+
+
 @dataclass(frozen=True)
 class Hook:
     event: Event
     name: str
     command: tuple[str, ...]
-    #: Tool-name patterns (``fnmatch``, case-sensitive); pre/post-tool hooks only.
+    #: Tool-name patterns (``fnmatch``, case-sensitive); not for turn-end hooks.
     match: tuple[str, ...] = ("*",)
     #: Policy risk levels the hook runs for; empty means every level.
     risk: frozenset[str] = frozenset()
@@ -164,31 +198,92 @@ class HookSet:
     workspace_root: Path
     source: Path | None = None
     environ: Mapping[str, str] = field(default_factory=lambda: os.environ, repr=False, compare=False)
+    rules: tuple[Rule, ...] = ()
+    #: Why this set cannot be trusted (the file changed since the process read it).
+    #: A tampered set denies every call.
+    tampered: str | None = None
+    #: Files a hook names (its scripts), protected from the agent like the file itself.
+    scripts: tuple[Path, ...] = ()
+    #: The fingerprint of the file and its absolutely named scripts when loaded, and
+    #: those scripts; ``verify`` compares it again.
+    fingerprint: str | None = None
+    fingerprinted: tuple[Path, ...] = ()
 
     def for_event(self, event: Event) -> tuple[Hook, ...]:
         return tuple(hook for hook in self.hooks if hook.event == event)
 
+    def verify(self) -> "HookSet":
+        """This set, or a tampered copy if the file or a script changed since it was loaded.
+
+        An agent built once (text mode) calls this every turn: a script runs fresh
+        each time, so an edit to it would otherwise take effect unnoticed.
+        """
+
+        if self.tampered is not None or self.fingerprint is None or self.source is None:
+            return self
+        if _fingerprint(self.source, self.fingerprinted) == self.fingerprint:
+            return self
+        return replace(self, hooks=(), rules=(),
+                       tampered="the hooks file or a hook script changed after Odessy read it; restart Odessy to load it again")
+
     def matching(self, event: Event, tool: str, risk: str) -> tuple[Hook, ...]:
         return tuple(hook for hook in self.for_event(event) if hook.applies(tool, risk))
 
-    async def pre_tool(self, request: ToolRequest, decision: PolicyDecision) -> HookVerdict:
-        """Run the matching pre-tool hooks in order; the strictest answer wins.
+    def screens(self, request: ToolRequest, risk: str) -> bool:
+        """Whether a call must be screened before it runs (``_screen``)."""
 
-        A deny stops the remaining hooks: nothing they say could loosen it.
+        if self.tampered is not None or self.matching("pre_tool", request.name, risk):
+            return True
+        if "sandbox_permissions" in request.arguments and self.matching("pre_escalation", request.name, risk):
+            return True
+        return any(
+            rule.decision != "taint" and any(fnmatch.fnmatchcase(request.name, pattern) for pattern in rule.match)
+            for rule in self.rules
+        )
+
+    def protected_paths(self) -> tuple[Path, ...]:
+        """The hooks file, its folder and the scripts its hooks name."""
+
+        paths = [*self.scripts]
+        if self.source is not None:
+            paths[:0] = [self.source, self.source.parent]
+        return tuple(paths)
+
+    async def pre_tool(
+        self,
+        request: ToolRequest,
+        decision: PolicyDecision,
+        context: Mapping[str, Any] | None = None,
+        state: TurnState | None = None,
+    ) -> HookVerdict:
+        """Run the rules, then the matching pre-tool hooks in order; the strictest answer wins.
+
+        A deny stops the remaining checks: nothing they say could loosen it.
+        ``context`` (execution, session, request) is added to the hook's JSON.
         """
 
+        if self.tampered is not None:
+            return HookVerdict("deny", self.tampered, "integrity", ({"hook": "integrity", "decision": "deny", "reason": self.tampered},))
+        verdict = ALLOW
+        results: list[dict[str, Any]] = []
+        for rule, action in evaluate_rules(self.rules, request, decision.risk, self.workspace_root, state):
+            results.append({"hook": rule.name, "kind": "rule", "decision": action, "reason": rule.describe()})
+            if _STRICTNESS[action] > _STRICTNESS[verdict.action] or verdict.hook is None:
+                verdict = HookVerdict(action, rule.describe(), rule.name)
+            if action == "deny":
+                return replace(verdict, results=tuple(results))
         hooks = self.matching("pre_tool", request.name, decision.risk)
         if not hooks:
-            return ALLOW
+            return replace(verdict, results=tuple(results))
         payload = {
             "event": "pre_tool",
             "tool": request.name,
             "arguments": redact_value(dict(request.arguments)),
             "policy": {"decision": decision.action, "risk": decision.risk},
             "workspace": str(self.workspace_root),
+            **(context or {}),
+            "taints": sorted(state.taints) if state is not None else [],
         }
-        verdict = ALLOW
-        results: list[dict[str, Any]] = []
         for hook in hooks:
             action, reason = _pre_tool_answer(hook, await self.run(hook, payload))
             results.append({"hook": hook.name, "decision": action, "reason": reason})
@@ -198,29 +293,98 @@ class HookSet:
                 break
         return replace(verdict, results=tuple(results))
 
-    async def post_tool(self, request: ToolRequest, result: Mapping[str, Any], risk: str) -> list[dict[str, Any]]:
-        """Run the matching post-tool hooks; each returns a note or a failure record."""
+    async def pre_escalation(
+        self,
+        request: ToolRequest,
+        decision: PolicyDecision,
+        context: Mapping[str, Any] | None = None,
+    ) -> HookVerdict:
+        """Run the pre-escalation hooks for a call that asks for a wider sandbox.
 
+        They can only deny: a human is asked about every escalation anyway, so
+        ``confirm`` (or an ``on_error = "confirm"`` failure) leaves it to the human.
+        """
+
+        requested = request.arguments.get("sandbox_permissions")
+        hooks = self.matching("pre_escalation", request.name, decision.risk) if requested is not None else ()
+        if not hooks:
+            return ALLOW
+        payload = {
+            "event": "pre_escalation",
+            "tool": request.name,
+            "arguments": redact_value(dict(request.arguments)),
+            "escalation": {
+                "requested": requested,
+                "justification": redact_text(str(request.arguments.get("justification") or "")),
+            },
+            "policy": {"decision": decision.action, "risk": decision.risk},
+            "workspace": str(self.workspace_root),
+            **(context or {}),
+        }
+        results: list[dict[str, Any]] = []
+        for hook in hooks:
+            action, reason = _pre_tool_answer(hook, await self.run(hook, payload))
+            action = "deny" if action == "deny" else "allow"
+            results.append({"hook": hook.name, "event": "pre_escalation", "decision": action, "reason": reason})
+            if action == "deny":
+                return HookVerdict("deny", f"sandbox escalation refused: {reason}", hook.name, tuple(results))
+        return replace(ALLOW, results=tuple(results))
+
+    async def post_tool(
+        self,
+        request: ToolRequest,
+        result: Mapping[str, Any],
+        risk: str,
+        context: Mapping[str, Any] | None = None,
+        state: TurnState | None = None,
+    ) -> list[dict[str, Any]]:
+        """Run the taint rules and the matching post-tool hooks.
+
+        Each record is a failure (``error``) or what a hook or rule asked for:
+        ``note``, ``taint`` (a list), ``stop`` and ``quarantine``, with ``reason``.
+        """
+
+        records: list[dict[str, Any]] = []
+        if state is not None and result.get("status") not in ("denied", "skipped", "rejected"):
+            for rule, taint in taints_for(self.rules, request, risk, self.workspace_root, state):
+                records.append({"hook": rule.name, "kind": "rule", "taint": [taint]})
         hooks = self.matching("post_tool", request.name, risk)
         if not hooks:
-            return []
+            return records
         payload = {
             "event": "post_tool",
             "tool": request.name,
             "arguments": redact_value(dict(request.arguments)),
             "result": redact_value(dict(result)),
             "workspace": str(self.workspace_root),
+            **(context or {}),
+            "taints": sorted(state.taints) if state is not None else [],
         }
-        records = []
         for hook in hooks:
             run = await self.run(hook, payload)
             if run.error is not None:
                 records.append({"hook": hook.name, "error": run.error})
                 continue
-            note = _note(run)
-            if note:
-                records.append({"hook": hook.name, "exit_code": run.code, "note": note})
+            record = _post_tool_answer(run)
+            if record:
+                records.append({"hook": hook.name, "exit_code": run.code, **record})
         return records
+
+    def review_changes(self, paths: list[str]) -> list[dict[str, Any]]:
+        """The ``filesystem.write`` rules that fire for files a delegated agent changed.
+
+        A child coding CLI runs its own tools, out of the hooks' reach, so its result
+        is checked against the write rules as if Odessy had written each file.
+        """
+
+        if self.tampered is not None:
+            return [{"path": None, "rule": "integrity", "decision": "deny", "reason": self.tampered}]
+        findings = []
+        for path in paths:
+            request = ToolRequest("filesystem.write", {"path": path})
+            for rule, action in evaluate_rules(self.rules, request, "medium", self.workspace_root, None):
+                findings.append({"path": path, "rule": rule.name, "decision": action, "reason": rule.describe()})
+        return findings
 
     async def turn_end(self, payload: Mapping[str, Any]) -> list[dict[str, Any]]:
         """Run every turn-end hook; returns the failures, for the log."""
@@ -374,16 +538,42 @@ def _pre_tool_answer(hook: Hook, run: HookRun) -> tuple[str, str]:
 
 
 def _note(run: HookRun) -> str:
+    return _post_tool_answer(run).get("note", "")
+
+
+def _post_tool_answer(run: HookRun) -> dict[str, Any]:
+    """What a post-tool hook asked for. Plain output is a note.
+
+    JSON may carry ``note``, ``taint`` (a name or a list), ``"decision": "stop"``,
+    ``quarantine`` (true) and ``reason``. Unknown fields are ignored; a malformed
+    taint name is dropped rather than trusted.
+    """
+
     text = run.stdout.strip()
     try:
         answer = json.loads(text) if text else None
     except json.JSONDecodeError:
         answer = None
-    if isinstance(answer, dict) and "note" in answer:
+    record: dict[str, Any] = {}
+    if isinstance(answer, dict) and answer.keys() & {"note", "taint", "decision", "quarantine"}:
         text = str(answer.get("note") or "")
+        taints = answer.get("taint") or []
+        taints = [taints] if isinstance(taints, str) else taints if isinstance(taints, list) else []
+        taints = [taint for taint in taints if isinstance(taint, str) and _NAME.match(taint)]
+        if taints:
+            record["taint"] = taints
+        if answer.get("decision") == "stop":
+            record["stop"] = True
+        if answer.get("quarantine") is True:
+            record["quarantine"] = True
+        if record:
+            record["reason"] = _short(str(answer.get("reason") or ""), MAX_REASON_CHARS)
     if not text and run.code:
         text = run.stderr
-    return _short(text, MAX_NOTE_CHARS)
+    note = _short(text, MAX_NOTE_CHARS)
+    if note:
+        record["note"] = note
+    return record
 
 
 def default_hooks_file() -> Path:
@@ -400,32 +590,159 @@ def _same_path(a: Path, b: Path) -> bool:
     return os.path.normcase(str(a.resolve())) == os.path.normcase(str(b.resolve()))
 
 
+def protected_paths(environ: Mapping[str, str] | None = None, hooks: HookSet | None = None) -> tuple[Path, ...]:
+    """Paths the agent's commands must not touch: the hooks file, its folder, and
+    the scripts its hooks name.
+
+    The file is protected whether or not it exists. A hook runs as the user, outside
+    the sandbox, so an agent that could create one could run anything it liked.
+    """
+
+    target = hooks_file(environ)
+    paths = [target, target.parent]
+    if hooks is not None:
+        paths.extend(path for path in hooks.protected_paths() if path not in paths)
+    return tuple(paths)
+
+
+def _truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _script_paths(hooks: tuple[Hook, ...], workspace_root: Path, where: Path) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    """The existing files a hook's command names, refusing any inside the workspace.
+
+    A hook runs with the workspace as its working directory, so a relative name is
+    resolved there. A script in the workspace could be rewritten by the repository
+    or the agent, which would turn the user's hook into theirs.
+
+    Returns every script, and those named by an absolute path: only those are part
+    of the fingerprint, since a relative name means a different file per workspace.
+    """
+
+    root = workspace_root.resolve()
+    scripts: list[Path] = []
+    absolute: list[Path] = []
+    for hook in hooks:
+        for index, part in enumerate(hook.command):
+            candidate = Path(part).expanduser()
+            named_absolute = candidate.is_absolute()
+            if not named_absolute:
+                candidate = workspace_root / candidate
+            try:
+                if not candidate.is_file():
+                    continue
+                resolved = candidate.resolve()
+            except OSError:
+                continue
+            if resolved == root or root in resolved.parents:
+                raise HookConfigError(
+                    f"{where}: the {hook.name} hook runs {part!r}, which is inside the workspace; "
+                    "keep hook scripts outside it, where the repository cannot change them"
+                )
+            if resolved not in scripts and not (index == 0 and _is_interpreter(resolved)):
+                scripts.append(resolved)
+            if named_absolute and resolved not in absolute:
+                absolute.append(resolved)
+    return tuple(scripts), tuple(absolute)
+
+
+def _is_interpreter(program: Path) -> bool:
+    """A general program (python, node, a shell): fingerprinted, but not protected,
+    since protecting it would stop the agent running it for its own work."""
+
+    if os.path.normcase(str(program)) == os.path.normcase(str(Path(sys.executable).resolve())):
+        return True
+    return shutil.which(program.name) is not None
+
+
+def _fingerprint(target: Path, scripts: tuple[Path, ...]) -> str:
+    digest = hashlib.sha256()
+    for path in (target, *scripts):
+        digest.update(os.path.normcase(str(path)).encode("utf-8") + b"\0")
+        try:
+            stat = path.stat()
+            if stat.st_size <= _HASHED_BYTES:
+                digest.update(path.read_bytes())
+            else:
+                digest.update(f"{stat.st_size}:{stat.st_mtime_ns}".encode())
+        except OSError:
+            digest.update(b"missing")
+    return digest.hexdigest()
+
+
+def reset_baselines() -> None:
+    """Forget the fingerprints (tests; a restart does the same)."""
+
+    _BASELINES.clear()
+
+
 def load_hooks(
     workspace_root: Path,
     path: Path | None = None,
     environ: Mapping[str, str] | None = None,
+    *,
+    track: bool = True,
 ) -> HookSet | None:
-    """The hooks for ``workspace_root``, or None when there are none."""
+    """The hooks and rules for ``workspace_root``, or None when there are none.
 
+    With ``track`` (the agent; not the doctor) the file is compared with the
+    fingerprint this process took the first time it read it. A file that changed
+    or disappeared since gives a tampered set, which denies every call.
+    """
+
+    source = os.environ if environ is None else environ
     target = path or hooks_file(environ)
+    key = os.path.normcase(str(target.expanduser().resolve()))
+    required = _truthy(source.get(HOOKS_REQUIRED_ENV))
     if not target.is_file():
+        if track and key in _BASELINES:
+            return _tampered(workspace_root, target, source, "the hooks file was removed after Odessy read it")
+        if required:
+            raise HookConfigError(f"{target}: {HOOKS_REQUIRED_ENV} is set, but there is no hooks file")
         return None
-    hooks = tuple(hook for hook, where in parse_hooks(target) if where is None or _same_path(where, workspace_root))
-    if not hooks:
-        return None
-    return HookSet(hooks, workspace_root, target, os.environ if environ is None else environ)
-
-
-def parse_hooks(target: Path) -> list[tuple[Hook, Path | None]]:
-    """Every hook in the file with the workspace it is limited to, validated."""
-
+    data = _read(target)
+    hooks = tuple(hook for hook, where in parse_hooks(target, data) if where is None or _same_path(where, workspace_root))
     try:
-        data = tomllib.loads(target.read_text(encoding="utf-8"))
+        rules = tuple(rule for rule, where in parse_rules(target, data) if where is None or _same_path(where, workspace_root))
+    except RuleConfigError as error:
+        raise HookConfigError(str(error)) from error
+    scripts, fingerprinted = _script_paths(hooks, workspace_root, target)
+    if track:
+        fingerprint = _fingerprint(target, fingerprinted)
+        baseline = _BASELINES.setdefault(key, fingerprint)
+        if baseline != fingerprint:
+            return _tampered(workspace_root, target, source, "the hooks file or a hook script changed after Odessy read it")
+    if not hooks and not rules:
+        if required:
+            raise HookConfigError(f"{target}: {HOOKS_REQUIRED_ENV} is set, but no hook or rule applies to {workspace_root}")
+        return None
+    return HookSet(hooks, workspace_root, target, source, rules=rules, scripts=scripts,
+                   fingerprint=_fingerprint(target, fingerprinted), fingerprinted=fingerprinted)
+
+
+def _tampered(workspace_root: Path, target: Path, environ: Mapping[str, str], why: str) -> HookSet:
+    return HookSet((), workspace_root, target, environ, tampered=f"{why}; restart Odessy to load it again")
+
+
+def _read(target: Path) -> dict[str, Any]:
+    try:
+        return tomllib.loads(target.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as error:
         raise HookConfigError(f"{target}: cannot read hooks file: {error}") from error
-    unknown = sorted(set(data) - set(EVENTS))
+
+
+def parse_hooks(target: Path, data: dict[str, Any] | None = None) -> list[tuple[Hook, Path | None]]:
+    """Every hook in the file with the workspace it is limited to, validated."""
+
+    if data is None:
+        data = _read(target)
+    unknown = sorted(set(data) - set(_TOP_LEVEL))
     if unknown:
-        raise HookConfigError(f"{target}: unknown keys {unknown}; use [[pre_tool]], [[post_tool]] or [[turn_end]]")
+        raise HookConfigError(
+            f"{target}: unknown keys {unknown}; use [[pre_tool]], [[pre_escalation]], [[post_tool]], "
+            "[[turn_end]], [[rule]] or presets"
+        )
     parsed: list[tuple[Hook, Path | None]] = []
     names: set[str] = set()
     for event in EVENTS:
@@ -447,7 +764,7 @@ def _parse_entry(where: str, event: Event, entry: Any) -> tuple[Hook, Path | Non
     allowed = {"name", "command", "timeout", "workspace"}
     if event != "turn_end":
         allowed |= {"match", "risk"}
-    if event == "pre_tool":
+    if event in ("pre_tool", "pre_escalation"):
         allowed |= {"on_error"}
     if not isinstance(entry, dict):
         raise HookConfigError(f"{where}: must be a table")
@@ -461,7 +778,7 @@ def _parse_entry(where: str, event: Event, entry: Any) -> tuple[Hook, Path | Non
     command = entry.get("command")
     if not isinstance(command, list) or not command or not all(isinstance(part, str) and part for part in command):
         raise HookConfigError(f"{where}: command must be a non-empty list of strings (the program, then its arguments)")
-    match = entry.get("match", ["*"])
+    match = entry.get("match", ["terminal.run", "laptop.terminal.run"] if event == "pre_escalation" else ["*"])
     if isinstance(match, str):
         match = [match]
     if not isinstance(match, list) or not match or not all(isinstance(item, str) and item for item in match):
@@ -516,19 +833,36 @@ def public_event(entry: Any) -> tuple[str, dict[str, Any]] | None:
     if event in outcomes:
         return "policy", {"name": detail.get("name"), "outcome": outcomes[event], "risk": detail.get("risk"), **ids}
     if event == "hook_decision":
-        return "hook", {"event": "pre_tool", "name": detail.get("name"), "hook": detail.get("hook"),
+        return "hook", {"event": detail.get("event", "pre_tool"), "name": detail.get("name"), "hook": detail.get("hook"),
                         "decision": detail.get("decision"), **ids}
     if event in ("hook_note", "hook_failed"):
         return "hook", {"event": detail.get("event"), "name": detail.get("name"), "hook": detail.get("hook"),
                         "failed": event == "hook_failed", **ids}
+    if event in ("hook_taint", "hook_stop", "hook_quarantine"):
+        return "hook", {"event": "post_tool", "name": detail.get("name"), "hook": detail.get("hook"),
+                        "action": event.removeprefix("hook_"), **ids}
     if event == "final_call":
         return "final_call", {"model_calls": detail.get("model_calls"), "limit": detail.get("limit")}
     return None
 
 
+async def screen_request(hooks: HookSet | None, request: ToolRequest, decision: PolicyDecision) -> PolicyDecision:
+    """Screen a call that does not come from the agent loop (a desktop ``/jobs`` request).
+
+    Same rules and pre-tool hooks, same tightening; there is no turn, so no taints.
+    """
+
+    if hooks is None or decision.action == "deny":
+        return decision
+    verdict = await hooks.pre_tool(request, decision, {"execution": {"target": call_target(request.name), "origin": "api"}})
+    return tighten(decision, verdict)
+
+
 __all__ = [
     "EVENTS",
     "HOOKS_FILE_ENV",
+    "HOOKS_REQUIRED_ENV",
+    "TurnState",
     "Hook",
     "HookConfigError",
     "HookRun",
@@ -538,7 +872,10 @@ __all__ = [
     "hooks_file",
     "load_hooks",
     "parse_hooks",
+    "protected_paths",
     "public_event",
+    "reset_baselines",
     "run_hook",
+    "screen_request",
     "tighten",
 ]

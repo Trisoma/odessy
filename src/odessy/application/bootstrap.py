@@ -129,7 +129,14 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
         servers, externals, audit = await resources.ready
         # Capture context-local tool admission now; callbacks may run in later API
         # tasks. Each turn re-enters these exact scopes instead of leaking trust.
-        jobs = JobManager(config.participants, remote_targets=authorized_remote_targets(servers))
+        def review_job(job):
+            # Loaded per review, so a hooks file changed since start-up is caught here
+            # too (load_hooks reports it as tampered, and the review blocks the job).
+            from odessy.runtime.hooks import load_hooks
+            hooks = load_hooks(workspace)
+            return hooks.review_changes(job['changed_files']) if hooks is not None else []
+
+        jobs = JobManager(config.participants, remote_targets=authorized_remote_targets(servers), review=review_job)
         loop = asyncio.get_running_loop()
 
         def coding_advice(profile, question, context):
