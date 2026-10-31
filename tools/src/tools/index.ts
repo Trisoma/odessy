@@ -234,7 +234,12 @@ export async function grepProjectTool(
   await walk(root, async (absolutePath, stat) => {
     if (matches.length >= limit || !stat.isFile()) return;
     if (input.glob && !globMatches(path.basename(absolutePath), input.glob)) return;
-    const text = await fs.promises.readFile(absolutePath, "utf8").catch(() => "");
+    // The policy judged the folder the model named, not the files found under it. Each
+    // one goes through the guard, so a credential or a link out of the workspace is
+    // skipped here as `filesystem.read` would refuse it.
+    const readable = await guard.resolveExisting(absolutePath).catch(() => null);
+    if (readable === null) return;
+    const text = await fs.promises.readFile(readable, "utf8").catch(() => "");
     const lines = text.split(/\r?\n/);
     for (let index = 0; index < lines.length && matches.length < limit; index += 1) {
       if (matcher(lines[index] ?? "")) {

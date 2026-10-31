@@ -607,6 +607,12 @@ def matches_allow(command: str, tokens: list[str]) -> bool:
     return _is_git_read(tokens)
 
 
+#: Error output thrown away or merged into stdout. Neither writes a file, so neither
+#: makes a read "may modify state". Anything else after the name (`/dev/null.txt`) is
+#: a file, and stays a write.
+_DISCARDED_STDERR = re.compile(r"(?<![\w>])2>(?:&1|\s*(?:/dev/null|\$null|nul))(?![^\s;|&)])")
+
+
 def matches_confirm(command: str, tokens: list[str]) -> bool:
     if not tokens:
         return False
@@ -620,7 +626,7 @@ def matches_confirm(command: str, tokens: list[str]) -> bool:
         "set-content",
         "new-item",
     }
-    if ">" in command or ">>" in command:
+    if ">" in _DISCARDED_STDERR.sub("", command):
         return True
     if tokens[0] == "git" and not (_is_git_read(tokens) or _is_version_query(tokens)):
         return True

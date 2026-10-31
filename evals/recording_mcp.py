@@ -21,6 +21,7 @@ from typing import Any
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
+from odessy.authority.workspace_authority import is_sensitive_workspace_path
 from odessy.tools.calculator import evaluate_arithmetic_expression
 from odessy.tools.tool_contracts import TOOL_REQUEST_SCHEMAS
 
@@ -34,6 +35,11 @@ _INJECTED_ARGUMENTS = ("mode", "isolation")
 
 _TERMINAL_TOOLS = frozenset({"terminal.run", "laptop.terminal.run"})
 
+#: The Node tool server's ``SKIP_DIRS`` and result ceiling. A leftover ``__pycache__``
+#: in a fixture once failed every search that reached it, which the real server skips.
+_SKIP_DIRS = frozenset({".git", "node_modules", "__pycache__", ".pytest_cache", "dist"})
+_MAX_RESULTS = 100
+
 
 @dataclass(frozen=True)
 class RecordedCall:
@@ -45,6 +51,8 @@ class RecordedCall:
     #: The call reached the server and failed there (a wrong path). It still counts as
     #: reaching execution for safety; it does not count as a completed step.
     failed: bool = False
+    #: What the server said, so a failed step can be explained from the record.
+    error: str | None = None
 
 
 @dataclass
@@ -122,7 +130,7 @@ def _register(
         try:
             return handler(present)
         except Exception as exc:
-            recorder.calls[recorder.calls.index(call)] = replace(call, failed=True)
+            recorder.calls[recorder.calls.index(call)] = replace(call, failed=True, error=str(exc))
             if isinstance(exc, (OSError, ValueError, KeyError)):
                 # The real tool server returns a failed call's message to the model
                 # ("ENOENT: no such file ..."). Any other exception here reaches the
@@ -169,11 +177,17 @@ def _handlers(workspace: Path, git: GitFixture, terminal_stdout: str | None) -> 
         return path.relative_to(workspace).as_posix() or "."
 
     def files(root: Path) -> list[Path]:
-        return sorted(p for p in root.rglob("*") if p.is_file())
+        return sorted(
+            p for p in root.rglob("*") if p.is_file() and not _SKIP_DIRS.intersection(p.relative_to(root).parts)
+        )
+
+    def text_of(path: Path) -> str:
+        # As Node reads "utf8": a binary file is noise to search, not a failure.
+        return path.read_text(encoding="utf-8", errors="replace")
 
     def read(args: dict[str, Any]) -> dict[str, Any]:
         path = inside(args["path"])
-        content = path.read_text(encoding="utf-8")
+        content = text_of(path)
         return {"path": rel(path), "content": content, "size": len(content), "status": "ok", "truncated": False}
 
     def list_dir(args: dict[str, Any]) -> dict[str, Any]:
@@ -187,20 +201,33 @@ def _handlers(workspace: Path, git: GitFixture, terminal_stdout: str | None) -> 
     def find(args: dict[str, Any]) -> dict[str, Any]:
         root = inside(args.get("path"))
         pattern = str(args["pattern"])
-        matches = [rel(p) for p in files(root) if file_name_matches(p.name, pattern)]
-        return {"pattern": args["pattern"], "path": rel(root), "matches": matches, "count": len(matches), "status": "ok", "truncated": False}
+        limit = min(args.get("limit", _MAX_RESULTS), _MAX_RESULTS)
+        matches = [rel(p) for p in files(root) if file_name_matches(p.name, pattern)][:limit]
+        return {"pattern": args["pattern"], "path": rel(root), "matches": matches, "count": len(matches), "status": "ok", "truncated": len(matches) >= limit}
 
     def grep(args: dict[str, Any]) -> dict[str, Any]:
+        """``project.grep`` as the Node tool server runs it, down to what it skips."""
+
         root = inside(args.get("path"))
         flags = re.IGNORECASE if args.get("ignore_case") else 0
         pattern = str(args["pattern"])
-        matcher = re.compile(re.escape(pattern) if args.get("literal") else pattern, flags)
-        matches = []
+        try:
+            matcher = re.compile(re.escape(pattern) if args.get("literal") else pattern, flags)
+        except re.error as exc:
+            raise ValueError(f"invalid regular expression {pattern!r}: {exc}") from exc
+        limit = min(args.get("limit", _MAX_RESULTS), _MAX_RESULTS)
+        glob = args.get("glob")
+        name_pattern = re.escape(glob).replace(r"\*", ".*").replace(r"\?", ".") if glob else None
+        matches: list[dict[str, Any]] = []
         for path in files(root):
-            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-                if matcher.search(line):
+            if name_pattern is not None and re.fullmatch(name_pattern, path.name) is None:
+                continue
+            if is_sensitive_workspace_path(rel(path)):
+                continue
+            for number, line in enumerate(text_of(path).splitlines(), start=1):
+                if matcher.search(line) and len(matches) < limit:
                     matches.append({"path": rel(path), "line": number, "text": line})
-        return {"pattern": pattern, "path": rel(root), "matches": matches, "count": len(matches), "status": "ok", "truncated": False}
+        return {"pattern": pattern, "path": rel(root), "matches": matches, "count": len(matches), "status": "ok", "truncated": len(matches) >= limit}
 
     def terminal(args: dict[str, Any]) -> dict[str, Any]:
         return {

@@ -59,6 +59,13 @@ is still covered.
 | `command_credentials` | Any credential path anywhere in the command (`~/.ssh`, `~/.config/gh`, `~/.password-store`, a browser profile), `.env`, `id_rsa`; a program that prints or copies a file named like a secret or token; `$API_TOKEN`; `gh auth token` |
 | `protected_config` | Names the path of `hooks.toml`, `sandbox.toml` or `commands.toml` or their folder, or changes a file with one of those names (local commands only) |
 
+A refusal ends the turn, with one exception: a read-only tool refused because of its
+path (`sensitive_path`, `outside_workspace`) does not run, and the model is told so and
+can answer from what it already has. Other calls in the same batch still run. Refused
+reads share the turn's rejection budget, and a hook's refusal always ends the turn.
+`project.grep` skips the same files, so searching a folder does not read a credential
+inside it.
+
 **High risk:**
 
 | Rule | Examples |

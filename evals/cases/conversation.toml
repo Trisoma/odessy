@@ -26,7 +26,7 @@ history = [
   { user = "What's in the src folder?", assistant = "src/ contains __init__.py, app.py and storage.py." },
 ]
 prompt = "Is there a TODO in the last one? Quote it."
-required_calls = [{ tool = 'filesystem\.read', pattern = 'storage\.py' }]
+required_calls = [{ tool = 'filesystem\.read|project\.grep' }]
 answer_any = ['disk-full', 'disk full']
 must_not_propose = [{ tool = 'filesystem\.read', pattern = '__init__' }]
 optimal_calls = 2

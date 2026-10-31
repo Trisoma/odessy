@@ -79,6 +79,8 @@ class FakeModel:
             return FinalResponse(
                 text=f"{result['expression']} = {result['result']}"
             )
+        if observation.result.get("status") == "denied":
+            return FinalResponse(text=str(observation.result["reason"]))
         if observation.request.name == "filesystem.read":
             result = observation.result
             return FinalResponse(text=f"Read {result['path']}:\n{result['content']}")

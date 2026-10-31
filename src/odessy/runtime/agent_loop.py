@@ -17,7 +17,7 @@ from odessy.execution.escalation import EscalationApproval, EscalationApprover, 
 from odessy.authority.audit import current_audit
 from odessy.authority.redaction import redact_value
 from odessy.tools.external_tools import NamespacedServer, external_tool, public_name
-from odessy.authority.policy import OdessyPolicy
+from odessy.authority.policy import OdessyPolicy, refusal_leaves_turn_open
 from odessy.runtime.hook_rules import TurnState, call_target
 from odessy.runtime.hooks import MAX_FINAL_TEXT_CHARS, HookSet, HookVerdict, tighten
 from odessy.runtime.repeat_guard import RepeatGuard, build_guard
@@ -86,6 +86,11 @@ _REJECTION_INSTRUCTION = (
 )
 
 #: Instruction carried by the observation of a tool call that ran and failed.
+_REFUSED_READ_INSTRUCTION = (
+    "The policy refused this read and it was NOT run. Do not look for the same data "
+    "another way. Answer from what you already have, and say what you could not read."
+)
+
 _TOOL_ERROR_INSTRUCTION = (
     "The tool ran and failed. Correct the call (for example the path, which is "
     "relative to the workspace) and try again, or answer briefly with what went wrong."
@@ -694,16 +699,30 @@ class OdessyAgent:
                 batch_id = f"batch-{batch_number}"
                 failure = None
                 reminders = {}
+                # Refused reads: the rest of the batch still runs, and the model hears why.
+                refused = {}
                 for call in action.calls:
                     batch_decision = await self._screen(call.request, log, call_id=call.call_id)
                     if batch_decision.action == "deny":
                         self._audit_decision(call.request, batch_decision, confirmed=None)
-                        failure = "Policy denied request: " + batch_decision.reason
-                        break
+                        reason = "Policy denied request: " + batch_decision.reason
+                        if not refusal_leaves_turn_open(call.request.name, batch_decision):
+                            failure = reason
+                            break
+                        refused[id(call)] = ToolObservation(call.request, {"status": "denied", "reason": reason, "instruction": _REFUSED_READ_INSTRUCTION}, call.call_id)
+                if failure is None and refused:
+                    rejections += 1
+                    if not self._may_continue(rejections=rejections, model_calls=model_calls, deadline=deadline):
+                        failure = next(iter(refused.values())).result["reason"]
+                proposed = action
                 if failure is not None:
                     batch_observations = [ToolObservation(c.request, {"status": "denied", "reason": failure}, c.call_id) for c in action.calls]
                     stopped = failure
+                elif len(refused) == len(action.calls):
+                    batch_observations, stopped = [], None
                 else:
+                    if refused:
+                        action = replace(action, calls=tuple(c for c in action.calls if id(c) not in refused))
                     if tool_registry is None:
                         tool_registry = await self._collect_tool_registry()
                     invalid = None
@@ -760,6 +779,9 @@ class OdessyAgent:
                             await self._post_tool_hooks(call.request, structured, log, call_id=call.call_id)
                             return {**structured, "_dispatch_timing": {"started": started, "completed": completed}}
                         batch_observations, stopped = await schedule_calls(action, limit=self._tool_concurrency, safe=safe, prepare=prepare, dispatch=dispatch, stop=stop_event)
+                if refused and failure is None:
+                    ran = iter(batch_observations)
+                    batch_observations = [refused[id(c)] if id(c) in refused else next(ran) for c in proposed.calls]
                 for index, observation in enumerate(batch_observations):
                     if observation.call_id in reminders:
                         observation.result["repeat_reminder"] = reminders[observation.call_id]
@@ -823,11 +845,47 @@ class OdessyAgent:
                         },
                     )
                 )
-                raise PermissionError(
-                    f"Policy denied request: {preflight_decision.reason}"
+                reason = f"Policy denied request: {preflight_decision.reason}"
+                rejections += 1
+                if not refusal_leaves_turn_open(action.name, preflight_decision) or not self._may_continue(
+                    rejections=rejections,
+                    model_calls=model_calls,
+                    deadline=deadline,
+                ):
+                    raise PermissionError(reason)
+                observation = ToolObservation(
+                    request=action,
+                    result={
+                        "status": "denied",
+                        "reason": reason,
+                        "instruction": _REFUSED_READ_INSTRUCTION,
+                        **self._drain_reminders(pending_reminders),
+                    },
                 )
+                observations.append(observation)
+                next_action = await self._resume(
+                    user_text,
+                    observation,
+                    log=log,
+                    status_callback=status_callback,
+                    message="Continuing after a refused read",
+                )
+                model_calls += 1
+                if isinstance(next_action, FinalResponse):
+                    log.append(LogEntry("model_final_response", {"text": next_action.text}))
+                    return _finish_turn_result(
+                        final_text=next_action.text,
+                        log=log,
+                        metrics=metrics,
+                        turn_started=turn_started,
+                        tool_request=last_request,
+                        tool_result=last_result,
+                        tool_observations=observations,
+                    )
+                action = next_action
+                continue
 
-            # Rejections are recoverable; authority outcomes above are not.
+            # Rejections are recoverable; other authority outcomes above are not.
             if tool_registry is None:
                 mcp_started = time.perf_counter()
                 tool_registry = await self._collect_tool_registry()

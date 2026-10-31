@@ -54,6 +54,38 @@ test("filesystem.read reads workspace file with structured content", async () =>
   assert.equal(result.truncated, false);
 });
 
+test("project.grep does not read what filesystem.read would refuse", async () => {
+  const workspace = makeWorkspace();
+  fs.writeFileSync(path.join(workspace, "notes.txt"), "needle in a note\n", "utf8");
+  fs.writeFileSync(path.join(workspace, ".env"), "PGURL=postgres://admin:needle@db/x\n", "utf8");
+  fs.writeFileSync(path.join(workspace, ".env.local"), "needle\n", "utf8");
+  fs.writeFileSync(path.join(workspace, "server.pem"), "needle\n", "utf8");
+  fs.mkdirSync(path.join(workspace, ".ssh"));
+  fs.writeFileSync(path.join(workspace, ".ssh", "id_rsa"), "needle\n", "utf8");
+  fs.mkdirSync(path.join(workspace, "keys"));
+  fs.writeFileSync(path.join(workspace, "keys", "id_ed25519"), "needle\n", "utf8");
+
+  const result = await grepProjectTool(createWorkspaceGuard(workspace), { pattern: "needle" });
+
+  assert.deepEqual(result.matches.map((match) => match.path), ["notes.txt"]);
+});
+
+test("project.grep does not follow a link out of the workspace", async (t) => {
+  const workspace = makeWorkspace();
+  const outside = path.join(makeWorkspace(), "outside.txt");
+  fs.writeFileSync(outside, "needle\n", "utf8");
+  try {
+    fs.symlinkSync(outside, path.join(workspace, "link.txt"));
+  } catch {
+    t.skip("creating a symbolic link needs a privilege here");
+    return;
+  }
+
+  const result = await grepProjectTool(createWorkspaceGuard(workspace), { pattern: "needle" });
+
+  assert.equal(result.count, 0);
+});
+
 test("a workspace given by its 8.3 short name still contains itself", async (t) => {
   if (process.platform !== "win32") {
     t.skip("8.3 short names are Windows-only");

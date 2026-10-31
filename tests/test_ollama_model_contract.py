@@ -312,7 +312,10 @@ def test_ollama_repair_debug_output_is_optional(monkeypatch, capsys) -> None:
 @pytest.mark.anyio
 async def test_valid_tool_request_denied_by_policy_does_not_trigger_repair(tmp_path) -> None:
     model = QueuedOllamaModel(
-        ['{"type":"tool","name":"filesystem.read","arguments":{"path":".env"}}']
+        [
+            '{"type":"tool","name":"filesystem.read","arguments":{"path":".env"}}',
+            "That file is off limits.",
+        ]
     )
     agent = OdessyAgent(
         model=model,
@@ -320,7 +323,8 @@ async def test_valid_tool_request_denied_by_policy_does_not_trigger_repair(tmp_p
         mcp_server=object(),
     )
 
-    with pytest.raises(PermissionError, match="credentials or secrets"):
-        await agent.run_turn("read .env")
+    result = await agent.run_turn("read .env")
 
-    assert len(model.prompts) == 1
+    # One proposal and one reply to the refusal, with no repair call between them.
+    assert result.final_text == "That file is off limits."
+    assert len(model.prompts) == 2
