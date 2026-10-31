@@ -26,3 +26,40 @@ commits = [
     "8d2a6f0 Move configuration to config/app.toml",
     "1e0b3c9 Initial commit",
 ]
+
+[shows]
+c41f9e2 = """
+commit c41f9e2
+    Add monthly report page
+
+ src/ledger/report.py | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+"""
+b7c1e2f = """
+commit b7c1e2f
+    Parse amounts as integers to speed up totals
+
+ src/ledger/totals.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/ledger/totals.py b/src/ledger/totals.py
+--- a/src/ledger/totals.py
++++ b/src/ledger/totals.py
+@@ -3,4 +3,4 @@
+ def sum_amounts(entries: list[dict]) -> float:
+     \"\"\"Total of the entries' amounts.\"\"\"
+-    return sum(float(entry["amount"]) for entry in entries)
++    return sum(int(entry["amount"]) for entry in entries)
+"""
+8d2a6f0 = """
+commit 8d2a6f0
+    Move configuration to config/app.toml
+
+ config/app.toml | 6 ++++++
+ ledger.ini      | 6 ------
+ 2 files changed, 6 insertions(+), 6 deletions(-)
+"""
+1e0b3c9 = """
+commit 1e0b3c9
+    Initial commit
+"""

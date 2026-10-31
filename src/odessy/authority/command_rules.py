@@ -571,6 +571,33 @@ _GIT_BRANCH_LIST_OPTIONS = frozenset(
 CHAINING = re.compile(r"[;&|`\n(){}]")
 
 
+def _outside_single_quotes(command: str) -> str:
+    """``command`` without its single-quoted text, which no shell here interprets:
+    the ``|`` in ``git log --format='%h | %s'`` separates nothing.
+
+    Double quotes stay, because ``$(...)`` runs inside them. A command that escapes a
+    quote or leaves one open is returned whole: this is not a parser, so it does not
+    guess where such a string ends.
+    """
+
+    if "\\'" in command or '\\"' in command:
+        return command
+    kept: list[str] = []
+    quote: str | None = None
+    for char in command:
+        if quote is None:
+            if char in "'\"":
+                quote = char
+            if char != "'":
+                kept.append(char)
+        else:
+            if quote == '"':
+                kept.append(char)
+            if char == quote:
+                quote = None
+    return command if quote is not None else "".join(kept)
+
+
 def _is_git_read(tokens: list[str]) -> bool:
     """``git status|log|show|diff|branch`` without options that write or reach out.
 
@@ -595,7 +622,7 @@ def _is_version_query(tokens: list[str]) -> bool:
 
 
 def matches_allow(command: str, tokens: list[str]) -> bool:
-    if not tokens or CHAINING.search(command):
+    if not tokens or CHAINING.search(_outside_single_quotes(command)):
         return False
     if tokens[0] in _ALLOWED_FIRST_TOKENS:
         return True
@@ -626,7 +653,7 @@ def matches_confirm(command: str, tokens: list[str]) -> bool:
         "set-content",
         "new-item",
     }
-    if ">" in _DISCARDED_STDERR.sub("", command):
+    if ">" in _DISCARDED_STDERR.sub("", _outside_single_quotes(command)):
         return True
     if tokens[0] == "git" and not (_is_git_read(tokens) or _is_version_query(tokens)):
         return True

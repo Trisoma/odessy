@@ -194,6 +194,7 @@ class OdessyPolicy:
             "git.diff",
             "git.changed_files",
             "git.log",
+            "git.show",
             "model.consult", "agent.delegate", "agent.job_status", "agent.cancel",
         }
         if request.name not in allowed_tools:
@@ -844,7 +845,20 @@ _READ_ONLY_TOOL_NAMES = {
     "git.diff",
     "git.changed_files",
     "git.log",
+    "git.show",
 }
+
+
+def decline_leaves_turn_open(decision: PolicyDecision) -> bool:
+    """Whether a person's "no" stops one command rather than the whole request.
+
+    A command the rules could not place (``find . | head``, ``pwd; ls``) is often a
+    look around on the way to an answer. Declining it says "not that", and the model
+    may still answer from what it has. Every other confirmation stands for a change or
+    a high risk: the "no" is to the request itself, and it ends the turn.
+    """
+
+    return decision.rule == "command_default"
 
 
 def refusal_leaves_turn_open(tool_name: str, decision: PolicyDecision) -> bool:

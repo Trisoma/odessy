@@ -10,6 +10,8 @@ import {
   gitChangedFiles,
   gitDiff,
   gitLog,
+  gitShow,
+  gitShowInputSchema,
   gitStatus,
   laptopTerminalRun,
   logAppendTool,
@@ -235,6 +237,37 @@ test("git read-only tools use fixed argv behavior", async (t) => {
   assert.deepEqual(changed.files, ["tracked.txt"]);
   assert.equal(log.commits.length, 1);
   assert.equal(log.limit, 50);
+});
+
+test("git.show prints a commit but leaves secret files out of it", async (t) => {
+  const workspace = makeGitWorkspace();
+  if (workspace === null) {
+    t.skip("Node child_process cannot run git in a temp workspace in this environment");
+    return;
+  }
+  fs.writeFileSync(path.join(workspace, ".env"), "PGURL=needle\n", "utf8");
+  execFileSync("git", ["add", "tracked.txt", ".env"], { cwd: workspace });
+  execFileSync("git", ["commit", "-m", "second"], { cwd: workspace, stdio: "ignore" });
+
+  const shown = await gitShow(createWorkspaceGuard(workspace), {});
+
+  if (shown.status === "failed" && shown.error?.includes("EPERM")) {
+    t.skip("Node child_process cannot execute git tool handlers in this environment");
+    return;
+  }
+  assert.equal(shown.status, "ok");
+  assert.match(shown.diff ?? "", /second/);
+  assert.match(shown.diff ?? "", /tracked\.txt/);
+  assert.doesNotMatch(shown.diff ?? "", /needle/);
+});
+
+test("git.show accepts a commit and refuses a path in history or an option", () => {
+  const rev = gitShowInputSchema.rev;
+
+  assert.equal(rev.safeParse("b7c1e2f").success, true);
+  assert.equal(rev.safeParse("HEAD~1").success, true);
+  assert.equal(rev.safeParse("HEAD:.env").success, false);
+  assert.equal(rev.safeParse("--output=x").success, false);
 });
 
 test("laptop.terminal.run preserves configured PowerShell modules", {

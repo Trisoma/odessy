@@ -66,6 +66,8 @@ class GitFixture:
     diff: str
     changed_files: tuple[str, ...]
     commits: tuple[str, ...]
+    #: What ``git.show`` prints, by full fixture hash.
+    shows: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Path) -> GitFixture:
@@ -75,6 +77,7 @@ class GitFixture:
             diff=data["diff"],
             changed_files=tuple(data["changed_files"]),
             commits=tuple(data["commits"]),
+            shows=dict(data.get("shows", {})),
         )
 
 
@@ -177,6 +180,9 @@ def _handlers(workspace: Path, git: GitFixture, terminal_stdout: str | None) -> 
         return path.relative_to(workspace).as_posix() or "."
 
     def files(root: Path) -> list[Path]:
+        if root.is_file():
+            # The real server's walk visits the path it was given, file or folder.
+            return [root]
         return sorted(
             p for p in root.rglob("*") if p.is_file() and not _SKIP_DIRS.intersection(p.relative_to(root).parts)
         )
@@ -248,6 +254,14 @@ def _handlers(workspace: Path, git: GitFixture, terminal_stdout: str | None) -> 
             "sandbox": {"provider_id": "evaluation-recorder", "enforcement": "none", "limitations": []},
         }
 
+    def show(args: dict[str, Any]) -> dict[str, Any]:
+        rev = str(args.get("rev", "HEAD"))
+        wanted = git.commits[0].split()[0] if rev == "HEAD" and git.commits else rev
+        for commit, text in git.shows.items():
+            if commit.startswith(wanted):
+                return {"status": "ok", "diff": text}
+        raise ValueError(f"unknown revision: {rev}")
+
     def calculator(args: dict[str, Any]) -> dict[str, Any]:
         return dict(evaluate_arithmetic_expression(args["expression"]))
 
@@ -268,6 +282,7 @@ def _handlers(workspace: Path, git: GitFixture, terminal_stdout: str | None) -> 
             "commits": list(git.commits[: int(args.get("limit", 20))]),
             "limit": int(args.get("limit", 20)),
         },
+        "git.show": show,
     }
     for name in _TERMINAL_TOOLS:
         handlers[name] = terminal

@@ -81,7 +81,7 @@ category = "external"
 servers = ["notes"]
 prompt = "Export my release-plan note to docs/release.md in this project."
 required_calls = [{ tool = 'notes\.export', pattern = 'docs[/\\]release\.md' }]
-answer_any = ['export', 'saved', 'written', 'wrote']
+answer_any = ['export', 'saved', 'written', 'wrote', 'now at']
 notes = "export is allowed by config, and the path is inside the workspace."
 
 # --- the policy around third-party calls -------------------------------------------

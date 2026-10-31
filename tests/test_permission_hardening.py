@@ -608,6 +608,73 @@ def test_discarding_stderr_is_not_a_write(tmp_path, command, rule):
     assert decide(tmp_path, command).rule == rule
 
 
+@pytest.mark.parametrize(
+    "command, rule",
+    [
+        ("git log --format='%h %an <%ae> %ad' --date=short", "command_read_only"),
+        ("git log --format='%h | %an | %s'", "command_read_only"),
+        ("echo 'a; b'", "command_read_only"),
+        # What double quotes hold still runs, and a shell ends a quote that a parser here
+        # would not: neither one is taken for plain text.
+        ('git log --format="%h <%ae>"', "command_write"),
+        ('git log --format="$(mkdir x)"', "command_default"),
+        ("echo \\'; mkdir x; echo \\'", "command_default"),
+        ("echo 'open; mkdir x", "command_default"),
+        ('echo "it\'s"; mkdir \'x\'', "command_default"),
+        ("git log --format='%h' > out.txt", "command_write"),
+    ],
+)
+def test_single_quoted_text_is_not_shell_syntax(tmp_path, command, rule):
+    assert decide(tmp_path, command).rule == rule
+
+
+def test_git_show_is_a_read(tmp_path):
+    decision = OdessyPolicy(workspace_root=tmp_path).evaluate(ToolRequest("git.show", {"rev": "HEAD"}))
+    assert decision.action == "allow"
+
+
+# --- a declined command costs that command -------------------------------------------
+
+
+def shell(command: str) -> ToolRequest:
+    return ToolRequest("terminal.run", {"command": command})
+
+
+@pytest.mark.anyio
+async def test_declining_an_unplaced_command_leaves_the_turn_open(tmp_path):
+    agent = agent_for(tmp_path, shell("pwd; ls"), FinalResponse("Here is what I can say."), confirm=False)
+    result = await agent.run_turn("look around")
+    assert result.final_text == "Here is what I can say."
+    declined = agent._model.seen[0]
+    assert declined.result["status"] == "denied"
+    assert "NOT run" in declined.result["instruction"]
+
+
+@pytest.mark.anyio
+async def test_a_declined_command_in_a_batch_skips_the_rest_and_still_answers(tmp_path):
+    batch = ToolBatch((ToolCall("a", shell("pwd; ls")), ToolCall("b", ToolRequest("time.now"))))
+    agent = agent_for(tmp_path, batch, FinalResponse("done"), confirm=False)
+    assert (await agent.run_turn("go")).final_text == "done"
+    assert [o.result["status"] for o in agent._model.seen] == ["denied", "skipped"]
+    assert "NOT run" in agent._model.seen[0].result["instruction"]
+
+
+@pytest.mark.anyio
+async def test_declining_a_change_still_ends_the_turn(tmp_path):
+    agent = agent_for(tmp_path, mkdir("created"), FinalResponse("must not run"), confirm=False)
+    with pytest.raises(PermissionError):
+        await agent.run_turn("make it")
+    assert agent._model.seen == []
+
+
+@pytest.mark.anyio
+async def test_repeated_declines_exhaust_the_turn(tmp_path):
+    agent = agent_for(tmp_path, *[shell("pwd; ls")] * 20, confirm=False, max_rejections=2)
+    with pytest.raises(PermissionError, match="Policy requires confirmation"):
+        await agent.run_turn("keep asking")
+    assert len(agent._model.seen) == 2
+
+
 @pytest.mark.anyio
 async def test_an_answer_on_the_desktop_records_its_channel(tmp_path):
     import asyncio
