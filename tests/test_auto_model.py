@@ -189,7 +189,7 @@ async def test_stop_during_generation_discards_output(tmp_path):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("command", ["rm -rf /", "python helper.py"])
+@pytest.mark.parametrize("command", ["rm -rf /", "mkdir helper"])
 async def test_denial_or_declined_confirmation_does_not_escalate(tmp_path, command):
     from odessy.runtime.agent_loop import OdessyAgent, ExecutionTarget
     from odessy.authority.policy import OdessyPolicy
@@ -200,6 +200,20 @@ async def test_denial_or_declined_confirmation_does_not_escalate(tmp_path, comma
                         mcp_server=ExecutionTarget(build_odessy_mcp_server(workspace_root=tmp_path)), confirm=False)
     with pytest.raises(PermissionError):
         await agent.run_turn("run this command")
+    assert cloud.calls == 0
+
+
+@pytest.mark.anyio
+async def test_a_declined_command_that_leaves_the_turn_open_does_not_escalate(tmp_path):
+    from odessy.runtime.agent_loop import OdessyAgent, ExecutionTarget
+    from odessy.authority.policy import OdessyPolicy
+    from odessy.tools.mcp_server import build_odessy_mcp_server
+    cloud = Scripted(FinalResponse("must not run"))
+    capable = Scripted(ToolRequest("terminal.run", {"command": "python helper.py"}), FinalResponse("not run"))
+    model = make_router(Scripted(), capable, cloud)
+    agent = OdessyAgent(model=model, policy=OdessyPolicy(workspace_root=tmp_path),
+                        mcp_server=ExecutionTarget(build_odessy_mcp_server(workspace_root=tmp_path)), confirm=False)
+    assert (await agent.run_turn("run this command")).final_text == "not run"
     assert cloud.calls == 0
 
 

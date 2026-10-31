@@ -27,7 +27,7 @@ Used for low-risk operations such as:
 - `time.now`
 - `calculator.eval`
 - approved read-only filesystem and project-search tools
-- `git.status`, `git.diff`, `git.changed_files`, and `git.log`
+- `git.status`, `git.diff`, `git.changed_files`, `git.log`, and `git.show`
 - safe read-only commands, each as a single command: listing (`pwd`, `ls`, `dir`),
   locating programs (`which`, `where`), `echo` without variables, `--version` of
   well-known programs, read-only git (`status`, `log`, `show`, `diff`, listing

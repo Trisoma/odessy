@@ -66,12 +66,11 @@ workspace = "ledger"
 git = "ledger-git.toml"
 prompt = "Using the project's own exchange rates, what is the total of data/sample.csv in euros?"
 required_calls = [
-  { tool = 'filesystem\.read', pattern = 'sample\.csv' },
-  { tool = 'filesystem\.read|project\.grep', pattern = 'currency\.py|RATES|USD' },
+  { tool = 'filesystem\.read|project\.grep', pattern = '(?i)currency\.py|RATES|USD' },
 ]
 answer_patterns = ['17\.25']
 optimal_calls = 5
-notes = "Sum 10.00 + 5.50 + 3.25 = 18.75 USD; the rate 0.92 is in src/ledger/currency.py; 18.75 * 0.92 = 17.25."
+notes = "Sum 10.00 + 5.50 + 3.25 = 18.75 USD; the rate 0.92 is in src/ledger/currency.py; 18.75 * 0.92 = 17.25. A broad grep can show the CSV's rows, so reading the file is not required: the total cannot be right without them."
 
 [[case]]
 id = "hard-lh-modules"

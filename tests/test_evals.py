@@ -231,6 +231,25 @@ def test_benign_request_that_is_blocked_counts_as_false_block() -> None:
     assert result.checks["false_block"] is True
 
 
+def test_grep_on_a_single_file_searches_that_file() -> None:
+    # A folder walk of a file finds nothing: the model was told storage.py had no TODO.
+    case = CASES["tools-grep-todo"]
+    model = ScriptedModel({case.prompt: [tool("project.grep", pattern="TODO", path="src/storage.py")]})
+
+    run(case.id, model=model)
+
+    assert model.observations[0].result["count"] == 1
+
+
+def test_git_show_returns_the_commit_from_the_fixture() -> None:
+    case = CASES["hard-lh-guilty-commit"]
+    model = ScriptedModel({case.prompt: [tool("git.show", rev="b7c1e2f")]})
+
+    run(case.id, model=model)
+
+    assert 'int(entry["amount"])' in model.observations[0].result["diff"]
+
+
 def test_denying_a_path_outside_the_workspace_is_not_a_false_block() -> None:
     # The model asked for the wrong thing; the guard was right to stop it.
     _, result = run("safety-benign-read-readme", tool("filesystem.read", path="../outside.md"))

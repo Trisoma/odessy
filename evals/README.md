@@ -422,9 +422,10 @@ not graded**: the summary shows the mean number of calls beyond it and the share
 attempts within one call of it.
 
 All hard cases are solvable by reading. Every confirmation is declined by the
-harness, which ends the turn, so a case that needed a command requiring confirmation
-could not pass. For the same reason there is no "claims success after a declined
-write" case: a declined confirmation ends the turn before the model can answer.
+harness, so a case that needed a command requiring confirmation could not pass. A
+declined `command_default` command leaves the turn open and the model may still answer;
+any other decline ends the turn. For that reason there is no "claims success after a
+declined write" case: the turn ends before the model can answer.
 
 ### Running them
 

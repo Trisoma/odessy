@@ -17,6 +17,8 @@ import {
   gitDiffInputSchema,
   gitLog,
   gitLogInputSchema,
+  gitShow,
+  gitShowInputSchema,
   gitStatus,
   grepInputSchema,
   grepProjectTool,
@@ -177,6 +179,16 @@ function buildServer(registry?: ProviderRegistry): McpServer {
       inputSchema: gitLogInputSchema,
     },
     async (input) => resultPayload(await gitLog(guard, input)),
+  );
+
+  server.registerTool(
+    "git.show",
+    {
+      title: "Git Show",
+      description: "Return one commit's message, changed files and diff using fixed argv.",
+      inputSchema: gitShowInputSchema,
+    },
+    async (input) => resultPayload(await gitShow(guard, input)),
   );
 
   server.registerTool(
