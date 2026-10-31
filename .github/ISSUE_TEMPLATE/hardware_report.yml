@@ -42,7 +42,7 @@ body:
     id: model
     attributes:
       label: Model and execution configuration
-      description: Model/version, quantization, provider, GPU layers, context and generation limits; unknown is acceptable.
+      description: Model/version, quantization, provider, GPU layers, context and generation limits; unknown is acceptable. State the adapter you used. A `--adapter fake` or fake-model run exercises the harness, not the hardware, and must be labelled as such rather than reported as a hardware measurement.
     validations:
       required: true
   - type: textarea

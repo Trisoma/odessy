@@ -3,6 +3,10 @@
 > DRAFT — proposed contributor routing, not a list of assigned owners.
 > Status: unstable developer preview. The model proposes; Odessy decides.
 
+New here? Read [the story](story.md) for the intended end-to-end experience and how it
+differs from what is qualified today, then pick an unclaimed task from the
+[starter-issue drafts](contributor-issues.md).
+
 ```mermaid
 flowchart LR
   Input[CLI / voice / Flutter] --> Python[Python runtime and authority]
