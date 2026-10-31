@@ -20,10 +20,17 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
       this.timeout = const Duration(seconds: 30)})
       : python = python.isNotEmpty
             ? python
-            : (_bundledPython(executablePath) ?? _installedPython(executablePath) ??
-                _sourcePython(sourceRoot.isNotEmpty ? sourceRoot : _sourceRoot(executablePath)) ?? 'python'),
-        sourceRoot = sourceRoot.isNotEmpty ? sourceRoot :
-            (_bundledRoot(executablePath).isNotEmpty ? _bundledRoot(executablePath) : _sourceRoot(executablePath));
+            : (_bundledPython(executablePath) ??
+                _installedPython(executablePath) ??
+                _sourcePython(sourceRoot.isNotEmpty
+                    ? sourceRoot
+                    : _sourceRoot(executablePath)) ??
+                'python'),
+        sourceRoot = sourceRoot.isNotEmpty
+            ? sourceRoot
+            : (_bundledRoot(executablePath).isNotEmpty
+                ? _bundledRoot(executablePath)
+                : _sourceRoot(executablePath));
 
   // A raw Flutter release remains a checkout build, not a portable distribution.
   // Locate only a verified ancestor project, never an arbitrary working folder.
@@ -32,8 +39,10 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
     for (var depth = 0; depth < 12; depth++) {
       final project = File('${candidate.path}/pyproject.toml');
       try {
-        if (project.existsSync() && project.lengthSync() <= 65536 &&
-            RegExp(r'''^\s*name\s*=\s*["']odessy["']\s*$''', multiLine: true).hasMatch(project.readAsStringSync()) &&
+        if (project.existsSync() &&
+            project.lengthSync() <= 65536 &&
+            RegExp(r'''^\s*name\s*=\s*["']odessy["']\s*$''', multiLine: true)
+                .hasMatch(project.readAsStringSync()) &&
             File('${candidate.path}/src/odessy/setup/bridge.py').existsSync()) {
           return candidate.path;
         }
@@ -48,7 +57,8 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
 
   static String? _sourcePython(String root) {
     if (root.isEmpty) return null;
-    final candidate = File('$root/.venv/${Platform.isWindows ? 'Scripts/python.exe' : 'bin/python3'}');
+    final candidate = File(
+        '$root/.venv/${Platform.isWindows ? 'Scripts/python.exe' : 'bin/python3'}');
     return candidate.existsSync() ? candidate.path : null;
   }
 
@@ -79,7 +89,8 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
 
   /// An installed version keeps its owned interpreter beside the desktop build.
   static String? _installedPython([String? executablePath]) {
-    final versionDirectory = File(executablePath ?? Platform.resolvedExecutable).parent.parent;
+    final versionDirectory =
+        File(executablePath ?? Platform.resolvedExecutable).parent.parent;
     final candidate = Platform.isWindows
         ? File(
             '${versionDirectory.path}${Platform.pathSeparator}Scripts${Platform.pathSeparator}python.exe')
@@ -126,8 +137,10 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
     try {
       final message = request.toJson();
       sessionModelCredentials.validate(request);
-      message['session_credentials'] = sessionModelCredentials.privateStdinValues;
-      if ({'installer', 'manage','component-probe'}.contains(request.operation)) {
+      message['session_credentials'] =
+          sessionModelCredentials.privateStdinValues;
+      if ({'installer', 'manage', 'component-probe'}
+          .contains(request.operation)) {
         _cancelDirectory =
             await Directory.systemTemp.createTemp('odessy-setup-');
         message['cancel_file'] =

@@ -87,9 +87,8 @@ class _SetupApplicationState extends State<SetupApplication> {
   /// must use the same theme the surface is built with.
   ThemeData get _theme => odessyTheme(Brightness.dark);
 
-  SetupBackend _newBackend() =>
-      (widget.backendFactory ??
-          () => LocalSetupBackend(payloadRoot: widget.payloadRoot))();
+  SetupBackend _newBackend() => (widget.backendFactory ??
+      () => LocalSetupBackend(payloadRoot: widget.payloadRoot))();
 
   @override
   void initState() {
@@ -205,8 +204,8 @@ class _SetupApplicationState extends State<SetupApplication> {
   }
 
   Future<void> _browseInstallFolder() async {
-    final selected = await widget.picker.pickDirectory(
-        initial: location.text.isEmpty ? null : location.text);
+    final selected = await widget.picker
+        .pickDirectory(initial: location.text.isEmpty ? null : location.text);
     if (selected == null || selected.trim().isEmpty) return;
     location.text = selected;
     setState(() => locationError = null);
@@ -228,8 +227,8 @@ class _SetupApplicationState extends State<SetupApplication> {
     await c.run('context');
     if (!mounted) return;
     location.text = c.root;
-    setState(() =>
-        locationError = c.existingInstallation ? 'An installation already exists here.' : null);
+    setState(() => locationError =
+        c.existingInstallation ? 'An installation already exists here.' : null);
   }
 
   @override
@@ -255,53 +254,49 @@ class _SetupApplicationState extends State<SetupApplication> {
 
   // ---------------------------------------------------------------- steps
 
-  Widget _welcome() => Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
+  Widget _welcome() =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         SetupSection(
             title: 'Install Odessy on this computer',
             description:
                 'Setup verifies the downloaded package, installs it into a folder you choose, $registrationTargetCopy',
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const _Bullet(
-                      'Nothing is downloaded from the internet and no model is pulled.'),
-                  const _Bullet(
-                      'A model you already have can be selected next, or configured later.'),
-                  _Bullet(accountScopeCopy),
-                ])),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const _Bullet(
+                  'Nothing is downloaded from the internet and no model is pulled.'),
+              const _Bullet(
+                  'A model you already have can be selected next, or configured later.'),
+              _Bullet(accountScopeCopy),
+            ])),
         const SetupMessage(
             text:
                 'Installing files and getting ready to chat are separate. You can configure a model after installation.'),
       ]);
 
-  Widget _machine() => Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
+  Widget _machine() =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         SetupSection(
             title: 'Where should Odessy be installed?',
             description:
                 'Use a dedicated folder. Only files Odessy records are removed later; other files are preserved.',
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  PathField(
-                      fieldKey: const Key('setup-location'),
-                      controller: location,
-                      label: 'Installation folder',
-                      hint: r'C:\Users\you\AppData\Local\Odessy\App',
-                      error: locationError,
-                      enabled: !c.busy,
-                      onChanged: (_) => _edit(),
-                      onBrowse: _browseInstallFolder),
-                  Align(
-                      alignment: Alignment.centerLeft,
-                      child: OutlinedButton.icon(
-                          onPressed: c.busy ? null : _checkLocation,
-                          icon: const Icon(Icons.check_circle_outline, size: 18),
-                          label: const Text('Check this folder'))),
-                ])),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              PathField(
+                  fieldKey: const Key('setup-location'),
+                  controller: location,
+                  label: 'Installation folder',
+                  hint: r'C:\Users\you\AppData\Local\Odessy\App',
+                  error: locationError,
+                  enabled: !c.busy,
+                  onChanged: (_) => _edit(),
+                  onBrowse: _browseInstallFolder),
+              Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                      onPressed: c.busy ? null : _checkLocation,
+                      icon: const Icon(Icons.check_circle_outline, size: 18),
+                      label: const Text('Check this folder'))),
+            ])),
         if (c.existingInstallation)
           SetupMessage(
               text: 'Odessy is already installed in this folder.',
@@ -314,36 +309,38 @@ class _SetupApplicationState extends State<SetupApplication> {
             description: customSetup
                 ? 'Choose the role this machine performs.'
                 : 'Standard setup installs a coordinator that also runs tools on this computer.',
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (!customSetup)
-                    TextButton.icon(
-                        onPressed: () => setState(() => customSetup = true),
-                        icon: const Icon(Icons.tune, size: 18),
-                        label: const Text('Custom setup')),
-                  if (customSetup)
-                    DropdownButtonFormField<String>(
-                        initialValue: role,
-                        decoration: const InputDecoration(labelText: 'Role'),
-                        items: const [
-                          DropdownMenuItem(
-                              value: 'combined',
-                              child: Text('Coordinator that also runs tools locally')),
-                          DropdownMenuItem(
-                              value: 'coordinator',
-                              child: Text('Coordinator only (tools run elsewhere)')),
-                          DropdownMenuItem(
-                              value: 'execution',
-                              child: Text('Execution node owned by another coordinator')),
-                        ],
-                        onChanged: c.busy
-                            ? null
-                            : (value) {
-                                setState(() => role = value ?? 'combined');
-                                _edit();
-                              }),
-                ])),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              if (!customSetup)
+                TextButton.icon(
+                    onPressed: () => setState(() => customSetup = true),
+                    icon: const Icon(Icons.tune, size: 18),
+                    label: const Text('Custom setup')),
+              if (customSetup)
+                DropdownButtonFormField<String>(
+                    initialValue: role,
+                    decoration: const InputDecoration(labelText: 'Role'),
+                    items: const [
+                      DropdownMenuItem(
+                          value: 'combined',
+                          child:
+                              Text('Coordinator that also runs tools locally')),
+                      DropdownMenuItem(
+                          value: 'coordinator',
+                          child:
+                              Text('Coordinator only (tools run elsewhere)')),
+                      DropdownMenuItem(
+                          value: 'execution',
+                          child: Text(
+                              'Execution node owned by another coordinator')),
+                    ],
+                    onChanged: c.busy
+                        ? null
+                        : (value) {
+                            setState(() => role = value ?? 'combined');
+                            _edit();
+                          }),
+            ])),
       ]);
 
   Widget _modelAndVoice() {
@@ -368,95 +365,92 @@ class _SetupApplicationState extends State<SetupApplication> {
           title: 'Model',
           description:
               'Optional now. Selecting an existing model here does not start it or download anything.',
-          child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            DropdownButtonFormField<String>(
+                key: const Key('setup-model-provider'),
+                initialValue: provider,
+                decoration: const InputDecoration(labelText: 'Model source'),
+                items: const [
+                  DropdownMenuItem(
+                      value: 'later', child: Text('Configure a model later')),
+                  DropdownMenuItem(
+                      value: 'ollama',
+                      child: Text('An Ollama model already installed')),
+                  DropdownMenuItem(
+                      value: 'openai',
+                      child: Text('A compatible remote endpoint')),
+                ],
+                onChanged: c.busy
+                    ? null
+                    : (value) {
+                        setState(() => provider = value ?? 'later');
+                        _edit();
+                      }),
+            if (provider != 'later') ...[
+              const SizedBox(height: OdessyTokens.spaceMedium),
+              PathField(
+                  fieldKey: const Key('setup-endpoint'),
+                  controller: endpoint,
+                  label: 'Endpoint',
+                  hint: 'http://127.0.0.1:11434',
+                  enabled: !c.busy,
+                  onChanged: (_) => _edit()),
+              if (provider == 'ollama')
+                Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                        onPressed: c.busy || c.discovering
+                            ? null
+                            : () => c.discover(endpoint: endpoint.text.trim()),
+                        icon: const Icon(Icons.search, size: 18),
+                        label: Text(c.discovering
+                            ? 'Reading the endpoint…'
+                            : 'Find installed models'))),
+              const SizedBox(height: OdessyTokens.spaceMedium),
+              if (models.isNotEmpty)
                 DropdownButtonFormField<String>(
-                    key: const Key('setup-model-provider'),
-                    initialValue: provider,
-                    decoration: const InputDecoration(labelText: 'Model source'),
-                    items: const [
-                      DropdownMenuItem(
-                          value: 'later', child: Text('Configure a model later')),
-                      DropdownMenuItem(
-                          value: 'ollama',
-                          child: Text('An Ollama model already installed')),
-                      DropdownMenuItem(
-                          value: 'openai',
-                          child: Text('A compatible remote endpoint')),
+                    initialValue: models.contains(model.text.trim())
+                        ? model.text.trim()
+                        : null,
+                    decoration:
+                        const InputDecoration(labelText: 'Installed model'),
+                    items: [
+                      for (final name in models)
+                        DropdownMenuItem(value: name, child: Text(name))
                     ],
                     onChanged: c.busy
                         ? null
                         : (value) {
-                            setState(() => provider = value ?? 'later');
+                            model.text = value ?? '';
                             _edit();
-                          }),
-                if (provider != 'later') ...[
-                  const SizedBox(height: OdessyTokens.spaceMedium),
-                  PathField(
-                      fieldKey: const Key('setup-endpoint'),
-                      controller: endpoint,
-                      label: 'Endpoint',
-                      hint: 'http://127.0.0.1:11434',
-                      enabled: !c.busy,
-                      onChanged: (_) => _edit()),
-                  if (provider == 'ollama')
-                    Align(
-                        alignment: Alignment.centerLeft,
-                        child: OutlinedButton.icon(
-                            onPressed: c.busy || c.discovering
-                                ? null
-                                : () =>
-                                    c.discover(endpoint: endpoint.text.trim()),
-                            icon: const Icon(Icons.search, size: 18),
-                            label: Text(c.discovering
-                                ? 'Reading the endpoint…'
-                                : 'Find installed models'))),
-                  const SizedBox(height: OdessyTokens.spaceMedium),
-                  if (models.isNotEmpty)
-                    DropdownButtonFormField<String>(
-                        initialValue: models.contains(model.text.trim())
-                            ? model.text.trim()
-                            : null,
-                        decoration:
-                            const InputDecoration(labelText: 'Installed model'),
-                        items: [
-                          for (final name in models)
-                            DropdownMenuItem(value: name, child: Text(name))
-                        ],
-                        onChanged: c.busy
-                            ? null
-                            : (value) {
-                                model.text = value ?? '';
-                                _edit();
-                              })
-                  else
-                    TextField(
-                        key: const Key('setup-model'),
-                        controller: model,
-                        enabled: !c.busy,
-                        onChanged: (_) => _edit(),
-                        decoration: InputDecoration(
-                            labelText: 'Existing model name',
-                            hintText: 'For example llama3.1:8b',
-                            helperText: c.discovery['status'] == 'empty'
-                                ? 'The endpoint answered but has no models installed. Odessy will not download one.'
-                                : c.discovery['status'] == 'unreachable'
-                                    ? 'The endpoint did not answer. Check that it is running; nothing was installed.'
-                                    : null)),
-                  if (provider != 'ollama')
-                    TextField(
-                        controller: credential,
-                        enabled: !c.busy,
-                        onChanged: (_) => _edit(),
-                        decoration: const InputDecoration(
-                            labelText:
-                                'Credential environment variable (optional)',
-                            hintText: 'ODESSY_CLOUD_API_KEY',
-                            helperText:
-                                'The variable name only. Never enter a key here.')),
-                ],
-              ])),
+                          })
+              else
+                TextField(
+                    key: const Key('setup-model'),
+                    controller: model,
+                    enabled: !c.busy,
+                    onChanged: (_) => _edit(),
+                    decoration: InputDecoration(
+                        labelText: 'Existing model name',
+                        hintText: 'For example llama3.1:8b',
+                        helperText: c.discovery['status'] == 'empty'
+                            ? 'The endpoint answered but has no models installed. Odessy will not download one.'
+                            : c.discovery['status'] == 'unreachable'
+                                ? 'The endpoint did not answer. Check that it is running; nothing was installed.'
+                                : null)),
+              if (provider != 'ollama')
+                TextField(
+                    controller: credential,
+                    enabled: !c.busy,
+                    onChanged: (_) => _edit(),
+                    decoration: const InputDecoration(
+                        labelText: 'Credential environment variable (optional)',
+                        hintText: 'ODESSY_CLOUD_API_KEY',
+                        helperText:
+                            'The variable name only. Never enter a key here.')),
+            ],
+          ])),
       SetupSection(
           title: 'Voice',
           description:
@@ -535,9 +529,11 @@ class _SetupApplicationState extends State<SetupApplication> {
                 provider == 'later'
                     ? 'Configure later — nothing is started'
                     : model.text.trim()),
-            _row('Voice', voice && _voiceComplete ? 'Existing components' : 'Text only'),
+            _row('Voice',
+                voice && _voiceComplete ? 'Existing components' : 'Text only'),
             _row('Downloads', 'None. This is an offline package.'),
-            _row('Service', 'Not created here; available later under Installation.'),
+            _row('Service',
+                'Not created here; available later under Installation.'),
           ])),
       if (review.isEmpty)
         FilledButton(
@@ -569,8 +565,7 @@ class _SetupApplicationState extends State<SetupApplication> {
                   children: [
                     SelectableText(
                         const JsonEncoder.withIndent('  ').convert(review),
-                        style: const TextStyle(
-                            fontSize: 11))
+                        style: const TextStyle(fontSize: 11))
                   ]),
             ])),
     ]);
@@ -580,13 +575,14 @@ class _SetupApplicationState extends State<SetupApplication> {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         SizedBox(
-            width: 108,
-            child: Text(label, style: _theme.textTheme.bodySmall)),
+            width: 108, child: Text(label, style: _theme.textTheme.bodySmall)),
         Expanded(child: Text(value)),
       ]));
 
   Widget _progress() => SetupSection(
-      title: c.interrupted && !c.busy ? 'Installation stopped' : 'Installing Odessy',
+      title: c.interrupted && !c.busy
+          ? 'Installation stopped'
+          : 'Installing Odessy',
       description: c.busy
           ? 'Preparation and package checks finished before this page opened; their recorded times are retained. The remaining stages follow the installation journal.'
           : c.interrupted
@@ -611,7 +607,8 @@ class _SetupApplicationState extends State<SetupApplication> {
         if (c.error.isNotEmpty)
           Padding(
               padding: const EdgeInsets.only(top: OdessyTokens.spaceMedium),
-              child: SetupMessage(error: true, text: c.error, details: c.reason)),
+              child:
+                  SetupMessage(error: true, text: c.error, details: c.reason)),
         if (c.interrupted && !c.busy)
           Align(
               alignment: Alignment.centerLeft,
@@ -790,8 +787,8 @@ class _SetupApplicationState extends State<SetupApplication> {
     };
   }
 
-  Widget _managementSurface(InstalledManageController manage) => Column(
-      children: [
+  Widget _managementSurface(InstalledManageController manage) =>
+      Column(children: [
         Expanded(
             child: ManagePage(
                 controller: manage,
@@ -812,9 +809,8 @@ class _SetupApplicationState extends State<SetupApplication> {
   @override
   Widget build(BuildContext context) {
     final manage = management;
-    final managing = manage != null ||
-        widget.mode == 'manage' ||
-        widget.mode == 'uninstall';
+    final managing =
+        manage != null || widget.mode == 'manage' || widget.mode == 'uninstall';
     final title = widget.mode == 'uninstall'
         ? 'Uninstall Odessy'
         : managing
@@ -835,9 +831,7 @@ class _SetupApplicationState extends State<SetupApplication> {
                             child: Row(children: [
                               const OdessyBrandMark(),
                               const SizedBox(width: OdessyTokens.spaceMedium),
-                              Text(title,
-                                  style:
-                                      _theme.textTheme.titleLarge),
+                              Text(title, style: _theme.textTheme.titleLarge),
                             ])),
                         const Divider(height: 1),
                         Expanded(

@@ -162,7 +162,9 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
     _process = process;
     sessionModelCredentials.addListener(_sendCredentials);
     process.exitCode.then((code) => _exitCode = code);
-    process.stdout.transform(const Utf8Decoder(allowMalformed: true)).listen(_readCredentialAcks);
+    process.stdout
+        .transform(const Utf8Decoder(allowMalformed: true))
+        .listen(_readCredentialAcks);
     process.stderr
         .transform(const Utf8Decoder(allowMalformed: true))
         .listen((chunk) {
@@ -172,7 +174,8 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
       await _sendCredentials();
     } catch (_) {
       await stop();
-      throw const CoordinatorStartFailure('The coordinator did not acknowledge its private credential startup message.');
+      throw const CoordinatorStartFailure(
+          'The coordinator did not acknowledge its private credential startup message.');
     }
     final target = Uri.parse('http://127.0.0.1:$chosen');
     final deadline = DateTime.now().add(readyTimeout);
@@ -211,11 +214,14 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
     _credentialAcks[revision] = ack;
     try {
       await (() async {
-        process.stdin.writeln(jsonEncode({'session_credentials': sessionModelCredentials.privateStdinValues,
-          'credential_revision': revision}));
+        process.stdin.writeln(jsonEncode({
+          'session_credentials': sessionModelCredentials.privateStdinValues,
+          'credential_revision': revision
+        }));
         await process.stdin.flush();
         await ack.future;
-      })().timeout(const Duration(seconds: 5));
+      })()
+          .timeout(const Duration(seconds: 5));
     } finally {
       _credentialAcks.remove(revision);
       if (!ack.isCompleted) ack.complete();
@@ -224,16 +230,22 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
 
   void _readCredentialAcks(String chunk) {
     _ackBuffer += chunk;
-    if (_ackBuffer.length > 65536) { _ackBuffer = ''; return; }
+    if (_ackBuffer.length > 65536) {
+      _ackBuffer = '';
+      return;
+    }
     while (_ackBuffer.contains('\n')) {
       final index = _ackBuffer.indexOf('\n');
       final line = _ackBuffer.substring(0, index);
       _ackBuffer = _ackBuffer.substring(index + 1);
       try {
         final value = jsonDecode(line);
-        final ack = value is Map ? _credentialAcks[value['credential_revision']] : null;
+        final ack =
+            value is Map ? _credentialAcks[value['credential_revision']] : null;
         if (ack != null && !ack.isCompleted) ack.complete();
-      } on FormatException catch (_) { /* Ordinary stdout is never a credential reply. */ }
+      } on FormatException catch (_) {
+        /* Ordinary stdout is never a credential reply. */
+      }
     }
   }
 

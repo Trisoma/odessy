@@ -22,8 +22,10 @@ class AudioInventoryController extends ChangeNotifier {
   String backendName = '', status = '', message = '', error = '';
 
   /// Devices that can serve one direction, in the order the backend listed them.
-  List<Json> forDirection(String direction) =>
-      [for (final device in devices) if (device[direction] == true) device];
+  List<Json> forDirection(String direction) => [
+        for (final device in devices)
+          if (device[direction] == true) device
+      ];
 
   String directionMessage(String direction) =>
       '${(directions[direction] as Map?)?['message'] ?? ''}';

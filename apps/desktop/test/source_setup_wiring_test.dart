@@ -15,17 +15,21 @@ class UnavailableCoordinator implements InstalledCoordinatorHandle {
 }
 
 void main() {
-  testWidgets('a failed owned start can be retried after configuring a key', (tester) async {
+  testWidgets('a failed owned start can be retried after configuring a key',
+      (tester) async {
     tester.view.physicalSize = const Size(1400, 1000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     var attempts = 0;
-    await tester.pumpWidget(OdessyApp(api: DisconnectedApi(), restoreConfiguration: true,
-      setupBackend: RestoringBackend(), coordinatorFactory: (_) {
-        attempts++;
-        return UnavailableCoordinator();
-      }));
+    await tester.pumpWidget(OdessyApp(
+        api: DisconnectedApi(),
+        restoreConfiguration: true,
+        setupBackend: RestoringBackend(),
+        coordinatorFactory: (_) {
+          attempts++;
+          return UnavailableCoordinator();
+        }));
     await tester.pumpAndSettle();
     expect(attempts, 1);
     await tester.tap(find.widgetWithText(ListTile, 'Settings'));

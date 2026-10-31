@@ -49,7 +49,10 @@ class Backend implements SetupBackend {
           'operation': 'uninstall',
           'keep_models': true,
         },
-      'package-uninstall' => {'removed': ['owned'], 'retained': []},
+      'package-uninstall' => {
+          'removed': ['owned'],
+          'retained': []
+        },
       _ => {'done': true},
     };
     return SetupReply.fromJson({

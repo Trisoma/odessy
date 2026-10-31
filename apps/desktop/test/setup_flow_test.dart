@@ -68,7 +68,8 @@ void main() {
     final initial = path();
     await tester.tap(find.text('Browse…'));
     await settle(tester);
-    expect(path(), initial, reason: 'a cancelled picker must not change the path');
+    expect(path(), initial,
+        reason: 'a cancelled picker must not change the path');
     picker.directory = r'C:\Users\me\My Odessy Install (test)';
     await tester.tap(find.text('Browse…'));
     await settle(tester);
@@ -83,8 +84,7 @@ void main() {
     tester.view.physicalSize = const Size(720, 540);
     await tester.tap(find.text('Continue'));
     await settle(tester);
-    await tester.enterText(
-        find.byKey(const Key('setup-location')),
+    await tester.enterText(find.byKey(const Key('setup-location')),
         r'C:\Users\someone\OneDrive - Contoso Corporation\Documents and Settings\Odessy application installation folder');
     await settle(tester);
     expect(tester.takeException(), isNull);
@@ -133,8 +133,7 @@ void main() {
     await install(tester);
     await tester.tap(find.text('Open Odessy and finish'));
     await settle(tester);
-    expect(
-        backend.requests.map((r) => r.parameters['action']),
+    expect(backend.requests.map((r) => r.parameters['action']),
         contains('package-launch'),
         reason: 'the finish action must ask the bridge to launch');
     expect(exited, isTrue);
@@ -168,19 +167,34 @@ void main() {
       () async {
     final backend = FlowBackend()
       ..statusLogs = const [
-        {'seq': 1, 'stage': 'dependencies', 'stream': 'stdout', 'line': 'Collecting wheel'},
-        {'seq': 2, 'stage': 'dependencies', 'stream': 'stderr', 'line': 'index unreachable'},
+        {
+          'seq': 1,
+          'stage': 'dependencies',
+          'stream': 'stdout',
+          'line': 'Collecting wheel'
+        },
+        {
+          'seq': 2,
+          'stage': 'dependencies',
+          'stream': 'stderr',
+          'line': 'index unreachable'
+        },
       ];
     final controller = PackageSetupController(backend);
     addTearDown(controller.dispose);
     await controller.readProgress();
     await controller.readProgress();
     final lines = controller.output;
-    expect(lines.where((line) => line.contains('Collecting wheel')), hasLength(1),
+    expect(
+        lines.where((line) => line.contains('Collecting wheel')), hasLength(1),
         reason: 'a repeated poll must not duplicate a line already shown');
-    expect(lines.any((line) => line.contains('Installing dependencies: Collecting wheel')),
+    expect(
+        lines.any((line) =>
+            line.contains('Installing dependencies: Collecting wheel')),
         isTrue);
-    expect(lines.any((line) => line.contains('Installing dependencies error: index unreachable')),
+    expect(
+        lines.any((line) =>
+            line.contains('Installing dependencies error: index unreachable')),
         isTrue,
         reason: 'stderr must be distinguishable from ordinary output');
   });

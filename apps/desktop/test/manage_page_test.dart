@@ -9,7 +9,8 @@ void main() {
   testWidgets('manage shows recorded state and requires an exact review',
       (tester) async {
     final backend = Backend();
-    final c = InstalledManageController(backend, spec: {'root': 'C:/Odessy/App'});
+    final c =
+        InstalledManageController(backend, spec: {'root': 'C:/Odessy/App'});
     await c.load();
     await tester.pumpWidget(
         MaterialApp(home: Scaffold(body: ManagePage(controller: c))));
@@ -32,7 +33,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(
         backend.requests
-            .where((request) => request.parameters['action'] == 'package-repair')
+            .where(
+                (request) => request.parameters['action'] == 'package-repair')
             .single
             .parameters['confirm'],
         'repair-1');
@@ -41,7 +43,8 @@ void main() {
   testWidgets('uninstall is delegated when the app is inside the installation',
       (tester) async {
     final backend = Backend();
-    final c = InstalledManageController(backend, spec: {'root': 'C:/Odessy/App'});
+    final c =
+        InstalledManageController(backend, spec: {'root': 'C:/Odessy/App'});
     await c.load();
     var opened = false;
     await tester.pumpWidget(MaterialApp(
@@ -60,7 +63,8 @@ void main() {
   testWidgets('an external maintenance window offers reviewed uninstall',
       (tester) async {
     final backend = Backend();
-    final c = InstalledManageController(backend, spec: {'root': 'C:/Odessy/App'});
+    final c =
+        InstalledManageController(backend, spec: {'root': 'C:/Odessy/App'});
     await c.load();
     await tester.pumpWidget(MaterialApp(
         home: Scaffold(body: ManagePage(controller: c, external: true))));
@@ -69,7 +73,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Review uninstall'));
     await tester.pumpAndSettle();
-    expect(backend.requests.last.parameters['action'], 'package-uninstall-review');
-    expect(find.textContaining('Existing models are preserved'), findsOneWidget);
+    expect(
+        backend.requests.last.parameters['action'], 'package-uninstall-review');
+    expect(
+        find.textContaining('Existing models are preserved'), findsOneWidget);
   });
 }

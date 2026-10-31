@@ -33,95 +33,96 @@ class ManagePage extends StatelessWidget {
         final portable = c.spec['portable'] == true;
         return SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(28, 24, 28, 40),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Manage Odessy',
-                      style: Theme.of(context).textTheme.headlineSmall),
-                  const SizedBox(height: 6),
-                  Text(
-                      'Version ${version.isEmpty ? 'none active' : version.substring(0, 8)} · ${c.root}',
-                      style: Theme.of(context).textTheme.bodySmall),
-                  const SizedBox(height: 18),
-                  if (c.error.isNotEmpty)
-                    _message(context, c.error,
-                        background: Theme.of(context).colorScheme.errorContainer,
-                        onPressed: c.refreshStatus,
-                        action: 'Reload status'),
-                  if (c.notice.isNotEmpty)
-                    _message(context, c.notice,
-                        onPressed: c.dismissNotice, action: 'Dismiss'),
-                  if (c.busy) const LinearProgressIndicator(),
-                  const SizedBox(height: 12),
-                  _summary(context, c),
-                  const SizedBox(height: 20),
-                  if (c.review.isNotEmpty) _review(context, c),
-                  Wrap(spacing: 10, runSpacing: 10, children: [
-                    OutlinedButton.icon(
-                        onPressed: c.busy ? null : c.verify,
-                        icon: const Icon(Icons.verified_outlined, size: 18),
-                        label: const Text('Check installed files')),
-                    OutlinedButton.icon(
-                        onPressed: c.busy || c.uninstalled || c.payload.isEmpty
-                            ? null
-                            : c.reviewRepair,
-                        icon: const Icon(Icons.build_outlined, size: 18),
-                        label: const Text('Repair or update files')),
-                    OutlinedButton.icon(
-                        onPressed: c.busy || c.uninstalled || c.versions.length < 2
-                            ? null
-                            : () => _rollback(context, c),
-                        icon: const Icon(Icons.undo, size: 18),
-                        label: const Text('Roll back')),
-                    OutlinedButton.icon(
-                        onPressed: c.busy || c.uninstalled
-                            ? null
-                            : () => _configure(context, c),
-                        icon: const Icon(Icons.tune, size: 18),
-                        label: const Text('Change configuration')),
-                    OutlinedButton.icon(
-                        onPressed: c.busy || c.uninstalled || portable
-                            ? null
-                            : () => _services(context, c),
-                        icon: const Icon(Icons.settings_power_outlined, size: 18),
-                        label: const Text('Service controls')),
-                    OutlinedButton.icon(
-                        onPressed: c.busy || c.uninstalled || portable ? null : c.launch,
-                        icon: const Icon(Icons.play_arrow_outlined, size: 18),
-                        label: const Text('Start Odessy')),
-                    OutlinedButton.icon(
-                        onPressed: c.busy || c.uninstalled || portable ? null : c.register,
-                        icon: const Icon(Icons.app_shortcut_outlined, size: 18),
-                        label: Text(repairRegistrationLabel)),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Manage Odessy',
+                  style: Theme.of(context).textTheme.headlineSmall),
+              const SizedBox(height: 6),
+              Text(
+                  'Version ${version.isEmpty ? 'none active' : version.substring(0, 8)} · ${c.root}',
+                  style: Theme.of(context).textTheme.bodySmall),
+              const SizedBox(height: 18),
+              if (c.error.isNotEmpty)
+                _message(context, c.error,
+                    background: Theme.of(context).colorScheme.errorContainer,
+                    onPressed: c.refreshStatus,
+                    action: 'Reload status'),
+              if (c.notice.isNotEmpty)
+                _message(context, c.notice,
+                    onPressed: c.dismissNotice, action: 'Dismiss'),
+              if (c.busy) const LinearProgressIndicator(),
+              const SizedBox(height: 12),
+              _summary(context, c),
+              const SizedBox(height: 20),
+              if (c.review.isNotEmpty) _review(context, c),
+              Wrap(spacing: 10, runSpacing: 10, children: [
+                OutlinedButton.icon(
+                    onPressed: c.busy ? null : c.verify,
+                    icon: const Icon(Icons.verified_outlined, size: 18),
+                    label: const Text('Check installed files')),
+                OutlinedButton.icon(
+                    onPressed: c.busy || c.uninstalled || c.payload.isEmpty
+                        ? null
+                        : c.reviewRepair,
+                    icon: const Icon(Icons.build_outlined, size: 18),
+                    label: const Text('Repair or update files')),
+                OutlinedButton.icon(
+                    onPressed: c.busy || c.uninstalled || c.versions.length < 2
+                        ? null
+                        : () => _rollback(context, c),
+                    icon: const Icon(Icons.undo, size: 18),
+                    label: const Text('Roll back')),
+                OutlinedButton.icon(
+                    onPressed: c.busy || c.uninstalled
+                        ? null
+                        : () => _configure(context, c),
+                    icon: const Icon(Icons.tune, size: 18),
+                    label: const Text('Change configuration')),
+                OutlinedButton.icon(
+                    onPressed: c.busy || c.uninstalled || portable
+                        ? null
+                        : () => _services(context, c),
+                    icon: const Icon(Icons.settings_power_outlined, size: 18),
+                    label: const Text('Service controls')),
+                OutlinedButton.icon(
+                    onPressed:
+                        c.busy || c.uninstalled || portable ? null : c.launch,
+                    icon: const Icon(Icons.play_arrow_outlined, size: 18),
+                    label: const Text('Start Odessy')),
+                OutlinedButton.icon(
+                    onPressed:
+                        c.busy || c.uninstalled || portable ? null : c.register,
+                    icon: const Icon(Icons.app_shortcut_outlined, size: 18),
+                    label: Text(repairRegistrationLabel)),
+              ]),
+              const SizedBox(height: 22),
+              if (c.uninstalled)
+                Text('This installation has been removed. Close this window.',
+                    style: Theme.of(context).textTheme.titleMedium)
+              else if (portable)
+                const Text(
+                    'Portable build: close Odessy and remove its extracted folder. Settings, models and workspaces are separate and preserved.')
+              else if (c.status.isNotEmpty)
+                _uninstall(context, c),
+              const SizedBox(height: 18),
+              ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  title: const Text('Diagnostics'),
+                  children: [
+                    SelectableText(
+                        const JsonEncoder.withIndent('  ').convert(c.status),
+                        style: const TextStyle(fontSize: 12)),
+                    if (onOpenMaintenance != null)
+                      TextButton(
+                          onPressed: onOpenMaintenance,
+                          child: const Text(
+                              'Open the external maintenance window')),
+                    if (onStart != null)
+                      TextButton(
+                          onPressed: onStart,
+                          child: const Text('Start the local coordinator')),
                   ]),
-                  const SizedBox(height: 22),
-                  if (c.uninstalled)
-                    Text('This installation has been removed. Close this window.',
-                        style: Theme.of(context).textTheme.titleMedium)
-                  else if (portable)
-                    const Text('Portable build: close Odessy and remove its extracted folder. Settings, models and workspaces are separate and preserved.')
-                  else if (c.status.isNotEmpty)
-                    _uninstall(context, c),
-                  const SizedBox(height: 18),
-                  ExpansionTile(
-                      tilePadding: EdgeInsets.zero,
-                      title: const Text('Diagnostics'),
-                      children: [
-                        SelectableText(
-                            const JsonEncoder.withIndent('  ')
-                                .convert(c.status),
-                            style: const TextStyle(fontSize: 12)),
-                        if (onOpenMaintenance != null)
-                          TextButton(
-                              onPressed: onOpenMaintenance,
-                              child: const Text(
-                                  'Open the external maintenance window')),
-                        if (onStart != null)
-                          TextButton(
-                              onPressed: onStart,
-                              child: const Text('Start the local coordinator')),
-                      ]),
-                ]));
+            ]));
       });
 
   Widget _message(BuildContext context, String text,
@@ -179,7 +180,8 @@ class ManagePage extends StatelessWidget {
       if (review['target_version'] != null)
         'Target version: ${review['target_version']}',
       if (review['workspace'] != null) 'Workspace: ${review['workspace']}',
-      if (review['definition'] != null) 'Service definition: ${review['scope']}',
+      if (review['definition'] != null)
+        'Service definition: ${review['scope']}',
       if (review['keep_models'] == true) 'Existing models are preserved',
       if (review['keep_config'] == true) 'Existing configuration is preserved',
     ];
@@ -208,9 +210,8 @@ class ManagePage extends StatelessWidget {
         ]));
   }
 
-  Widget _uninstall(BuildContext context, InstalledManageController c) => Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
+  Widget _uninstall(BuildContext context, InstalledManageController c) =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text('Remove Odessy', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 6),
         Text(external
@@ -234,16 +235,17 @@ class ManagePage extends StatelessWidget {
     final choice = await showDialog<String>(
         context: context,
         builder: (context) => SimpleDialog(
-            title: const Text('Roll back to an owned version'),
-            children: [
-              for (final version in c.versions)
-                SimpleDialogOption(
-                    onPressed: () => Navigator.pop(context, version),
-                    child: Text(
-                        '${version.substring(0, 8)}${version == c.activeVersion ? ' · active' : ''}')),
-              SimpleDialogOption(
-                  onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-            ]));
+                title: const Text('Roll back to an owned version'),
+                children: [
+                  for (final version in c.versions)
+                    SimpleDialogOption(
+                        onPressed: () => Navigator.pop(context, version),
+                        child: Text(
+                            '${version.substring(0, 8)}${version == c.activeVersion ? ' · active' : ''}')),
+                  SimpleDialogOption(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Cancel')),
+                ]));
     if (choice == null) return;
     await c.reviewRollback(choice);
   }
@@ -255,7 +257,8 @@ class ManagePage extends StatelessWidget {
         builder: (context) => AlertDialog(
                 title: const Text('Background service'),
                 content: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Text('$serviceAccountCopy Registering one requires an existing workspace directory.'),
+                  Text(
+                      '$serviceAccountCopy Registering one requires an existing workspace directory.'),
                   const SizedBox(height: 16),
                   Wrap(spacing: 8, runSpacing: 8, children: [
                     OutlinedButton(
@@ -282,10 +285,11 @@ class ManagePage extends StatelessWidget {
   Future<void> _configure(
       BuildContext context, InstalledManageController c) async {
     final workspace = TextEditingController(
-        text: (c.configuration['workspace'] as String?) ?? c.spec['workspace'] as String? ?? '');
+        text: (c.configuration['workspace'] as String?) ??
+            c.spec['workspace'] as String? ??
+            '');
     final model = TextEditingController();
-    final endpoint =
-        TextEditingController(text: 'http://127.0.0.1:11434');
+    final endpoint = TextEditingController(text: 'http://127.0.0.1:11434');
     var provider = 'ollama';
     final submitted = await showDialog<bool>(
         context: context,
@@ -294,7 +298,8 @@ class ManagePage extends StatelessWidget {
                     title: const Text('Change configuration'),
                     content: SizedBox(
                         width: 460,
-                        child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        child:
+                            Column(mainAxisSize: MainAxisSize.min, children: [
                           DropdownButtonFormField<String>(
                               initialValue: provider,
                               items: const [

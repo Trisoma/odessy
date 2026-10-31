@@ -75,13 +75,17 @@ class _OdessyAppState extends State<OdessyApp> {
   bool restarting = false;
   ExecutionHostsController _executionHostController() {
     final api = controller.api;
-    if (executionHosts == null || !identical(executionHosts!.api, api is ExecutionHostsApi ? api : null)) {
+    if (executionHosts == null ||
+        !identical(
+            executionHosts!.api, api is ExecutionHostsApi ? api : null)) {
       executionHosts?.dispose();
-      executionHosts = ExecutionHostsController(api is ExecutionHostsApi ? api as ExecutionHostsApi : null,
+      executionHosts = ExecutionHostsController(
+          api is ExecutionHostsApi ? api as ExecutionHostsApi : null,
           onConnected: controller.reloadExecutionTarget);
     }
     return executionHosts!;
   }
+
   void _observeConnection() {
     if (!identical(observedApi, controller.api)) {
       observedApi = controller.api;
@@ -643,8 +647,8 @@ class _OdessyAppState extends State<OdessyApp> {
               padding: const EdgeInsets.only(bottom: 5),
               child: ListTile(
                   key: ValueKey('nav-$label'),
-                  focusNode: navigationFocus.putIfAbsent(label,
-                      () => FocusNode(debugLabel: 'Navigation: $label')),
+                  focusNode: navigationFocus.putIfAbsent(
+                      label, () => FocusNode(debugLabel: 'Navigation: $label')),
                   dense: true,
                   selected: selected,
                   selectedTileColor: Theme.of(context)
@@ -663,7 +667,8 @@ class _OdessyAppState extends State<OdessyApp> {
                     FocusManager.instance.applyFocusChangesIfNeeded();
                     final previousPage = page;
                     await tap();
-                    if (tileContext.mounted && (page != previousPage || selected)) {
+                    if (tileContext.mounted &&
+                        (page != previousPage || selected)) {
                       Scaffold.maybeOf(tileContext)?.closeDrawer();
                     }
                   })));
@@ -690,7 +695,9 @@ class _OdessyAppState extends State<OdessyApp> {
     }
     final previous = configuredCoordinator;
     await previous?.stop();
-    if (identical(configuredCoordinator, previous)) configuredCoordinator = null;
+    if (identical(configuredCoordinator, previous)) {
+      configuredCoordinator = null;
+    }
     await controller.replace(DisconnectedApi());
     if (!mounted || epoch != configuredEpoch) return;
     final child = widget.coordinatorFactory?.call(spec) ??
@@ -707,7 +714,9 @@ class _OdessyAppState extends State<OdessyApp> {
       if (!mounted || epoch != configuredEpoch) {
         api.close();
         await child.stop();
-        if (identical(configuredCoordinator, child)) configuredCoordinator = null;
+        if (identical(configuredCoordinator, child)) {
+          configuredCoordinator = null;
+        }
         return;
       }
       await controller.replace(api);

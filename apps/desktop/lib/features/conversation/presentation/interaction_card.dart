@@ -173,12 +173,16 @@ List<(String, String)> approvalFacts(Json e) {
   String text(Object? value) {
     if (value == null) return 'not reported';
     if (value is List) {
-      return value.isEmpty ? 'none reported' : value.map((v) => '$v').join(', ');
+      return value.isEmpty
+          ? 'none reported'
+          : value.map((v) => '$v').join(', ');
     }
     if (value is Map) {
       return value.isEmpty
           ? 'none reported'
-          : value.entries.map((entry) => '${entry.key}=${entry.value}').join(', ');
+          : value.entries
+              .map((entry) => '${entry.key}=${entry.value}')
+              .join(', ');
     }
     final raw = '$value';
     return raw.isEmpty ? 'not reported' : raw;
@@ -186,10 +190,15 @@ List<(String, String)> approvalFacts(Json e) {
 
   return [
     ('Action', text(e['operation'] ?? e['tool_name'] ?? e['tool'])),
-    ('Execution target', text(e['target_identity'] ?? e['execution_target'] ?? e['host'])),
+    (
+      'Execution target',
+      text(e['target_identity'] ?? e['execution_target'] ?? e['host'])
+    ),
     ('Permission scope', text(e['permission_scopes'] ?? e['scopes'])),
     ('Risk', text(e['risk'])),
-    ('Exact arguments',
-        e.containsKey('arguments') ? text(e['arguments']) : 'not reported'),
+    (
+      'Exact arguments',
+      e.containsKey('arguments') ? text(e['arguments']) : 'not reported'
+    ),
   ];
 }

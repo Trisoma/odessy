@@ -75,7 +75,8 @@ class VoiceBackend implements SetupBackend {
         'issues': issues,
         'missing': missing,
         'partial': partial,
-        'reason': 'Existing files only; no inference, downloads or audio capture performed.',
+        'reason':
+            'Existing files only; no inference, downloads or audio capture performed.',
       });
     }
     if (p['action'] == 'save') {
@@ -109,10 +110,24 @@ class VoiceBackend implements SetupBackend {
 }
 
 const headphones = <String, dynamic>{
-  'id': 'hw:CARD=Headset,DEV=0', 'name': 'USB Headset', 'input': true, 'output': true};const microphone = <String, dynamic>{
-  'id': 'hw:CARD=Mic,DEV=0', 'name': 'Desk Mic', 'input': true, 'output': false};
+  'id': 'hw:CARD=Headset,DEV=0',
+  'name': 'USB Headset',
+  'input': true,
+  'output': true
+};
+const microphone = <String, dynamic>{
+  'id': 'hw:CARD=Mic,DEV=0',
+  'name': 'Desk Mic',
+  'input': true,
+  'output': false
+};
 const speakers = <String, dynamic>{
-  'id': 'hw:CARD=HDMI,DEV=3', 'name': 'HDMI Output', 'input': false, 'output': true, 'is_default': true};
+  'id': 'hw:CARD=HDMI,DEV=3',
+  'name': 'HDMI Output',
+  'input': false,
+  'output': true,
+  'is_default': true
+};
 
 /// A backend whose replies are completed by the test, in whatever order it likes.
 class _OutOfOrderBackend implements SetupBackend {
@@ -141,11 +156,13 @@ class _CancellingPicker implements NativePicker {
   @override
   Future<String?> pickDirectory({String? initial, String? title}) async => null;
   @override
-  Future<String?> pickFile({String? initial, List<String> extensions = const []}) async =>
+  Future<String?> pickFile(
+          {String? initial, List<String> extensions = const []}) async =>
       null;
   @override
   Future<String?> pickSaveLocation(
-          {required String suggestedName, List<String> extensions = const []}) async =>
+          {required String suggestedName,
+          List<String> extensions = const []}) async =>
       null;
 }
 
@@ -181,11 +198,14 @@ void main() {
     final backend = VoiceBackend(devices: [headphones, microphone, speakers]);
     final controller = await open(tester, backend, 'voice');
 
-    expect(find.byKey(const ValueKey('component-audio_input_device')), findsOneWidget);
-    expect(find.byKey(const ValueKey('component-audio_output_device')), findsOneWidget);
+    expect(find.byKey(const ValueKey('component-audio_input_device')),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey('component-audio_output_device')),
+        findsOneWidget);
     expect(find.text('System default'), findsNWidgets(2));
 
-    await tester.tap(find.byKey(const ValueKey('component-audio_input_device')));
+    await tester
+        .tap(find.byKey(const ValueKey('component-audio_input_device')));
     await tester.pumpAndSettle();
     expect(find.text('Desk Mic'), findsWidgets);
     expect(find.text('HDMI Output'), findsNothing,
@@ -193,7 +213,8 @@ void main() {
     await tester.tapAt(const Offset(4, 4));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('component-audio_output_device')));
+    await tester
+        .tap(find.byKey(const ValueKey('component-audio_output_device')));
     await tester.pumpAndSettle();
     expect(find.text('HDMI Output · system default'), findsWidgets);
     expect(find.text('Desk Mic'), findsNothing,
@@ -208,7 +229,8 @@ void main() {
     final backend = VoiceBackend(devices: [headphones, microphone, speakers]);
     final controller = await open(tester, backend, 'voice');
 
-    await tester.tap(find.byKey(const ValueKey('component-audio_input_device')));
+    await tester
+        .tap(find.byKey(const ValueKey('component-audio_input_device')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Desk Mic').last);
     await tester.pumpAndSettle();
@@ -229,10 +251,12 @@ void main() {
     controller.dispose();
   });
 
-  testWidgets('a saved device that disappeared is kept and labelled unavailable',
+  testWidgets(
+      'a saved device that disappeared is kept and labelled unavailable',
       (tester) async {
     final backend = VoiceBackend(
-        devices: [microphone], voice: {'audio_input_device': 'hw:CARD=Gone,DEV=0'});
+        devices: [microphone],
+        voice: {'audio_input_device': 'hw:CARD=Gone,DEV=0'});
     final controller = await open(tester, backend, 'voice');
 
     expect(find.textContaining('Previously selected device — unavailable'),
@@ -336,10 +360,12 @@ void main() {
     controller.dispose();
   });
 
-  testWidgets('opening a section only loads; it never writes',
-      (tester) async {
-    final backend = VoiceBackend(
-        devices: [microphone], candidates: const {'wake_model': ['/m/hey.onnx']});
+  testWidgets('opening a section only loads; it never writes', (tester) async {
+    final backend = VoiceBackend(devices: [
+      microphone
+    ], candidates: const {
+      'wake_model': ['/m/hey.onnx']
+    });
     final controller = await open(tester, backend, 'voice');
     expect(backend.savedAnything, isFalse);
     for (final request in backend.requests) {
@@ -384,27 +410,26 @@ void main() {
     controller.dispose();
   });
 
-  testWidgets('a blocking verdict on another component never stops this section',
+  testWidgets(
+      'a blocking verdict on another component never stops this section',
       (tester) async {
     // Whisper is unusable, the TTS files are fine. Saving TTS must still work.
-    final backend = VoiceBackend(
-        issues: const {
-          'whisper_bin': {
-            'message': 'Select the Whisper executable, not a folder.',
-            'blocking': true
-          }
-        },
-        voice: {
-          'kokoro_model': '/opt/kokoro/kokoro.onnx',
-          'kokoro_voices': '/opt/kokoro/voices.bin',
-        });
+    final backend = VoiceBackend(issues: const {
+      'whisper_bin': {
+        'message': 'Select the Whisper executable, not a folder.',
+        'blocking': true
+      }
+    }, voice: {
+      'kokoro_model': '/opt/kokoro/kokoro.onnx',
+      'kokoro_voices': '/opt/kokoro/voices.bin',
+    });
     final controller = await open(tester, backend, 'tts');
 
-    expect(find.text('Select the Whisper executable, not a folder.'), findsNothing,
+    expect(
+        find.text('Select the Whisper executable, not a folder.'), findsNothing,
         reason: 'another component’s error must not appear in this section');
 
-    await tester.enterText(
-        find.byKey(const ValueKey('component-kokoro_model')),
+    await tester.enterText(find.byKey(const ValueKey('component-kokoro_model')),
         '/opt/kokoro/kokoro-v1.onnx');
     await tester.pumpAndSettle();
     await save(tester);
@@ -420,18 +445,20 @@ void main() {
     // The Kokoro files are unusable, but the section is now on a custom provider
     // whose own fields are fine, so the save must be allowed.
     final backend = VoiceBackend(issues: const {
-      'kokoro_model': {'message': 'Select a file, not a folder.', 'blocking': true}
+      'kokoro_model': {
+        'message': 'Select a file, not a folder.',
+        'blocking': true
+      }
     });
     final controller = await open(tester, backend, 'tts');
 
-    await tester.enterText(
-        find.byKey(const ValueKey('component-tts_provider')),
+    await tester.enterText(find.byKey(const ValueKey('component-tts_provider')),
         'trusted:factory');
     await tester.pumpAndSettle();
     await tester.enterText(
         find.byKey(const ValueKey('component-tts_executable')), '/opt/tts/say');
-    await tester.enterText(
-        find.byKey(const ValueKey('component-tts_model')), '/opt/tts/model.bin');
+    await tester.enterText(find.byKey(const ValueKey('component-tts_model')),
+        '/opt/tts/model.bin');
     await tester.pumpAndSettle();
     await save(tester);
 
@@ -480,8 +507,10 @@ void main() {
 
       // ...then the stale one arrives late and must be ignored.
       backend.pending[0].complete(const {
-        'whisper_bin': {'message': 'Select an executable file, not a folder.',
-            'blocking': true}
+        'whisper_bin': {
+          'message': 'Select an executable file, not a folder.',
+          'blocking': true
+        }
       });
       await first;
       expect(controller.issues.containsKey('whisper_bin'), isFalse,
@@ -517,7 +546,8 @@ void main() {
   });
 
   group('helper-reported path verdicts', () {
-    testWidgets('a folder in the Whisper field blocks the save', (tester) async {
+    testWidgets('a folder in the Whisper field blocks the save',
+        (tester) async {
       final backend = VoiceBackend(issues: const {
         'whisper_bin': {
           'message': 'Select the Whisper executable, not a folder.',
@@ -539,7 +569,8 @@ void main() {
       controller.dispose();
     });
 
-    testWidgets('an advisory verdict is shown but does not block', (tester) async {
+    testWidgets('an advisory verdict is shown but does not block',
+        (tester) async {
       final backend = VoiceBackend(issues: const {
         'whisper_bin': {
           'message': 'Not found on PATH or on disk. Saving is still allowed.',
@@ -563,7 +594,8 @@ void main() {
       final backend = VoiceBackend();
       final controller = await open(tester, backend, 'stt');
       await tester.enterText(
-          find.byKey(const ValueKey('component-whisper_bin')), '/opt/whisper/whisper-cli');
+          find.byKey(const ValueKey('component-whisper_bin')),
+          '/opt/whisper/whisper-cli');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pumpAndSettle();
 

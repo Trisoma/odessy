@@ -67,15 +67,19 @@ class ConfigureBackend implements SetupBackend {
 }
 
 void main() {
-  testWidgets('voice row opens editable assets and endpoint row probes explicitly', (tester) async {
+  testWidgets(
+      'voice row opens editable assets and endpoint row probes explicitly',
+      (tester) async {
     final backend = ConfigureBackend();
     final c = InstalledManageController(backend, spec: {'root': 'C:/App'});
     await c.load();
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: GetStartedPage(controller: c, onStart: () {}))));
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: GetStartedPage(controller: c, onStart: () {}))));
     await tester.ensureVisible(find.byKey(const Key('checklist-endpoint')));
     await tester.tap(find.byKey(const Key('checklist-endpoint')));
     await tester.pumpAndSettle();
-    expect(backend.requests.where((r) => r.operation == 'discover'), hasLength(1));
+    expect(
+        backend.requests.where((r) => r.operation == 'discover'), hasLength(1));
     await tester.ensureVisible(find.byKey(const Key('checklist-voice')));
     await tester.tap(find.byKey(const Key('checklist-voice')));
     await tester.pumpAndSettle();
@@ -84,8 +88,10 @@ void main() {
     await tester.ensureVisible(find.text('Save voice configuration'));
     await tester.tap(find.text('Save voice configuration'));
     await tester.pumpAndSettle();
-    final review = backend.requests.firstWhere((r) => r.parameters['action'] == 'package-configure-review');
-    expect((review.parameters['selection'] as Map)['voice'], containsPair('enabled', false));
+    final review = backend.requests.firstWhere(
+        (r) => r.parameters['action'] == 'package-configure-review');
+    expect((review.parameters['selection'] as Map)['voice'],
+        containsPair('enabled', false));
   });
   Future<InstalledManageController> controller(ConfigureBackend backend) async {
     final c = InstalledManageController(backend, spec: {'root': 'C:/App'});

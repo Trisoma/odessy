@@ -74,14 +74,14 @@ void main() {
       expect(find.byTooltip('Browse kokoro model'), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.runAsync(() async {
-      final boundary =
-          capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-      final image = await boundary.toImage();
-      final data = await image.toByteData(format: ui.ImageByteFormat.png);
-      await Directory('build/preview/gui-audit').create(recursive: true);
-      await File('build/preview/gui-audit/browse-${brightness.name}-200.png')
-          .writeAsBytes(data!.buffer.asUint8List());
-      image.dispose();
+        final boundary = capture.currentContext!.findRenderObject()!
+            as RenderRepaintBoundary;
+        final image = await boundary.toImage();
+        final data = await image.toByteData(format: ui.ImageByteFormat.png);
+        await Directory('build/preview/gui-audit').create(recursive: true);
+        await File('build/preview/gui-audit/browse-${brightness.name}-200.png')
+            .writeAsBytes(data!.buffer.asUint8List());
+        image.dispose();
       });
       await tester.pumpWidget(const SizedBox());
     });

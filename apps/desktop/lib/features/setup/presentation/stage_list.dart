@@ -55,13 +55,8 @@ class StageList extends StatelessWidget {
                           fontWeight: running ? FontWeight.w600 : null))),
               if (timing.isNotEmpty)
                 Text(timing,
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(
-                            fontFeatures: const [
-                          FontFeature.tabularFigures()
-                        ])),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontFeatures: const [FontFeature.tabularFigures()])),
             ])));
   }
 
@@ -135,8 +130,7 @@ class _InstallOutputPaneState extends State<InstallOutputPane> {
                   Switch(
                       value: autoscroll,
                       onChanged: (value) => setState(() => autoscroll = value)),
-                  const Text('Follow output',
-                      style: TextStyle(fontSize: 12)),
+                  const Text('Follow output', style: TextStyle(fontSize: 12)),
                   const Spacer(),
                   if (widget.onExport != null)
                     TextButton(
@@ -146,22 +140,22 @@ class _InstallOutputPaneState extends State<InstallOutputPane> {
             Container(
                 constraints: BoxConstraints(maxHeight: widget.maxHeight),
                 width: double.infinity,
-                margin: const EdgeInsets.fromLTRB(
-                    OdessyTokens.spaceMedium, 0, OdessyTokens.spaceMedium, OdessyTokens.spaceMedium),
+                margin: const EdgeInsets.fromLTRB(OdessyTokens.spaceMedium, 0,
+                    OdessyTokens.spaceMedium, OdessyTokens.spaceMedium),
                 padding: const EdgeInsets.all(OdessyTokens.spaceCompact),
                 decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    color:
+                        Theme.of(context).colorScheme.surfaceContainerHighest,
                     borderRadius:
                         BorderRadius.circular(OdessyTokens.radiusSmall)),
                 child: widget.lines.isEmpty
                     ? const Text('No output yet.',
-                        style:
-                            TextStyle(fontSize: 11))
+                        style: TextStyle(fontSize: 11))
                     : SingleChildScrollView(
                         controller: scroll,
                         child: SelectableText(widget.lines.join('\n'),
                             key: const Key('install-output-text'),
-                            style: const TextStyle(
-                                fontSize: 11, height: 1.45)))),
+                            style:
+                                const TextStyle(fontSize: 11, height: 1.45)))),
           ]));
 }

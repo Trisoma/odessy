@@ -38,7 +38,7 @@ class ComponentSettingsController extends ChangeNotifier {
   String error = '', status = '';
   Map<String, String> fieldErrors = {};
   Json? writerReview;
-  bool writerBlocked=false;
+  bool writerBlocked = false;
   Future<bool>? _write;
   Json? _submitted;
   String? _submittedSection;
@@ -120,10 +120,13 @@ class ComponentSettingsController extends ChangeNotifier {
     try {
       snapshot = await _call('load');
       status = '';
-      writerBlocked=(snapshot['writer'] as Map?)?['pending']==true;
+      writerBlocked = (snapshot['writer'] as Map?)?['pending'] == true;
       if (writerBlocked) {
-        writerReview={'recoverable':false,'status':(snapshot['writer'] as Map)['status']};
-        status=writerReview!['status'] as String;
+        writerReview = {
+          'recoverable': false,
+          'status': (snapshot['writer'] as Map)['status']
+        };
+        status = writerReview!['status'] as String;
       }
       for (final entry in drafts.entries) {
         if (!entry.value.dirty) {

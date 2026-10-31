@@ -90,7 +90,13 @@ class ApiFailure implements Exception {
       };
 }
 
-class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi, DesktopVoiceApi, ExecutionHostsApi {
+class LocalApi
+    implements
+        OdessyApi,
+        ProfileMetadataApi,
+        RuntimeConfigurationApi,
+        DesktopVoiceApi,
+        ExecutionHostsApi {
   LocalApi(this.base, String token) : _token = token {
     if (!['http', 'https'].contains(base.scheme) ||
         !['localhost', '127.0.0.1', '::1'].contains(base.host) ||
@@ -118,7 +124,9 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
   @override
   String get identity => base.origin;
   Future<HttpClientResponse> _open(String path, String method,
-      [Json? data, HttpClient? client, Duration responseTimeout = const Duration(seconds: 12)]) async {
+      [Json? data,
+      HttpClient? client,
+      Duration responseTimeout = const Duration(seconds: 12)]) async {
     final request = await (client ?? _http)
         .openUrl(method, base.resolve(path))
         .timeout(const Duration(seconds: 8));
@@ -137,7 +145,9 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
     return response;
   }
 
-  Future<Json> _json(String path, [String method = 'GET', Json? data,
+  Future<Json> _json(String path,
+      [String method = 'GET',
+      Json? data,
       Duration responseTimeout = const Duration(seconds: 12)]) async {
     final response = await _open(path, method, data, null, responseTimeout);
     if (response.statusCode == 204) return {};
@@ -158,38 +168,58 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
   Future<void> disconnectExecutionHost() async {
     await _json('/v1/execution-hosts/disconnect', 'POST');
   }
+
   @override
   Future<Json> connectExecutionHost(String id) async {
     try {
-      final response = await _open('/v1/execution-hosts/connect', 'POST', {'id': id}, null,
-          const Duration(seconds: 90));
+      final response = await _open('/v1/execution-hosts/connect', 'POST',
+          {'id': id}, null, const Duration(seconds: 90));
       final bytes = <int>[];
       await for (final chunk in response.timeout(const Duration(seconds: 12))) {
         bytes.addAll(chunk);
-        if (bytes.length > 65536) throw const FormatException('Connection response exceeds 64 KiB');
+        if (bytes.length > 65536)
+          throw const FormatException('Connection response exceeds 64 KiB');
       }
       return jsonDecode(utf8.decode(bytes)) as Json;
     } on ApiFailure catch (error) {
       throw ExecutionConnectionFailure(switch (error.status) {
-        403 => 'The execution host declined or did not answer. Press Connect to ask again.',
-        409 => 'Stop any active turn, disconnect the current host, or refresh nearby hosts before retrying.',
-        503 => 'The execution host could not connect its tools. Restart sharing there and retry. Chat remains available.',
-        _ => 'Connection request failed. Check the local coordinator and execution host.',
+        403 =>
+          'The execution host declined or did not answer. Press Connect to ask again.',
+        409 =>
+          'Stop any active turn, disconnect the current host, or refresh nearby hosts before retrying.',
+        503 =>
+          'The execution host could not connect its tools. Restart sharing there and retry. Chat remains available.',
+        _ =>
+          'Connection request failed. Check the local coordinator and execution host.',
       });
     }
   }
 
   String _session(String sid) => '/v1/sessions/${Uri.encodeComponent(sid)}';
-  @override Future<VoiceSnapshot> voiceState(String sid) async => VoiceSnapshot.fromJson(await _json('${_session(sid)}/voice'));
-  @override Future<VoiceSnapshot> voiceCommand(String sid,String action,{String? captureId,String? interactionId}) async =>
-      VoiceSnapshot.fromJson(await _json('${_session(sid)}/voice','POST',{'action':action,if(captureId!=null)'capture_id':captureId,if(interactionId!=null)'expected_interaction_id':interactionId}));
   @override
-  Future<RuntimeCapabilities> runtimeCapabilities() async => RuntimeCapabilities.fromJson(await _json('/v1/capabilities'));
+  Future<VoiceSnapshot> voiceState(String sid) async =>
+      VoiceSnapshot.fromJson(await _json('${_session(sid)}/voice'));
   @override
-  Future<String> prepareRestart(String serviceInstance) async =>
-      (await _json('/v1/lifecycle/prepare-restart','POST',{'service_instance_id':serviceInstance}))['ticket'] as String;
+  Future<VoiceSnapshot> voiceCommand(String sid, String action,
+          {String? captureId, String? interactionId}) async =>
+      VoiceSnapshot.fromJson(await _json('${_session(sid)}/voice', 'POST', {
+        'action': action,
+        if (captureId != null) 'capture_id': captureId,
+        if (interactionId != null) 'expected_interaction_id': interactionId
+      }));
   @override
-  Future<void> resumeAdmission(String ticket) async { await _json('/v1/lifecycle/resume','POST',{'ticket':ticket}); }
+  Future<RuntimeCapabilities> runtimeCapabilities() async =>
+      RuntimeCapabilities.fromJson(await _json('/v1/capabilities'));
+  @override
+  Future<String> prepareRestart(String serviceInstance) async => (await _json(
+      '/v1/lifecycle/prepare-restart',
+      'POST',
+      {'service_instance_id': serviceInstance}))['ticket'] as String;
+  @override
+  Future<void> resumeAdmission(String ticket) async {
+    await _json('/v1/lifecycle/resume', 'POST', {'ticket': ticket});
+  }
+
   @override
   Future<List<String>> profiles() async =>
       ((await _json('/v1/profiles'))['profiles'] as Map)
@@ -204,8 +234,8 @@ class LocalApi implements OdessyApi, ProfileMetadataApi, RuntimeConfigurationApi
   }
 
   @override
-  Future<Session> createSession() async =>
-      Session.fromJson(await _json('/v1/sessions', 'POST', null, const Duration(seconds: 90)));
+  Future<Session> createSession() async => Session.fromJson(
+      await _json('/v1/sessions', 'POST', null, const Duration(seconds: 90)));
   @override
   Future<Session> snapshot(String sid) async =>
       Session.fromJson(await _json(_session(sid)));

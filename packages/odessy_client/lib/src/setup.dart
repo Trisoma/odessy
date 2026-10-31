@@ -82,11 +82,15 @@ class SetupReply {
             RegExp(r'^[a-z][a-z0-9_]{0,63}$').hasMatch(value['code'] as String)
         ? value['code'] as String
         : null;
-    fieldErrors=Map.unmodifiable(value['field_errors'] is Map ? {
-      for(final entry in (value['field_errors'] as Map).entries)
-        if(entry.key is String && entry.value is String && (entry.key as String).length<=64)
-          entry.key as String: _boundedReason(entry.value)
-    } : <String,String>{});
+    fieldErrors = Map.unmodifiable(value['field_errors'] is Map
+        ? {
+            for (final entry in (value['field_errors'] as Map).entries)
+              if (entry.key is String &&
+                  entry.value is String &&
+                  (entry.key as String).length <= 64)
+                entry.key as String: _boundedReason(entry.value)
+          }
+        : <String, String>{});
   }
   late final bool ok;
   late final Json result;
@@ -94,9 +98,10 @@ class SetupReply {
 
   /// A bounded, single-line helper reason; never raw stdout or a command line.
   late final String reason;
+
   /// Additive safe error category. Unknown categories remain compatible.
   late final String? code;
-  late final Map<String,String> fieldErrors;
+  late final Map<String, String> fieldErrors;
 
   static String _boundedReason(Object? value) {
     if (value is! String) return '';

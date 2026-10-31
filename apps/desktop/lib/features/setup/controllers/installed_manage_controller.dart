@@ -8,7 +8,8 @@ import '../../../app/setup/platform_copy.dart';
 /// The installation root and the maintenance payload come from the installation
 /// itself; the user never supplies an internal Python, wheelhouse or payload path.
 class InstalledManageController extends ChangeNotifier {
-  InstalledManageController(this.backend, {Json? spec}) : spec = spec ?? const {};
+  InstalledManageController(this.backend, {Json? spec})
+      : spec = spec ?? const {};
 
   final SetupBackend backend;
   Json spec;
@@ -44,7 +45,8 @@ class InstalledManageController extends ChangeNotifier {
 
   bool get modelConfigured => configuration['model_configured'] == true;
 
-  String get workspace => (configuration['workspace'] as String?) ??
+  String get workspace =>
+      (configuration['workspace'] as String?) ??
       (spec['workspace'] as String?) ??
       '';
 
@@ -163,11 +165,12 @@ class InstalledManageController extends ChangeNotifier {
   Future<void> reviewRollback(String version) =>
       _review('package-rollback-review', {'version': version});
 
-  Future<void> reviewConfiguration(Json selection, String workspace) =>
-      _review('package-configure-review',
-          {'selection': selection, 'workspace': workspace});
+  Future<void> reviewConfiguration(Json selection, String workspace) => _review(
+      'package-configure-review',
+      {'selection': selection, 'workspace': workspace});
 
-  Future<void> reviewUninstall() => _review('package-uninstall-review', const {});
+  Future<void> reviewUninstall() =>
+      _review('package-uninstall-review', const {});
 
   /// Explicit, bounded inventory of the configured local endpoint only.
   Future<void> discover({String endpoint = 'http://127.0.0.1:11434'}) async {
@@ -201,8 +204,8 @@ class InstalledManageController extends ChangeNotifier {
     }
   }
 
-  Future<void> reviewService(String workspace, int port) => _review(
-      'service-plan', {'workspace': workspace, 'port': port});
+  Future<void> reviewService(String workspace, int port) =>
+      _review('service-plan', {'workspace': workspace, 'port': port});
 
   Future<void> confirm() async {
     if (!canConfirm) return;
@@ -253,7 +256,8 @@ class InstalledManageController extends ChangeNotifier {
         'package-rollback' => 'The previous owned version is active again.',
         'package-configure' =>
           'Configuration saved. The next launch uses it; nothing was started.',
-        'service-install' => 'The user service was registered for this account.',
+        'service-install' =>
+          'The user service was registered for this account.',
         _ => 'The operation completed.',
       };
 
@@ -262,8 +266,8 @@ class InstalledManageController extends ChangeNotifier {
     final epoch = ++_epoch;
     _begin();
     try {
-      final value =
-          await _execute('package-register', {if (payload.isNotEmpty) 'payload': payload});
+      final value = await _execute(
+          'package-register', {if (payload.isNotEmpty) 'payload': payload});
       if (_disposed || epoch != _epoch) return;
       result = value;
       notice = registrationRewrittenCopy;
@@ -319,8 +323,7 @@ class InstalledManageController extends ChangeNotifier {
     final epoch = ++_epoch;
     _begin();
     try {
-      final value =
-          await _execute('package-launch', const {'mode': 'manage'});
+      final value = await _execute('package-launch', const {'mode': 'manage'});
       if (_disposed || epoch != _epoch) return;
       result = value;
       notice =

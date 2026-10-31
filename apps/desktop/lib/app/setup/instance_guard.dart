@@ -17,7 +17,8 @@ class InstanceGuard {
     String mode = 'setup',
   }) async {
     final dir = directory ??
-        Directory('${Platform.environment['LOCALAPPDATA'] ?? Directory.systemTemp.path}'
+        Directory(
+            '${Platform.environment['LOCALAPPDATA'] ?? Directory.systemTemp.path}'
             '${Platform.pathSeparator}Odessy${Platform.pathSeparator}instances');
     await dir.create(recursive: true);
     final safe = key.replaceAll(RegExp('[^A-Za-z0-9_-]'), '_');

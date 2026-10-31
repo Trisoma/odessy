@@ -18,10 +18,12 @@ class FileSelectorPicker implements NativePicker {
 
   @override
   Future<String?> pickDirectory({String? initial, String? title}) =>
-      getDirectoryPath(initialDirectory: initial, confirmButtonText: 'Use this folder');
+      getDirectoryPath(
+          initialDirectory: initial, confirmButtonText: 'Use this folder');
 
   @override
-  Future<String?> pickFile({String? initial, List<String> extensions = const []}) async {
+  Future<String?> pickFile(
+      {String? initial, List<String> extensions = const []}) async {
     final group = extensions.isEmpty
         ? null
         : XTypeGroup(label: 'Files', extensions: extensions);
@@ -52,7 +54,8 @@ class UnavailablePicker implements NativePicker {
   @override
   Future<String?> pickDirectory({String? initial, String? title}) async => null;
   @override
-  Future<String?> pickFile({String? initial, List<String> extensions = const []}) async =>
+  Future<String?> pickFile(
+          {String? initial, List<String> extensions = const []}) async =>
       null;
   @override
   Future<String?> pickSaveLocation({

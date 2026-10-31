@@ -72,7 +72,9 @@ class DesktopSession extends ChangeNotifier {
   }
 
   Future<void> reloadExecutionTarget() async {
-    if (busy || session?.running == true) throw StateError('Stop the active turn first.');
+    if (busy || session?.running == true) {
+      throw StateError('Stop the active turn first.');
+    }
     await _subscription?.cancel();
     _subscription = null;
     final old = session;

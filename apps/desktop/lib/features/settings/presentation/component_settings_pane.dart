@@ -187,10 +187,7 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
               for (final key in _keys) key: fields[key]!.text
             }
           : widget.section == 'host'
-              ? {
-                  'role': role,
-                  'workspace': fields['workspace']!.text.trim()
-                }
+              ? {'role': role, 'workspace': fields['workspace']!.text.trim()}
               : {for (final key in _keys) key: fields[key]!.text};
 
   void _remember() => c.edit(widget.section, _patch());
@@ -241,7 +238,8 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
   /// A short form that keeps the filename visible on a narrow window; the full path
   /// stays in the text field and the tooltip once chosen.
   String _shortPath(String path) {
-    final parts = path.split(RegExp(r'[\\/]')).where((part) => part.isNotEmpty).toList();
+    final parts =
+        path.split(RegExp(r'[\\/]')).where((part) => part.isNotEmpty).toList();
     if (parts.length <= 2) return path;
     return '…/${parts.sublist(parts.length - 2).join('/')}';
   }
@@ -254,7 +252,8 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
             padding: const EdgeInsets.symmetric(horizontal: 12),
             foregroundColor: Theme.of(context).colorScheme.primary,
             side: BorderSide(color: Theme.of(context).colorScheme.outline),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           ),
           onPressed: locked
               ? null
@@ -262,8 +261,10 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
                   // Cancelling Browse changes nothing. The host section browses a
                   // directory; every speech asset is a file.
                   final path = widget.section == 'host'
-                      ? await widget.picker.pickDirectory(initial: fields[key]!.text)
-                      : await widget.picker.pickFile(initial: fields[key]!.text);
+                      ? await widget.picker
+                          .pickDirectory(initial: fields[key]!.text)
+                      : await widget.picker
+                          .pickFile(initial: fields[key]!.text);
                   if (mounted && path != null) {
                     fields[key]!.text = path;
                     _remember();
@@ -293,7 +294,8 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
           if (candidates.isNotEmpty) ...[
             const SizedBox(height: 6),
             Tooltip(
-                message: 'Existing files found by detection. None of them were tested.',
+                message:
+                    'Existing files found by detection. None of them were tested.',
                 child: PopupMenuButton<String>(
                     key: ValueKey('component-$key-candidates'),
                     enabled: !locked,
@@ -311,9 +313,11 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
                                     overflow: TextOverflow.ellipsis))
                         ],
                     child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
                         decoration: BoxDecoration(
-                            border: Border.all(color: Theme.of(context).colorScheme.outline),
+                            border: Border.all(
+                                color: Theme.of(context).colorScheme.outline),
                             borderRadius: BorderRadius.circular(8)),
                         child: Text('Detected (${candidates.length})')))),
           ],
@@ -321,10 +325,13 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
   }
 
   /// One observation strip per section: scan once on open, then explicitly again.
-  Widget _detectionStrip() => Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(spacing: 12, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+  Widget _detectionStrip() =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
               OutlinedButton(
                   onPressed: locked || discovery.busy
                       ? null
@@ -334,23 +341,28 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
                       : 'Detect existing components')),
               if (discovery.busy) const Text('Scanning existing files…'),
             ]),
-            if (discovery.error.isNotEmpty)
-              Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(discovery.error,
-                      style: TextStyle(color: Theme.of(context).colorScheme.error))),
-            if (discovery.partial)
-              const Text('Scan stopped early, so some locations were not searched. Browse still works.'),
-            if (!discovery.busy && discovery.error.isEmpty && discovery.reason.isNotEmpty)
-              Text(discovery.reason),
-            const SizedBox(height: 12),
-          ]);
+        if (discovery.error.isNotEmpty)
+          Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(discovery.error,
+                  style:
+                      TextStyle(color: Theme.of(context).colorScheme.error))),
+        if (discovery.partial)
+          const Text(
+              'Scan stopped early, so some locations were not searched. Browse still works.'),
+        if (!discovery.busy &&
+            discovery.error.isEmpty &&
+            discovery.reason.isNotEmpty)
+          Text(discovery.reason),
+        const SizedBox(height: 12),
+      ]);
 
   /// A device selector for one direction. Saved identifiers are never rewritten:
   /// a value that is not in the inventory stays selected and is labelled unavailable.
   Widget _deviceField(String key, String label, String direction) {
     final unique = <String, Json>{
-      for (final device in inventory.forDirection(direction)) '${device['id']}': device
+      for (final device in inventory.forDirection(direction))
+        '${device['id']}': device
     };
     final options = unique.values.toList();
     final saved = fields[key]!.text;
@@ -380,7 +392,8 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
                 decoration: InputDecoration(
                     errorText: _errorFor(key),
                     labelText: '$label identifier',
-                    helperText: 'Passed unchanged to the selected backend. Nothing was opened.'),
+                    helperText:
+                        'Passed unchanged to the selected backend. Nothing was opened.'),
                 onChanged: (_) => _remember())
           else
             // Stable key for tests and a11y; the inner key changes so a reloaded or
@@ -388,46 +401,53 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
             KeyedSubtree(
                 key: ValueKey('component-$key'),
                 child: DropdownButtonFormField<String>(
-                key: ValueKey('component-$key-${inventory.backendName}-$saved'),
-                initialValue: saved,
-                isExpanded: true,
-                decoration: InputDecoration(
-                    labelText: label,
-                    errorText: _errorFor(key),
-                    helperText: options.isEmpty
-                        ? 'No $direction device was detected. Refresh devices, or use Advanced.'
-                        : null),
-                items: [
-                  const DropdownMenuItem(value: '', child: Text('System default')),
-                  for (final device in options)
-                    DropdownMenuItem(
-                        value: '${device['id']}',
-                        child: Text(labelFor(device), overflow: TextOverflow.ellipsis)),
-                  if (unavailable)
-                    DropdownMenuItem(
-                        value: saved,
-                        child: const Text('Previously selected device — unavailable',
-                            overflow: TextOverflow.ellipsis)),
-                ],
-                onChanged: locked
-                    ? null
-                    : (value) {
-                        if (value == null) return;
-                        fields[key]!.text = value;
-                        _remember();
-                      })),
+                    key: ValueKey(
+                        'component-$key-${inventory.backendName}-$saved'),
+                    initialValue: saved,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                        labelText: label,
+                        errorText: _errorFor(key),
+                        helperText: options.isEmpty
+                            ? 'No $direction device was detected. Refresh devices, or use Advanced.'
+                            : null),
+                    items: [
+                      const DropdownMenuItem(
+                          value: '', child: Text('System default')),
+                      for (final device in options)
+                        DropdownMenuItem(
+                            value: '${device['id']}',
+                            child: Text(labelFor(device),
+                                overflow: TextOverflow.ellipsis)),
+                      if (unavailable)
+                        DropdownMenuItem(
+                            value: saved,
+                            child: const Text(
+                                'Previously selected device — unavailable',
+                                overflow: TextOverflow.ellipsis)),
+                    ],
+                    onChanged: locked
+                        ? null
+                        : (value) {
+                            if (value == null) return;
+                            fields[key]!.text = value;
+                            _remember();
+                          })),
           if (unavailable)
             Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text('Previously selected device — unavailable: $saved',
                     key: ValueKey('component-$key-unavailable'),
-                    style: TextStyle(color: Theme.of(context).colorScheme.error))),
+                    style:
+                        TextStyle(color: Theme.of(context).colorScheme.error))),
         ]));
   }
 
   Widget _backendField() {
     final current = fields['audio_backend']!.text;
-    final value = const {'auto', 'command', 'native'}.contains(current) ? current : 'auto';
+    final value = const {'auto', 'command', 'native'}.contains(current)
+        ? current
+        : 'auto';
     return DropdownButtonFormField<String>(
         key: ValueKey('component-audio_backend-$value'),
         initialValue: value,
@@ -437,7 +457,8 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
         items: const [
           DropdownMenuItem(
               value: 'auto',
-              child: Text('Auto — native on Windows/macOS, ALSA commands on Linux',
+              child: Text(
+                  'Auto — native on Windows/macOS, ALSA commands on Linux',
                   overflow: TextOverflow.ellipsis)),
           DropdownMenuItem(
               value: 'command', child: Text('Command — arecord / aplay')),
@@ -457,29 +478,37 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
               });
   }
 
-  Widget _deviceControls() => Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(spacing: 12, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
+  Widget _deviceControls() =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
               OutlinedButton(
                   onPressed: locked || inventory.busy
                       ? null
                       : () => inventory.detect(_probeSelection()),
-                  child: Text(inventory.busy ? 'Refreshing devices…' : 'Refresh devices')),
+                  child: Text(inventory.busy
+                      ? 'Refreshing devices…'
+                      : 'Refresh devices')),
               FilterChip(
                   key: const ValueKey('component-custom-device'),
                   selected: customDevice,
                   label: const Text('Advanced: custom device identifier'),
-                  onSelected: locked ? null : (value) => setState(() => customDevice = value)),
+                  onSelected: locked
+                      ? null
+                      : (value) => setState(() => customDevice = value)),
             ]),
-            if (inventory.error.isNotEmpty)
-              Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(inventory.error,
-                      style: TextStyle(color: Theme.of(context).colorScheme.error))),
-            if (inventory.message.isNotEmpty) Text(inventory.message),
-            const SizedBox(height: 12),
-          ]);
+        if (inventory.error.isNotEmpty)
+          Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(inventory.error,
+                  style:
+                      TextStyle(color: Theme.of(context).colorScheme.error))),
+        if (inventory.message.isNotEmpty) Text(inventory.message),
+        const SizedBox(height: 12),
+      ]);
 
   @override
   Widget build(BuildContext context) =>
@@ -543,10 +572,13 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
                 enabled: !locked,
                 onChanged: _remember),
             if (!{'ollama', 'lfm'}.contains(provider))
-              ModelCredentialPanel(backend: c.backend, provider: provider,
-                endpoint: fields['endpoint']!.text.trim(),
-                reference: fields['credential_env']!.text.trim()),
-            const Text('Credential reference names an optional environment variable. Enter API keys only in the separate masked API key field.'),
+              ModelCredentialPanel(
+                  backend: c.backend,
+                  provider: provider,
+                  endpoint: fields['endpoint']!.text.trim(),
+                  reference: fields['credential_env']!.text.trim()),
+            const Text(
+                'Credential reference names an optional environment variable. Enter API keys only in the separate masked API key field.'),
           ] else if (widget.section == 'voice') ...[
             SwitchListTile(
                 title: const Text('Enable the voice pipeline'),

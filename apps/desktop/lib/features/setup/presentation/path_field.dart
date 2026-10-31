@@ -91,8 +91,8 @@ class SummaryPath extends StatelessWidget {
         if (label != null) ...[
           SizedBox(
               width: 108,
-              child: Text(label!,
-                  style: Theme.of(context).textTheme.bodySmall)),
+              child:
+                  Text(label!, style: Theme.of(context).textTheme.bodySmall)),
         ],
         Expanded(
             child: Tooltip(
