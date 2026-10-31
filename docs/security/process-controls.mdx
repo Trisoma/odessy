@@ -23,7 +23,7 @@ The model may propose a terminal action, but only the Python Odessy runtime can 
 ## Process Confinement
 
 Authorization decides whether a command may run. Confinement decides what it can reach
-once it does. v0.2.0 had authorization only; **v0.3.0 adds confinement**, and every
+once it does. There was authorization only at first; **the current build adds confinement**, and every
 executor now routes its argv through `confine()`.
 
 The backend is chosen by **what the host can actually enforce**, not by platform name:
@@ -87,11 +87,11 @@ On Windows, cleanup uses the platform process tree tool.
 On POSIX platforms, cleanup uses the process group where practical.
 
 This is not a universal process jail.
-It is a v0.3.0 local single-user lifecycle boundary.
+It is a local single-user lifecycle boundary.
 
 ## Background And Detached Execution
 
-Odessy v0.3.0 is request-scoped.
+Odessy process control is request-scoped.
 Intentional background or detached execution is outside the authority model.
 
 The policy layer denies obvious detachment patterns such as:
@@ -135,7 +135,7 @@ state before dispatch, and the execution host independently enforces its enrolle
 peer's capability and workspace grant. Revocation stops admission and initiates
 cleanup; completed effects are not undone. See [host pairing](../reference/host-pairing.mdx).
 
-Odessy process control is a local v0.3.0 authority boundary plus best-effort confinement,
+Odessy process control is a local authority boundary plus best-effort confinement,
 not a complete OS sandbox. Coverage depends on the host, and on this board most backends
 report unavailable.
 Timeout cleanup is best effort, shell command parsing is intentionally limited, and intentionally detached descendants may require stronger OS primitives in a future version.

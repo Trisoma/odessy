@@ -7,7 +7,7 @@ keywords: ["odessy architecture", "authority boundary", "mcp security", "runtime
 content:
   type: "reference"
 ---
-Odessy v0.3.0 uses a local single-user command-line authority model.
+Odessy uses a local single-user command-line authority model.
 The architecture is intentionally small, but the authority split is strict.
 
 ## Required Flow
@@ -51,7 +51,7 @@ MODEL
 
 ## Current Tool Surface
 
-v0.3.0 keeps the v0.1.0 command-line scope:
+The scope remains command-line:
 
 ```text
 time.now
@@ -67,7 +67,7 @@ git.changed_files
 git.log
 ```
 
-Voice integration arrived in v0.2.0 and remains part of the interface. GUI automation, robotics, and background autonomy remain outside the current scope.
+Voice integration is part of the interface. GUI automation, robotics, and background autonomy remain outside the current scope.
 
 ## Defense In Depth
 

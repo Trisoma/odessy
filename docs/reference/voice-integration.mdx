@@ -1,7 +1,7 @@
 ---
 title: "Voice Integration"
 sidebar-title: "Voice Integration"
-description: "Reference for Odessy's staged voice loop (introduced in v0.2.0, unchanged in v0.3.0), configuration, and current operating limits."
+description: "Reference for Odessy's staged voice loop, configuration, and current operating limits."
 description-agent: "Use when running or changing Odessy's voice path. Preserve the runtime authority boundary and staged Jetson voice design."
 keywords: ["odessy voice", "whisper.cpp", "kokoro", "ollama", "lfm", "jetson"]
 content:
@@ -11,7 +11,7 @@ content:
 Development voice sessions share the controller with CLI and HTTP. `switch model to <profile>` selects the next turn; `consult <participant>: <question>` requests attributed advice. Stop does not undo completed actions. See [model collaboration](model-collaboration.mdx).
 
 
-Odessy v0.2.0 added voice as an interface around the existing runtime; it is unchanged in v0.3.0.
+Voice is an interface around the existing runtime.
 Voice does not replace the policy, MCP, workspace authority, process authority, or confirmation path.
 
 ## Development: approval and clarification
@@ -20,13 +20,13 @@ Voice dependencies and model weights retain separate licenses. In particular,
 Hey Jarvis pretrained weights are noncommercial CC-BY-NC-SA-4.0, while
 openWakeWord code is Apache-2.0. Kokoro/Whisper and the GPL phonemizer dependencies
 are detailed in the [third-party license inventory](third-party-licenses.md).
-Custom Odessy wake-word support targets v0.5.0; v0.4.0 keeps Hey Jarvis.
+Custom Odessy wake-word support is not available; the integrated wake loop uses Hey Jarvis.
 
 The `feat/voice-user-interaction` worktree extends the shared session controller.
 Both wake sessions and one-shot voice support human clarification and one-use
 approval. **Offline implementation and independent review are complete as of
 October 22, 2026**; the feature merged into `develop` via PR #24 (`6d8b80b`) and
-is released in v0.4.0. Independent review reran **72 relevant tests, all passed**.
+is available. Independent review reran **72 relevant tests, all passed**.
 DeepSeek reported **1,449 passed, 5 skipped** for the full suite; that full count
 was not independently repeated. Real microphone, Jetson and packaged-device
 qualification remain pending, separate opt-in checks.
@@ -217,13 +217,13 @@ ODESSY_AUDIO_PLAYER     player command, default aplay
 ODESSY_AUDIO_INPUT_DEVICE
 ODESSY_AUDIO_OUTPUT_DEVICE
 ODESSY_VOICE_SECONDS    bounded recording duration, default 5
-ODESSY_VOICE_BLANK_RETRIES  v0.4.0: extra recordings for no speech; default 2, 0 disables retries
+ODESSY_VOICE_BLANK_RETRIES  extra recordings for no speech; default 2, 0 disables retries
 ODESSY_VOICE_TMPDIR     controlled temporary audio directory
 ```
 
 ## Jetson Baseline
 
-Whisper.cpp should use CPU inference with `-ng` (the v0.2.0 baseline, still current).
+Whisper.cpp should use CPU inference with `-ng` (the current baseline).
 CUDA Whisper remains a separate unresolved optimization because the benchmark saw cuBLAS resource-allocation failure.
 
 Kokoro ONNX int8 works on the Jetson but is slow in the current benchmark:
@@ -233,11 +233,11 @@ about 14.8 seconds generation for 5.7 seconds of audio
 about 2.6x real time
 ```
 
-This latency was accepted for v0.2.0 because the priority is a working local voice loop before optimization. The figure is a v0.2.0 measurement, not a fresh v0.3.0 one.
+This latency was accepted because the priority is a working local voice loop before optimization. The figure is a v0.2.0 measurement, not a fresh v0.3.0 one.
 
 ## Wake-Word Sessions
 
-Merged into `develop` in the v0.4.0 release cycle. For Linux installation,
+Merged into `develop`. For Linux installation,
 support-model setup, audio checks, and a staged real-device test, follow the
 [Jetson wake test guide](../jetson-wake-testing.md). Automated CI does not qualify
 the Jetson microphone, detector, or playback latency.
@@ -325,7 +325,7 @@ tool-call identifier. Interrupted turns are not recorded.
 
 ### Streamed speech
 
-Merged via PR #23 (`d05e1b8`) and released as an extra v0.4.0 feature.
+Merged in `d05e1b8`.
 
 With a cloud model, a wake-listening session speaks the answer sentence by sentence
 as the reply arrives, instead of after the whole reply. The first sentence is heard
@@ -368,10 +368,10 @@ while the rest is still being generated.
 
 ## Current Limits
 
-The v0.3.0 private prerelease retains these limits. Blank-audio handling is
+These limits remain. Blank-audio handling is
 implemented; wake-up activation is implemented in software and awaiting hardware
 qualification. Risk-aware voice approval and clarification are complete offline
-and merged into v0.4.0; hardware acceptance remains pending. Further
+and merged; hardware acceptance remains pending. Further
 voice/local-model optimization remains measurement-led follow-up in the
 [v0.5.0 roadmap](../releases/v0.5.0.md), not a promised speedup.
 

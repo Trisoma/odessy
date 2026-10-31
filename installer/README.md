@@ -1,177 +1,221 @@
-# Odessy 在线安装器
+# Odessy online installer
 
-> **2026-10-22 决定：暂停当前安装向导工作，延期至 v0.5.0。**
-> 当前版本仍是开发原型，功能范围不完整，界面和图标尚未定稿；不作为 v0.4.0
-> 的已完成安装体验或正式发布入口。保留现有实现供后续迭代，`installation_ready`
-> 保持为 false。后续范围见 [v0.5.0 计划](../docs/releases/v0.5.0.md)。
+> **Decision (2026-10-22): work on the current installation wizard is paused and
+> deferred.** This remains a development prototype: the feature scope is incomplete and
+> the UI and icons are not final. It is **not** a finished install experience and not a
+> release entry point, so `installation_ready` stays `false`. The implementation is kept
+> for future iteration. Scope: [roadmap](../docs/releases/v0.5.0.md).
 
-面向 Windows x64 的图形在线安装器。普通用户可使用独立 EXE 安装，无需预装
-Python、Node.js 或 Git。安装器自动下载和校验锁定资源，在用户可写目录准备
-运行环境、应用、本地模型及连接配置。
+A graphical online installer for Windows x64. End users run a self-contained EXE and do
+not need Python, Node.js or Git installed beforehand. The installer downloads and
+verifies pinned resources, then prepares the runtime, application, local model and
+connection configuration in a user-writable directory.
 
-## v0.5.0 新需求：检测已有模型，用户选择，禁止强制下载 LFM
+## Requirement: detect existing models, let the user choose, never force an LFM download
 
-v0.4.0 已发布；此安装器仍是未完成原型，下面旧流程描述的是当前实现，
-不是已完成的 v0.5.0 体验。新版本必须先检测用户配置的 Ollama/模型服务及
-已安装模型，允许选择已有模型、手动填写受支持的远程端点或仅使用云模型。
-**不得默认下载整个 LFM，也不得安装所有模型。** 模型下载必须是显式选择，
-先展示来源、许可证、大小和空间需求。已有模型、服务与用户配置不得被接管、
-删除或无提示覆盖；本地不可达也不能被当作“未安装”。
+This installer is still an unfinished prototype. The workflow documented below describes
+the **current** implementation, not a finished experience.
 
-Auto 的快速模型、能力模型和协作参与者分别配置；检测到模型不代表它适合
-工具调用。语音模型/依赖属于可选组件。测试必须覆盖“复用已有模型”和
-“仅云端配置”不会下载 LFM，以及取消、离线和错误恢复。此处是计划要求，
-尚未修改安装器行为。详见 [v0.5.0 路线图](../docs/releases/v0.5.0.md)。
+The planned version must first detect the user's configured Ollama/model services and
+installed models, and let the user pick an existing model, enter a supported remote
+endpoint by hand, or use cloud models only. **It must not download the whole LFM by
+default, and must not install every model.** A model download must be an explicit choice
+that first shows source, licence, size and space required.
 
-## 当前原型使用方式
+Existing models, services and user configuration must never be taken over, deleted or
+silently overwritten. An unreachable local service must not be treated as "not installed".
 
-向导采用深色界面，按 Welcome → Location → Review → Install → Verify → Ready
-六步展示。Verify 随实际模型与工具验证事件进入，只有工作流确认完成后才显示 Ready。
-底部按钮支持 Tab、Enter 和空格；安装中可以停止，错误信息持续显示以便处理。
+Auto's fast model, capable model and collaboration participants are configured
+separately; detecting a model does not mean it is suitable for tool calls. Voice models
+and dependencies are optional components. Tests must cover that "reuse an existing model"
+and "cloud-only configuration" never download LFM, plus cancellation, offline and error
+recovery. This is a requirement, not a change already made to installer behaviour. See the
+[roadmap](../docs/releases/v0.5.0.md).
 
-1. 普通双击 `OdessySetup.exe`，选择新的独立安装目录。
-2. 点击检查安装方案，核对路径、下载内容和磁盘空间，再确认安装。
-3. 安装器完成环境、依赖、应用、Ollama、模型准备及真实调用验证。
-4. 创建启动入口和桌面或开始菜单快捷方式。
-5. 打开启动面板，选择允许操作的工作文件夹，在独立终端中输入请求。
-   输入 `/exit` 退出；本次启动的模型服务随会话结束停止，已有服务保持原状。
+## Using the current prototype
 
-默认安装根目录为 `%LOCALAPPDATA%\Programs\Odessy\installation`，共享下载缓存为
-`%LOCALAPPDATA%\Odessy\downloads`。可以选择其他用户可写目录，不需要管理员权限。
-选择工作文件夹不会跳过核心已有的权限检查或操作确认。
-Windows 上自行启动的模型服务及其子进程由独立 Job 管理，退出时等待整棵进程树结束；
-复用已有服务时不创建或终止该服务的 Job。
+The wizard is a dark-themed six-step flow: Welcome → Location → Review → Install →
+Verify → Ready. Verify advances on real model and tool-verification events, and Ready
+appears only once the workflow confirms completion. The bottom buttons respond to Tab,
+Enter and Space; an install can be stopped while it runs, and error text stays on screen.
 
-## 安装目录
+1. Double-click `OdessySetup.exe` and choose a new, separate install directory.
+2. Click to check the installation plan; review paths, downloads and disk space, then confirm.
+3. The installer prepares the runtime, dependencies, application, Ollama and model, then
+   verifies with a real call.
+4. It creates a launcher entry and desktop or Start-menu shortcuts.
+5. Open the launch panel, choose the working folder you allow, and type requests into the
+   dedicated terminal. `/exit` quits. A model service started by this launch stops with the
+   session; services that already existed are left alone.
 
-| 路径 | 内容 |
+The default install root is `%LOCALAPPDATA%\Programs\Odessy\installation` and the shared
+download cache is `%LOCALAPPDATA%\Odessy\downloads`. Another user-writable directory can
+be chosen; no administrator rights are required. Choosing a working folder does not skip
+the existing permission checks or operation confirmations.
+
+On Windows, a model service the installer started and its child processes are managed by a
+dedicated Job object, and shutdown waits for the whole process tree to end. When an existing
+service is reused, no Job is created for it and none is terminated.
+
+## Install directory
+
+| Path | Contents |
 | --- | --- |
-| `runtime/` | 私有 Python 和 Node.js |
-| `dependencies/` | 原路径创建的虚拟环境与锁定 Python 依赖 |
-| `application/` | 应用文件和预编译工具服务 |
-| `ollama-runtime/` | 私有 Ollama CLI 和库 |
-| `models/` | 固定版本本地模型 |
-| `config/odessy.env` | 此安装使用的连接配置 |
-| `launcher/` | 独立启动程序及快捷方式记录 |
-| `ollama-state/` | 私有服务状态和诊断日志 |
-| `.installer/` | 安装检查点、维护记录和回退副本 |
+| `runtime/` | Private Python and Node.js |
+| `dependencies/` | Virtual environment created at its final path, plus pinned Python dependencies |
+| `application/` | Application files and the prebuilt tool service |
+| `ollama-runtime/` | Private Ollama CLI and libraries |
+| `models/` | Pinned local models |
+| `config/odessy.env` | Connection configuration for this installation |
+| `launcher/` | Standalone launcher and shortcut records |
+| `ollama-state/` | Private service state and diagnostic logs |
+| `.installer/` | Install checkpoints, maintenance records and rollback copies |
 
-不要移动已安装的 Python 或虚拟环境；Windows 虚拟环境不能直接搬移使用。
+Do not move an installed Python or virtual environment; Windows virtual environments are
+not relocatable.
 
-## 下载、校验与恢复
+## Download, verification and recovery
 
-- 发布资源的 URL、版本、大小和 SHA-256 固定在 `releases/` 清单中。
-  校验摘要保证资源与清单一致，不等同于发布者数字签名。
-- Python 依赖资源的 v2 记录只绑定 `requires-python` 和基础 `dependencies`；
-  修改测试、云端、UI 或语音可选依赖、注释和排版不会使本地依赖锁失效。
-  基础依赖或 Python 要求变化时必须重新生成资源；下载清单和 wheel 摘要仍严格校验。
-- 下载先进入缓存，校验通过后再使用；中断或失败后可重新检查并重试。
-- 安装前按实际磁盘合并计算下载、解压、临时文件和回退空间，防止同卷重复计算。
-- 写入安装检查点；恢复时重新校验已完成组件，不直接相信完成标记。
-- 每次安装连接验证使用独立的 `ollama-state/verification-sessions/<会话编号>/`
-  目录。强制退出或重启留下的旧锁和日志会保留，不会阻塞同一安装版本的重试；
-  已校验的完整组件可继续复用，无需重新安装。不会删除其他会话的锁或停止复用的服务。
-- 点击停止后，当前模型调用会等待返回或超时，再安全清理；不再启动下一次模型验证。
-  验证取消不会记录安装成功或继续写入新的连接配置。诊断日志会显示本次服务日志路径。
-- 源码、资源或关键选项变化可能阻止旧安装任务恢复，需要重新检查。
-- 原位置的完整安装记录是启动、维护和卸载的依据；不接管任意第三方目录。
+- Resource URLs, versions, sizes and SHA-256 digests are pinned in the `releases/`
+  manifests. A matching digest shows the resource matches the manifest; it is not the
+  publisher's digital signature.
+- The v2 record for Python dependency resources binds only `requires-python` and the base
+  `dependencies`. Changing test, cloud, UI or voice optional dependencies, comments or
+  formatting does not invalidate the local dependency lock. A change to base dependencies
+  or the Python requirement does require regenerating the resources; download manifests
+  and wheel digests are still verified strictly.
+- Downloads land in the cache first and are used only after verification; an interrupted or
+  failed download can be re-checked and retried.
+- Before installing, the installer adds up downloads, extraction, temporary files and
+  rollback space against the actual disk, avoiding double-counting on the same volume.
+- Install checkpoints are written; resuming re-verifies every completed component rather
+  than trusting a completion marker.
+- Each install-time connection verification uses its own
+  `ollama-state/verification-sessions/<session-id>/` directory. Locks and logs left by a
+  forced exit or reboot are kept and do not block a retry of the same installation; complete
+  verified components are reused rather than reinstalled. Locks belonging to other sessions
+  are never deleted and reused services are never stopped.
+- After Stop is pressed, the current model call waits to return or time out before the
+  installer cleans up safely, and no further model verification starts. A cancelled
+  verification records no success and writes no new connection configuration. The diagnostic
+  log reports where this run's service log is.
+- A change to source, resources or key options can prevent an older install task from
+  resuming; it then needs re-checking.
+- The complete install record in its original location is what launcher, maintenance and
+  uninstall rely on. The installer never takes over an arbitrary third-party directory.
 
-## 修复与升级
+## Repair and upgrade
 
-从安装目录外运行新版 EXE，在设置页选择已有完整安装，打开“修复/升级此目录…”。
-先关闭该安装的启动面板、终端和模型服务，再检查并确认维护。
+Run the new EXE from outside the install directory, pick the existing complete installation
+on the settings page, and open "Repair/upgrade this directory…". Close that installation's
+launch panel, terminals and model service first, then check and confirm maintenance.
 
-维护检查私有运行环境、锁定依赖、Ollama、固定模型、应用及启动入口。
-只准备需要修复的基础组件；健康模型继续复用。Python/Node 重建时同时重建依赖，
-虚拟环境在最终路径创建。依赖检查直接读取 wheel RECORD，检查文件存在性、大小
-和 SHA-256；这用于发现意外损坏，不抵御恶意改写校验记录。
+Maintenance inspects the private runtime, pinned dependencies, Ollama, pinned models, the
+application and the launcher entry. It prepares only the base components that need repair;
+healthy models are reused. Rebuilding Python/Node also rebuilds dependencies, and the
+virtual environment is created at its final path. Dependency checks read the wheel RECORD
+directly and check file existence, size and SHA-256 — enough to catch accidental damage, not
+to resist a deliberately rewritten verification record.
 
-新版应用先组装并验证，真实模型回复和目录工具调用通过后才切换。
-原组件保留为回退副本；失败时尝试恢复。维护中断后，先用新版外部维护窗口
-“恢复原版本”，再检查使用。备份变化、缺失或权限不足时停止并报告。
-回退恢复维护前的状态；原来已损坏的组件不会因此自动修好。
+The new application is assembled and verified first, and swapped in only after a real model
+reply and a directory tool call succeed. The previous components are kept as rollback copies
+and restored on failure. If maintenance is interrupted, use the new external maintenance
+window's "Restore previous version" before checking again. If a backup changed, is missing,
+or permissions are insufficient, maintenance stops and reports.
 
-自定义或缺失连接配置不会被默认值覆盖，会停止维护并提示处理。
-快捷方式可通过“创建/补齐快捷方式”补建；同名外来链接或已修改链接保持原状。
-快捷方式使用 Windows Unicode 接口创建和读取，支持系统 ANSI 代码页之外的路径。
-安装记录遇到短暂文件占用时会有限重试原子替换；持续权限问题仍会报错并保留原记录。
+A custom or missing connection configuration is never overwritten with defaults; maintenance
+stops and asks for a decision. Shortcuts can be re-created with "Create/complete shortcuts";
+foreign or already-modified links with the same name are left as they are. Shortcuts are
+created and read through the Windows Unicode API, so paths outside the system ANSI code page
+work. When a transient file lock is hit, the install record retries an atomic replace a
+bounded number of times; a persistent permission problem still fails and keeps the original
+record.
 
-## 清理维护备份
+## Cleaning maintenance backups
 
-在修复窗口点击“查看备份占用”，核对后单独确认“清理备份”。
-清理将永久放弃该次维护的回退能力。默认不删除备份。
+In the repair window click "Show backup usage", review it, then confirm "Clean backups"
+separately. Cleaning permanently gives up that maintenance run's rollback ability. Backups
+are not deleted by default.
 
-只清理当前维护记录关联且清单未变化的 `backup-*` 副本，保留应用、模型、配置、
-工作文件夹、共享缓存及其他维护文件。逐项删除清单中的文件，再移除空目录；
-新增或变化的文件会停止清理。失败后需重新检查和确认，不能借重试删除新文件。
-更早且已不由当前记录关联的维护目录不自动清理。文件大小合计不保证等于释放的
-物理空间；清理不提升账户权限。
+Only `backup-*` copies tied to the current maintenance record and whose manifests are
+unchanged are cleaned; the application, models, configuration, working folders, shared cache
+and other maintenance files are preserved. Files listed in the manifest are deleted one at a
+time, then empty directories are removed; a new or changed file stops the cleanup. After a
+failure, re-check and confirm again — retrying must not delete new files. Older maintenance
+directories no longer tied to the current record are not cleaned automatically. The sum of
+file sizes does not guarantee the physical space freed. Cleaning does not raise account
+privileges.
 
-## 卸载
+## Uninstall
 
-从安装目录外运行安装器的卸载界面：
+Run the installer's uninstall UI from outside the install directory:
 
 ```powershell
 .\OdessySetup.exe --mode uninstall --install-dir D:\Apps\Odessy
 ```
 
-先检查删除范围再确认；默认保留模型、用户配置和共享下载缓存。
-删除模型或配置必须单独选择。用户工作文件夹不属于卸载范围。
-卸载只逐项删除已经检查的内容；未列出的文件或权限问题会导致停止并保留剩余内容。
-早期管理员创建、当前用户无权删除的文件不会被强行接管。
+Check the deletion scope before confirming. Models, user configuration and the shared
+download cache are kept by default; deleting models or configuration is a separate choice.
+The user's working folders are outside the uninstall scope. Uninstall deletes only what it
+has checked, one item at a time; an unlisted file or a permission problem stops it and leaves
+the remainder in place. Files created by an earlier administrator that the current user may
+not delete are not force-taken over.
 
-## 目录结构
+## Directory layout
 
-| 路径 | 用途 |
+| Path | Purpose |
 | --- | --- |
-| `installer/*.py` | 稳定入口：向导、启动器、终端会话、维护/卸载窗口、工作流与 EXE 分发。 |
-| `installer/core/` | 共享基础逻辑：下载、清单、路径、磁盘空间、解包、检查点、进程环境和预检。 |
-| `installer/components/` | 安装组件：Python/Node、依赖、应用、模型、Ollama、连接验证和工具包。 |
-| `installer/operations/` | 安装后的维护：修复、升级、备份清理和卸载。 |
-| `installer/windows/` | Windows 集成：权限、进程树、Shell 链接和快捷方式。 |
-| `installer/build/` | 发布构建：EXE 打包、wheel 准备与嵌入资源引导。 |
-| `installer/_compat/` | 历史模块名的兼容转发；不放业务实现。原有命令和导入继续有效。 |
-| `installer/ui/` | 表现层：`ui_theme.py` 统一设计令牌与窗口装配，`ui_controls.py` 提供自绘控件，`brand.py` 生成像素帆船标志，`wizard_controller.py` 是界面与工作流之间的适配器。 |
-| `installer/assets/` | 构建与打包资源；`odessy-boat.ico`（16/32/48/64）用作四个窗口的标题栏/任务栏图标，并作为 `OdessySetup.exe` 的 `--icon`。 |
-| `installer/releases/` | 固定版本的下载清单、校验资源与构建依赖。 |
-| `installer/templates/` | 安装完成后写入目标目录的启动模板。 |
-| `installer/examples/` | 示例数据（第三方许可证片段）。 |
-| `tests/test_installer*.py` | 安装器回归测试，覆盖 UI、权限、快捷方式、卸载与端到端流程。 |
+| `installer/*.py` | Stable entry points: wizard, launcher, terminal sessions, maintenance/uninstall windows, workflow and EXE distribution. |
+| `installer/core/` | Shared fundamentals: downloads, manifests, paths, disk space, extraction, checkpoints, process environment and preflight. |
+| `installer/components/` | Install components: Python/Node, dependencies, application, models, Ollama, connection verification and the tool bundle. |
+| `installer/operations/` | Post-install maintenance: repair, upgrade, backup cleanup and uninstall. |
+| `installer/windows/` | Windows integration: privileges, process trees, shell links and shortcuts. |
+| `installer/build/` | Release build: EXE packaging, wheel preparation and embedded-resource bootstrap. |
+| `installer/_compat/` | Compatibility forwarding for historical module names; no business logic. Existing commands and imports keep working. |
+| `installer/ui/` | Presentation: `ui_theme.py` holds the design tokens and window assembly, `ui_controls.py` provides the custom-drawn controls, `brand.py` generates the pixel sailboat mark, and `wizard_controller.py` adapts between the UI and the workflow. |
+| `installer/assets/` | Build and packaging assets; `odessy-boat.ico` (16/32/48/64) is the title-bar/taskbar icon for all four windows and the `--icon` for `OdessySetup.exe`. |
+| `installer/releases/` | Pinned download manifests, verification resources and build dependencies. |
+| `installer/templates/` | Launch templates written into the target directory after installation. |
+| `installer/examples/` | Example data (third-party licence excerpts). |
+| `tests/test_installer*.py` | Installer regression tests covering UI, privileges, shortcuts, uninstall and end-to-end flows. |
 
-图标只在 `installer/ui/ui_theme.py` 的 `configure()` 中应用一次，因此向导、维护、
-卸载和启动器四个窗口自动获得同一图标；新增窗口应复用该方法，不要各自调用
-`iconphoto`。
+The icon is applied once, in `installer/ui/ui_theme.py`'s `configure()`, so the wizard,
+maintenance, uninstall and launcher windows all get the same icon automatically. New
+windows should reuse that method rather than calling `iconphoto` themselves.
 
-新代码使用分组后的模块路径，例如 `installer.components.runtime`、
-`installer.core.checkpoint` 和 `installer.operations.maintenance`。
-历史导入指向同一模块对象，保留类型与测试替换的一致性；原有
-`python -m installer.runtime`、`python -m installer.build_exe` 等命令保持可用。
-资源清单、模板和 EXE 入口位置不变。此整理不改变 v0.5.0 延期决定。
+New code uses the grouped module paths, such as `installer.components.runtime`,
+`installer.core.checkpoint` and `installer.operations.maintenance`. Historical imports
+resolve to the same module objects, preserving type and test-patch consistency, and the
+existing commands such as `python -m installer.runtime` and `python -m installer.build_exe`
+keep working. Resource manifests, templates and the EXE entry point are unchanged. This
+reorganisation does not change the decision to leave the installer paused.
 
-## 源码开发与构建
+## Source development and build
 
-以下命令从仓库根目录执行。开发机需要 Windows x64、带 Tcl/Tk 的 Python，
-并使用项目已有依赖与接口。输出目录应使用新的独立目录；示例路径可自行替换。
+Run these from the repository root. The development machine needs Windows x64 and a Python
+with Tcl/Tk, using the project's existing dependencies and interfaces. Use fresh, separate
+output directories; the example paths can be replaced.
 
-准备私有构建运行环境和预编译工具包：
+Prepare the private build runtime and the prebuilt tool bundle:
 
 ```powershell
 python -m installer.runtime --runtime-dir D:\OdessyBuild\runtime --prepare
 python -m installer.toolbundle --runtime-dir D:\OdessyBuild\runtime --output-dir D:\OdessyBuild\tool-bundle --build
 ```
 
-启动源码向导或构建独立 EXE：
+Start the source wizard, or build the standalone EXE:
 
 ```powershell
 python -m installer.wizard --tool-bundle D:\OdessyBuild\tool-bundle
 python -m installer.build_exe --tool-bundle D:\OdessyBuild\tool-bundle --output-dir D:\OdessyBuild\setup --build
 ```
 
-构建器在隔离环境中使用 `releases/windows-x64-bootstrap/build-requirements.txt`
-固定的构建依赖，输出 `OdessySetup.exe` 和 `build-report.json`。
-最终用户安装不运行 npm 或 TypeScript 构建。
+The builder uses the build dependencies pinned in
+`releases/windows-x64-bootstrap/build-requirements.txt` inside an isolated environment, and
+outputs `OdessySetup.exe` plus `build-report.json`. End-user installation runs no npm or
+TypeScript build.
 
-命令行工作流默认仅预览；添加 `--run` 才开始安装：
+The command-line workflow only previews by default; add `--run` to actually install:
 
 ```powershell
 python -m installer.workflow --install-dir D:\Apps\Odessy --tool-bundle D:\OdessyBuild\tool-bundle
@@ -180,24 +224,29 @@ python -m installer.workflow --install-dir D:\Apps\Odessy --status
 python -m installer.workflow --install-dir D:\Apps\Odessy --resume
 ```
 
-`installer.component_repair`、`installer.backup_cleanup` 和 `installer.uninstall`
-提供维护、备份清理和卸载的命令行入口。先用 `--help` 查看参数；会删除文件的操作
-需要先预览，再显式提供该方案的 `plan_sha256` 确认。
+`installer.component_repair`, `installer.backup_cleanup` and `installer.uninstall` provide
+command-line entry points for maintenance, backup cleanup and uninstall. Use `--help` for
+their arguments; operations that delete files must be previewed first and then confirmed by
+supplying that plan's `plan_sha256`.
 
-运行安装器测试：
+Run the installer tests:
 
 ```powershell
 python -m unittest discover -s tests -p 'test_installer*.py' -q
 ```
 
-提交源码时保留安装器、测试程序、必要资源清单和说明；不提交 EXE、依赖包、模型、
-临时安装目录、缓存、测试输出或构建日志。
+When committing, keep the installer, its tests, the required resource manifests and the
+documentation; do not commit the EXE, dependency packages, models, temporary install
+directories, caches, test output or build logs.
 
-## 当前范围
+## Current scope
 
-当前实现为 Windows x64、本机部署和固定本地模型的安装及维护链路。
-语音依赖自动准备、模型迁移、云账户配置、分布式部署及核心工作流的极简 UI
-尚未包含。启动面板仍通过终端输入请求和完成确认。
+The implementation covers install and maintenance for Windows x64, on-machine deployment and
+a pinned local model. Automatic voice-dependency preparation, model migration, cloud account
+configuration, distributed deployment and a minimal UI for the core workflow are not
+included. The launch panel still takes requests and completes confirmations through the
+terminal.
 
-运行时检查不保证发现任意未探测的文件损坏，也不保证所有硬件的模型性能。
-干净 Windows 机器验收和正式发布尚待完成，`installation_ready` 保持为 false。
+Runtime checks do not guarantee that arbitrary unprobed file damage is found, nor model
+performance on every machine. Acceptance on a clean Windows machine and a formal release are
+still outstanding, so `installation_ready` stays `false`.
