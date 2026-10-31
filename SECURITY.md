@@ -11,7 +11,7 @@ Use GitHub Private Vulnerability Reporting: open this repository's **Security**
 tab, then **Report a vulnerability**. Do not disclose vulnerabilities in public
 issues. Maintainers must enable private reporting before making the repository public.
 
-Maintainer contact: [jaimefine6@gmail.com](mailto:jaimefine6@gmail.com).
+Maintainer contact: [jaimefine6@gmail.com](mailto:jaimefine6@gmail.com) and [lightraincr7@gmail.com](mailto:lightraincr7@gmail.com).
 
 Include the affected version/commit, platform, deployment mode, reproduction steps,
 impact and redacted diagnostics. Never include real API keys or private data.
