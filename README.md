@@ -478,3 +478,10 @@ See [current limitations](LIMITATION.md) and the
 It has an isolation layer, and that is **not** the same as being sandboxed. Coverage depends on the host: on the Jetson board most backends report unavailable, and each run states the enforcement it actually achieved rather than implying one. Do not describe Odessy as sandboxed, jailed, or contained without that qualifier.
 
 The current policy and authority rules are introduced in `policy/README.md`.
+
+## Contributing
+
+Start with [CONTRIBUTING.md](CONTRIBUTING.md) and the [architecture map](docs/ARCHITECTURE.md).
+Browse the [starter-issue drafts](docs/contributor-issues.md) or share measurements using the
+[hardware report template](.github/ISSUE_TEMPLATE/hardware_report.yml).
+Demo video: **planned — link pending maintainer recording and review**.
