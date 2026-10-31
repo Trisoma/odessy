@@ -1,10 +1,62 @@
 # Odessy: A Voice-Controlled Edge-AI Personal Agent and Device Orchestration Platform
 
-v0.5.0 development: `python -m odessy setup --role combined` reviews a headless
-configuration with **no default model download**. Existing-model discovery,
-cloud-only selection and optional voice asset checks are described in the
-[setup guide](docs/setup/headless.md). This configures existing components;
-it is not the completed installer or Flutter wizard.
+> **v0.5.0-unstable - unstable developer preview.** Expect bugs, breaking changes
+> and rough edges. This is a source-first pre-release, not a production service.
+
+| Platform | Support status |
+|---|---|
+| Windows 11 x64, from source | Supported preview; the only path with recent end-to-end evidence |
+| Linux x86_64, from source | Experimental; CI tests only |
+| Jetson Orin Nano 4GB | Experimental, headless; cloud backend recommended. Local model plus desktop UI hits GPU out-of-memory. |
+| macOS | Untested / unsupported |
+
+No minimum or recommended hardware has been established. Voice and split/LAN
+execution are experimental. The installer, monitoring, custom wake word and MCU
+devices are not supported or shipped in this preview. See the
+[release notes](docs/releases/v0.5.0-unstable-notes.md) and [limitations](LIMITATION.md).
+
+## From-source quick start
+
+Use Python 3.10-3.13, Node 22, and an existing Ollama model or cloud API key.
+On Windows 11 x64, from the repository root:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[ui]"
+cd tools
+npm ci --no-audit --no-fund
+npm run build
+cd ..
+python -m odessy doctor
+```
+
+Configure your existing model with the [headless setup guide](docs/setup/headless.md)
+or [cloud backend guide](docs/reference/cloud-models.mdx), then run
+`python -m odessy "list the files here"`. `python -m odessy setup --role combined`
+reviews a headless configuration with no default model download; it configures
+existing components, not a completed installer or Flutter wizard.
+
+### Desktop first run
+
+1. Start `python -m odessy serve` and note the address and token it prints.
+2. With Flutter 3.47.7 (stable), run `flutter pub get` and `flutter build windows`
+   from `apps/desktop/`, then launch the built desktop app.
+3. Connect the app to that backend using its address and token.
+4. Configure an existing Ollama model or cloud backend in **Settings**, then chat.
+   Try a policy-controlled tool call and check both approve and reject.
+
+There is no installer in this release. Any optional Windows desktop zip is a
+**UI client only** requiring a separately started source backend, and must pass
+clean-machine acceptance before attachment. Binaries are unsigned; SmartScreen
+warnings are expected. Voice needs separately fetched assets.
+
+**Security:** the experimental LAN executor uses unencrypted HTTP; use it only on
+a trusted LAN or point-to-point link. `ODESSY_MCP_HOST=0.0.0.0` exposes an
+unauthenticated executor. Prefer an SSH tunnel or Rust/mTLS pairing. Command
+isolation depends on the host; Windows is partial, Jetson confinement is largely
+unavailable, and `terminal.run` without Node.js is unconfined. Read
+[SECURITY.md](SECURITY.md) and report vulnerabilities privately.
 
 Third-party runtime and model licenses are listed in the
 [license inventory](docs/reference/third-party-licenses.md) and
@@ -12,14 +64,12 @@ Third-party runtime and model licenses are listed in the
 not replace model-specific terms, including the Hey Jarvis weights' noncommercial
 restriction or the default phonemizer stack's GPL licenses.
 
-> v0.4.0 was released on October 23, 2026. See the
-> [release record](docs/releases/v0.4.0.md) and [known limits](docs/reference/current-limitations.mdx).
-> Active development targets [v0.5.0](docs/releases/v0.5.0.md): Flutter desktop,
-> finished onboarding with model detection/choice rather than mandatory LFM,
-> Go multi-host monitoring, custom Odessy wake word and GitHub Pages documentation.
-> These v0.5.0 goals are planned, not already available.
-> Future feature work belongs to the [v0.5.0 roadmap](docs/releases/v0.5.0.md).
-> The unfinished Windows installation wizard is deferred to [v0.5.0](docs/releases/v0.5.0.md).
+Historical v0.4.0 was released on October 23, 2026; see its
+[release record](docs/releases/v0.4.0.md). Future work remains in the
+[v0.5.0 roadmap](docs/releases/v0.5.0.md), including finished onboarding with
+model detection/choice, Go multi-host monitoring, the custom Odessy wake word,
+GitHub Pages documentation and the deferred Windows installation wizard.
+These roadmap goals are not already available.
 
 Odessy is a local, single-user edge-AI agent runtime. It runs on one computer, or split across a Jetson (model and voice) and a laptop (controlled command execution). An optional cloud model backend can replace the local model; policy, authorization, and confirmation stay local in every configuration. See `docs/reference/cloud-models.mdx`.
 
@@ -34,7 +84,7 @@ Voice command
 
 The model proposes actions. Python Odessy validates and authorizes them. MCP transports them. The model is never the authority.
 
-## Released v0.3.0 capabilities
+## History: v0.3.0 capabilities
 
 - LFM2.5-Thinking 1.2B through Ollama is the default model path.
 - Gemma 3 1B remains available with `--model-backend ollama`.
@@ -51,7 +101,7 @@ The model proposes actions. Python Odessy validates and authorizes them. MCP tra
 > The long-term technical category could be:
 > Embodied Edge-AI Agent for Multimodal Device and Engineering Automation
 
-## Released in v0.4.0; next target v0.5.0
+## History: v0.4.0 capabilities and v0.5.0 plans
 
 Extra features beyond the original plan now include model collaboration and the
 session API, mid-task clarification, cloud caching/usage budgets, and cloud
@@ -125,7 +175,9 @@ shell its commands run in.
 
 ## Quick Start (one computer)
 
-Works on Windows, macOS, and Linux.
+Windows 11 x64 from source is the supported preview path. Linux x86_64 is
+experimental; Jetson Orin Nano 4GB is experimental and headless, with a cloud
+backend recommended. macOS is untested and unsupported.
 
 Requirements:
 
@@ -166,8 +218,9 @@ Voice (`python -m odessy voice`) currently needs Whisper.cpp, Kokoro, and the Li
 For the current experimental headless LAN executor, follow the
 [Jetson + Windows step-by-step guide](docs/setup/jetson-windows-lan-execution.md).
 It covers dependencies, Wi-Fi/Ethernet selection, terminal Y/N approval and an
-actual remote tool check. This trusted-LAN HTTP prototype is separate from the
-Rust/mTLS enrollment flow below.
+actual remote tool check. This experimental prototype is unencrypted HTTP, for a
+trusted LAN or point-to-point link only. Prefer the authenticated Rust/mTLS
+enrollment flow below.
 
 Optional authenticated split deployment uses `ODESSY_PAIRED_HOST=<enrolled-alias>`
 and the Rust `odessy-link` transport. Enroll both hosts, then grant the permitted
@@ -276,11 +329,27 @@ npm install
 npm run start:http
 ```
 
-#### The bind address matters
+#### SSH tunnel (preferred legacy split path)
 
-The server binds `127.0.0.1` by default, which is **loopback only** — reachable
-only from the laptop itself. For the Jetson to reach it over the network, set the
-bind host explicitly:
+The server binds `127.0.0.1` by default, which is loopback only, reachable only
+from the laptop itself. Keep that bind and run this from the laptop:
+
+```bash
+ssh -R 8765:127.0.0.1:8765 <user>@<jetson>
+```
+
+Then point the Jetson at `http://127.0.0.1:8765/mcp`. This overrides the direct-LAN
+URL example above, needs no firewall rule, and is authenticated. For the separate
+Rust/mTLS path, see [host pairing](docs/reference/host-pairing.mdx).
+
+#### Warning: direct LAN bind exposes an unauthenticated executor
+
+`ODESSY_MCP_HOST=0.0.0.0` exposes an **unauthenticated** command executor to
+every network the laptop joins. This is insecure by design on untrusted networks.
+Use only a trusted LAN or point-to-point Ethernet link, and set it per session
+rather than persistently. Prefer the SSH tunnel above.
+
+To let the Jetson reach it directly over the network, set the bind host explicitly:
 
 ```powershell
 $env:ODESSY_MCP_HOST="0.0.0.0"
@@ -314,21 +383,6 @@ Connection timed out     firewall is dropping the port
 Connection refused       nothing listening on that interface (still loopback-only)
 400 + MCP session text   reachable and working
 ```
-
-#### Security
-
-`ODESSY_MCP_HOST=0.0.0.0` exposes an **unauthenticated** command executor to
-every network the laptop joins. Set it per session rather than persistently, and
-prefer a point-to-point Ethernet link or an SSH tunnel over a shared network.
-
-To tunnel instead of exposing the port, run this from the laptop:
-
-```bash
-ssh -R 8765:127.0.0.1:8765 <user>@<jetson>
-```
-
-Then point the Jetson at `http://127.0.0.1:8765/mcp`. That keeps the loopback
-bind, needs no firewall rule, and is authenticated.
 
 ## Run
 
@@ -417,7 +471,8 @@ has a note. Older run files are not repaired retroactively. See
 
 ## Known Limits
 
-See `docs/reference/current-limitations.mdx`. v0.3.0 is not a production network service, always-on voice assistant, or autonomous background agent.
+See [current limitations](LIMITATION.md) and the
+[reference](docs/reference/current-limitations.mdx). v0.5.0-unstable is not a production network service, always-on voice assistant, or autonomous background agent.
 
 It has an isolation layer, and that is **not** the same as being sandboxed. Coverage depends on the host: on the Jetson board most backends report unavailable, and each run states the enforcement it actually achieved rather than implying one. Do not describe Odessy as sandboxed, jailed, or contained without that qualifier.
 
