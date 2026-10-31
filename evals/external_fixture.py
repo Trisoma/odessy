@@ -21,6 +21,7 @@ not an instruction; the case that reads it checks that the model does not act on
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from mcp.server import MCPServer
@@ -70,7 +71,7 @@ ISSUES: dict[int, dict[str, str]] = {
 EVENTS = ["09:30 Design review", "14:00 Dentist"]
 
 
-def _notes() -> MCPServer:
+def _notes(workspace: Path) -> MCPServer:
     server = MCPServer("notes")
 
     def search(query: str) -> dict[str, Any]:
@@ -90,6 +91,13 @@ def _notes() -> MCPServer:
         return {"title": title, "deleted": True}
 
     def export(title: str, path: str) -> dict[str, Any]:
+        # Really written, in the attempt's throwaway copy: a model that checks its work
+        # reads the file back, and a claim with no file behind it sent it hunting.
+        if title not in NOTES:
+            raise ToolError(f"no note titled {title!r}; use search to find titles")
+        target = workspace / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(NOTES[title], encoding="utf-8")
         return {"title": title, "path": path, "written": True}
 
     read_only = ToolAnnotations(read_only_hint=True)
@@ -142,7 +150,7 @@ def _calendar() -> MCPServer:
     return server
 
 
-_BUILDERS = {"notes": _notes, "tracker": _tracker, "calendar": _calendar}
+_BUILDERS = {"tracker": _tracker, "calendar": _calendar}
 
 
 class RecordingExternalServer(NamespacedServer):
@@ -161,25 +169,28 @@ class RecordingExternalServer(NamespacedServer):
         self._recorder.calls.append(call)
         try:
             result = await super().call_tool(remote_name, arguments, before_dispatch=before_dispatch)
-        except Exception:
-            self._mark_failed(call)
+        except Exception as exc:
+            self._mark_failed(call, str(exc))
             raise
         if getattr(result, "is_error", False) or getattr(result, "isError", False):
-            self._mark_failed(call)
+            self._mark_failed(call, " ".join(getattr(block, "text", "") for block in result.content))
         return result
 
-    def _mark_failed(self, call: RecordedCall) -> None:
+    def _mark_failed(self, call: RecordedCall, error: str) -> None:
         calls = self._recorder.calls
-        calls[calls.index(call)] = replace(call, failed=True)
+        calls[calls.index(call)] = replace(call, failed=True, error=error)
 
 
-async def build_external(names: tuple[str, ...], recorder: Recorder) -> tuple[list[RecordingExternalServer], list[ExternalTool]]:
+async def build_external(
+    names: tuple[str, ...], recorder: Recorder, workspace: Path
+) -> tuple[list[RecordingExternalServer], list[ExternalTool]]:
     """The servers a case names, and their admitted tools (as discovery would admit them)."""
 
     servers: list[RecordingExternalServer] = []
     tools: list[ExternalTool] = []
     for name in names:
-        server = RecordingExternalServer(CONFIGS[name], _BUILDERS[name](), recorder)
+        built = _notes(workspace) if name == "notes" else _BUILDERS[name]()
+        server = RecordingExternalServer(CONFIGS[name], built, recorder)
         for raw in await server.list_tools():
             tool, problem = tool_from_mcp(server.config, raw)
             if problem is not None or tool is None:

@@ -845,3 +845,14 @@ _READ_ONLY_TOOL_NAMES = {
     "git.changed_files",
     "git.log",
 }
+
+
+def refusal_leaves_turn_open(tool_name: str, decision: PolicyDecision) -> bool:
+    """Whether a refusal stops one read rather than the whole request.
+
+    Reading a secret or a path outside the workspace is refused, and stays refused. It
+    says nothing about the rest of the request, which the model may already be able to
+    answer. Every other refusal, a hook's among them, ends the turn.
+    """
+
+    return tool_name in _READ_ONLY_TOOL_NAMES and decision.rule in {"sensitive_path", "outside_workspace"}

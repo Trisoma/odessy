@@ -377,14 +377,17 @@ def test_a_folder_answer_does_not_reach_a_high_risk_write_inside_it(tmp_path):
 class Scripted:
     def __init__(self, *actions):
         self.actions = list(actions)
+        self.seen = []
 
     def propose(self, user_text):
         return self.actions.pop(0)
 
     def respond_to_observation(self, user_text, observation):
+        self.seen.append(observation)
         return self.actions.pop(0)
 
     def respond_to_observations(self, user_text, observations):
+        self.seen.extend(observations)
         return self.actions.pop(0)
 
 
@@ -522,6 +525,87 @@ async def test_a_refusal_reaches_the_audit_log(tmp_path):
         await agent_for(tmp_path, ToolRequest("terminal.run", {"command": "rm -rf ."})).run_turn("wipe")
     (record,) = audit_records(log)
     assert (record["decision"], record["rule"], record["confirmed"]) == ("deny", "command_destructive", None)
+
+
+# --- a refused read costs that read --------------------------------------------------
+
+
+def read(path: str) -> ToolRequest:
+    return ToolRequest("filesystem.read", {"path": path})
+
+
+@pytest.mark.anyio
+async def test_a_refused_read_leaves_the_turn_open(tmp_path):
+    (tmp_path / ".env").write_text("API_TOKEN=hunter2\n", encoding="utf-8")
+    agent = agent_for(tmp_path, read(".env"), FinalResponse("Port 8731; I may not read .env."))
+    result = await agent.run_turn("what is configured?")
+    assert result.final_text == "Port 8731; I may not read .env."
+    (observation,) = agent._model.seen
+    assert observation.result["status"] == "denied" and "hunter2" not in str(observation.result)
+
+
+@pytest.mark.anyio
+async def test_a_refused_read_in_a_batch_lets_the_rest_run(tmp_path):
+    (tmp_path / ".env").write_text("API_TOKEN=hunter2\n", encoding="utf-8")
+    batch = ToolBatch((ToolCall("a", read(".env")), ToolCall("b", ToolRequest("time.now"))))
+    agent = agent_for(tmp_path, batch, FinalResponse("done"))
+    assert (await agent.run_turn("read and tell the time")).final_text == "done"
+    refused, ran = agent._model.seen
+    assert (refused.call_id, refused.result["status"]) == ("a", "denied")
+    assert ran.call_id == "b" and "iso_time" in ran.result
+
+
+@pytest.mark.anyio
+async def test_a_batch_of_refused_reads_still_answers(tmp_path):
+    batch = ToolBatch((ToolCall("a", read(".env")), ToolCall("b", read("id_rsa"))))
+    agent = agent_for(tmp_path, batch, FinalResponse("Neither is readable."))
+    assert (await agent.run_turn("read both")).final_text == "Neither is readable."
+    assert [o.result["status"] for o in agent._model.seen] == ["denied", "denied"]
+
+
+@pytest.mark.anyio
+async def test_repeated_refused_reads_exhaust_the_turn(tmp_path):
+    agent = agent_for(tmp_path, *[read(".env")] * 20, max_rejections=2)
+    with pytest.raises(PermissionError, match="credentials or secrets"):
+        await agent.run_turn("keep trying")
+
+
+@pytest.mark.anyio
+async def test_a_refused_command_still_ends_the_turn(tmp_path):
+    agent = agent_for(tmp_path, ToolRequest("terminal.run", {"command": "cat .env"}), FinalResponse("unreached"))
+    with pytest.raises(PermissionError):
+        await agent.run_turn("show it")
+
+
+@pytest.mark.anyio
+async def test_a_hooks_refusal_of_a_read_still_ends_the_turn(tmp_path):
+    (tmp_path / "app.toml").write_text("port = 8731\n", encoding="utf-8")
+    rules = parse_rules(Path("rules"), {"rule": [
+        {"name": "no-reads", "match": "filesystem.read", "decision": "deny"},
+    ]})
+    hooks = HookSet((), tmp_path, rules=tuple(rule for rule, _ in rules))
+    agent = agent_for(tmp_path, read("app.toml"), FinalResponse("unreached"), hooks=hooks)
+    with pytest.raises(PermissionError):
+        await agent.run_turn("read it")
+
+
+@pytest.mark.parametrize(
+    "command, rule",
+    [
+        ("ls 2>/dev/null", "command_read_only"),
+        ("ls 2> /dev/null", "command_read_only"),
+        ("ls 2>$null", "command_read_only"),
+        ("ls 2>nul", "command_read_only"),
+        ("find . -name x 2>/dev/null", "command_default"),
+        ("find . -name x 2>&1", "command_default"),
+        ("ls > out.txt", "command_write"),
+        ("ls 2>/dev/null.txt", "command_write"),
+        ("ls 2>errors.txt", "command_write"),
+        ("ls 2>/dev/null > out.txt", "command_write"),
+    ],
+)
+def test_discarding_stderr_is_not_a_write(tmp_path, command, rule):
+    assert decide(tmp_path, command).rule == rule
 
 
 @pytest.mark.anyio

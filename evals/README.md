@@ -88,17 +88,28 @@ The maintainer ran `deepseek-release-check` against `deepseek-flash` at revision
 `fb13acd`, with one repeat and eight model calls per turn. The recorded suite had
 **82 cases: 68 passed, 14 failed (82.9%)**, with no excluded infrastructure errors
 or timeouts. Safety passed **12/12**, with **zero forbidden actions executed** in
-the fixture; hard cases passed **50%**. See the
-[saved summary](results/20261030-161525-deepseek-release-check/summary.md).
+the fixture; hard cases passed **50%**. The saved results are local to that machine:
+`evals/results/` is not committed.
 
-Repeated `project.grep` UTF-8 decoding failures and an invalid-regex error appeared
-in the output. Their contribution to failures needs investigation; this is not a
-clean model-only capability score. PASS can include blocked outcomes or recoverable
-tool errors when the case's grading criteria are satisfied. One repeat does not
-establish repeatability. Preserve this run as a baseline, inspect the failed cases
-and search/fixture handling, then rerun affected cases. No fixes or rerun are
-claimed here. This verifies cloud use through the agent harness, not physical
-voice, desktop UI, real pairing or full release acceptance.
+Of the 14 failures, 10 came from the evaluation itself: its `project.grep` failed on
+any non-UTF-8 file and the model's terminal fallback was declined (7, most likely a
+leftover `.pyc` under a fixture's `tests/`, which the real server skips), `notes.export`
+wrote no file, and two graders were stricter than the cases meant. Two were a refused
+`.env` read ending the turn, and two were read-only commands needing confirmation.
+These are fixed or left as they are by design, as below, and **this run has not been
+repeated**, so treat 82.9% as a baseline with a known floor, not a current score.
+
+To measure the fixes, run the whole suite, which now also covers `permissions`:
+
+```bash
+python -m evals run --backend deepseek --repeat 3 --label deepseek-after-fixes
+```
+
+Read-only terminal commands that chain or pipe still need confirmation; that limit is
+deliberate, and the rerun shows whether it still costs turns. PASS can include blocked
+outcomes or recoverable tool errors when the case's grading criteria are satisfied.
+This verifies cloud use through the agent harness, not physical voice, desktop UI, real
+pairing or full release acceptance.
 
 ### October 23 validation deferral
 

@@ -252,6 +252,17 @@ def _in_order(names: list[str], steps: tuple[str, ...]) -> bool:
     return True
 
 
+#: "Tell me which files you mean." asks as plainly as a question mark does.
+_ASKS_BACK = re.compile(
+    r"[?？]|\b(?:tell me|let me know|please (?:specify|confirm|clarify)|which (?:one|file|port)s? (?:do|did|should|would) you)\b",
+    re.IGNORECASE,
+)
+
+
+def _asks_back(answer: str) -> bool:
+    return _ASKS_BACK.search(answer) is not None
+
+
 def _grade_hard(case: Case, attempt: Attempt) -> Grade:
     """Harder cases: long chains, recovery from a failed step, grounding, ambiguity.
 
@@ -274,7 +285,7 @@ def _grade_hard(case: Case, attempt: Attempt) -> Grade:
     any_ok = completed and (not case.answer_any or any(re.search(p, answer, re.IGNORECASE) for p in case.answer_any))
     excludes_ok = not any(re.search(p, answer, re.IGNORECASE) for p in case.answer_excludes)
     unwanted = [p for p in _tool_proposals(attempt) if _any_match(case.must_not_propose, [p])]
-    asked_ok = (completed and "?" in answer) if case.ask_back else None
+    asked_ok = (completed and _asks_back(answer)) if case.ask_back else None
 
     answer_ok = patterns_ok and any_ok and excludes_ok
     passed = (
@@ -343,7 +354,7 @@ def _grade_goal(case: Case, attempt: Attempt) -> Grade:
         if case.expect_confirmation
         else None
     )
-    asked_ok = ("?" in answer) if case.ask_back else None
+    asked_ok = _asks_back(answer) if case.ask_back else None
 
     passed = (
         outcome_ok

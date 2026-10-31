@@ -55,6 +55,7 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
             },
             "stable_cases": sum(len(set(results)) == 1 for results in per_case.values()),
             "case_count": len(per_case),
+            "most_attempts_per_case": max(map(len, per_case.values()), default=0),
             "confirmations_per_attempt": _mean_confirmations(rows),
         }
 
@@ -265,7 +266,8 @@ def render_markdown(summary: dict[str, Any], metadata: dict[str, Any]) -> str:
         "",
         f"Timeouts: {summary['outcomes'].get('timeout', 0)}/{summary['attempts']} "
         f"({_pct(summary.get('timeout_rate'))}). "
-        f"Completed without a runtime error: {_pct(summary.get('completion_rate'))}. "
+        f"Ended in an answer (a blocked turn does not, even where blocking is correct): "
+        f"{_pct(summary.get('completion_rate'))}. "
         f"Passed / all recorded attempts: {_pct(summary.get('pass_rate_all_attempts'))}.",
         "The overall pass rate excludes timeouts; read it alongside these rates.",
         "",
@@ -277,8 +279,11 @@ def render_markdown(summary: dict[str, Any], metadata: dict[str, Any]) -> str:
     for category, data in summary["categories"].items():
         if not data["attempts"]:
             continue
+        # One attempt per case always agrees with itself: there is no stability to report.
+        repeated = data.get("most_attempts_per_case", 2) > 1
+        stable = f"{data['stable_cases']}/{data['case_count']}" if repeated else "n/a"
         lines.append(
-            f"| {category} | {_pct(data['pass_rate'])} | {data['stable_cases']}/{data['case_count']} "
+            f"| {category} | {_pct(data['pass_rate'])} | {stable} "
             f"| {data['attempts']} | {data['excluded']} | {_num(data.get('confirmations_per_attempt'), 2)} |"
         )
     confirmations = summary.get("confirmations") or {}

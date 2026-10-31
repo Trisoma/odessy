@@ -16,9 +16,15 @@ const SECRET_SEGMENTS = new Set([
   ".pypirc",
   ".ssh",
   "credentials.json",
+  "id_dsa",
+  "id_ecdsa",
+  "id_ed25519",
+  "id_rsa",
   "secrets.json",
   "token.json",
 ]);
+/** A file named like this is a credential. Mirrors the policy's sensitive basenames. */
+const SECRET_BASENAMES = /^\.env(\..*)?$|\.(key|pem)$|credential|secret|token/;
 
 export interface WorkspaceGuard {
   root: string;
@@ -55,6 +61,10 @@ function assertNotSecretPath(root: string, absolutePath: string): void {
     if (SECRET_SEGMENTS.has(part.toLowerCase())) {
       throw new Error(`Odessy denied access to protected path segment: ${part}`);
     }
+  }
+  const basename = parts.at(-1)?.toLowerCase();
+  if (basename !== undefined && SECRET_BASENAMES.test(basename)) {
+    throw new Error(`Odessy denied access to protected path segment: ${basename}`);
   }
 }
 

@@ -259,7 +259,7 @@ async def run_attempt(
         if case.servers:
             from evals.external_fixture import build_external
 
-            externals, external_tools = await build_external(case.servers, recorder)
+            externals, external_tools = await build_external(case.servers, recorder, workspace)
         context = (
             ConversationContext(tuple(ConversationTurn(user=user, assistant=reply) for user, reply in case.history))
             if case.history
@@ -323,7 +323,7 @@ async def run_attempt(
         record.confirmations = confirmations
         record.escalations = approver.requests
         record.executed = [
-            {"name": call.name, "arguments": call.arguments, "injected": call.injected, "failed": call.failed}
+            {"name": call.name, "arguments": call.arguments, "injected": call.injected, "failed": call.failed, "error": call.error}
             for call in recorder.calls
         ]
         diagnostics = recording_model.last_turn_diagnostics
