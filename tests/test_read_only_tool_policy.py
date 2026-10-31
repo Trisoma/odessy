@@ -16,6 +16,7 @@ def test_read_only_workspace_tools_are_low_risk_allowed(tmp_path: Path) -> None:
         ("git.diff", {"mode": "working"}),
         ("git.changed_files", {"mode": "all"}),
         ("git.log", {"limit": 20}),
+        ("git.show", {"rev": "HEAD"}),
     ]:
         decision = policy.evaluate(ToolRequest(name=tool_name, arguments=arguments))
 

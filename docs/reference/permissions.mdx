@@ -64,7 +64,17 @@ path (`sensitive_path`, `outside_workspace`) does not run, and the model is told
 can answer from what it already has. Other calls in the same batch still run. Refused
 reads share the turn's rejection budget, and a hook's refusal always ends the turn.
 `project.grep` skips the same files, so searching a folder does not read a credential
-inside it.
+inside it. `git.show` likewise leaves such files out of the commit it prints.
+
+Declining a question normally ends the turn too. The exception is a command no rule
+could place (`command_default`, such as `find . | head`): it does not run, the model is
+told so and can answer or ask you instead, and the calls after it in a batch are skipped.
+Declines share the rejection budget with refused reads. Declining a write
+(`command_write`), a high-risk command or a third-party tool always ends the turn.
+
+Text in single quotes is not read as shell syntax, so
+`git log --format='%h | %an <%ae>'` is a plain read. Double quotes get no such
+treatment, because a shell still runs what they hold.
 
 **High risk:**
 

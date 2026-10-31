@@ -17,7 +17,7 @@ from odessy.execution.escalation import EscalationApproval, EscalationApprover, 
 from odessy.authority.audit import current_audit
 from odessy.authority.redaction import redact_value
 from odessy.tools.external_tools import NamespacedServer, external_tool, public_name
-from odessy.authority.policy import OdessyPolicy, refusal_leaves_turn_open
+from odessy.authority.policy import OdessyPolicy, decline_leaves_turn_open, refusal_leaves_turn_open
 from odessy.runtime.hook_rules import TurnState, call_target
 from odessy.runtime.hooks import MAX_FINAL_TEXT_CHARS, HookSet, HookVerdict, tighten
 from odessy.runtime.repeat_guard import RepeatGuard, build_guard
@@ -91,6 +91,12 @@ _REFUSED_READ_INSTRUCTION = (
     "another way. Answer from what you already have, and say what you could not read."
 )
 
+_DECLINED_COMMAND_INSTRUCTION = (
+    "The user declined this command and it was NOT run. Do not run it again or reword "
+    "it. Use a dedicated tool if one fits; otherwise answer from what you already have, "
+    "or ask the user what they want."
+)
+
 _TOOL_ERROR_INSTRUCTION = (
     "The tool ran and failed. Correct the call (for example the path, which is "
     "relative to the workspace) and try again, or answer briefly with what went wrong."
@@ -98,6 +104,10 @@ _TOOL_ERROR_INSTRUCTION = (
 
 #: Characters of a tool's error message kept in the observation.
 _TOOL_ERROR_CHARS = 1000
+
+
+class DeclinedCommandError(PermissionError):
+    """A person said no to a command, and the turn may go on without it."""
 
 
 def _is_error_result(result: Any) -> bool:
@@ -701,6 +711,7 @@ class OdessyAgent:
                 reminders = {}
                 # Refused reads: the rest of the batch still runs, and the model hears why.
                 refused = {}
+                declined = []
                 for call in action.calls:
                     batch_decision = await self._screen(call.request, log, call_id=call.call_id)
                     if batch_decision.action == "deny":
@@ -758,6 +769,9 @@ class OdessyAgent:
                             try:
                                 answer, plan = answers.get(id(call), (None, None))
                                 args = await self._prepare_call(call.request, tool_registry, log, metrics, answer=answer, call_id=call.call_id, plan=plan)
+                            except DeclinedCommandError as exc:
+                                declined.append(str(exc))
+                                raise
                             except EscalationDeniedError as exc:
                                 raise PermissionError(str(exc)) from exc
                             dispatched += 1
@@ -779,6 +793,14 @@ class OdessyAgent:
                             await self._post_tool_hooks(call.request, structured, log, call_id=call.call_id)
                             return {**structured, "_dispatch_timing": {"started": started, "completed": completed}}
                         batch_observations, stopped = await schedule_calls(action, limit=self._tool_concurrency, safe=safe, prepare=prepare, dispatch=dispatch, stop=stop_event)
+                        if declined and stopped == declined[0]:
+                            rejections += 1
+                            if self._may_continue(rejections=rejections, model_calls=model_calls, deadline=deadline):
+                                # The calls after it stay skipped: the model hears both.
+                                stopped = None
+                                for observation in batch_observations:
+                                    if observation.result.get("status") == "denied":
+                                        observation.result["instruction"] = _DECLINED_COMMAND_INSTRUCTION
                 if refused and failure is None:
                     ran = iter(batch_observations)
                     batch_observations = [refused[id(c)] if id(c) in refused else next(ran) for c in proposed.calls]
@@ -953,7 +975,43 @@ class OdessyAgent:
 
             log.append(LogEntry("schema_validated", {"name": action.name}))
 
-            call_arguments = await self._prepare_call(action, tool_registry, log, metrics)
+            try:
+                call_arguments = await self._prepare_call(action, tool_registry, log, metrics)
+            except DeclinedCommandError as exc:
+                rejections += 1
+                if not self._may_continue(rejections=rejections, model_calls=model_calls, deadline=deadline):
+                    raise
+                observation = ToolObservation(
+                    request=action,
+                    result={
+                        "status": "denied",
+                        "reason": str(exc),
+                        "instruction": _DECLINED_COMMAND_INSTRUCTION,
+                        **self._drain_reminders(pending_reminders),
+                    },
+                )
+                observations.append(observation)
+                next_action = await self._resume(
+                    user_text,
+                    observation,
+                    log=log,
+                    status_callback=status_callback,
+                    message="Continuing after a declined command",
+                )
+                model_calls += 1
+                if isinstance(next_action, FinalResponse):
+                    log.append(LogEntry("model_final_response", {"text": next_action.text}))
+                    return _finish_turn_result(
+                        final_text=next_action.text,
+                        log=log,
+                        metrics=metrics,
+                        turn_started=turn_started,
+                        tool_request=last_request,
+                        tool_result=last_result,
+                        tool_observations=observations,
+                    )
+                action = next_action
+                continue
             if stop_event is not None and stop_event.is_set():
                 return _finish_turn_result(final_text="Stopped. No further tools were dispatched.", log=log, metrics=metrics, turn_started=turn_started, tool_observations=observations)
 
@@ -1172,7 +1230,8 @@ class OdessyAgent:
             log.append(LogEntry('approval_requested', plan.public_dict()))
             if not await self._confirm_action(plan.public_dict()):
                 self._audit_decision(action, decision, confirmed=False)
-                raise PermissionError('The action was not approved')
+                error = DeclinedCommandError if decline_leaves_turn_open(decision) else PermissionError
+                raise error('The action was not approved')
             return
         if not decision.requires_confirmation:
             return
@@ -1186,7 +1245,8 @@ class OdessyAgent:
             confirmed = bool(await reply) if inspect.isawaitable(reply) else bool(reply)
         if not confirmed:
             self._audit_decision(action, decision, confirmed=False, channel='terminal')
-            raise PermissionError(f"Policy requires confirmation before execution: {decision.reason}")
+            error = DeclinedCommandError if decline_leaves_turn_open(decision) else PermissionError
+            raise error(f"Policy requires confirmation before execution: {decision.reason}")
 
     def _target_identity(self, action, registry):
         name = action.name
