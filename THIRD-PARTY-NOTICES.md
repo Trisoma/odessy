@@ -36,7 +36,7 @@ Full upstream license texts are included in:
 
 ## OpenClaw
 
-Source: `C:\Users\13647\OneDrive\Desktop\odessy\openclaw\openclaw-main`
+Source: https://github.com/openclaw/openclaw
 
 License: MIT
 
@@ -72,7 +72,7 @@ Changes made for Odessy:
 
 ## NemoClaw
 
-Source: `C:\Users\13647\OneDrive\Desktop\odessy\nemoclaw\NemoClaw-main`
+Source: https://github.com/NVIDIA/NemoClaw
 
 License: Apache-2.0
 
@@ -98,7 +98,7 @@ Changes made for Odessy:
 
 ## Hermes
 
-Source: `C:\Users\13647\OneDrive\Desktop\odessy\hermes`
+Source: https://github.com/NousResearch/hermes-agent
 
 License: MIT
 
@@ -118,7 +118,7 @@ Because Hermes was used as an architectural reference only, no Hermes license te
 
 ## DeepSeek Harness (dsh)
 
-Source: `C:\Users\13647\OneDrive\Desktop\MiMundo\GitHub\odessy\deepseek-harness-master`
+Source: https://github.com/deepseek-ai/deepseek-harness
 
 Upstream repository: `deepseek-ai/deepseek-harness`
 

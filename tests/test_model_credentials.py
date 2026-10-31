@@ -89,16 +89,19 @@ def test_bridge_replies_never_echo_secret(credentials, monkeypatch):
 
 
 def test_node_server_does_not_receive_cloud_credentials(monkeypatch, tmp_path):
+    import mcp.client.stdio as stdio
     from odessy.tools.node_mcp import NodeToolServerTransport
-    import odessy.tools.node_mcp as node
     captured = {}
     monkeypatch.setenv('DEEPSEEK_API_KEY', 'must-stay-private')
     monkeypatch.setenv('ODESSY_CLOUD_API_KEY', 'must-stay-private-too')
     def transport(params, **kwargs):
         captured.update(params.env)
         return None
-    monkeypatch.setattr(node, 'stdio_client', transport)
+    # node_mcp imports stdio_client lazily inside the transport's __init__, so the
+    # patch has to land on the module that lazy import reads, not on node_mcp.
+    monkeypatch.setattr(stdio, 'stdio_client', transport)
     NodeToolServerTransport(tmp_path)
+    assert captured, 'the Node server environment was never observed'
     assert 'DEEPSEEK_API_KEY' not in captured
     assert 'ODESSY_CLOUD_API_KEY' not in captured
     assert captured['ODESSY_WORKSPACE_ROOT'] == str(tmp_path.resolve())

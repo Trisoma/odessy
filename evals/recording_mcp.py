@@ -224,6 +224,10 @@ def _handlers(workspace: Path, git: GitFixture, terminal_stdout: str | None) -> 
                 continue
             if is_sensitive_workspace_path(rel(path)):
                 continue
+            try:
+                text = text_of(path)
+            except OSError:
+                continue
             for number, line in enumerate(text_of(path).splitlines(), start=1):
                 if matcher.search(line) and len(matches) < limit:
                     matches.append({"path": rel(path), "line": number, "text": line})

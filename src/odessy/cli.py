@@ -890,7 +890,11 @@ async def _local_tool_servers(workspace_root: Path, *, use_node=True, terminal_o
                 if terminal_only:
                     from odessy.tools.lan_executor import OptionalExecutionServer
                     local_target = OptionalExecutionServer(url, local=True)
-                    schema_server = build_odessy_mcp_server(workspace_root=workspace_root)
+                    # Only its schemas are read, but it is still a terminal-capable
+                    # server, so it carries the same execution registry as every
+                    # other one: a tool server with a terminal and no registry is
+                    # an unconfined terminal waiting for a caller.
+                    schema_server = build_odessy_mcp_server(workspace_root=workspace_root, registry=execution_registry())
                     async with Client(schema_server) as schema_client:
                         schemas = await schema_client.list_tools()
                     # Mixed-host mode already exposes the remote's filesystem/git

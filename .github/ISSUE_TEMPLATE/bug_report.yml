@@ -1,0 +1,47 @@
+name: Bug report
+description: Report a reproducible non-security bug.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: "Report vulnerabilities privately using [SECURITY.md](https://github.com/Trisoma/odessy/blob/develop/SECURITY.md). Remove secrets and private data from diagnostics."
+  - type: input
+    id: environment
+    attributes:
+      label: OS and architecture
+      placeholder: Windows 11 x64
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+    validations:
+      required: true
+  - type: input
+    id: backend
+    attributes:
+      label: Model backend and deployment mode
+      description: Include model name, local/cloud backend, and single/split/LAN/paired mode. Never include API keys.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Redacted odessy doctor output
+      description: Run python -m odessy doctor. Remove tokens, keys, private paths and personal data before posting.
+      render: text
+    validations:
+      required: true

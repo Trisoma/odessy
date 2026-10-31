@@ -1,6 +1,7 @@
 # Odessy Current Limitations
 
-Release baseline: **v0.4.0**, released October 23, 2026. Active development
+Release baseline: **v0.5.0-unstable**, unstable developer preview. See the
+[release known issues](docs/releases/v0.5.0-unstable-notes.md#known-limitations). Active development
 targets the [v0.5.0 roadmap](docs/releases/v0.5.0.md); planned UI/installer/Go
 monitoring and custom wake-word features are not already available.
 
