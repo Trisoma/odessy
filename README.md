@@ -13,7 +13,8 @@
 No minimum or recommended hardware has been established. Voice and split/LAN
 execution are experimental. The installer, monitoring, custom wake word and MCU
 devices are not supported or shipped in this preview. See the
-[release notes](docs/releases/v0.5.0-unstable-notes.md) and [limitations](LIMITATION.md).
+[release notes](docs/releases/v0.5.0-unstable-notes.md), [limitations](LIMITATION.md),
+and [changelog](CHANGELOG.md).
 
 ## From-source quick start
 
