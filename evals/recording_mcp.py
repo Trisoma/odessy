@@ -197,7 +197,13 @@ def _handlers(workspace: Path, git: GitFixture, terminal_stdout: str | None) -> 
         matcher = re.compile(re.escape(pattern) if args.get("literal") else pattern, flags)
         matches = []
         for path in files(root):
-            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            # The real grepProjectTool reads with `.catch(() => "")`, so a file it
+            # cannot decode is skipped rather than reported as a tool failure.
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            for number, line in enumerate(text.splitlines(), start=1):
                 if matcher.search(line):
                     matches.append({"path": rel(path), "line": number, "text": line})
         return {"pattern": pattern, "path": rel(root), "matches": matches, "count": len(matches), "status": "ok", "truncated": False}
