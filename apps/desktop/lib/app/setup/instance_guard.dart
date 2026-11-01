@@ -6,10 +6,12 @@ import 'dart:io';
 /// existing window is a native runner concern; this only prevents a second window
 /// from being created and reports that an instance already exists.
 class InstanceGuard {
-  InstanceGuard._(this._file, this._handle);
+  InstanceGuard._(this._key, this._handle);
 
-  final File _file;
+  static final Set<String> _held = {};
+  final String _key;
   final RandomAccessFile _handle;
+  bool _released = false;
 
   static Future<InstanceGuard?> acquire(
     String key, {
@@ -22,32 +24,52 @@ class InstanceGuard {
             '${Platform.pathSeparator}Odessy${Platform.pathSeparator}instances');
     await dir.create(recursive: true);
     final safe = key.replaceAll(RegExp('[^A-Za-z0-9_-]'), '_');
-    final file = File('${dir.path}${Platform.pathSeparator}$mode-$safe.lock');
-    final handle = await file.open(mode: FileMode.write);
+    final canonicalDir = await dir.resolveSymbolicLinks();
+    final file = File('$canonicalDir${Platform.pathSeparator}$mode-$safe.lock');
+    final lockKey = Platform.isWindows ? file.path.toLowerCase() : file.path;
+    // POSIX advisory locks are process-wide. Do not open the same file twice:
+    // closing a second descriptor would release the first descriptor's lock.
+    if (!_held.add(lockKey)) return null;
+    RandomAccessFile? handle;
     try {
-      // Non-blocking: throws when another process holds the lock.
-      await handle.lock(FileLock.exclusive);
-    } on FileSystemException {
-      await handle.close();
-      return null;
+      handle = await file.open(mode: FileMode.append);
+      try {
+        // Non-blocking: throws when another process holds the lock.
+        await handle.lock(FileLock.exclusive);
+      } on FileSystemException {
+        await handle.close();
+        _held.remove(lockKey);
+        return null;
+      }
+      await handle.truncate(0);
+      await handle.writeString('$pid');
+      await handle.flush();
+      return InstanceGuard._(lockKey, handle);
+    } catch (_) {
+      try {
+        await handle?.close();
+      } finally {
+        _held.remove(lockKey);
+      }
+      rethrow;
     }
-    await handle.truncate(0);
-    await handle.writeString('$pid');
-    await handle.flush();
-    return InstanceGuard._(file, handle);
   }
 
   Future<void> release() async {
+    if (_released) return;
+    _released = true;
     try {
       await _handle.unlock();
     } on FileSystemException {
       // Already released by process exit.
+    } finally {
+      try {
+        await _handle.close();
+      } finally {
+        _held.remove(_key);
+      }
     }
-    await _handle.close();
-    try {
-      if (await _file.exists()) await _file.delete();
-    } on FileSystemException {
-      // Leftover lock files are harmless.
-    }
+    // Keep the file: deleting it after unlock can race with a new owner and
+    // let a third process lock a different inode at the same path.
   }
 }

@@ -3,6 +3,22 @@ import pytest
 from odessy.models.usage import CloudBudgetExceeded, CloudUsageConfigError, Pricing, UsageLedger, process_ledger
 
 
+def test_report_currency_and_unknown_prices():
+    ledger = UsageLedger()
+    assert ledger.report()['currency'] is None
+    priced = ledger.for_profile('a', 'p', 'm', Pricing(1000, 1000, 1000, 'CNY'))
+    priced.record(prompt=100, cached=0, completion=0)
+    report = ledger.report()
+    assert report['currency'] == 'CNY'
+    assert report['total_cost'] == pytest.approx(.1)
+    assert report['profiles'][0]['total']['prompt'] == report['total']['prompt'] == 100
+    ledger.for_profile('unpriced', 'p', 'n').record(prompt=1, cached=0, completion=0)
+    report = ledger.report()
+    assert report['total_cost'] is None and report['currency'] is None
+    ledger.start_turn()
+    assert ledger.report()['turn_cost'] == 0
+
+
 def test_profile_totals_use_each_price_and_global_budget():
     ledger = UsageLedger(budget_tokens=300, budget_cost=1)
     a = ledger.for_profile('a', 'openai', 'one', Pricing(1000, 1000, 1000))

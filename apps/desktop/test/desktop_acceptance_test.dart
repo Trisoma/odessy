@@ -29,6 +29,8 @@ class AcceptanceBackend implements SetupBackend {
                 'arguments': ['peers', 'revoke', p['alias']]
               }
             : {
+                'operation': 'list',
+                'link': 'fixture-link',
                 'peers': {
                   'grant_revision': 4,
                   'peers': [

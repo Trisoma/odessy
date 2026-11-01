@@ -5,6 +5,9 @@ import '../../../app/setup/native_picker.dart';
 import '../controllers/component_settings_controller.dart';
 import 'component_settings_pane.dart';
 import 'settings_navigation.dart';
+import 'model_profiles.dart';
+import 'runtime_inventory.dart';
+import 'collaboration_setting_dialog.dart';
 import '../../../app/readiness_controller.dart';
 import 'package:flutter/material.dart';
 
@@ -93,10 +96,13 @@ class _SettingsPageState extends State<SettingsPage> {
       validate: (v) =>
           v < 0 || v > 32 ? 'Enter a whole number from 0 to 32.' : null);
   late final SettingsFormController<int> form;
+  late OdessyApi _formApi;
+  bool get changedConnection => !identical(_formApi, widget.controller.api);
   SettingField<int> get field => form.field;
   String section = SettingsSections.general;
   ComponentSettingsController? components;
   bool changingSection = false;
+  bool _dialogOpen = false;
 
   bool get loading => form.loading;
   String get status => form.error ?? form.status;
@@ -104,6 +110,8 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void initState() {
     super.initState();
+    _formApi = widget.controller.api;
+    widget.controller.addListener(_sessionChanged);
     section = widget.initialSection;
     if (widget.componentController != null) {
       components = widget.componentController;
@@ -116,13 +124,17 @@ class _SettingsPageState extends State<SettingsPage> {
             field: fallbackField,
             read: () async {
               final transport = widget.controller.api;
+              if (changedConnection) throw StateError('Connection changed');
               final value = await widget.controller.loadSettings();
               if (!identical(transport, widget.controller.api)) {
                 throw StateError('Connection changed');
               }
               return (value['settings'] as Map)['max_consultations'] as int;
             },
-            write: widget.controller.updateConsultationLimit);
+            write: (value) async {
+              if (changedConnection) throw StateError('Connection changed');
+              await widget.controller.updateConsultationLimit(value);
+            });
     form.addListener(syncText);
     if (!form.loaded && !form.loading) form.load();
     syncText();
@@ -132,22 +144,29 @@ class _SettingsPageState extends State<SettingsPage> {
     if (count.text != field.text) count.text = field.text;
   }
 
+  void _sessionChanged() {
+    if (mounted) setState(() {});
+  }
+
   Future<void> load() async {
     if (form.dirty) {
       final discard = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-                  title: const Text('Reload saved collaboration setting?'),
+                  title: const Text('Discard unsaved changes?'),
                   content: const Text('Your current edit will be discarded.'),
                   actions: [
                     TextButton(
                         onPressed: () => Navigator.pop(context, false),
-                        child: const Text('Keep editing')),
-                    TextButton(
+                        child: const Text('Cancel')),
+                    FilledButton(
                         onPressed: () => Navigator.pop(context, true),
-                        child: const Text('Discard and reload'))
+                        child: const Text('Discard changes'))
                   ]));
       if (discard != true || !mounted) return;
+    }
+    if (changedConnection && widget.formController == null) {
+      _formApi = widget.controller.api;
     }
     await form.load();
   }
@@ -157,8 +176,55 @@ class _SettingsPageState extends State<SettingsPage> {
           ? 'Saved in demo memory only.'
           : 'Saved by the service. Applies to newly created sessions.');
 
+  Future<void> _editCollaboration(
+      {bool rounds = false, bool enablement = false}) async {
+    if (_dialogOpen || changedConnection) return;
+    _dialogOpen = true;
+    try {
+      await showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => CollaborationSettingDialog(
+              session: widget.controller,
+              rounds: rounds,
+              enablement: enablement));
+    } finally {
+      _dialogOpen = false;
+    }
+  }
+
+  Future<void> _openStandalone(VoidCallback action) async {
+    if (form.loading) return;
+    if (widget.formController != null) {
+      action();
+      return;
+    }
+    if (form.dirty) {
+      final discard = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+                title: const Text('Discard unsaved changes?'),
+                content:
+                    const Text('Your collaboration limit has not been saved.'),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Cancel')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Discard changes')),
+                ],
+              ));
+      if (discard != true || !mounted) return;
+      await form.load();
+      if (!mounted || form.error != null) return;
+    }
+    action();
+  }
+
   @override
   void dispose() {
+    widget.controller.removeListener(_sessionChanged);
     form.removeListener(syncText);
     if (widget.formController == null) form.dispose();
     if (widget.componentController == null) components?.dispose();
@@ -178,28 +244,32 @@ class _SettingsPageState extends State<SettingsPage> {
               onTap: () => _selectSection(name)),
       ]));
 
-  Widget _narrowPicker(BuildContext context) => DropdownButtonFormField<String>(
-      key: ValueKey('settings-section-picker-$section'),
-      initialValue: section,
-      isExpanded: true,
-      decoration: const InputDecoration(labelText: 'Settings section'),
-      items: [
-        for (final name in SettingsSections.all)
-          DropdownMenuItem(
-              value: name, child: Text(name, overflow: TextOverflow.ellipsis))
-      ],
-      onChanged: (name) {
-        if (name != null) _selectSection(name);
-      });
+  Widget _narrowPicker(BuildContext context) => KeyedSubtree(
+      key: const Key('settings-section-picker'),
+      child: DropdownButtonFormField<String>(
+          key: ValueKey('settings-section-picker-$section'),
+          initialValue: section,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Settings section'),
+          items: [
+            for (final name in SettingsSections.all)
+              DropdownMenuItem(
+                  value: name,
+                  child: Text(name, overflow: TextOverflow.ellipsis))
+          ],
+          onChanged: (name) {
+            if (name != null) _selectSection(name);
+          }));
 
   Future<void> _selectSection(String name) async {
-    if (name == section || changingSection) return;
+    if (name == section || changingSection || _dialogOpen || form.loading) {
+      return;
+    }
     changingSection = true;
     try {
       if (!await confirmSettingsNavigation(context, components) || !mounted) {
         return;
       }
-      if (!await confirmFormNavigation(context, form) || !mounted) return;
       setState(() => section = name);
     } finally {
       changingSection = false;
@@ -257,6 +327,16 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Widget _content(BuildContext context) =>
       Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        KeyedSubtree(
+          key: const ValueKey('collaboration-draft-notice'),
+          child: form.dirty && section != SettingsSections.models
+              ? _card(context, 'Unsaved collaboration changes', [
+                  TextButton(
+                      onPressed: () => _selectSection(SettingsSections.models),
+                      child: const Text('Review changes')),
+                ])
+              : const SizedBox.shrink(),
+        ),
         if (section == SettingsSections.general) ...[
           _card(context, 'Connection', [
             _row(
@@ -267,6 +347,11 @@ class _SettingsPageState extends State<SettingsPage> {
                         ? 'Connected'
                         : 'Not connected'),
             _row('State', widget.controller.status),
+            _row(
+                'Installation',
+                widget.installed
+                    ? 'Managed installation'
+                    : 'Not managed by this app'),
             if (widget.onToggleTheme != null)
               Align(
                   alignment: Alignment.centerLeft,
@@ -280,6 +365,24 @@ class _SettingsPageState extends State<SettingsPage> {
           _card(context, 'Collaboration', [_collaborationForm(context)]),
         ],
         if (section == SettingsSections.models) ...[
+          _card(context, 'Session profiles', [
+            _row(
+                'Next-turn model',
+                widget.controller.connected
+                    ? widget.controller.session?.selectedProfile ??
+                        'Unavailable'
+                    : 'Unavailable'),
+            _row(
+                'Available profiles',
+                widget.controller.connected
+                    ? widget.controller.profiles.join('\n')
+                    : 'Unavailable'),
+            if (widget.controller.api.isDemo)
+              const Text('These profiles belong to the demo session.'),
+          ]),
+          ModelProfiles(
+              session: widget.controller,
+              onDialogChange: (open) => _dialogOpen = open),
           const Text(
               'Save your API key securely below, or use it for this session only. Environment-provided keys remain supported and read-only.'),
           if (components != null)
@@ -287,19 +390,20 @@ class _SettingsPageState extends State<SettingsPage> {
           else
             _card(context, 'Model', [
               _row('State',
-                  widget.modelConfigured ? 'Configured' : 'Not configured'),
+                  widget.modelConfigured ? 'Configured' : 'Not reported'),
               const SizedBox(height: OdessyTokens.spaceCompact),
               const Text(
                   'Choosing a model and endpoint is a reviewed configuration change. It does not start the model or contact a provider.',
                   style: TextStyle(fontSize: 12)),
-              if (widget.onOpenGetStarted != null)
-                Align(
-                    alignment: Alignment.centerLeft,
-                    child: FilledButton.tonal(
-                        onPressed: widget.onOpenGetStarted,
-                        child: Text(widget.modelConfigured
-                            ? 'Change model'
-                            : 'Configure a model'))),
+              Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton(
+                      onPressed: widget.onOpenGetStarted == null
+                          ? null
+                          : () => _openStandalone(widget.onOpenGetStarted!),
+                      child: Text(widget.modelConfigured
+                          ? 'Change model'
+                          : 'Configure a model'))),
             ]),
           if (widget.onConnectSaved != null)
             Padding(
@@ -310,7 +414,33 @@ class _SettingsPageState extends State<SettingsPage> {
                         onPressed: widget.onConnectSaved,
                         icon: const Icon(Icons.play_arrow_outlined),
                         label: const Text('Connect saved configuration')))),
-          _card(context, 'Collaboration', [_collaborationForm(context)]),
+          _card(context, 'Collaboration', [
+            _collaborationForm(context),
+            OutlinedButton(
+                onPressed: widget.controller.connected &&
+                        !changedConnection &&
+                        widget.controller.api is CollaborationEnabledApi &&
+                        !widget.controller.api.isDemo
+                    ? () => _editCollaboration(enablement: true)
+                    : null,
+                child: const Text('Edit collaboration availability')),
+            OutlinedButton(
+                onPressed: widget.controller.connected &&
+                        !changedConnection &&
+                        widget.controller.api is ContextLimitApi &&
+                        !widget.controller.api.isDemo
+                    ? () => _editCollaboration()
+                    : null,
+                child: const Text('Edit context limit')),
+            OutlinedButton(
+                onPressed: widget.controller.connected &&
+                        !changedConnection &&
+                        widget.controller.api is RoundLimitApi &&
+                        !widget.controller.api.isDemo
+                    ? () => _editCollaboration(rounds: true)
+                    : null,
+                child: const Text('Edit round limit')),
+          ]),
         ],
         if (section == SettingsSections.stt) _component('stt'),
         if (section == SettingsSections.tts) _component('tts'),
@@ -327,12 +457,12 @@ class _SettingsPageState extends State<SettingsPage> {
               const Text(
                   'Voice is optional and uses components you already have. It is not downloaded or started here.',
                   style: TextStyle(fontSize: 12)),
-              if (widget.onOpenGetStarted != null)
+              if (widget.onOpenVoice != null || widget.onOpenGetStarted != null)
                 Align(
                     alignment: Alignment.centerLeft,
                     child: OutlinedButton(
-                        onPressed:
-                            widget.onOpenVoice ?? widget.onOpenGetStarted,
+                        onPressed: () => _openStandalone(
+                            (widget.onOpenVoice ?? widget.onOpenGetStarted)!),
                         child: const Text('Open configuration'))),
             ]),
         if (section == SettingsSections.devices && components != null)
@@ -350,6 +480,8 @@ class _SettingsPageState extends State<SettingsPage> {
                       icon: const Icon(Icons.devices_other, size: 18),
                       label: const Text('Open devices'))),
           ]),
+        if (section == SettingsSections.advanced)
+          RuntimeInventory(session: widget.controller),
         if (section == SettingsSections.advanced)
           _card(context, 'Advanced', [
             const Text(
@@ -424,6 +556,8 @@ class _SettingsPageState extends State<SettingsPage> {
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text('Maximum consultations per turn',
             style: TextStyle(fontSize: 13)),
+        if (changedConnection)
+          const Text('Connection changed. Reload settings before editing.'),
         const SizedBox(height: 8),
         const Text(
             'Choose how often Odessy may consult another configured model. This limit does not enable collaboration by itself.',
@@ -435,7 +569,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 key: const Key('consultation-limit'),
                 controller: count,
                 onChanged: (value) => form.edit(value),
-                enabled: !loading && form.loaded,
+                enabled: !loading && form.loaded && !changedConnection,
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
                     labelText: 'Limit · 0–32',
@@ -446,10 +580,11 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 18),
         Wrap(spacing: 10, children: [
           FilledButton(
-              onPressed: form.canSave ? save : null,
+              onPressed: form.canSave && !changedConnection ? save : null,
               child: const Text('Save settings')),
           OutlinedButton(
-              onPressed: loading ? null : load, child: const Text('Reload'))
+              onPressed: loading ? null : load,
+              child: Text(changedConnection ? 'Reload settings' : 'Reload'))
         ]),
         if (loading)
           const Padding(
