@@ -540,4 +540,74 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     async def cancel_session_job(sid: str, job_id: str):
         return await cancel(job_id, sid)
 
+    def runs_of(sid):
+        selected = find(sid).runs
+        if selected is None:
+            raise HTTPException(503, 'Handoff runs are not configured for this session')
+        return selected
+
+    async def confirmed_run(sid, name, values, action):
+        """Each handoff decision is one approval, bound to what `confirm` shows."""
+        nonlocal pending_admissions
+        from odessy.runtime.types import ToolRequest
+        admission_open()
+        pending_admissions += 1
+        try:
+            runs = runs_of(sid)
+            approved = await find(sid).confirm({'reason': 'Hand work between coding agents', 'risk': 'high'},
+                                               ToolRequest(name, values))
+            if not approved:
+                raise HTTPException(403, 'Handoff declined')
+            return public(await action(runs))
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc))
+        except KeyError:
+            raise HTTPException(404, 'Run not found')
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(400, str(exc))
+        finally:
+            pending_admissions -= 1
+
+    @app.post('/v1/sessions/{sid}/runs', status_code=202)
+    async def submit_run(sid: str, request: Request):
+        data = await body(request)
+        required = {'flow', 'from_participant', 'from_task', 'to_participant', 'to_task'}
+        if set(data) - required - {'workspace'} or required - set(data):
+            raise HTTPException(400, 'flow, from_participant, from_task, to_participant and to_task are required')
+        if not all(isinstance(value, str) for value in data.values()):
+            raise HTTPException(400, 'Run fields must be strings')
+        return await confirmed_run(sid, 'agent.run', data, lambda runs: runs.start(**data, approved=True))
+
+    @app.get('/v1/sessions/{sid}/runs/{run_id}')
+    async def get_run(sid: str, run_id: str):
+        try:
+            return public(runs_of(sid).get(run_id))
+        except KeyError:
+            raise HTTPException(404, 'Run not found')
+
+    @app.get('/v1/sessions/{sid}/runs/{run_id}/artifact')
+    async def get_run_artifact(sid: str, run_id: str):
+        try:
+            return public(runs_of(sid).artifact(run_id))
+        except KeyError:
+            raise HTTPException(404, 'Run not found')
+        except ValueError as exc:
+            raise HTTPException(409, str(exc))
+
+    @app.post('/v1/sessions/{sid}/runs/{run_id}/continue')
+    async def continue_run(sid: str, run_id: str, request: Request):
+        data = await body(request)
+        if set(data) != {'artifact_sha256'} or not isinstance(data['artifact_sha256'], str):
+            raise HTTPException(400, 'artifact_sha256 is required')
+        values = {'run_id': run_id, 'artifact_sha256': data['artifact_sha256']}
+        return await confirmed_run(sid, 'agent.run_continue', values,
+                                   lambda runs: runs.continue_run(**values, approved=True))
+
+    @app.post('/v1/sessions/{sid}/runs/{run_id}/cancel')
+    async def cancel_run(sid: str, run_id: str):
+        try:
+            return public(await runs_of(sid).cancel(run_id))
+        except KeyError:
+            raise HTTPException(404, 'Run not found')
+
     return app

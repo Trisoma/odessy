@@ -131,7 +131,8 @@ def consult_agent(profile, question, context=''):
 
 class JobManager:
     def __init__(self, profiles, event_sink=None, remote_targets=None, runner=None,
-                 adapters=None, max_log_chars=32000, max_progress=100, review=None):
+                 adapters=None, max_log_chars=32000, max_progress=100, review=None,
+                 max_output_chars=2_000_000):
         self.profiles = profiles
         #: Checks the files a finished job changed (``HookSet.review_changes``): a child
         #: CLI runs its own tools, out of reach of the hooks, so its result is reviewed.
@@ -143,6 +144,10 @@ class JobManager:
         self.adapters = adapters or {}
         self.max_log_chars = max_log_chars
         self.max_progress = max_progress
+        #: A handoff passes the whole result on, so it is bounded apart from the log.
+        self.max_output_chars = max_output_chars
+        #: Told of every job change, on the loop. A handoff run watches its steps here.
+        self.job_listener = None
         self._jobs, self._tasks, self._active, self._secrets = {}, {}, {}, {}
         self._remote_ids = {}
         self._remote_inflight = set()
@@ -167,6 +172,27 @@ class JobManager:
                 raise ValueError('workspace repository has an active job')
             _repository_reservations[key] = job_id
             self._active[key] = job_id
+
+    async def _repository_key(self, cwd, repo):
+        common = await self._git(cwd, 'rev-parse', '--git-common-dir', check=False)
+        identity = (Path(cwd) / common).resolve() if common else repo
+        return ('local', str(identity).casefold() if os.name == 'nt' else str(identity))
+
+    async def reserve_repository(self, workspace, owner):
+        """Hold a repository for `owner` between jobs. Returns the repository root."""
+        cwd = Path(workspace)
+        top = await self._git(cwd, 'rev-parse', '--show-toplevel', check=False)
+        if not top:
+            raise ValueError('a handoff run requires a clean git repository')
+        repo = Path(top).resolve()
+        self._reserve(await self._repository_key(cwd, repo), owner)
+        return repo
+
+    def release_repository(self, owner):
+        self._release(owner)
+
+    async def wait(self, job_id):
+        await asyncio.gather(self._tasks[job_id], return_exceptions=True)
 
     async def consult(self, profile, question, context=''):
         """Advice on this manager's loop, including explicitly admitted hosts."""
@@ -227,6 +253,8 @@ class JobManager:
             self._raw_logs[job_id] = raw
             job['log'] = self._redact(job_id, raw)[-self.max_log_chars:]
             job['progress'] = [line[-2000:] for line in job['log'].splitlines()[-self.max_progress:]]
+        if self.job_listener:
+            self.job_listener(job['job_id'])
         if self.event_sink:
             result = self.event_sink({'type': 'collaboration.job', **self.get(job['job_id'])})
             if inspect.isawaitable(result):
@@ -244,6 +272,10 @@ class JobManager:
 
     async def submit(self, participant, task, mode='advice', workspace=None, approved=False):
         return await self._submit(participant, task, mode, workspace, approved)
+
+    async def submit_in_worktree(self, participant, task, mode, worktree, approved=False):
+        """A handoff step: it runs in the worktree and under the reservation of its run."""
+        return await self._submit(participant, task, mode, None, approved, worktree=Path(worktree))
 
     async def _submit_consult(self, participant, task):
         return await self._submit(participant, task, 'advice', None, False, consultation=True)
@@ -286,7 +318,7 @@ class JobManager:
                 'remote_identity': remote_identity,
                 'adapter_identity': str(id(custom)) if custom is not None else None}
 
-    async def _submit(self, participant, task, mode, workspace, approved, consultation=False):
+    async def _submit(self, participant, task, mode, workspace, approved, consultation=False, worktree=None):
         identity = self._preflight_submission(participant, task, mode, workspace,
             'consult' if consultation else 'delegate')
         # The approval binds the target that was admitted. Keep it, so a queued job
@@ -307,22 +339,23 @@ class JobManager:
             cwd = str(workspace) if workspace is not None else configured_workspace
             repo = None
             key = (host, configured_workspace or str(cwd) or participant)
+        elif worktree is not None:
+            cwd, repo, key = worktree, worktree, None
         else:
             cwd = Path(identity['workspace'])
             repo = Path(await self._git(cwd, 'rev-parse', '--show-toplevel', check=False) or cwd).resolve()
-            common = await self._git(cwd, 'rev-parse', '--git-common-dir', check=False)
-            identity = (cwd / common).resolve() if common else repo
-            key = ('local', str(identity).casefold() if os.name == 'nt' else str(identity))
-        if self._reserved(key):
+            key = await self._repository_key(cwd, repo)
+        if key is not None and self._reserved(key):
             raise ValueError('workspace repository has an active job')
-        if mode == 'patch' and not remote:
+        if mode == 'patch' and not remote and worktree is None:
             if not await self._git(cwd, 'rev-parse', '--show-toplevel', check=False):
                 raise ValueError('patch mode requires a clean git repository')
             if await self._git(repo, 'status', '--porcelain'):
                 raise ValueError('patch mode requires a clean git repository')
         job_id = uuid.uuid4().hex
         job = dict(job_id=job_id, participant=participant, mode=mode, task=task,
-                   state='queued', workspace=str(cwd), worktree=None, diff='', changed_files=[],
+                   state='queued', workspace=str(cwd), worktree=str(worktree) if worktree else None,
+                   diff='', changed_files=[],
                    validation={'status': 'unknown', 'report': None}, result=None, error=None,
                    progress=[], log='', usage=_cli_usage(), hook_review=None)
         job['remote_state_unknown'] = False
@@ -342,7 +375,8 @@ class JobManager:
         credential = getattr(profile, 'credential_env', None)
         self._secrets[job_id] = [os.environ.get(credential, '')] if credential else []
         try:
-            self._reserve(key, job_id)
+            if key is not None:
+                self._reserve(key, job_id)
         except ValueError:
             del self._jobs[job_id]
             del self._secrets[job_id]
@@ -438,7 +472,7 @@ class JobManager:
                 # registered adapter swapped or removed while the job was queued
                 # would silently run different code under the old approval.
                 self._require_approved_adapter(job, profile)
-                if job['mode'] == 'patch':
+                if job['mode'] == 'patch' and not job['worktree']:
                     worktree = repo.parent / (repo.name + '-odessy-' + job['job_id'][:12])
                     await self._git(repo, 'worktree', 'add', '--detach', str(worktree), 'HEAD')
                     job['worktree'] = str(worktree)
@@ -592,7 +626,7 @@ class JobManager:
                 if not chunk:
                     break
                 text = chunk.decode(errors='replace')
-                output = (output + text)[-self.max_log_chars:]
+                output = (output + text)[-self.max_output_chars:]
                 on_output(text)
             await proc.wait()
         except asyncio.CancelledError:
