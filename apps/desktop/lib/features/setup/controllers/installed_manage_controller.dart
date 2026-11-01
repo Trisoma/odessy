@@ -241,10 +241,6 @@ class InstalledManageController extends ChangeNotifier {
             'Odessy was uninstalled from this computer. Models, credentials, settings and unrelated files were preserved.';
       } else {
         notice = _completedNotice(mutating);
-        if (mutating == 'package-configure') {
-          spec = await _execute('installed-spec', const {});
-          if (_disposed || epoch != _epoch) return;
-        }
         status = await _execute('package-status', const {});
       }
     } catch (failure) {

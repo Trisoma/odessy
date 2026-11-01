@@ -7,14 +7,10 @@
     "approvals": "live-broker",
     "clarification": "live-broker",
     "collaboration_limit": "live-new-sessions",
-    "settings_draft_guard": "shell-navigation-connection-cancelable-exit",
-    "monitoring_inventory": "live-read-only-fixture-tested",
-    "monitoring_metrics": "live-read-only-fixture-tested",
-    "monitoring_history": "live-read-only-fixture-tested",
     "device_management": "unavailable-api-pending",
-    "desktop_voice": "session-controls-adapter-hardware-unqualified",
-    "provider_editing": "cloud-ollama-new-sessions",
-    "usage_jobs": "live-process-ledger-session-jobs",
-    "persistent_credentials": "windows-opt-in-local-api-token"
+    "desktop_voice": "unavailable-api-pending",
+    "provider_editing": "not-in-preview",
+    "usage_jobs": "not-in-preview",
+    "persistent_credentials": "not-in-preview"
   }
 }

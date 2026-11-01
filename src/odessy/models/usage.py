@@ -29,7 +29,7 @@ import sys
 import threading
 import copy
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 
 BUDGET_TOKENS_ENV = "ODESSY_CLOUD_BUDGET_TOKENS"
 BUDGET_COST_ENV = "ODESSY_CLOUD_BUDGET_COST"
@@ -154,30 +154,6 @@ class UsageLedger:
                 entry['cost'] = None if p is None else p.cost(prompt=t.prompt, cached=t.cached, completion=t.completion)
                 entry['price_status'] = 'unknown' if p is None else 'configured'
             return result
-
-    def report(self):
-        """Return one consistent process-wide report, without guessing prices."""
-        with self._lock:
-            profiles = []
-            currencies = set()
-            if self.pricing is not None:
-                currencies.add(self.pricing.currency)
-            for (participant, provider, model), entry in self._profiles.items():
-                pricing, turn, total = entry['pricing'], entry['turn'], entry['total']
-                if pricing is not None:
-                    currencies.add(pricing.currency)
-                def amount(totals):
-                    return None if pricing is None else pricing.cost(
-                        prompt=totals.prompt, cached=totals.cached, completion=totals.completion)
-                profiles.append({'participant': participant, 'provider': provider, 'model': model,
-                    'turn': asdict(turn), 'total': asdict(total), 'turn_cost': amount(turn),
-                    'total_cost': amount(total), 'pricing': asdict(pricing) if pricing else None,
-                    'price_status': 'configured' if pricing else 'unknown'})
-            total_cost, turn_cost = self.cost(), self.cost(self.turn)
-            return {'turn': asdict(self.turn), 'total': asdict(self.total),
-                    'turn_cost': turn_cost, 'total_cost': total_cost,
-                    'currency': next(iter(currencies)) if len(currencies) == 1 and total_cost is not None else None,
-                    'profiles': profiles}
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None, *, allow_profile_prices: bool = False) -> UsageLedger:

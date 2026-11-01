@@ -5,44 +5,6 @@ import 'package:odessy_desktop/features/setup/controllers/maintenance_controller
 import 'setup_controller_test.dart' show Backend;
 
 void main() {
-  for (final action in ['pair:revoke-telemetry', 'pair:revoke-execution']) {
-    test('$action requires review and excludes the workspace', () async {
-      final backend = Backend();
-      final controller = MaintenanceController(backend);
-      controller.update(
-          {'link': 'local-link', 'alias': 'node', 'workspace': 'unrelated'});
-      await controller.apply();
-      expect(backend.requests, isEmpty);
-      await controller.review(action);
-      expect(backend.requests.single.parameters['review'], isTrue);
-      expect(
-          backend.requests.single.parameters.containsKey('workspace'), isFalse);
-      await controller.apply();
-      expect(backend.requests.last.parameters['action'], action.substring(5));
-      expect(backend.requests.last.parameters['confirm'], 'review-id');
-      expect(controller.needsInspection, isTrue);
-      controller.dispose();
-    });
-  }
-  test('telemetry grant needs review and does not include a workspace grant',
-      () async {
-    final backend = Backend();
-    final controller = MaintenanceController(backend);
-    controller.update(
-        {'link': 'local-link', 'alias': 'node', 'workspace': 'unrelated'});
-    await controller.apply();
-    expect(backend.requests, isEmpty);
-    await controller.review('pair:grant-telemetry');
-    final review = backend.requests.single;
-    expect(review.operation, 'pair');
-    expect(review.parameters['action'], 'grant-telemetry');
-    expect(review.parameters['review'], isTrue);
-    expect(review.parameters.containsKey('workspace'), isFalse);
-    await controller.apply();
-    expect(backend.requests.last.parameters['action'], 'grant-telemetry');
-    expect(backend.requests.last.parameters['confirm'], 'review-id');
-    controller.dispose();
-  });
   test('rollback and uninstall require their exact operation plans', () async {
     final backend = Backend();
     final c = MaintenanceController(backend);

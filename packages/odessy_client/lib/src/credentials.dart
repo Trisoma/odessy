@@ -6,7 +6,7 @@ abstract interface class CredentialStore {
   Future<void> remove(String identity);
 }
 
-/// Memory credentials are never written to preferences or files.
+/// Preview credentials live only in memory, never in preferences or files.
 class MemoryCredentialStore implements CredentialStore {
   final Map<String, String> _tokens = {};
   @override

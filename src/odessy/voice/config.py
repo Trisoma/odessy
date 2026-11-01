@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import tempfile
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -90,7 +89,7 @@ class VoiceConfig:
             onnx_provider=os.environ.get("ODESSY_ONNX_PROVIDER", "auto"),
             onnx_cache_dir=_env_path("ODESSY_ONNX_CACHE_DIR"),
             audio_recorder=os.environ.get("ODESSY_AUDIO_RECORDER", "arecord"),
-            audio_player=os.environ.get("ODESSY_AUDIO_PLAYER", "windows-native" if sys.platform == 'win32' else "aplay"),
+            audio_player=os.environ.get("ODESSY_AUDIO_PLAYER", "aplay"),
             audio_backend=os.environ.get("ODESSY_AUDIO_BACKEND", "auto"),
             audio_input_device=os.environ.get("ODESSY_AUDIO_INPUT_DEVICE") or None,
             audio_output_device=os.environ.get("ODESSY_AUDIO_OUTPUT_DEVICE") or None,

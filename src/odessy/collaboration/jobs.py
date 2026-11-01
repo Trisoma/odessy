@@ -152,30 +152,6 @@ class JobManager:
     def get(self, job_id):
         return copy.deepcopy(self._jobs[job_id])
 
-    def list_summaries(self, *, after=None, limit=50):
-        """Return a bounded insertion-ordered page without logs or task contents.
-
-        The cursor names a job in this manager; pages are not frozen snapshots.
-        """
-        if type(limit) is not int or not 1 <= limit <= 50:
-            raise ValueError('Invalid job page size')
-        if after is not None and (not isinstance(after, str) or
-                                  not re.fullmatch(r'[0-9a-f]{32}', after)):
-            raise ValueError('Invalid job cursor')
-        ids = list(self._jobs)
-        if after is not None:
-            try:
-                start = ids.index(after) + 1
-            except ValueError:
-                raise ValueError('Job cursor is not in this session') from None
-        else:
-            start = 0
-        page = ids[start:start + limit]
-        fields = ('job_id', 'participant', 'mode', 'state', 'remote_state_unknown')
-        items = [{name: copy.deepcopy(self._jobs[job_id].get(name)) for name in fields}
-                 for job_id in page]
-        return {'jobs': items, 'next_cursor': page[-1] if start + limit < len(ids) else None}
-
     @property
     def has_active_work(self):
         return bool(self._remote_inflight) or any(not task.done() for task in self._tasks.values()) or any(
