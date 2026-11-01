@@ -151,7 +151,7 @@ async def test_single_mode_without_node_runs_degraded_and_says_so(
         )
         assert "filesystem.list" not in error.tool_contract
 
-    assert len(model_tool_names()) == 13  # Availability does not leak into later runs.
+    assert len(model_tool_names()) == 14  # Availability does not leak into later runs.
     assert "terminal.run" in await _tool_names(local)
     warning = capsys.readouterr().err
     assert "Node tool server is not installed" in warning
@@ -270,7 +270,7 @@ async def test_single_mode_runs_a_command_through_the_local_node_server(
         local, node_url = _servers_of(servers)
         node_tools = await _tool_names(node_url)
         assert set(model_tool_names()) == node_tools | await _tool_names(local)
-        assert len(model_tool_names()) == 13
+        assert len(model_tool_names()) == 14
         agent = OdessyAgent(
             model=ShellModel(),
             policy=OdessyPolicy(workspace_root=tmp_path),

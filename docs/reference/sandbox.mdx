@@ -53,7 +53,8 @@ governs file effects.
 `~/.config/odessy/sandbox.toml`, or the path in `ODESSY_SANDBOX_FILE`. Like
 `hooks.toml` it is never read from the workspace, and the agent may not change it:
 a local command that names it, or a `filesystem.write` to it, is denied, even
-before it exists. It is read once per process; restart Odessy after editing it.
+before it exists. It is read once per process, and a change while Odessy runs denies
+every call until you restart it.
 
 ```toml
 isolation = "auto"                       # auto | required | preferred | not-required
@@ -92,13 +93,17 @@ At most 64 hidden paths (the built-in list included) and 16 extra writable folde
 A hidden path that contains the workspace or lies inside it is skipped, since
 hiding it would break the command.
 
+`sandbox.toml` governs Odessy's own commands, and hooks that ask for it. A delegated
+coding agent and a third-party tool server run outside it.
+
 ### Hidden by default
 
 `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.azure`, `~/.kube`, `~/.docker`, `~/.netrc`,
 `~/.pypirc`, `~/.npmrc`, `~/.git-credentials`, `~/.config/gcloud`, `~/.config/gh`,
 `~/.config/odessy`, `~/.local/share/keyrings`, `~/.password-store`, the Firefox,
 Chrome, Chromium, Brave and Edge profiles, the macOS keychains, and the Windows
-credential and DPAPI folders. A confirmed `npm install` from a private registry
+credential and DPAPI folders. The policy refuses a command that names one of these
+([permissions](permissions.mdx)), so a backend that cannot hide them is still covered. A confirmed `npm install` from a private registry
 needs `~/.npmrc`; drop it with `default_hidden = false` and list the rest.
 
 ### Limits

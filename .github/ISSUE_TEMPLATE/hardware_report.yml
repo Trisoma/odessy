@@ -1,0 +1,80 @@
+# DRAFT — maintainer review before merge.
+name: Hardware benchmark report
+description: Share reproducible measurements; a report does not establish platform support.
+title: "[Hardware]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use benchmark/README.md for component measurements. Agent evals are a different workload.
+        Remove keys, tokens, serial numbers, usernames and personal paths from attachments.
+        Real hardware reports must use --adapter real. Failures and OOM are useful evidence.
+        Report vulnerabilities privately through SECURITY.md, not this form.
+  - type: input
+    id: device
+    attributes:
+      label: Device and GPU
+      description: Exact device/GPU model, CPU and architecture. Mark virtualization or emulation.
+    validations:
+      required: true
+  - type: input
+    id: memory
+    attributes:
+      label: RAM, GPU memory and swap
+      description: Give capacities and whether GPU memory is shared or dedicated.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and software versions
+      description: OS/kernel, driver, accelerator stack, Python and Ollama/provider versions.
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Odessy commit and working-tree changes
+      description: Include git rev-parse HEAD and whether local modifications were present.
+    validations:
+      required: true
+  - type: textarea
+    id: model
+    attributes:
+      label: Model and execution configuration
+      description: Model/version, quantization, provider, GPU layers, context and generation limits; unknown is acceptable. State the adapter you used. A `--adapter fake` or fake-model run exercises the harness, not the hardware, and must be labelled as such rather than reported as a hardware measurement.
+    validations:
+      required: true
+  - type: textarea
+    id: commands
+    attributes:
+      label: Exact benchmark commands
+      description: |
+        Start from benchmark/README.md. For an already-installed Ollama model, adapt:
+        python -m benchmark --scenario lfm_compare --adapter real --prompt "What time is it?" --expected-tool time.now --lfm-variant "current=<installed-ollama-model>" --runs 3 --warmup 1
+        Record changes, environment overrides and cold/warm state. Do not paste credentials.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: measurements
+    attributes:
+      label: Throughput, latency and correctness
+      description: Report generation tok/s, count excluding warmup, median/p95 latency with units, valid proposals and expected-tool matches. Use unknown for missing values; three samples do not establish stable p95.
+    validations:
+      required: true
+  - type: dropdown
+    id: oom
+    attributes:
+      label: Was an out-of-memory error observed?
+      options:
+        - "No"
+        - "Yes"
+        - "Unknown"
+    validations:
+      required: true
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: Failures, resource observations and sanitized artifacts
+      description: Include exits, OOM details, peak memory if measured, throttling and other workloads. Attach redacted metadata/CSV/JSONL; preserve failed samples. This does not certify support.

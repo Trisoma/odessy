@@ -240,8 +240,11 @@ class SessionController:
         from pathlib import Path
         from odessy.runtime.hooks import HookConfigError, load_hooks, screen_request
         from odessy.runtime.types import PolicyDecision
+        # The job's own workspace: a rule limited to a workspace, or a path glob, means
+        # the one the job will change, not the one this process started in.
+        workspace = Path(arguments.get('workspace') or Path.cwd())
         try:
-            hooks = load_hooks(Path.cwd())
+            hooks = load_hooks(workspace)
         except HookConfigError as error:
             raise PermissionError(f'{name} refused: {error}') from error
         decision = PolicyDecision('confirm', f'{name} requested directly', risk)

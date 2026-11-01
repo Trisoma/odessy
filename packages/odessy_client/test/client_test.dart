@@ -5,9 +5,11 @@ import 'package:odessy_client/odessy_client.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('HTTP 503 provides model configuration guidance without server details', () async {
+  test('HTTP 503 provides model configuration guidance without server details',
+      () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final api = LocalApi(Uri.parse('http://127.0.0.1:${server.port}'), 'secret');
+    final api =
+        LocalApi(Uri.parse('http://127.0.0.1:${server.port}'), 'secret');
     server.listen((request) async {
       request.response.statusCode = 503;
       request.response.write('{"detail":"private-server-diagnostic"}');
@@ -22,7 +24,8 @@ void main() {
           expect(error.status, 503);
           expect(error.toString(), contains('API key'));
           expect(error.toString(), contains('model settings'));
-          expect(error.toString(), isNot(contains('private-server-diagnostic')));
+          expect(
+              error.toString(), isNot(contains('private-server-diagnostic')));
         }
       }
     } finally {

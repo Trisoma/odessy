@@ -288,10 +288,14 @@ class LocalApi
       return jsonDecode(utf8.decode(bytes)) as Json;
     } on ApiFailure catch (error) {
       throw ExecutionConnectionFailure(switch (error.status) {
-        403 => 'The execution host declined or did not answer. Press Connect to ask again.',
-        409 => 'Stop any active turn, disconnect the current host, or refresh nearby hosts before retrying.',
-        503 => 'The execution host could not connect its tools. Restart sharing there and retry. Chat remains available.',
-        _ => 'Connection request failed. Check the local coordinator and execution host.',
+        403 =>
+          'The execution host declined or did not answer. Press Connect to ask again.',
+        409 =>
+          'Stop any active turn, disconnect the current host, or refresh nearby hosts before retrying.',
+        503 =>
+          'The execution host could not connect its tools. Restart sharing there and retry. Chat remains available.',
+        _ =>
+          'Connection request failed. Check the local coordinator and execution host.',
       });
     }
   }

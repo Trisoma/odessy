@@ -118,8 +118,7 @@ pub async fn request(req: &Request) -> Result<Value, String> {
     {
         return Err("IDENTITY_MISMATCH".into());
     }
-    let stream = BufReader::new(stream);
-    stream
+    BufReader::new(stream)
 
         }
     };

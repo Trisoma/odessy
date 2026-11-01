@@ -55,16 +55,30 @@ class PendingReader implements SetupBackend {
 }
 
 void main() {
-  testWidgets('normal closure can be cancelled before owned shutdown', (tester) async {
-    tester.view.physicalSize=const Size(1280,1000);tester.view.devicePixelRatio=1;
-    addTearDown(tester.view.resetPhysicalSize);addTearDown(tester.view.resetDevicePixelRatio);
-    var shutdowns=0;
-    await tester.pumpWidget(OdessyApp(api:DemoApi(),setupBackend:SavedComponents(),onShutdownOwned:() async {shutdowns++;}));
-    await tester.pumpAndSettle();await tester.tap(find.byKey(const ValueKey('nav-Settings')));await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const Key('consultation-limit')),'3');
-    final exit=tester.binding.handleRequestAppExit();await tester.pumpAndSettle();
-    expect(shutdowns,0);await tester.tap(find.text('Keep editing'));await tester.pumpAndSettle();
-    expect(await exit,AppExitResponse.cancel);expect(shutdowns,0);
+  testWidgets('normal closure can be cancelled before owned shutdown',
+      (tester) async {
+    tester.view.physicalSize = const Size(1280, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var shutdowns = 0;
+    await tester.pumpWidget(OdessyApp(
+        api: DemoApi(),
+        setupBackend: SavedComponents(),
+        onShutdownOwned: () async {
+          shutdowns++;
+        }));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('nav-Settings')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('consultation-limit')), '3');
+    final exit = tester.binding.handleRequestAppExit();
+    await tester.pumpAndSettle();
+    expect(shutdowns, 0);
+    await tester.tap(find.text('Keep editing'));
+    await tester.pumpAndSettle();
+    expect(await exit, AppExitResponse.cancel);
+    expect(shutdowns, 0);
     await tester.pumpWidget(const SizedBox());
   });
   test(

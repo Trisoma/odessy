@@ -48,7 +48,8 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  test('failed host connection preserves an already usable conversation', () async {
+  test('failed host connection preserves an already usable conversation',
+      () async {
     final api = HostTransport();
     final chat = DesktopSession(api);
     final hosts = ExecutionHostsController(api);

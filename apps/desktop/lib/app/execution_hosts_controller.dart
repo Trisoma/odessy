@@ -11,7 +11,9 @@ class ExecutionHostsController extends ChangeNotifier {
   String state = 'disconnected', message = '';
   bool busy = false, _disposed = false;
   Timer? _poll;
-  void _notify() { if (!_disposed) notifyListeners(); }
+  void _notify() {
+    if (!_disposed) notifyListeners();
+  }
 
   Future<void> scan() async {
     if (api == null || busy || _disposed) return;
@@ -21,11 +23,19 @@ class ExecutionHostsController extends ChangeNotifier {
     try {
       final result = await api!.scanExecutionHosts();
       if (_disposed) return;
-      hosts = (result['hosts'] as List).whereType<Map>().map((v) => Map<String, dynamic>.from(v)).toList();
-      connection = result['connection'] is Map ? Map<String, dynamic>.from(result['connection'] as Map) : null;
-      message = hosts.isEmpty ? 'No execution hosts found. Open OdessyExecutor on the same Wi-Fi or LAN.' : '';
+      hosts = (result['hosts'] as List)
+          .whereType<Map>()
+          .map((v) => Map<String, dynamic>.from(v))
+          .toList();
+      connection = result['connection'] is Map
+          ? Map<String, dynamic>.from(result['connection'] as Map)
+          : null;
+      message = hosts.isEmpty
+          ? 'No execution hosts found. Open OdessyExecutor on the same Wi-Fi or LAN.'
+          : '';
     } catch (_) {
-      message = 'Could not find nearby hosts. Check the local coordinator, Wi-Fi and discovery dependencies.';
+      message =
+          'Could not find nearby hosts. Check the local coordinator, Wi-Fi and discovery dependencies.';
     } finally {
       busy = false;
       _notify();
@@ -36,7 +46,8 @@ class ExecutionHostsController extends ChangeNotifier {
     if (api == null || busy || _disposed) return;
     busy = true;
     state = 'waiting_for_approval';
-    message = 'Waiting for approval. On the execution host, type Y in its terminal.';
+    message =
+        'Waiting for approval. On the execution host, type Y in its terminal.';
     _notify();
     _poll = Timer.periodic(const Duration(seconds: 1), (_) async {
       try {
@@ -46,7 +57,7 @@ class ExecutionHostsController extends ChangeNotifier {
           message = 'Accepted. Connecting to tools…';
           _notify();
         }
-      } catch (_) { /* The final request reports a connection failure. */ }
+      } catch (_) {/* The final request reports a connection failure. */}
     });
     try {
       final result = await api!.connectExecutionHost(id);
@@ -57,11 +68,14 @@ class ExecutionHostsController extends ChangeNotifier {
       try {
         await onConnected?.call();
       } catch (_) {
-        message = 'Tools connected. The model session could not reopen; check model settings. Execution configuration is retained.';
+        message =
+            'Tools connected. The model session could not reopen; check model settings. Execution configuration is retained.';
       }
     } catch (error) {
       state = 'failed';
-      message = error is ExecutionConnectionFailure ? error.message : 'Connection failed. Check the execution host and try again. Chat remains available.';
+      message = error is ExecutionConnectionFailure
+          ? error.message
+          : 'Connection failed. Check the execution host and try again. Chat remains available.';
     } finally {
       _poll?.cancel();
       _poll = null;

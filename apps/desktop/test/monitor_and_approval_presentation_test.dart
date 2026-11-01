@@ -18,9 +18,11 @@ Map<String, dynamic> _approval() => {
       'permission_scopes': ['workspace:read', 'process:exec'],
       'risk': 'high',
       'arguments': {'command': 'ls -la /workspace', 'cwd': '/workspace'},
-      'expires_at':
-          DateTime.now().toUtc().add(const Duration(minutes: 5)).millisecondsSinceEpoch /
-              1000,
+      'expires_at': DateTime.now()
+              .toUtc()
+              .add(const Duration(minutes: 5))
+              .millisecondsSinceEpoch /
+          1000,
     };
 
 void main() {
@@ -34,7 +36,8 @@ void main() {
         .load();
   });
 
-  testWidgets('approval card shows review facts, keeps the exact command and '
+  testWidgets(
+      'approval card shows review facts, keeps the exact command and '
       'hides the raw payload behind Details', (tester) async {
     tester.view.physicalSize = const Size(760, 900);
     tester.view.devicePixelRatio = 1;
@@ -45,7 +48,8 @@ void main() {
     addTearDown(session.dispose);
     final key = GlobalKey();
 
-    await tester.pumpWidget(MaterialApp(theme: ThemeData(fontFamily: 'OdessySans'),
+    await tester.pumpWidget(MaterialApp(
+        theme: ThemeData(fontFamily: 'OdessySans'),
         home: Scaffold(
             body: SingleChildScrollView(
                 child: RepaintBoundary(
@@ -80,8 +84,7 @@ void main() {
           key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
       final image = await boundary.toImage(pixelRatio: 1);
       final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-      await Directory('build/preview/ux-completion')
-          .create(recursive: true);
+      await Directory('build/preview/ux-completion').create(recursive: true);
       await File('build/preview/ux-completion/approval-review-expanded.png')
           .writeAsBytes(bytes!.buffer.asUint8List());
       image.dispose();

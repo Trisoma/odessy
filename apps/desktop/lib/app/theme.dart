@@ -21,13 +21,12 @@ ThemeData odessyTheme(Brightness brightness) {
             bodySmall: base.bodySmall?.copyWith(fontSize: 12, height: 1.45),
             titleLarge: base.titleLarge?.copyWith(
                 fontSize: 25, fontWeight: FontWeight.w600, letterSpacing: -.6),
-            titleMedium: base.titleMedium?.copyWith(
-                fontSize: 15, fontWeight: FontWeight.w600),
+            titleMedium: base.titleMedium
+                ?.copyWith(fontSize: 15, fontWeight: FontWeight.w600),
             labelLarge: base.labelLarge?.copyWith(fontSize: 13),
             labelMedium: base.labelMedium?.copyWith(fontSize: 12))
         .apply(
-            fontFamily: 'OdessySans',
-            fontFamilyFallback: const ['OdessySans']),
+            fontFamily: 'OdessySans', fontFamilyFallback: const ['OdessySans']),
     dividerColor: dark ? const Color(0xff303335) : const Color(0xffe0e2dc),
     inputDecorationTheme: InputDecorationTheme(
         filled: true,

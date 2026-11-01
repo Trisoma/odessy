@@ -253,7 +253,8 @@ async def test_a_pre_tool_hook_sees_where_the_call_runs_and_the_session(workspac
     model = Scripted(run("pwd"), FinalResponse("done"))
     await make_agent(workspace, model, hooks=[program(outside, "pre_tool", "silent")]).run_turn("where am I?")
     (payload,) = records(outside)
-    assert payload["execution"] == {"target": "local", "mode": "read-only", "isolation": "preferred", "escalation": None}
+    assert payload["execution"] == {"target": "local", "mode": "read-only", "isolation": "preferred", "network": "deny",
+                                    "provider": None, "enforcement": None, "escalation": None}
     assert payload["session"]["call_index"] == 1 and len(payload["session"]["turn_id"]) == 12
     assert payload["request"] == "where am I?" and payload["taints"] == []
 
@@ -494,11 +495,12 @@ def test_the_hooks_file_is_protected_even_before_it_exists(workspace, outside):
     paths = protected_paths({"ODESSY_HOOKS_FILE": str(path)})
     assert paths == (path, path.parent)
     policy = OdessyPolicy(workspace_root=workspace, protected_paths=paths)
-    for command in (f"echo x > {path}", f'Set-Content "{path.parent}\\hooks.toml" x', "type hooks.toml"):
+    for command in (f"echo x > {path}", f'Set-Content "{path.parent}\\hooks.toml" x', "echo x > hooks.toml"):
         decision = policy.evaluate(run(command))
         assert decision.action == "deny" and decision.rule == "protected_config", command
     assert policy.evaluate(run("pwd")).action == "allow"
-    laptop = policy.evaluate(ToolRequest("laptop.terminal.run", {"command": "type hooks.toml", "timeout": 30}))
+    assert policy.evaluate(run("type hooks.toml")).rule != "protected_config"  # a repository's own file
+    laptop = policy.evaluate(ToolRequest("laptop.terminal.run", {"command": "echo x > hooks.toml", "timeout": 30}))
     assert laptop.rule != "protected_config"
 
 

@@ -1,16 +1,16 @@
 ---
-title: "Current v0.4.0 Limitations and v0.5.0 Boundaries"
+title: "Current Limitations"
 sidebar-title: "Current Limitations"
-description: "Limits of released v0.4.0 and planned v0.5.0 UI, onboarding and monitoring work."
+description: "Known limits of the current build: per-host isolation coverage, data egress, voice readiness and deferred work."
 description-agent: "Use before claiming Odessy is sandboxed, paired, autonomous, voice-ready, local-only, or production-secure. Lists current known limitations, per-host isolation coverage, data egress, and deferred work."
-keywords: ["odessy limitations", "v0.4.0 scope", "v0.5.0 planning", "security limitations", "isolation coverage", "deferred work"]
+keywords: ["odessy limitations", "security limitations", "isolation coverage", "deferred work"]
 content:
   type: "reference"
 ---
 
 Configurable collaboration adds an authenticated loopback session API and coding jobs. It does not provide durable jobs, verified child-CLI confinement, mid-task model takeover, or hardware qualification. Coding-agent bills are outside the API budget. See [model collaboration](model-collaboration.mdx).
 
-Session-preserving keyboard input is included in released v0.4.0. The following
+Keyboard input is available throughout an interactive voice session. The following
 October 22 verification figures are historical. Interactive voice commands share one controller and history with typed
 requests; this does not establish real-terminal or Jetson acceptance. Slow audio
 setup and explicit retry now leave typing responsive. Earlier MCP/runtime failures
@@ -21,27 +21,27 @@ See [voice integration](voice-integration.mdx).
 
 Risk-aware voice approval and mid-task clarification are **complete offline and
 independently reviewed as of October 22, 2026** on `feat/voice-user-interaction`
-through `3412025`; merged via PR #24 (`6d8b80b`), released in v0.4.0. Real microphone echo
+through `3412025`; merged in `6d8b80b`. Real microphone echo
 behaviour and packaged-device acceptance remain unqualified. October 23 Jetson
 recorded-audio approval/clarification and live headset smoke checks passed; see
 [qualification](../qualification/2026-10-23-interactions-and-pairing.md).
 Spoken approval signals intent and does not authenticate identity. See
 [voice integration](voice-integration.mdx).
 
-Cloud resilience merged via PR #23 (`d05e1b8`): configured pre-tool failover,
+Cloud resilience: configured pre-tool failover,
 sentence-level cloud wake speech and a content-free egress log. No live-provider
 or new Jetson qualification is established. Failover cannot resume a turn after
 tools ran; streaming compatibility and acoustic interruption remain hardware/provider
 checks. See [cloud models](cloud-models.mdx).
 
-Odessy v0.4.0 was released October 23, 2026. Its authority boundary and isolation
-coverage depend on the host. Future feature work is tracked in the
-[v0.5.0 roadmap](../releases/v0.5.0.md): Flutter desktop, completed installer with
+Odessy's authority boundary and isolation coverage depend on the host. Planned feature
+work is tracked in the
+[roadmap](../releases/v0.5.0.md): Flutter desktop, completed installer with
 optional model downloads/detection, Go multi-host monitoring and custom wake word
-are planned. LFM must not be a mandatory v0.5.0 installer download; this requirement
+are planned. LFM must not be a mandatory installer download; this requirement
 does not describe the current prototype as fixed. MCU operations remain deferred,
 gate narrowing optional and optimization measurement-led. Wake listening, Auto,
-confirmation UX and batch follow-ups are included in v0.4.0; recorded smoke tests
+confirmation UX and batch follow-ups are included; recorded smoke tests
 do not establish extended hardware or live-provider acceptance.
 See [Jetson wake testing](../jetson-wake-testing.md) for setup and acceptance.
 It is still not a complete operating-system sandbox, and on the Jetson board it is largely inactive — see **Isolation Layer** below.
@@ -64,10 +64,10 @@ This page records the limits future agents must keep visible when changing the r
 | Workspace confinement | Python `WorkspaceAuthority` plus Node path guard defense in depth, **and** an isolation layer that confines wherever a backend exists | Path validation is still user-space, so TOCTOU races remain possible between validation and access. Kernel isolation is a separate, additive control — see **Isolation Layer**. |
 | Symlinks/reparse points | Canonical path resolution blocks existing symlink escapes where the platform resolver exposes them | This is not a claim of complete coverage for every Windows reparse-point or filesystem race edge case. |
 | Sensitive paths | Obvious sensitive names and segments are denied | The classifier is intentionally conservative, not a perfect secret detector. It may miss unusual secret filenames and may deny some legitimate files. |
-| Command parsing | Policy denies destructive, credential-seeking, and obvious detached/background patterns, download-and-run (`curl … \| sh`, `iwr … \| iex`, `bash <(curl …)`), and writes to operating-system locations (`C:\Windows`, `/etc`, `/usr`, …) | Odessy does not implement a full shell parser, so these are patterns: an obfuscated command can evade them, and an interpreter fed by a download is denied even when it only formats data. Execution-level timeout cleanup is a backstop, not a universal containment proof. |
+| Command parsing | Policy denies destructive, credential-seeking, and obvious detached/background patterns, download-and-run (`curl … \| sh`, `iwr … \| iex`, `bash <(curl …)`), and writes to operating-system locations (`C:\Windows`, `/etc`, `/usr`, …) | Odessy splits a command into simple commands and judges each by its program and arguments ([permissions](permissions.mdx)), but it does not implement a full shell parser: an obfuscated command can evade the rules, `python -c` is opaque, and an interpreter fed by a download is denied even when it only formats data. Execution-level timeout cleanup is a backstop, not a universal containment proof. |
 | Low-risk allow rule | Run without confirmation, only as a single command: listing (`pwd`, `ls`, `dir`, `Get-ChildItem`/`gci`, `Get-Location`); locating programs (`which`, `where`, `Get-Command`); `echo` without variables; `--version`/`--help` of a named list of well-known programs; read-only git (`status`, `log`, `show`, `diff`, `branch` listing, without `--output`, `--ext-diff`, `--textconv` or `--no-index`); file readers (`cat`, `type`, `Get-Content`, `head`, `tail`, `wc`) only when every file named is inside the workspace and not a credential file | Before, only the first word was checked, so `ls && python evil.py` was "low risk"; any chaining (`;`, `&&`, `\|`, backticks, `$(`) now needs confirmation. Parentheses and braces also require confirmation because PowerShell can execute commands inside expressions. This remains conservative pattern matching, not a shell parser. As with `git status`, a repository's own git config can make an allowed git command run a program; allowed commands run in read-only mode. Commands listed in `commands.toml` for a workspace skip the question but keep `workspace-write` mode and every earlier rule; prefix matching means an entry such as `pytest` also approves its arguments (`pytest -p plugin`). |
 | Failed tool calls | A tool call that runs and fails (a wrong path) is returned to the model as an observation it can correct | The next call is validated and authorized like any other, and the per-turn model-call limit (`ODESSY_MAX_MODEL_CALLS`: for cloud backends 8 for a spoken turn and 20 for a typed one, 4 for local ones) still bounds retries. Before, one wrong path ended the turn. |
-| Third-party MCP servers | **Implemented in v0.4.0.** Only servers listed in `servers.toml` execute; their tools are namespaced, schema-checked, budgeted, and sent through the normal policy and authorization path | Annotations are self-reported: marking a server `trusted` means believing them. Listing a stdio server launches that command; an HTTP entry trusts the configured endpoint. A stdio server keeps one session per run, and a failed call is not retried. The audit log records argument hashes, not values; a guessable value can be recovered from its hash. Third-party tools do not automatically inherit Odessy's own command sandbox. See `docs/reference/external-servers.mdx`. |
+| Third-party MCP servers | **Implemented.** Only servers listed in `servers.toml` execute; their tools are namespaced, schema-checked, budgeted, and sent through the normal policy and authorization path | Annotations are self-reported: marking a server `trusted` means believing them. Listing a stdio server launches that command; an HTTP entry trusts the configured endpoint. A stdio server keeps one session per run, and a failed call is not retried. The audit log records argument hashes, not values; a guessable value can be recovered from its hash. Third-party tools do not automatically inherit Odessy's own command sandbox. See `docs/reference/external-servers.mdx`. |
 | Hooks | Programs and rules listed in `hooks.toml` (user config only, never the workspace) run before tool calls and escalations, after calls and at turn end; they can only deny or ask, and a failing one never allows. Desktop jobs are screened too, and a delegated job's changed files are checked against the write rules | A hook runs as the user, outside the sandbox, with an allowlisted environment and no API keys. Odessy does not confine what a hook program itself does; only configure programs you trust. The check that stops the agent naming the hooks file is textual; the fingerprint check is what catches a change. Hooks cannot see inside a delegated coding CLI while it runs, only its result. Hooks are not run by the evaluation suite. |
 | Cross-OS paths | The workspace check treats a Windows drive or UNC path as outside the workspace, and a backslash as a separator, on any host | Before this, on the Linux Jetson `C:\Windows\System32\x` was a relative file name inside the workspace, so a write there (bound for the Windows laptop) was only confirmed. The laptop's own path guard still rejected it. |
 | Timeout cleanup | Windows uses process-tree termination; POSIX uses process-group termination where practical | Cleanup is best effort. Intentionally detached descendants may evade request-scoped cleanup without stronger OS primitives. |
@@ -80,7 +80,7 @@ This page records the limits future agents must keep visible when changing the r
 
 ## Isolation Layer
 
-v0.3.0 adds provider-selected confinement. The backend is chosen by **what the host can
+Provider-selected confinement is in place. The backend is chosen by **what the host can
 actually enforce**, not by platform name, and every run reports what it achieved.
 
 Every executor routes commands through `confine()`, including runs with no backend
@@ -138,7 +138,7 @@ Reads, network, and process visibility are **not** restricted on Windows.
 
 ### Not isolated at all
 
-- **Host pairing is released in v0.4.0 via PR #27, with a Windows–Jetson LAN smoke test.** `native/odessy-link`
+- **Host pairing is available via the Rust mTLS path, with a Windows–Jetson LAN smoke test.** `native/odessy-link`
   implements enrolment, mutual TLS with exact leaf-fingerprint matching, the MCP relay
   limits, a durable content-free journal, revocation-triggered session termination,
   mDNS discovery as an address aid, and DPAPI/ACL key protection on Windows;
@@ -194,9 +194,9 @@ Current benchmark status:
 | Kokoro TTS | ONNX int8 model runs on Jetson and can generate speech | Measured generation is about 14.8 seconds for 5.7 seconds of audio, about 2.6x real time. The figure is a v0.2.0 measurement and is still the current one. Acceptable for feasibility, but not natural low-latency speech. |
 | Full voice stack | STT, LFM, and TTS have completed staged live turns | The staged turn-based pipeline established in v0.2.0 remains the design: STT + LFM + TTS are not required to stay active in parallel. |
 | Voice implementation | `python -m odessy voice` wires recording, STT, runtime, TTS, and playback | The command still depends on configured local binaries, model files, audio devices, and a real Jetson manual run. |
-| Continuous microphone capture | **Implemented in v0.4.0.** `odessy voice --listen` keeps one capture stream open for the session and detects the wake phrase on this machine | The microphone is open continuously while listening, and wake detection is local. **Not qualified on hardware:** open-speaker use needs echo cancellation and is not claimed, and a headset test recording detection rate, false activations, and interruption latency has not been run. Only a Linux/Jetson audio path exists; the recorder and player default to `arecord`/`aplay`. Model weights are CC BY-NC-SA 4.0 and never in the repository. |
-| Blank audio handling | **Implemented in v0.4.0.** Empty transcripts, known non-speech markers (`[BLANK_AUDIO]`, silence, music, or inaudible in matched brackets/parentheses), and punctuation-only text return `blank` before any model call | Unknown bracketed text and speech outside known markers are preserved. STT failures remain failures. `ODESSY_VOICE_BLANK_RETRIES` (default 2; 0 disables retries) controls fresh recordings, including actual empty STT output. **Not yet validated on real audio hardware.** |
-| Conversation memory | **Implemented in v0.4.0.** A session keeps up to 6 exchanges (8000 characters) in process so a follow-up ("and then?") has context | Memory is per session and never written to disk. Turns pass through the existing `redact_text` filter, which has minimum lengths: an assignment value shorter than 6 characters, or a recognised key shape shorter than 16 characters after its prefix, is left intact and resent to the model on later turns. `tests/test_wake_session.py::test_memory_keeps_a_short_secret_below_the_filter_floor` pins that behaviour as a recorded limitation. |
+| Continuous microphone capture | **Implemented.** `odessy voice --listen` keeps one capture stream open for the session and detects the wake phrase on this machine | The microphone is open continuously while listening, and wake detection is local. **Not qualified on hardware:** open-speaker use needs echo cancellation and is not claimed, and a headset test recording detection rate, false activations, and interruption latency has not been run. Only a Linux/Jetson audio path exists; the recorder and player default to `arecord`/`aplay`. Model weights are CC BY-NC-SA 4.0 and never in the repository. |
+| Blank audio handling | **Implemented.** Empty transcripts, known non-speech markers (`[BLANK_AUDIO]`, silence, music, or inaudible in matched brackets/parentheses), and punctuation-only text return `blank` before any model call | Unknown bracketed text and speech outside known markers are preserved. STT failures remain failures. `ODESSY_VOICE_BLANK_RETRIES` (default 2; 0 disables retries) controls fresh recordings, including actual empty STT output. **Not yet validated on real audio hardware.** |
+| Conversation memory | **Implemented.** A session keeps up to 6 exchanges (8000 characters) in process so a follow-up ("and then?") has context | Memory is per session and never written to disk. Turns pass through the existing `redact_text` filter, which has minimum lengths: an assignment value shorter than 6 characters, or a recognised key shape shorter than 16 characters after its prefix, is left intact and resent to the model on later turns. `tests/test_wake_session.py::test_memory_keeps_a_short_secret_below_the_filter_floor` pins that behaviour as a recorded limitation. |
 
 ### Blank Audio Failure Evidence
 
@@ -220,8 +220,8 @@ Voice turn failed with status failed: Policy requires confirmation before execut
 
 A second run again transcribed `[BLANK_AUDIO]`; when the user allowed the command, Odessy entered the tool-observation/final-response path and was manually interrupted with `Ctrl-C`.
 
-This was a known limitation, first recorded in v0.2.0, open through released
-v0.3.0, and **implemented in v0.4.0**. The evidence is kept as the record of
+This was a known limitation, first recorded early, left open through several
+releases, and now **implemented**. The evidence is kept as the record of
 what the fix addresses. The behaviour it required is now enforced, and asserted by
 tests that fail if a blank turn reaches the model:
 
@@ -241,10 +241,10 @@ benchmark/tts/jetson-voice-benchmark.mdx
 ## Windows installation wizard
 
 As of October 22, 2026, the wizard on `chenyang/install-wizard` is an unfinished
-prototype, paused and deferred to [v0.5.0](../releases/v0.5.0.md). Functionality is
+prototype, paused and deferred; see the [roadmap](../releases/v0.5.0.md). Functionality is
 incomplete; the interface and icon are not final. Offline tests and the latest
 visual refresh do not establish clean-machine or packaged-device readiness.
-`installation_ready` remains false. It is excluded from v0.4.0 delivery scope.
+`installation_ready` remains false. It is excluded from the current delivery scope.
 
 ## Testing Limits
 
@@ -300,8 +300,8 @@ It is not currently designed for:
 
 - untrusted multi-user hosting;
 - public network MCP exposure;
-- automatic discovery or blanket trust of arbitrary third-party MCP servers (v0.4.0 supports explicitly configured servers only);
-- production-grade sandbox isolation (v0.3.0 has a host-dependent isolation layer,
+- automatic discovery or blanket trust of arbitrary third-party MCP servers (explicitly configured servers only);
+- production-grade sandbox isolation (the isolation layer is host-dependent,
   documented above, not production-grade coverage);
 - long-running autonomous jobs;
 - GUI/desktop operation;

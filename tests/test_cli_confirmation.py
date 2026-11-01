@@ -31,7 +31,7 @@ def test_cli_build_agent_wires_human_confirmation(monkeypatch, tmp_path: Path) -
     monkeypatch.setattr("builtins.input", lambda prompt: "y")
     agent = _build_agent(tmp_path, FakeModel())
 
-    accepted = agent._is_confirmed(
+    accepted = agent._confirm(
         PolicyDecision("confirm", "filesystem.write modifies the workspace", "medium"),
         ToolRequest(name="filesystem.write", arguments={"path": "notes.txt", "content": "hello"}),
     )

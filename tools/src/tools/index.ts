@@ -70,6 +70,11 @@ export const gitLogInputSchema = {
   limit: z.number().int().min(1).max(500).optional(),
 };
 
+export const gitShowInputSchema = {
+  // A commit, not `rev:path`: that form prints a file from history, past the guard.
+  rev: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._\/~^-]*$/).optional(),
+};
+
 export const laptopTerminalRunInputSchema = {
   command: z.string(),
   cwd: z.string().optional(),
@@ -234,7 +239,12 @@ export async function grepProjectTool(
   await walk(root, async (absolutePath, stat) => {
     if (matches.length >= limit || !stat.isFile()) return;
     if (input.glob && !globMatches(path.basename(absolutePath), input.glob)) return;
-    const text = await fs.promises.readFile(absolutePath, "utf8").catch(() => "");
+    // The policy judged the folder the model named, not the files found under it. Each
+    // one goes through the guard, so a credential or a link out of the workspace is
+    // skipped here as `filesystem.read` would refuse it.
+    const readable = await guard.resolveExisting(absolutePath).catch(() => null);
+    if (readable === null) return;
+    const text = await fs.promises.readFile(readable, "utf8").catch(() => "");
     const lines = text.split(/\r?\n/);
     for (let index = 0; index < lines.length && matches.length < limit; index += 1) {
       if (matcher(lines[index] ?? "")) {
@@ -311,6 +321,20 @@ export async function gitLog(
     commits: (result.raw ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
     limit,
   });
+}
+
+/** What `filesystem.read` would refuse today must not come back out of history. */
+const GIT_SHOW_EXCLUDES = [
+  ".env", ".env.*", "*.key", "*.pem", "*credential*", "*secret*", "*token*",
+  ".ssh/*", ".aws/*", ".azure/*", ".docker/*", ".gnupg/*", ".kube/*", ".netrc", "id_dsa", "id_ecdsa", "id_ed25519", "id_rsa",
+].map((pattern) => `:(glob,exclude)**/${pattern}`);
+
+export async function gitShow(
+  guard: WorkspaceGuard,
+  input: { rev?: string },
+): Promise<GitTextResult> {
+  const args = ["show", "--stat", "--patch", "--no-ext-diff", "--no-textconv", input.rev ?? "HEAD", "--", ".", ...GIT_SHOW_EXCLUDES];
+  return prepareGitText(await gitText(guard.root, args, "diff"), "git.show", guard.root);
 }
 
 export async function laptopTerminalRun(

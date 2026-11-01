@@ -5,11 +5,18 @@ names include the host API and ambiguous or unplugged selections fail explicitly
 """
 import importlib
 import queue
+import shutil
+import subprocess
 import sys
 import threading
 import wave
 
 from .capture import CommandAudioStream, CommandPlayer
+
+#: A device listing is observation only. Both the wall-clock bound and the entry cap
+#: keep `arecord -L` / `aplay -L` from becoming an open-ended enumeration.
+ALSA_PROBE_TIMEOUT = 2.0
+MAX_LISTED_DEVICES = 256
 
 def backend_name(value):
     return ('command' if sys.platform.startswith('linux') else 'native') if value=='auto' else value
@@ -18,18 +25,102 @@ def library():
     try:return importlib.import_module('sounddevice')
     except (ImportError,OSError):raise RuntimeError('Native audio requires the voice extra and PortAudio on this computer.') from None
 
-def inventory(backend='auto'):
-    if backend_name(backend)=='command':
-        return {'status':'configured_unverified','devices':[],
-                'message':'ALSA command backend: use default, pulse, or an explicit ALSA device. No microphone was opened.'}
+def alsa_listing(text, limit=MAX_LISTED_DEVICES):
+    """Parse `arecord -L` / `aplay -L` output: name lines, then indented descriptions."""
+    entries=[]
+    for line in text.splitlines()[:4096]:
+        if not line.strip():
+            continue
+        if line[:1] not in (' ', '\t'):
+            if len(entries)>=limit:break
+            entries.append([line.strip(), ''])
+        elif entries and not entries[-1][1]:
+            entries[-1][1]=line.strip()
+    return [(name, description) for name, description in entries]
+
+def command_devices():
+    """ALSA device names usable verbatim as `-D`, plus any problems encountered."""
+    rows={};problems=[]
+    for tool,kind in (('arecord','input'),('aplay','output')):
+        if not shutil.which(tool):
+            problems.append(f'{tool} is not installed')
+            continue
+        try:
+            completed=subprocess.run([tool,'-L'],capture_output=True,text=True,
+                                     timeout=ALSA_PROBE_TIMEOUT,check=False)
+        except (OSError,subprocess.SubprocessError):
+            problems.append(f'{tool} -L did not complete')
+            continue
+        if completed.returncode!=0:
+            problems.append(f'{tool} -L exited with {completed.returncode}')
+            continue
+        for name,description in alsa_listing(completed.stdout):
+            row=rows.setdefault(name,{'id':name,'name':name,'input':False,'output':False})
+            row[kind]=True
+            if description and row['name']==name:row['name']=description
+    devices=list(rows.values())[:MAX_LISTED_DEVICES]
+    for device in devices:
+        if device['id']=='default':device['is_default']=True
+    return devices,problems
+
+def _directions(devices, backend, recorder='arecord', player='aplay'):
+    """Per-direction availability, so a UI can explain a missing half of the list."""
+    counts={'input':sum(1 for d in devices if d['input']),'output':sum(1 for d in devices if d['output'])}
+    result={}
+    for kind,tool in (('input',recorder),('output',player)):
+        count=counts[kind]
+        if count:
+            result[kind]={'available':True,'status':'available_unverified','count':count,
+                          'message':f'{count} {kind} device(s) listed; nothing was opened.'}
+            continue
+        if backend=='command':
+            detail=(f'Checked {tool} -L. ' if shutil.which(tool)
+                    else f'{tool} is not installed. ')
+        else:
+            detail='PortAudio listed no device with this capability. '
+        result[kind]={'available':False,'status':'unavailable','count':0,
+                      'message':f'No {kind} devices listed. '+detail+
+                                'Previously saved identifiers are kept as they are.'}
+    return result
+
+def inventory(backend='auto', recorder='arecord', player='aplay'):
+    """Device inventory only. Never opens a microphone, plays audio or runs inference.
+
+    The response is additive over the original contract: `status`, `message` and
+    `devices` keep their meaning, and every device keeps `id`, `name`, `input` and
+    `output`. New keys are `backend`, `directions` and the optional per-device
+    `is_default`. Identifiers are always exactly what the resolved backend consumes:
+    `HostAPI::name` for PortAudio, a literal ALSA name for `arecord`/`aplay` `-D`.
+    """
+    name=backend_name(backend)
+    if name=='command':
+        devices,problems=command_devices()
+        message=('ALSA command backend: device names are passed unchanged to arecord/aplay -D. '
+                 'No microphone was opened.')
+        if problems:message=' '.join(problems)+'. '+message
+        return {'backend':'command',
+                'status':'available_unverified' if devices else 'configured_unverified',
+                'devices':devices,'message':message,
+                'directions':_directions(devices,'command',recorder,player)}
     try:
         module=library();apis=module.query_hostapis()
-        devices=[{'id':f"{apis[d['hostapi']]['name']}::{d['name']}",
-                  'name':d['name'],'input':d['max_input_channels']>0,'output':d['max_output_channels']>0}
-                 for d in module.query_devices()][:256]
-        return {'status':'available_unverified','devices':devices,'message':'Device inventory only; no recording or playback performed.'}
+        default=getattr(getattr(module,'default',None),'device',())
+        defaults={index for index in default if isinstance(index,int) and index>=0}
+        devices=[]
+        for index,device in enumerate(module.query_devices()):
+            if index>=MAX_LISTED_DEVICES:break
+            entry={'id':f"{apis[device['hostapi']]['name']}::{device['name']}",
+                   'name':device['name'],'input':device['max_input_channels']>0,
+                   'output':device['max_output_channels']>0}
+            if index in defaults:entry['is_default']=True
+            devices.append(entry)
+        return {'backend':'native','status':'available_unverified','devices':devices,
+                'message':'Device inventory only; no recording or playback performed.',
+                'directions':_directions(devices,'native')}
     except Exception:
-        return {'status':'unavailable','devices':[],'message':'Native audio unavailable. Install the voice extra/PortAudio and check OS microphone permissions.'}
+        return {'backend':'native','status':'unavailable','devices':[],
+                'message':'Native audio unavailable. Install the voice extra/PortAudio and check OS microphone permissions.',
+                'directions':_directions([],'native')}
 
 def resolve_device(value,kind,module):
     if not value:return None

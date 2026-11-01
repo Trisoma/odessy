@@ -2,7 +2,8 @@ import 'package:odessy_client/odessy_client.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('connection credentials remain scoped, removable and session-only', () async {
+  test('connection credentials remain scoped, removable and session-only',
+      () async {
     final store = MemoryCredentialStore();
     expect(store.persistsAcrossRestarts, isFalse);
     await store.write('http://127.0.0.1:8765', 'fixture-a');

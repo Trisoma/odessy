@@ -1,8 +1,8 @@
 # Odessy Current Limitations
 
-Release baseline: **v0.4.0**, released October 23, 2026. Active development
-targets the [v0.5.0 roadmap](docs/releases/v0.5.0.md); planned UI/installer/Go
-monitoring and custom wake-word features are not already available.
+This is an unstable developer preview. Known issues for the current build are in the
+[release notes](docs/releases/v0.5.0-unstable-notes.md#known-limitations). The installer,
+Go multi-host monitoring and the custom wake word are not available.
 
 Jetson headset voice/recorded interaction and Windows–Jetson pairing/discovery
 smoke checks passed; see [qualification](docs/qualification/2026-10-23-interactions-and-pairing.md).
@@ -11,10 +11,10 @@ live-cloud/new-integration checks remain deferred to deployment acceptance.
 Q8 memory reliability remains a limitation. Auto selected Gemma then fell back
 to Q8 after empty output; no model speedup or stable offload guarantee is claimed.
 
-Third-party MCP support is included in v0.4.0; see
-[external servers](docs/reference/external-servers.mdx) for its trust boundaries.
+Third-party MCP servers are supported; see
+[external servers](docs/reference/external-servers.mdx) for their trust boundaries.
 Current limits are maintained in [the reference](docs/reference/current-limitations.mdx).
-The dated measurements below are historical evidence, not new v0.5.0 acceptance.
+The dated measurements below are historical evidence, not acceptance for the current build.
 
 ## Voice Smoke Test Limitations
 
@@ -22,9 +22,7 @@ The voice path is wired and runnable, but the first live smoke test exposed seve
 
 ### STT Quality
 
-Ignore this for now during runtime wiring tests.
-
-The transcript was poor:
+Transcript quality is poor (under our tested environment, but different environment may perform better):
 
 ```text
 What are you doing for you? Hi, are you doing? What are you?
@@ -167,7 +165,7 @@ captured evidence and follow-up checks.
 
 ## LFM GPU / Offload Configuration Is Unexplored
 
-**Status: deferred to v0.4.0; originally assigned to v0.3.0 on 2026-09-24. Not measured.**
+**Status: deferred. Not measured.**
 
 The capability exists and has never been used:
 `benchmark/scenarios.py` defines `num_gpu`, `BenchmarkPartialGpuLFMModel` sends it
@@ -183,8 +181,8 @@ dominates the cost of a turn, and layer placement is the largest untuned lever o
 it.
 
 Why deferred: it needs the Jetson, because `num_gpu` is an Ollama setting and
-Ollama runs there. The v0.2 budget is better spent closing verification gaps than
-opening a new unmeasured tuning axis.
+Ollama runs there, and closing verification gaps takes priority over opening a new
+unmeasured tuning axis.
 
 When it is run, the experiment is one command varying one number:
 
@@ -195,12 +193,11 @@ When it is run, the experiment is one command varying one number:
 on the fixed `lfm_compare` prompt, with warmups, comparing tok/s and latency.
 `ollama_num_gpu` is written into `metadata.json`, so the runs are comparable.
 
-## Isolation: Implemented In v0.3.0, Largely Inactive On This Board
+## Isolation: Implemented, Largely Inactive On This Board
 
 **Status: the layer exists. Do not describe this board as sandboxed.**
 
-Odessy enforced only an **authority** boundary through v0.2. v0.3.0 adds an
-**isolation** layer. The distinction is still the one that matters:
+Odessy keeps two separate boundaries, and the distinction is the one that matters:
 
 ```text
 Authority    "the model proposes, Odessy decides" -- enforced in-process.
@@ -264,9 +261,11 @@ limitation set.
 
 ### Still absent
 
-- **Host pairing — v0.4.0.** Single mode starts a local subprocess; split mode can
-  reach a configured remote MCP URL without authenticated pairing. Pairing waits
-  on a concrete trust scenario and adversary model. `ExecutionTarget` remains required.
+- **Unauthenticated remote tool servers.** Single mode starts a local subprocess;
+  the legacy `split` mode can reach a configured remote MCP URL without
+  authenticated pairing. The Rust `odessy-link` mTLS pairing path exists as an
+  alternative, but Jetson, real-network and Linux/ARM64 qualification remain pending.
+  `ExecutionTarget` remains required.
 - **Any device backend.** ESP32 / STM32 / RP2040 are declared and unbacked.
 - **A total wall-clock turn deadline.** Unchanged from the section above.
 
@@ -301,8 +300,7 @@ Cloud backend selected    The user's text and that turn's tool observations are 
 ```
 
 The redaction on that path is the same best-effort, name-based filter described above.
-Since v0.4.0 development every tool observation is redacted before it is logged or
-sent, so a cloud provider never sees a result the local path would not; but it is
+Every tool observation is redacted before it is logged or sent, so a cloud provider never sees a result the local path would not; but it is
 still a filter, not a policy.
 
 **What this does not establish:** no requirement states what may leave the host.
@@ -329,8 +327,7 @@ the setting apply to every OpenAI-compatible provider.
 
 **Status: implemented; model and routing configuration affect whether it succeeds.**
 
-The following examples are the historical v0.2 local-model observation, not a
-claim about every current backend:
+The following examples come from the local model, not a claim about every current backend:
 
 The observation call advertises tools, and the loop can accept a second tool
 request. Offline the same loop makes 3 model calls with tools advertised on calls
@@ -345,8 +342,7 @@ Even with an explicit "then run X", the model summarises and stops. The prompt
 line asking it to continue is a nudge, not an enforcement: the loop can decline to
 accept an answer, but cannot demand a tool call.
 
-**v0.2 shipped with this observed single-tool behaviour.** On October 18, both
-local LFM eval sweeps still passed 0/18 multi-step attempts, while the separate
+Both local LFM eval sweeps still passed 0/18 multi-step attempts, while the separate
 `deepseek-flash` reference passed 16/18 (88.9%). The continuation machinery can
 therefore work with a real cloud model in these fixtures. Keyword routing on also
 limits follow-ups to the selected tool, constraining sequences that need a
@@ -413,35 +409,4 @@ command the model writes and is a behaviour change with no measured failure behi
 it. What it does mean is that a non-zero `exit_code` on Windows is a signal that
 *something* failed, not which code it was. Read `stderr` for the reason.
 
-## Previously Failing Tests: Resolved
-
-**Status: resolved; the dated October 17 full-suite record is 530 passed, 3 skipped.**
-
-These five were quarantined rather than fixed. In each case the stale side was the
-expectation, not the runtime, and the expectations now match. Kept as a record of what
-was decided, not as outstanding work.
-
-```text
-test_benchmark_matrix.py::test_pytorch_kokoro_engine_uses_pipeline_and_reports_device
-test_benchmark_matrix.py::test_onnx_tensorrt_records_exact_provider_order_and_selection
-test_benchmark_matrix.py::test_matrix_cli_writes_pytorch_device_metadata
-test_onnx_runtime_wiring.py::test_build_kokoro_uses_tensorrt_with_fallbacks
-    All four assert ONNX Runtime provider configs. They expect
-    ('CUDAExecutionProvider', {'device_id': 0}) while the runtime now supplies
-    ('CUDAExecutionProvider', {'device_id': 0, 'gpu_mem_limit': 536870912}).
-    Resolved as stale expectations: the memory limit is part of the runtime's
-    provider configuration, and these tests exist to pin provider order and
-    selection. They now assert the limit as well.
-
-test_lfm_model.py::test_lfm_call_count_includes_final_observation_response
-    Asserts response_chars == 11 for a single call. The field accumulates across
-    calls (response_chars += len(content)), so a two-call turn records 59.
-    Resolved as a stale test: the field records the whole turn, so a two-call turn
-    legitimately reports both responses. The assertion now sums them.
-```
-
-Neither group was deleted to make the suite green; both were decided first. The rule
-still holds for future failures: settle whether the code or the expectation is wrong
-before editing either, because editing an expectation without settling that hides a
-possible regression.
 

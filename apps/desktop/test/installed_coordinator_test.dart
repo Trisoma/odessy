@@ -34,7 +34,8 @@ void main() {
     await expectLater(
         coordinator.start(),
         throwsA(isA<CoordinatorStartFailure>().having(
-            (failure) => failure.message, 'message',
+            (failure) => failure.message,
+            'message',
             contains('could not be started'))));
   });
 }

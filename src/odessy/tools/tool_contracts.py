@@ -184,6 +184,12 @@ TOOL_REQUEST_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": [],
     },
+    "git.show": {
+        "properties": {
+            "rev": {"type": "string", "optional": True},
+        },
+        "required": [],
+    },
 }
 
 
@@ -253,6 +259,7 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
     "git.diff": "Return git diff output.",
     "git.changed_files": "Return changed file names.",
     "git.log": "Return recent commit summaries.",
+    "git.show": "Return one commit's message, changed files and diff. rev is a hash, branch or tag; the default is HEAD.",
 }
 
 #: Descriptions that differ in ``single`` mode, where there is only one machine.

@@ -22,7 +22,8 @@ abstract class LaunchAcknowledgement {
   /// Generated here so the trusted adapter, not the helper, owns it.
   static String newId() {
     final random = Random.secure();
-    return List.generate(32, (_) => random.nextInt(16).toRadixString(16)).join();
+    return List.generate(32, (_) => random.nextInt(16).toRadixString(16))
+        .join();
   }
 
   /// Reports the terminal state for [launchId]. Only [launchReady],

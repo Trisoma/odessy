@@ -14,8 +14,10 @@ class MonitorPage extends StatelessWidget {
         final staleGroups = ((c.metrics?['stale_groups'] as List?) ?? const [])
             .map((g) => '$g')
             .toSet();
-        if (c.historical || c.hosts.any((h) => h.id == c.selected &&
-            (h.connectivity != 'online' || h.trust == 'revoked'))) {
+        if (c.historical ||
+            c.hosts.any((h) =>
+                h.id == c.selected &&
+                (h.connectivity != 'online' || h.trust == 'revoked'))) {
           staleGroups.addAll(groupTitles.keys);
         }
         final series = c.history?['series'] as List? ?? [];
@@ -57,7 +59,8 @@ class MonitorPage extends StatelessWidget {
           if (c.selected != null) ...[
             Text('Latest observation: ${_observedLabel(sample)}'),
             if (staleGroups.isNotEmpty)
-              Text('Stale: ${staleGroups.map((g) => groupTitles[g] ?? g).join(', ')}',
+              Text(
+                  'Stale: ${staleGroups.map((g) => groupTitles[g] ?? g).join(', ')}',
                   style: TextStyle(
                       fontSize: 12,
                       color: Theme.of(context).colorScheme.onSurfaceVariant)),

@@ -132,7 +132,8 @@ void main() {
         OdessyApp(api: FailedApi(), setupBackend: SavedComponents()));
     await tester.pumpAndSettle();
     expect(find.byType(ComponentStateBanner), findsWidgets);
-    expect(find.textContaining('Check your API key and model settings'), findsWidgets);
+    expect(find.textContaining('Check your API key and model settings'),
+        findsWidgets);
     await nav(tester, 'Settings');
     expect(find.text('Preferences'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());

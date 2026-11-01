@@ -1,0 +1,27 @@
+name: Feature request
+description: Propose a focused improvement.
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: "Check the roadmap and limitations first. Send security reports through [SECURITY.md](https://github.com/Trisoma/odessy/blob/develop/SECURITY.md)."
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: input
+    id: platform
+    attributes:
+      label: Platform and deployment mode

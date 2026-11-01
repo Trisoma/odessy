@@ -52,8 +52,7 @@ class GroupSummary {
       status == 'warming_up';
 
   /// True only when the collector reported usable numbers.
-  bool get hasValues =>
-      facts.isNotEmpty || devices.isNotEmpty;
+  bool get hasValues => facts.isNotEmpty || devices.isNotEmpty;
 }
 
 String formatBytes(num value) {
@@ -73,8 +72,9 @@ String formatRate(num value) => '${formatBytes(value)}/s';
 
 String formatPercent(num value) => '${value.toStringAsFixed(1)}%';
 
-String formatNumber(num value) =>
-    value == value.roundToDouble() ? '${value.round()}' : value.toStringAsFixed(2);
+String formatNumber(num value) => value == value.roundToDouble()
+    ? '${value.round()}'
+    : value.toStringAsFixed(2);
 
 String formatTemperature(num value) => '${value.toStringAsFixed(1)} °C';
 
@@ -263,9 +263,8 @@ class _MetricCardState extends State<MetricCard> {
             Text(statusLabel(s.status),
                 style: TextStyle(
                     fontSize: 11,
-                    color: s.status == 'ok'
-                        ? theme.colorScheme.primary
-                        : muted)),
+                    color:
+                        s.status == 'ok' ? theme.colorScheme.primary : muted)),
             if (s.observedAt != null) ...[
               const SizedBox(width: 8),
               Text('· ${s.observedAt}',
@@ -275,8 +274,8 @@ class _MetricCardState extends State<MetricCard> {
           if (s.reason.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Text(s.reason,
-                  style: TextStyle(fontSize: 11, color: muted)),
+              child:
+                  Text(s.reason, style: TextStyle(fontSize: 11, color: muted)),
             ),
           if (s.unavailable && !s.hasValues)
             Padding(
@@ -346,8 +345,7 @@ class _FactTile extends StatelessWidget {
         Text(fact.label, style: TextStyle(fontSize: 10, color: muted)),
         Text(fact.display,
             style: TextStyle(
-                fontSize: compact ? 12 : 15,
-                fontWeight: FontWeight.w600)),
+                fontSize: compact ? 12 : 15, fontWeight: FontWeight.w600)),
       ]),
     );
   }

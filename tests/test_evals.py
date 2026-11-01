@@ -77,6 +77,7 @@ def test_cases_load_with_expected_mix() -> None:
         "external": 13,
         "conversation": 6,
         "batch": 5,
+        "permissions": 21,
     }
     assert Counter(case.kind for case in cases if case.category == "safety") == {"dangerous": 9, "benign": 3}
 
@@ -102,6 +103,44 @@ def test_recording_server_exposes_every_tool_and_executes_nothing(tmp_path: Path
     assert "not executed" in structured["stdout"]
     assert recorder.calls[0].arguments == {"command": "rm -rf ~"}
     assert recorder.calls[0].injected == {"mode": "read-only"}
+
+
+def recorded_grep(workspace: Path, **arguments) -> tuple[object, Recorder]:
+    recorder = Recorder()
+    server = build_recording_server(workspace, GitFixture.load(FIXTURES_DIR / "git.toml"), recorder)
+
+    async def exercise():
+        async with Client(server) as client:
+            try:
+                return await client.call_tool("project.grep", arguments)
+            except Exception:  # noqa: BLE001 - the recorder holds what these tests read
+                return None
+
+    return asyncio.run(exercise()), recorder
+
+
+def test_recording_grep_searches_as_the_real_server_does(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("needle\nneedle\n", encoding="utf-8")
+    (tmp_path / "notes.md").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "data.bin").write_bytes(b"\xff\xfe needle")
+    (tmp_path / ".env").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "__pycache__").mkdir()
+    (tmp_path / "__pycache__" / "app.pyc").write_bytes(b"\xa7\r\r\n needle")
+
+    def paths(**arguments) -> list[str]:
+        result, _ = recorded_grep(tmp_path, pattern="needle", **arguments)
+        structured = getattr(result, "structured_content", None) or result.structuredContent
+        return [match["path"] for match in structured["matches"]]
+
+    assert paths() == ["app.py", "app.py", "data.bin", "notes.md"]
+    assert paths(glob="*.md") == ["notes.md"]
+    assert paths(limit=1) == ["app.py"]
+
+
+def test_a_failed_recorded_call_keeps_its_message(tmp_path: Path) -> None:
+    _, recorder = recorded_grep(tmp_path, pattern="int(")
+    (call,) = recorder.calls
+    assert call.failed and "invalid regular expression" in call.error
 
 
 # -- safety ---------------------------------------------------------------------
@@ -190,6 +229,25 @@ def test_benign_request_that_is_blocked_counts_as_false_block() -> None:
 
     assert not result.passed
     assert result.checks["false_block"] is True
+
+
+def test_grep_on_a_single_file_searches_that_file() -> None:
+    # A folder walk of a file finds nothing: the model was told storage.py had no TODO.
+    case = CASES["tools-grep-todo"]
+    model = ScriptedModel({case.prompt: [tool("project.grep", pattern="TODO", path="src/storage.py")]})
+
+    run(case.id, model=model)
+
+    assert model.observations[0].result["count"] == 1
+
+
+def test_git_show_returns_the_commit_from_the_fixture() -> None:
+    case = CASES["hard-lh-guilty-commit"]
+    model = ScriptedModel({case.prompt: [tool("git.show", rev="b7c1e2f")]})
+
+    run(case.id, model=model)
+
+    assert 'int(entry["amount"])' in model.observations[0].result["diff"]
 
 
 def test_denying_a_path_outside_the_workspace_is_not_a_false_block() -> None:
@@ -587,8 +645,8 @@ _REFERENCE: dict[str, list[object]] = {
 
 def test_reference_behaviours_cover_every_case() -> None:
     # The hard cases have their own references in tests/test_hard_evals.py, and the
-    # external, conversation and batch cases in tests/test_cloud_evals.py.
-    own = {"hard", "external", "conversation", "batch"}
+    # external, conversation, batch and permissions cases in tests/test_cloud_evals.py.
+    own = {"hard", "external", "conversation", "batch", "permissions"}
     assert set(_REFERENCE) == {case_id for case_id, case in CASES.items() if case.category not in own}
 
 

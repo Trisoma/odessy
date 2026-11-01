@@ -8,8 +8,10 @@ as possible and makes what it does ask readable:
   looks different and offers no shortcut. Anything else takes ``y``.
 * **Allow for this session.** ``a`` allows the same call again without asking until
   Odessy exits: the exact same command (same arguments, same directory), or every call
-  to one third-party tool. It is held in memory only and never written to a file, so
-  it relaxes nothing the user did not answer this run. High-risk calls never offer it.
+  to one third-party tool; ``f`` allows every write under one folder. It is held in
+  memory only and never written to a file, so it relaxes nothing the user did not
+  answer this run. A session answer covers the same rule's question only: high-risk
+  calls never offer it, and neither does a confirmation a hook or rule asked for.
 * **Writes show what they change.** ``filesystem.write`` shows a diff against the
   current file instead of a byte count.
 * **One question for a batch.** When the model proposes several calls together, the
@@ -25,9 +27,10 @@ from __future__ import annotations
 import difflib
 import json
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
+from odessy.authority.workspace_authority import WorkspaceAuthority, WorkspaceAuthorityError
 from odessy.runtime.types import PolicyDecision, ToolRequest
 from odessy.tools.external_tools import external_tool
 
@@ -50,23 +53,48 @@ def printable(text: str) -> str:
     )
 
 
-def session_key(request: ToolRequest) -> tuple[str, ...] | None:
+def session_key(request: ToolRequest, decision: PolicyDecision | None = None) -> tuple[str, ...] | None:
     """What "allow for this session" covers for this call, or None if it is not offered.
 
     A command is allowed again only exactly: same tool, same arguments with the command's
     whitespace normalized. A third-party tool is allowed as a whole, because its calls
-    rarely repeat exactly. File writes are never covered: each one is a different change.
+    rarely repeat exactly. File writes are covered by folder (``write_folder``), not
+    here: each one is a different change.
+
+    The key holds the rule that asked. An answer to "this may modify state" says nothing
+    about a question a hook or rule raises later in the session, and one of those is
+    never covered: a user who wrote a rule to be asked must be asked.
     """
 
+    rule = (decision.rule if decision is not None else None) or ""
+    if rule.startswith("hook:"):
+        return None
     if request.name in _COMMAND_TOOLS:
         arguments = dict(request.arguments)
         command = arguments.get("command")
         if isinstance(command, str):
             arguments["command"] = " ".join(command.split())
-        return ("command", request.name, json.dumps(arguments, sort_keys=True, default=str))
+        return ("command", request.name, json.dumps(arguments, sort_keys=True, default=str), rule)
     if external_tool(request.name) is not None:
-        return ("external", request.name)
+        return ("external", request.name, rule)
     return None
+
+
+def write_folder(workspace_root: Path, request: ToolRequest, decision: PolicyDecision) -> str | None:
+    """The folder a write sits in, relative to the workspace, if a folder answer may
+    cover it. The workspace root itself is never offered: that is every file."""
+
+    if request.name != "filesystem.write" or decision.risk == "high" or (decision.rule or "").startswith("hook:"):
+        return None
+    path = request.arguments.get("path")
+    if not isinstance(path, str):
+        return None
+    try:
+        relative = WorkspaceAuthority(workspace_root).resolve_path(path, must_exist=False).relative
+    except WorkspaceAuthorityError:
+        return None
+    folder = PurePosixPath(relative).parent.as_posix()
+    return None if folder == "." else folder
 
 
 def write_preview(workspace_root: Path, path: str, content: str, *, max_lines: int = PREVIEW_LINES) -> list[str]:
@@ -134,11 +162,25 @@ class TerminalConfirmer:
         self._ask = ask or (lambda prompt: input(prompt))
         self._say = say or (lambda line: print(line))
         self._session: set[tuple[str, ...]] = set()
+        self._write_folders: set[str] = set()
+
+    def _covered(self, decision: PolicyDecision, request: ToolRequest) -> bool:
+        """Whether an answer already given this session covers this call."""
+
+        if decision.risk == "high":
+            return False
+        key = session_key(request, decision)
+        if key is not None and key in self._session:
+            return True
+        folder = write_folder(self._workspace_root, request, decision)
+        if folder is None:
+            return False
+        return any(folder == granted or folder.startswith(granted + "/") for granted in self._write_folders)
 
     def __call__(self, decision: PolicyDecision, request: ToolRequest) -> bool:
         high = decision.risk == "high"
-        key = None if high else session_key(request)
-        if key is not None and key in self._session:
+        key = None if high else session_key(request, decision)
+        if self._covered(decision, request):
             self._say(f"Odessy runs {request.name} (allowed for this session).")
             return True
 
@@ -162,6 +204,14 @@ class TerminalConfirmer:
         try:
             if high:
                 return self._ask("Type 'yes' to allow it; anything else cancels: ").strip().lower() == "yes"
+            folder = write_folder(self._workspace_root, request, decision)
+            if folder is not None:
+                answer = self._ask(f"Allow? [y]es / [N]o / [f]older: every write under {printable(folder)}/ until Odessy exits: ")
+                answer = answer.strip().lower()
+                if answer in {"f", "folder"}:
+                    self._write_folders.add(folder)
+                    return True
+                return answer in {"y", "yes"}
             if key is None:
                 return self._ask("Allow this tool call? [y/N] ").strip().lower() in {"y", "yes"}
             scope = "this exact command" if key[0] == "command" else f"every {request.name} call"
@@ -183,8 +233,7 @@ class TerminalConfirmer:
         replies: list[bool | None] = [None] * len(items)
         listed: list[int] = []
         for index, (decision, request) in enumerate(items):
-            key = None if decision.risk == "high" else session_key(request)
-            if key is not None and key in self._session:
+            if self._covered(decision, request):
                 replies[index] = True
             elif decision.risk != "high":
                 listed.append(index)

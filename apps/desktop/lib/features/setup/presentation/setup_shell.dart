@@ -52,14 +52,16 @@ class SetupShell extends StatelessWidget {
                       vertical: OdessyTokens.spaceRegular),
                   child: Center(
                       child: ConstrainedBox(
-                          constraints: BoxConstraints(maxWidth: maxContentWidth),
+                          constraints:
+                              BoxConstraints(maxWidth: maxContentWidth),
                           child: footer!))),
             ],
           ]))));
 
   Widget _header(BuildContext context) => Padding(
       padding: const EdgeInsets.symmetric(
-          horizontal: OdessyTokens.spaceLarge, vertical: OdessyTokens.spaceRegular),
+          horizontal: OdessyTokens.spaceLarge,
+          vertical: OdessyTokens.spaceRegular),
       child: Center(
           child: ConstrainedBox(
               constraints: BoxConstraints(maxWidth: maxContentWidth),
@@ -87,8 +89,8 @@ class SetupShell extends StatelessWidget {
                     ])),
                 if (stepLabel != null)
                   Padding(
-                      padding: const EdgeInsets.only(
-                          left: OdessyTokens.spaceMedium),
+                      padding:
+                          const EdgeInsets.only(left: OdessyTokens.spaceMedium),
                       child: Text(stepLabel!,
                           style: Theme.of(context).textTheme.labelMedium)),
               ]))));
@@ -161,31 +163,36 @@ class SetupFooter extends StatelessWidget {
                 onPressed: busy ? null : onSecondary,
                 style: TextButton.styleFrom(
                     minimumSize: const Size(0, 44),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 10)),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 10)),
                 child: Text(secondaryLabel!));
         final stacked = box.maxWidth < 420;
-        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          if (note != null)
-            Padding(
-                padding: const EdgeInsets.only(bottom: OdessyTokens.spaceCompact),
-                child: Text(note!,
-                    style: Theme.of(context).textTheme.bodySmall)),
-          if (stacked)
-            Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              primary,
-              if (secondary != null) ...[
-                const SizedBox(height: OdessyTokens.spaceCompact),
-                secondary,
-              ],
-            ])
-          else
-            Row(children: [
-              if (secondary != null) secondary,
-              const Spacer(),
-              primary,
-            ]),
-        ]);
+        return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (note != null)
+                Padding(
+                    padding: const EdgeInsets.only(
+                        bottom: OdessyTokens.spaceCompact),
+                    child: Text(note!,
+                        style: Theme.of(context).textTheme.bodySmall)),
+              if (stacked)
+                Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      primary,
+                      if (secondary != null) ...[
+                        const SizedBox(height: OdessyTokens.spaceCompact),
+                        secondary,
+                      ],
+                    ])
+              else
+                Row(children: [
+                  if (secondary != null) secondary,
+                  const Spacer(),
+                  primary,
+                ]),
+            ]);
       });
 }
 
@@ -237,9 +244,8 @@ class SetupMessage extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: OdessyTokens.spaceMedium),
         padding: const EdgeInsets.all(OdessyTokens.spaceMedium),
         decoration: BoxDecoration(
-            color: error
-                ? scheme.errorContainer
-                : scheme.surfaceContainerHighest,
+            color:
+                error ? scheme.errorContainer : scheme.surfaceContainerHighest,
             borderRadius: BorderRadius.circular(OdessyTokens.radiusSmall)),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(text),
@@ -254,8 +260,8 @@ class SetupMessage extends StatelessWidget {
           if (actionLabel != null && onAction != null)
             Align(
                 alignment: Alignment.centerLeft,
-                child: TextButton(
-                    onPressed: onAction, child: Text(actionLabel!))),
+                child:
+                    TextButton(onPressed: onAction, child: Text(actionLabel!))),
         ]));
   }
 }

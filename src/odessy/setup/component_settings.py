@@ -82,6 +82,14 @@ def _review(data):
     # intentionally be incomplete. Never import or execute custom provider code.
     path_keys={'stt':{'whisper_bin','whisper_model'} if selection.voice.stt_provider=='whisper.cpp' else {'stt_executable','stt_model'},
                'tts':{'kokoro_model','kokoro_voices'} if selection.voice.tts_provider=='kokoro' else {'tts_executable','tts_model'}}
+    # Wrong-kind-of-thing problems get a field-specific message first, so a folder typed
+    # into an executable field is not reported as a generic missing file.
+    from .voice_assets import check_voice_paths
+    checked=set(path_keys.get(section,set()))
+    if section=='voice':checked={'wake_model'}
+    for key,issue in check_voice_paths({'voice':patch}).items():
+        if key in checked and issue['blocking']:
+            raise ComponentValidationError(key,issue['message'])
     for key in path_keys.get(section,set()):
         value=patch.get(key)
         if value and not Path(value).expanduser().is_file():

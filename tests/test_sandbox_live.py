@@ -11,6 +11,7 @@ Jetson before a release::
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -58,6 +59,16 @@ def outside() -> Path:
 def run(bwrap: BwrapProvider, workspace: Path, command: str, mode: str = "read-only", **shape):
     bridge = CommandBridge(workspace, registry=ProviderRegistry([bwrap]))
     return bridge.run(command=command, timeout=30, mode=mode, isolation="required", **shape)
+
+
+def test_a_sandboxed_hook_cannot_write_or_reach_the_network(bwrap, workspace, monkeypatch):
+    from odessy.runtime import hooks
+
+    monkeypatch.setattr(hooks, "_sandbox_registry", lambda: ProviderRegistry([bwrap]))
+    argv = hooks.confine_hook(("/bin/sh", "-c", "touch created"), workspace, {})
+    assert subprocess.run(argv, cwd=workspace).returncode != 0
+    assert not (workspace / "created").exists()
+    assert "--unshare-net" in argv
 
 
 def test_read_only_cannot_write_the_workspace(bwrap, workspace):

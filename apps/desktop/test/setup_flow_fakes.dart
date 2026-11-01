@@ -88,7 +88,10 @@ class FlowBackend implements SetupBackend {
           'keep_models': true,
           'keep_config': true,
         },
-      'package-uninstall' => {'removed': ['owned'], 'retained': []},
+      'package-uninstall' => {
+          'removed': ['owned'],
+          'retained': []
+        },
       'package-launch' => launchResponse,
       _ => {'ok': true},
     };

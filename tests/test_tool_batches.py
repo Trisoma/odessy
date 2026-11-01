@@ -122,7 +122,7 @@ async def test_preflight_denial_never_discovers(tmp_path):
     from odessy.authority.policy import OdessyPolicy
     class Model:
         def propose(self, text):
-            return ToolBatch((ToolCall('a', ToolRequest('time.now')), ToolCall('b', ToolRequest('filesystem.read', {'path': '.env'}))))
+            return ToolBatch((ToolCall('a', ToolRequest('time.now')), ToolCall('b', ToolRequest('terminal.run', {'command': 'rm -rf .'}))))
         def respond_to_observations(self, *args):
             raise AssertionError('must not retry denial')
     agent = OdessyAgent(model=Model(), policy=OdessyPolicy(workspace_root=tmp_path), mcp_server=None)

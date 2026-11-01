@@ -55,7 +55,8 @@ void main() {
     final backend = CredentialBackend()..source = 'keyring';
     await (FontLoader('OdessySans')
           ..addFont(rootBundle.load('assets/fonts/roboto-regular.ttf'))
-          ..addFont(rootBundle.load('assets/fonts/roboto-bold.ttf'))).load();
+          ..addFont(rootBundle.load('assets/fonts/roboto-bold.ttf')))
+        .load();
     await tester.pumpWidget(MaterialApp(
         theme: odessyTheme(Brightness.dark),
         home: Scaffold(

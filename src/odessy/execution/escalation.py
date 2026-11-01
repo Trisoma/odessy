@@ -133,6 +133,9 @@ class ApprovalRequest:
     tool_name: str
     call_id: str
     reason: str
+    #: The authority's own description of the call (the exact command, the target),
+    #: which ``reason`` is not: that carries the model's justification.
+    prompt: str = ""
 
 
 @runtime_checkable
@@ -160,6 +163,8 @@ class EscalationApproval:
     call_id: str
     #: The tool name recorded on the approval request.
     tool_name: str
+    #: What a person must see before approving; see ``ApprovalRequest.prompt``.
+    prompt: str = ""
 
 
 # --------------------------------------------------------------------------
@@ -220,6 +225,7 @@ async def approve_escalation(
             tool_name=approval.tool_name,
             call_id=approval.call_id,
             reason=_APPROVAL_REASON.format(mode=mode, justification=request.justification),
+            prompt=approval.prompt,
         )
     )
 

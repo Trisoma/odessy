@@ -131,11 +131,12 @@ selected built-in reads does not make third-party tools parallel.
 
 ## Audit log
 
-Every third-party call is recorded in `~/.local/state/odessy/external-audit.jsonl`,
-one JSON object per line. `ODESSY_AUDIT_FILE` sets another path; an empty value turns
+Every call is recorded in `~/.local/state/odessy/external-audit.jsonl`, one JSON object
+per line. `ODESSY_AUDIT_FILE` sets another path; an empty value turns
 the log off. If the directory cannot be created, Odessy stops and says so; a later
-failed write is reported once and the run continues. Odessy's own tools are not
-recorded here (the turn log covers them).
+failed write is reported once and the run continues. Odessy's own tools appear with
+`"server": "builtin"` and no `trust` or `transport`, and the file keeps its name from
+when it held third-party calls only.
 
 ```json
 {"time": "...", "event": "decision", "server": "notes", "trust": "untrusted", "transport": "stdio",
