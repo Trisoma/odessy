@@ -14,6 +14,7 @@ from odessy.authority.audit import current_audit, audit_scope
 from odessy.collaboration.config import load_config
 from odessy.collaboration.context import collaboration_scope
 from odessy.collaboration.jobs import JobManager
+from odessy.collaboration.runs import RunManager
 from odessy.collaboration.participants import CollaborationService
 from odessy.collaboration.tools import authorized_remote_targets, build_collaboration_server
 from odessy.config.deployment import model_tool_scope
@@ -63,6 +64,8 @@ class ManagedController(SessionController):
 
     async def close(self):
         await super().close()
+        if self.runs is not None:
+            await self.runs.close()
         if self.jobs is not None:
             await self.jobs.close()
         await self.resources.aclose()
@@ -140,6 +143,7 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
             return hooks.review_changes(job['changed_files']) if hooks is not None else []
 
         jobs = JobManager(config.participants, remote_targets=authorized_remote_targets(servers), review=review_job)
+        runs = RunManager(jobs)
         loop = asyncio.get_running_loop()
 
         def coding_advice(profile, question, context):
@@ -153,7 +157,7 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
         for adapter in ("codex", "claude_code", "custom_agent"):
             service.register_adapter(adapter, coding_advice)
         if config.settings.enabled:
-            servers = (*servers, ExecutionTarget(build_collaboration_server(service, jobs)))
+            servers = (*servers, ExecutionTarget(build_collaboration_server(service, jobs, runs)))
         from odessy.interaction.tools import build_interaction_server
         servers = (*servers, ExecutionTarget(build_interaction_server(lambda: controller.interactions)))
         names = []
@@ -172,6 +176,7 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
             agent = cli._build_agent(workspace, chosen, servers, mode=mode)
             agent._confirm_action = controller.confirm_action
             agent._delegation_jobs = jobs
+            agent._delegation_runs = runs
             # Composed sessions authorize only through the shared broker. Legacy
             # direct OdessyAgent users retain their existing confirmation seam.
             agent._confirm = False
@@ -193,6 +198,8 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
                     raise
             controller.interactions.handler = terminal_interaction
         jobs.event_sink = lambda event: controller.emit("job", event)
+        controller.runs = runs
+        runs.event_sink = lambda event: controller.emit("run", event)
         return controller
     except BaseException:
         await resources.aclose()

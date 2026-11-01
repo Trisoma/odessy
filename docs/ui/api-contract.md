@@ -15,6 +15,13 @@ an implicit request target. There are no direct provider/native calls in widgets
 | Approval | POST `/v1/sessions/{sid}/approvals/{id}`, `{approved: bool}` |
 | Clarification | POST `/v1/sessions/{sid}/questions/{id}`, `{answer: string}` |
 | Collaboration settings | GET/PUT `/v1/settings` |
+| Handoff run | POST `/v1/sessions/{sid}/runs`, GET `/v1/sessions/{sid}/runs/{id}` |
+| Handoff output | GET `/v1/sessions/{sid}/runs/{id}/artifact` |
+| Continue a handoff | POST `/v1/sessions/{sid}/runs/{id}/continue`, `{artifact_sha256}` |
+| Cancel a handoff | POST `/v1/sessions/{sid}/runs/{id}/cancel` |
+
+A `run` session event carries the same snapshot as GET: `steps` are the agents and
+`transfers` the data moving between them. Runs do not survive a service restart.
 
 The backend assigns response-channel identity. The client never sends a channel,
 risk, permission, action modification or model-written authorization. Interaction

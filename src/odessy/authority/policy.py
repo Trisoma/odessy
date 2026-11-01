@@ -196,6 +196,7 @@ class OdessyPolicy:
             "git.log",
             "git.show",
             "model.consult", "agent.delegate", "agent.job_status", "agent.cancel",
+            "agent.run", "agent.run_continue", "agent.run_status", "agent.run_cancel",
         }
         if request.name not in allowed_tools:
             return PolicyDecision(
@@ -211,15 +212,30 @@ class OdessyPolicy:
             if current_interactions() is None:
                 return PolicyDecision("deny", "No clarification interaction is available", "low", rule="no_interaction")
             return PolicyDecision("allow", "Ask for information; answers grant no authority", "low", rule="user_ask")
-        if request.name in {"model.consult", "agent.delegate", "agent.job_status", "agent.cancel"}:
+        if request.name in {"model.consult", "agent.delegate", "agent.job_status", "agent.cancel",
+                            "agent.run", "agent.run_continue", "agent.run_status", "agent.run_cancel"}:
             if _ESCALATION_ARGUMENT_NAMES & set(request.arguments):
                 return PolicyDecision("deny", "Collaboration tools do not accept sandbox escalation arguments", "high", rule="sandbox_arguments")
             from odessy.collaboration.context import current_service
             service = current_service()
             if service is None or not service.config.settings.enabled:
                 return PolicyDecision("deny", "Collaboration is not enabled", "medium", rule="collaboration_off")
-            if request.name in {"agent.job_status", "agent.cancel"}:
+            if request.name in {"agent.job_status", "agent.cancel", "agent.run_status", "agent.run_cancel"}:
                 return PolicyDecision("allow", "Inspect or cancel an authorized collaboration job", "low", rule="collaboration_job")
+            if request.name == "agent.run_continue":
+                return PolicyDecision("confirm", "Hand one agent's output to another agent", "high", rule="collaboration_handoff")
+            if request.name == "agent.run":
+                from odessy.collaboration.runs import FLOWS
+                modes = FLOWS.get(request.arguments.get("flow"))
+                if modes is None:
+                    return PolicyDecision("deny", "Unknown handoff flow", "medium", rule="collaboration_handoff")
+                for key, mode in zip(("from_participant", "to_participant"), modes):
+                    profile = service.config.participants.get(request.arguments.get(key))
+                    if profile is None or "delegate" not in profile.capabilities:
+                        return PolicyDecision("deny", "Participant or capability is not configured", "medium", rule="collaboration_participant")
+                    if mode not in profile.allowed_modes:
+                        return PolicyDecision("deny", "Delegation mode is not allowed for this participant", "high", rule="collaboration_mode")
+                return PolicyDecision("confirm", "Run a two-agent handoff using the configured child-agent permissions", "high", rule="collaboration_handoff")
             participant = request.arguments.get("participant") or service.config.settings.default_participant
             profile = service.config.participants.get(participant)
             capability = "consult" if request.name == "model.consult" else "delegate"

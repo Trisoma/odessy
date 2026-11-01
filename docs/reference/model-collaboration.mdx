@@ -122,6 +122,18 @@ existing authorized SSH/stdio MCP mechanism. This worker is stdio-only; the
 launching operator trusts the stdio connection. The submitting Odessy still
 confirms delegation. It does not expose an unauthenticated network listener.
 
+### Handoff runs
+
+`agent.run` passes one agent's output to another: `document_to_code` (the first
+writes a document, the second implements it) or `code_to_review` (the first changes
+code, the second reviews it). Both steps share one worktree and the run holds the
+repository from start to finish. After the first step the run waits. The output
+moves only through `agent.run_continue`, a high-risk confirmation bound to its
+SHA-256, and arrives as a file under `.odessy-handoff/`, which the repository's
+local exclude file keeps out of the diff. Refusing ends the run as `declined`.
+A read-only step that changes files, or a worktree that changed during the wait,
+ends in `needs_attention`. See [agent handoff](../agent-handoff.md).
+
 ## HTTP service and UI diagnostic client
 
 ```sh

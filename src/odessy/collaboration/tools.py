@@ -3,7 +3,7 @@ import asyncio
 from mcp.server import MCPServer
 
 
-def build_collaboration_server(service, jobs=None):
+def build_collaboration_server(service, jobs=None, runs=None):
     server = MCPServer("odessy-collaboration")
 
     @server.tool(name="model.consult")
@@ -39,6 +39,26 @@ def build_collaboration_server(service, jobs=None):
         @server.tool(name="agent.cancel")
         async def cancel(job_id: str) -> dict[str, object]:
             return await jobs.cancel(job_id)
+
+    if runs is not None:
+        @server.tool(name="agent.run")
+        async def run(flow: str, from_participant: str, from_task: str, to_participant: str, to_task: str,
+                      workspace: str = "") -> dict[str, object]:
+            # Confirmed by OdessyAgent, like agent.delegate.
+            return await runs.start(flow, from_participant, from_task, to_participant, to_task,
+                                    workspace=workspace or None, approved=True)
+
+        @server.tool(name="agent.run_continue")
+        async def run_continue(run_id: str = "", artifact_sha256: str = "") -> dict[str, object]:
+            return await runs.continue_run(run_id or None, artifact_sha256 or None, approved=True)
+
+        @server.tool(name="agent.run_status")
+        async def run_status(run_id: str = "") -> dict[str, object]:
+            return runs.get(run_id or None)
+
+        @server.tool(name="agent.run_cancel")
+        async def run_cancel(run_id: str = "") -> dict[str, object]:
+            return await runs.cancel(run_id or None)
 
     return server
 
