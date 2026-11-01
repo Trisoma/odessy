@@ -292,9 +292,9 @@ fn fill_random(buffer: &mut [u8]) -> Result<(), String> {
         use std::io::Read;
         let mut source = std::fs::File::open("/dev/urandom")
             .map_err(|error| format!("cannot open /dev/urandom: {error}"))?;
-        return source
+        source
             .read_exact(buffer)
-            .map_err(|error| format!("cannot read /dev/urandom: {error}"));
+            .map_err(|error| format!("cannot read /dev/urandom: {error}"))
     }
     #[cfg(windows)]
     {

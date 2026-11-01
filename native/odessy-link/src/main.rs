@@ -402,7 +402,7 @@ pub(crate) fn state_dir() -> Result<PathBuf, String> {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .ok_or_else(|| "HOME is not set".to_string())?;
-        return Ok(home.join(".local/share/odessy-link"));
+        Ok(home.join(".local/share/odessy-link"))
     }
 }
 

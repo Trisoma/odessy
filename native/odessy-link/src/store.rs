@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 /// File the identity is written to. Protected on Windows, `0600` on Unix.
 pub const IDENTITY_FILE: &str = "identity.json";
 /// Windows-only protected form of the same document.
+#[cfg(windows)]
 const PROTECTED_FILE: &str = "identity.dpapi";
 
 /// Create the state directory with owner-only access if it does not exist.

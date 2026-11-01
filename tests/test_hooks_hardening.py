@@ -64,7 +64,10 @@ def records(folder: Path) -> list[dict]:
 
 
 def rules_from(text: str, tmp_path: Path):
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10 uses the tomli backport.
+        import tomli as tomllib
 
     return tuple(rule for rule, _ in parse_rules(tmp_path / "hooks.toml", tomllib.loads(text)))
 
