@@ -6,8 +6,11 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
+
+import pytest
 
 from odessy.application.lan_connections import Connections
 from odessy.tools.lan_executor import clear, current
@@ -33,11 +36,22 @@ asyncio.run(main())
 '''
 
 
-def test_real_terminal_approval_connects_tools_and_policy(tmp_path, tmp_path_factory):
+@pytest.mark.parametrize('private_ancestor', [False, True] if os.name == 'nt' else [False])
+def test_real_terminal_approval_connects_tools_and_policy(tmp_path, tmp_path_factory, private_ancestor):
+    base = tmp_path_factory.getbasetemp()
+    if private_ancestor:
+        # Fresh CI creates private pytest parents above xdist's worker base.
+        # An existing developer temp root does not reproduce that hierarchy.
+        parent = tmp_path / 'private-pytest-root'
+        parent.mkdir(mode=0o700)
+        base = parent / 'popen-gw0'
+        base.mkdir(mode=0o700)
+        tmp_path = base / 'case'
+        tmp_path.mkdir(mode=0o700)
     if os.name == 'nt':
         # Python 3.12.4+ creates pytest's private temp root with OWNER RIGHTS
         # instead of an explicit user ACE. The LUA restricted token cannot
-        # read that fixture tree, so PowerShell silently starts in System32.
+        # read that fixture tree, so PowerShell silently starts elsewhere.
         # Give only the current user Modify access to the fixture tree so the
         # normal token access check succeeds. Writes still require the sandbox
         # capability in the second access check;
@@ -46,16 +60,23 @@ def test_real_terminal_approval_connects_tools_and_policy(tmp_path, tmp_path_fac
             ['whoami', '/user', '/fo', 'csv', '/nh'], text=True,
         )
         user_sid = next(csv.reader(identity.strip().splitlines()))[-1]
-        base = tmp_path_factory.getbasetemp()
-        directory = tmp_path
-        while True:
+        # xdist's base is pytest-N/popen-gwN. Fresh runners also have private
+        # pytest-N and pytest-of-user ancestors above it. Those need explicit
+        # read/traverse access too; stop before the system temp directory.
+        # A custom --basetemp outside it is bounded to that fixture tree.
+        base = base.resolve()
+        tmp_path = tmp_path.resolve()
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        boundary = temp_root if base.is_relative_to(temp_root) else base.parent
+        assert tmp_path.is_relative_to(base)
+        for directory in (tmp_path, *tmp_path.parents):
+            if directory == boundary:
+                break
+            rights = '(OI)(CI)(M)' if directory.is_relative_to(base) else '(RX)'
             subprocess.run(
-                ['icacls', str(directory), '/grant', f'*{user_sid}:(OI)(CI)(M)', '/Q'],
+                ['icacls', str(directory), '/grant', f'*{user_sid}:{rights}', '/Q'],
                 check=True, capture_output=True,
             )
-            if directory == base:
-                break
-            directory = directory.parent
     async def run():
         clear()
         process = subprocess.Popen([sys.executable, '-u', '-c', HOST_CODE, str(tmp_path)],
