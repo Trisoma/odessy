@@ -7,7 +7,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/app/app.dart';
-import 'package:odessy_desktop/widgets/component_state_banner.dart';
 import 'component_settings_test.dart' show SavedComponents;
 
 class DelayedApi extends DemoApi {
@@ -133,9 +132,8 @@ void main() {
     await tester.pumpWidget(
         OdessyApp(api: FailedApi(), setupBackend: SavedComponents()));
     await tester.pumpAndSettle();
-    expect(find.byType(ComponentStateBanner), findsWidgets);
-    expect(find.textContaining('Check your API key and model settings'),
-        findsWidgets);
+    expect(find.text('Session needs attention'), findsOneWidget);
+    expect(find.text('Refresh session'), findsOneWidget);
     await nav(tester, 'Settings');
     expect(find.text('Preferences'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());

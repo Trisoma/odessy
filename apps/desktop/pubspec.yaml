@@ -16,9 +16,14 @@ dev_dependencies:
   flutter_lints: ^5.0.0
 flutter:
   uses-material-design: true
+  assets:
+    - assets/fonts/OFL-RobotoMono.txt
   fonts:
     - family: OdessySans
       fonts:
         - asset: assets/fonts/roboto-regular.ttf
         - asset: assets/fonts/roboto-bold.ttf
           weight: 700
+    - family: OdessyMono
+      fonts:
+        - asset: assets/fonts/roboto-mono.ttf

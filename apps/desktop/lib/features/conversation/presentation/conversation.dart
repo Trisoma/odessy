@@ -3,17 +3,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../app/session_controller.dart';
 import '../../../app/readiness_controller.dart';
-import '../../../app/theme.dart';
 import '../controllers/voice_controller.dart';
 import 'interaction_card.dart';
+import 'message_content.dart';
 import 'session_activity.dart';
 
 class ConversationPage extends StatefulWidget {
   const ConversationPage(
-      {super.key, required this.controller, this.readiness, this.voice});
+      {super.key,
+      required this.controller,
+      this.readiness,
+      this.voice,
+      this.onOpenModels});
   final DesktopSession controller;
   final ReadinessController? readiness;
   final VoiceController? voice;
+  final VoidCallback? onOpenModels;
   @override
   State<ConversationPage> createState() => _ConversationPageState();
 }
@@ -21,7 +26,7 @@ class ConversationPage extends StatefulWidget {
 class _ConversationPageState extends State<ConversationPage> {
   final input = TextEditingController();
   final scroll = ScrollController();
-  bool submitting = false, showLatest = false;
+  bool submitting = false, showLatest = false, showVoiceOptions = false;
   Object? contentStamp;
   int scrollEpoch = 0;
   late VoiceController voice;
@@ -170,10 +175,10 @@ class _ConversationPageState extends State<ConversationPage> {
                 MediaQuery.textScalerOf(context).scale(14) > 20);
         final header = Padding(
             padding: EdgeInsets.fromLTRB(inset, 16, inset, 12),
-            child: _header(context));
+            child: _content(_header(context)));
         final composer = Padding(
             padding: EdgeInsets.fromLTRB(inset, 8, inset, 16),
-            child: _composer(context, narrow: box.maxWidth < 600));
+            child: _content(_composer(context, narrow: box.maxWidth < 600)));
         if (compact) {
           return SelectionArea(
               child: SingleChildScrollView(
@@ -275,7 +280,7 @@ class _ConversationPageState extends State<ConversationPage> {
   Widget _content(Widget child) => Align(
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 880),
+          constraints: const BoxConstraints(maxWidth: 760),
           child: SizedBox(width: double.infinity, child: child)));
 
   Widget _header(BuildContext context) {
@@ -298,10 +303,22 @@ class _ConversationPageState extends State<ConversationPage> {
                         ? 'Connected'
                         : 'Offline',
                 style: Theme.of(context).textTheme.bodySmall),
+            IconButton(
+                tooltip: 'Session details',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.info_outline, size: 18),
+                onPressed: () => showDialog<void>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                            title: const Text('Session details'),
+                            content: SelectableText(
+                                'Coordinator: ${c.api.identity}'),
+                            actions: [
+                              TextButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  child: const Text('Close'))
+                            ]))),
           ]),
-      const SizedBox(height: 4),
-      Text('Coordinator: ${c.api.identity}',
-          style: Theme.of(context).textTheme.bodySmall),
       if (s?.running == true && s?.activeProfile != null)
         Text('Active model: ${s!.activeProfile}',
             style: Theme.of(context).textTheme.bodySmall),
@@ -348,53 +365,82 @@ class _ConversationPageState extends State<ConversationPage> {
       'system' => 'System',
       _ => role,
     };
+    final copy = IconButton(
+        tooltip: 'Copy message',
+        visualDensity: VisualDensity.compact,
+        icon: const Icon(Icons.copy_outlined, size: 16),
+        onPressed: () async {
+          await Clipboard.setData(ClipboardData(text: text));
+          if (context.mounted) {
+            ScaffoldMessenger.of(context)
+                .showSnackBar(const SnackBar(content: Text('Message copied')));
+          }
+        });
+    final labelStyle = Theme.of(context)
+        .textTheme
+        .labelLarge
+        ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant);
+
+    if (user) {
+      return LayoutBuilder(builder: (context, bounds) {
+        final maxWidth = bounds.maxWidth * .78;
+        return Padding(
+            padding: const EdgeInsets.only(bottom: 24),
+            child: Align(
+                alignment: Alignment.centerRight,
+                child: ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: maxWidth),
+                    child: IntrinsicWidth(
+                        child: Container(
+                            key: const Key('user-message-bubble'),
+                            padding: const EdgeInsets.fromLTRB(16, 8, 8, 14),
+                            decoration: BoxDecoration(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest,
+                                borderRadius: BorderRadius.circular(18)),
+                            child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(label, style: labelStyle),
+                                        const SizedBox(width: 8),
+                                        copy,
+                                      ]),
+                                  Padding(
+                                      padding: const EdgeInsets.only(right: 8),
+                                      child: Text(text,
+                                          style: const TextStyle(height: 1.6))),
+                                ]))))));
+      });
+    }
+
     return Padding(
-        padding: const EdgeInsets.only(bottom: 20),
+        padding: const EdgeInsets.only(bottom: 24),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Padding(
               padding: const EdgeInsets.only(top: 10),
               child: Icon(
-                  user
-                      ? Icons.person_outline
-                      : role == 'tool'
-                          ? Icons.terminal
-                          : Icons.bubble_chart_outlined,
+                  role == 'tool' ? Icons.terminal : Icons.bubble_chart_outlined,
                   size: 20,
                   color: Theme.of(context).colorScheme.primary)),
           const SizedBox(width: 12),
           Expanded(
-              child: Container(
-            padding: const EdgeInsets.all(OdessyTokens.spaceRegular),
-            decoration: BoxDecoration(
-                color: user
-                    ? Theme.of(context)
-                        .colorScheme
-                        .primary
-                        .withValues(alpha: .07)
-                    : Theme.of(context).colorScheme.surfaceContainerLow,
-                borderRadius: BorderRadius.circular(OdessyTokens.radiusMedium)),
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Expanded(
-                    child: Text(label,
-                        style: Theme.of(context).textTheme.labelLarge)),
-                IconButton(
-                    tooltip: 'Copy message',
-                    visualDensity: VisualDensity.compact,
-                    icon: const Icon(Icons.copy_outlined, size: 16),
-                    onPressed: () async {
-                      await Clipboard.setData(ClipboardData(text: text));
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Message copied')));
-                      }
-                    }),
-              ]),
-              const SizedBox(height: 4),
-              Text(text, style: const TextStyle(height: 1.6)),
-            ]),
-          )),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Row(children: [
+                  Expanded(child: Text(label, style: labelStyle)),
+                  copy,
+                ]),
+                if (role == 'assistant')
+                  MessageContent(text: text)
+                else
+                  Text(text, style: const TextStyle(height: 1.6)),
+              ])),
         ]));
   }
 
@@ -435,7 +481,7 @@ class _ConversationPageState extends State<ConversationPage> {
                             decoration: const InputDecoration(
                                 hintText: 'Message Odessy…',
                                 labelText: 'Message',
-                                fillColor: Colors.transparent,
+                                filled: false,
                                 border: InputBorder.none,
                                 enabledBorder: InputBorder.none)))),
                 IconButton(
@@ -486,38 +532,82 @@ class _ConversationPageState extends State<ConversationPage> {
         if (c.api.isDemo)
           Text('Demo · no model or tool executes',
               style: Theme.of(context).textTheme.bodySmall),
-        if (voice.snapshot?.message.isNotEmpty == true)
-          Text(voice.snapshot!.message),
-        TextButton(
-            onPressed: voice.refresh,
-            child: const Text('Check voice availability')),
-        if (voice.supported)
+        if (voice.snapshot?.mode == 'wake')
+          Semantics(
+              liveRegion: true,
+              child: Text('Wake listening',
+                  style: Theme.of(context).textTheme.bodySmall)),
+        if (const {
+          'preparing',
+          'recording',
+          'transcribing',
+          'speaking',
+          'cancelling'
+        }.contains(voice.snapshot?.state))
+          Semantics(
+              liveRegion: true,
+              child: Text('Audio: ${voice.snapshot!.state}',
+                  style: Theme.of(context).textTheme.bodySmall)),
+        TextButton.icon(
+            style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 8)),
+            onPressed: () =>
+                setState(() => showVoiceOptions = !showVoiceOptions),
+            icon: Icon(showVoiceOptions ? Icons.expand_less : Icons.expand_more,
+                size: 18),
+            label: const Text('Voice options')),
+        if (!showVoiceOptions &&
+            voice.supported &&
+            voice.snapshot?.mode == 'wake')
           TextButton(
-              onPressed: voice.busy && voice.snapshot?.mode != 'wake'
-                  ? null
-                  : () => voice.command(voice.snapshot?.mode == 'wake'
-                      ? 'disable_wake'
-                      : 'enable_wake'),
-              child: Text(voice.snapshot?.mode == 'wake'
-                  ? 'Stop wake listening'
-                  : 'Enable wake listening on coordinator')),
-        if (voice.supported &&
-            voice.snapshot?.mode != 'wake' &&
-            !voice.busy &&
-            !voice.recording) ...[
-          TextButton(
-              onPressed: () => voice.command('test_input'),
-              child: const Text('Test speech input · no model call')),
-          TextButton(
-              onPressed: () => voice.command('test_output'),
-              child: const Text('Test speech output')),
-        ],
-        if (voice.supported)
+              onPressed: () => voice.command('disable_wake'),
+              child: const Text('Stop wake listening')),
+        if (!showVoiceOptions &&
+            voice.supported &&
+            voice.snapshot?.state == 'speaking')
           TextButton(
               onPressed: () => voice.command('stop_playback'),
               child: const Text('Stop playback')),
-        if (voice.error.isNotEmpty) Text(voice.error),
       ]),
+      if (voice.error.isNotEmpty)
+        Semantics(liveRegion: true, child: Text(voice.error)),
+      if (showVoiceOptions) ...[
+        if (voice.snapshot?.message.isNotEmpty == true)
+          Text(voice.snapshot!.message,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
+        Wrap(spacing: 8, runSpacing: 4, children: [
+          TextButton(
+              onPressed: voice.refresh,
+              child: const Text('Check voice availability')),
+          if (voice.supported)
+            TextButton(
+                onPressed: voice.busy && voice.snapshot?.mode != 'wake'
+                    ? null
+                    : () => voice.command(voice.snapshot?.mode == 'wake'
+                        ? 'disable_wake'
+                        : 'enable_wake'),
+                child: Text(voice.snapshot?.mode == 'wake'
+                    ? 'Stop wake listening'
+                    : 'Enable wake listening on coordinator')),
+          if (voice.supported &&
+              voice.snapshot?.mode != 'wake' &&
+              !voice.busy &&
+              !voice.recording) ...[
+            TextButton(
+                onPressed: () => voice.command('test_input'),
+                child: const Text('Test speech input · no model call')),
+            TextButton(
+                onPressed: () => voice.command('test_output'),
+                child: const Text('Test speech output')),
+          ],
+          if (voice.supported)
+            TextButton(
+                onPressed: () => voice.command('stop_playback'),
+                child: const Text('Stop playback')),
+        ]),
+      ],
     ]);
   }
 
@@ -546,6 +636,7 @@ class _ConversationPageState extends State<ConversationPage> {
 
   Widget _connectionNotice(BuildContext context) {
     final c = widget.controller;
+    final guidance = modelErrorGuidance(c.error);
     return _content(Padding(
         padding: const EdgeInsets.only(bottom: 16),
         child: Card(
@@ -560,22 +651,50 @@ class _ConversationPageState extends State<ConversationPage> {
                               : 'Service offline',
                           style: Theme.of(context).textTheme.titleMedium),
                       const SizedBox(height: 8),
-                      Text(c.error.isNotEmpty
-                          ? c.error
-                          : 'Connect to your local service to continue.'),
+                      Semantics(
+                          liveRegion: true,
+                          child: Text(c.error.isNotEmpty
+                              ? guidance ?? c.error
+                              : 'Connect to your local service to continue.')),
                       const SizedBox(height: 12),
-                      OutlinedButton.icon(
-                          onPressed: c.busy || c.stopping
-                              ? null
-                              : () async {
-                                  if (c.session == null) {
-                                    await c.start();
-                                  } else {
-                                    await c.refresh();
-                                  }
-                                },
-                          icon: const Icon(Icons.refresh, size: 16),
-                          label: const Text('Refresh session')),
+                      Wrap(spacing: 8, runSpacing: 8, children: [
+                        OutlinedButton.icon(
+                            onPressed: c.busy || c.stopping
+                                ? null
+                                : () async {
+                                    if (c.session == null) {
+                                      await c.start();
+                                    } else {
+                                      await c.refresh();
+                                    }
+                                  },
+                            icon: const Icon(Icons.refresh, size: 16),
+                            label: const Text('Refresh session')),
+                        if (guidance != null && widget.onOpenModels != null)
+                          TextButton(
+                              onPressed: widget.onOpenModels,
+                              child: const Text('Open model settings')),
+                      ]),
                     ])))));
   }
+}
+
+/// Provides actionable copy for recognized model failures without changing
+/// the service error retained by the session controller.
+String? modelErrorGuidance(String error) {
+  final lower = error.toLowerCase();
+  if (!lower.contains('ollama')) return null;
+  if (lower.contains('10061') || lower.contains('connection refused')) {
+    return 'Cannot connect to Ollama. Start the model service or choose another model in Settings.';
+  }
+  if (lower.contains('usage limit') ||
+      lower.contains('quota') ||
+      lower.contains('429')) {
+    return 'The model service reported a usage limit. Check the provider account or choose another model.';
+  }
+  if (lower.contains('model') &&
+      (lower.contains('not found') || lower.contains('not-configured'))) {
+    return 'The selected model is unavailable. Check the model name and configure an available model in Settings.';
+  }
+  return null;
 }

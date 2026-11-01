@@ -8,6 +8,8 @@ import 'package:odessy_desktop/app/theme.dart';
 import 'package:odessy_desktop/features/conversation/presentation/conversation.dart';
 import 'package:odessy_desktop/features/conversation/presentation/interaction_card.dart';
 import 'package:odessy_desktop/features/conversation/presentation/session_activity.dart';
+import 'package:odessy_desktop/features/conversation/controllers/voice_controller.dart';
+import 'voice_controller_test.dart' show AudioApi;
 
 Json interactionFixture(
         {String kind = 'approval',
@@ -96,6 +98,261 @@ Future<void> mountConversation(WidgetTester tester, DesktopSession c,
 }
 
 void main() {
+  testWidgets('assistant lists are readable while full copy keeps source',
+      (tester) async {
+    const source = 'Tasks:\n- First item\n* Second item\n2. Third item';
+    final api = ConversationFixtureApi()
+      ..messages = [const ChatMessage('assistant', source)];
+    final c = DesktopSession(api);
+    addTearDown(c.dispose);
+    await c.start();
+    String? copied;
+    tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copied = (call.arguments as Map)['text'];
+      }
+      return null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+    await mountConversation(tester, c);
+    await tester.pumpAndSettle();
+    expect(find.text('Tasks:\n• First item\n• Second item\n2. Third item'),
+        findsOneWidget);
+    await tester.tap(find.byTooltip('Copy message'));
+    await tester.pumpAndSettle();
+    expect(copied, source);
+  });
+
+  testWidgets('assistant code blocks copy exact code and preserve message copy',
+      (tester) async {
+    const source = 'Example <script>:\n'
+        '\x60\x60\x60dart\nfinal value = 42;\n\x60\x60\x60\n'
+        'More text\n~~~~text\nhello\n~~~~\n'
+        'Unfinished:\n\x60\x60\x60python\nprint(1)';
+    final api = ConversationFixtureApi()
+      ..messages = [const ChatMessage('assistant', source)];
+    final c = DesktopSession(api);
+    addTearDown(c.dispose);
+    await c.start();
+    String? copied;
+    tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copied = (call.arguments as Map)['text'];
+      }
+      return null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+    await mountConversation(tester, c);
+    await tester.pumpAndSettle();
+    expect(find.text('Example <script>:\n'), findsOneWidget);
+    expect(find.text('dart'), findsOneWidget);
+    expect(find.text('text'), findsOneWidget);
+    expect(find.textContaining('Unfinished:'), findsOneWidget);
+    expect(find.byTooltip('Copy code'), findsNWidgets(2));
+    await tester.tap(find.byTooltip('Copy code').first);
+    await tester.pumpAndSettle();
+    expect(copied, 'final value = 42;\n');
+    await tester.tap(find.byTooltip('Copy message'));
+    await tester.pumpAndSettle();
+    expect(copied, source);
+  });
+
+  testWidgets('long code lines remain accessible in a narrow window',
+      (tester) async {
+    final code = 'x' * 300;
+    final source = '\x60\x60\x60\n$code\n\x60\x60\x60';
+    final api = ConversationFixtureApi()
+      ..messages = [ChatMessage('assistant', source)];
+    final c = DesktopSession(api);
+    addTearDown(c.dispose);
+    await c.start();
+    await mountConversation(tester, c, size: const Size(360, 900), scale: 1.3);
+    await tester.pumpAndSettle();
+    expect(find.text('Code'), findsOneWidget);
+    expect(find.text('$code\n'), findsOneWidget);
+    expect(find.byTooltip('Copy code').hitTestable(), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('unclosed fences remain literal and shorter fences stay in code',
+      (tester) async {
+    const open = 'A partial response:\n\x60\x60\x60dart\nprint(1)';
+    const fenced =
+        '\x60\x60\x60\x60text\nline one\n\x60\x60\x60\nline two\n\x60\x60\x60\x60';
+    final api = ConversationFixtureApi()
+      ..messages = [
+        const ChatMessage('assistant', open),
+        const ChatMessage('assistant', fenced)
+      ];
+    final c = DesktopSession(api);
+    addTearDown(c.dispose);
+    await c.start();
+    await mountConversation(tester, c);
+    await tester.pumpAndSettle();
+    expect(find.text(open), findsOneWidget);
+    expect(find.text('line one\n\x60\x60\x60\nline two\n'), findsOneWidget);
+    expect(find.byTooltip('Copy code'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('session details are available on demand', (tester) async {
+    final c = DesktopSession(ConversationFixtureApi());
+    addTearDown(c.dispose);
+    await c.start();
+    await mountConversation(tester, c);
+    expect(find.textContaining('Coordinator:'), findsNothing);
+    await tester.tap(find.byTooltip('Session details'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Coordinator:'), findsOneWidget);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Coordinator:'), findsNothing);
+  });
+
+  testWidgets('voice options stay accessible and active playback can stop',
+      (tester) async {
+    final api = AudioApi();
+    final c = DesktopSession(api);
+    addTearDown(c.dispose);
+    await c.start();
+    final voice = VoiceController(c);
+    addTearDown(voice.dispose);
+    await voice.refresh();
+    await mountConversation(tester, c,
+        body: ConversationPage(controller: c, voice: voice));
+    expect(find.text('Check voice availability'), findsNothing);
+    await tester.tap(find.text('Voice options'));
+    await tester.pump();
+    expect(find.text('Check voice availability'), findsOneWidget);
+    expect(find.text('Test speech output'), findsOneWidget);
+    await tester.tap(find.text('Voice options'));
+    await tester.pump();
+    api.state = 'speaking';
+    await voice.refresh();
+    await tester.pump();
+    expect(find.text('Audio: speaking'), findsOneWidget);
+    expect(find.text('Stop playback'), findsOneWidget);
+    await tester.tap(find.text('Stop playback'));
+    await tester.pumpAndSettle();
+    expect(api.commands, contains('stop_playback'));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('wake listening can stop while voice options are closed',
+      (tester) async {
+    final api = AudioApi();
+    final c = DesktopSession(api);
+    addTearDown(c.dispose);
+    await c.start();
+    final voice = VoiceController(c);
+    addTearDown(voice.dispose);
+    await voice.refresh();
+    voice.snapshot = VoiceSnapshot.fromJson({
+      'supported': true,
+      'state': 'idle',
+      'mode': 'wake',
+    });
+    await mountConversation(tester, c,
+        body: ConversationPage(controller: c, voice: voice));
+    expect(find.text('Check voice availability'), findsNothing);
+    expect(find.text('Wake listening'), findsOneWidget);
+    expect(find.text('Stop wake listening'), findsOneWidget);
+    await tester.tap(find.text('Stop wake listening'));
+    await tester.pumpAndSettle();
+    expect(api.commands, contains('disable_wake'));
+  });
+
+  testWidgets('recording status and cancel remain visible with options closed',
+      (tester) async {
+    final api = AudioApi()..state = 'recording';
+    final c = DesktopSession(api);
+    addTearDown(c.dispose);
+    await c.start();
+    final voice = VoiceController(c);
+    addTearDown(voice.dispose);
+    await voice.refresh();
+    await mountConversation(tester, c,
+        body: ConversationPage(controller: c, voice: voice));
+    expect(find.text('Audio: recording'), findsOneWidget);
+    expect(
+        find.byTooltip('Finish recording and submit speech'), findsOneWidget);
+    await tester.tap(find.byTooltip('Cancel recording without submitting'));
+    await tester.pumpAndSettle();
+    expect(api.commands, contains('cancel_capture'));
+  });
+
+  for (final (error, expected) in [
+    (
+      'Ollama LFM API call failed: <urlopen error [WinError 10061] 连接被拒绝>',
+      'Cannot connect to Ollama. Start the model service or choose another model in Settings.'
+    ),
+    (
+      'Ollama API call failed (429): usage limit reached',
+      'The model service reported a usage limit. Check the provider account or choose another model.'
+    ),
+    (
+      'Ollama API call failed (404): model not found',
+      'The selected model is unavailable. Check the model name and configure an available model in Settings.'
+    ),
+    (
+      'Stop was not confirmed. Odessy service returned HTTP 500.',
+      'Stop was not confirmed. Odessy service returned HTTP 500.'
+    ),
+  ]) {
+    testWidgets('session notice retains actionable information: $error',
+        (tester) async {
+      final c = DesktopSession(ConversationFixtureApi());
+      addTearDown(c.dispose);
+      await c.start();
+      c.error = error;
+      var openedModels = false;
+      await mountConversation(tester, c,
+          body: ConversationPage(
+              controller: c, onOpenModels: () => openedModels = true));
+      expect(find.text(expected), findsOneWidget);
+      if (expected != error) {
+        expect(find.text(error), findsNothing);
+        await tester.tap(find.text('Open model settings'));
+        expect(openedModels, isTrue);
+      } else {
+        expect(find.text('Open model settings'), findsNothing);
+      }
+    });
+  }
+
+  for (final size in [const Size(1100, 1000), const Size(360, 900)]) {
+    testWidgets('user messages fit their content and stay usable at $size',
+        (tester) async {
+      final api = ConversationFixtureApi()
+        ..messages = [
+          const ChatMessage('user', 'Hello'),
+          ChatMessage('user', 'A long message with a URL: ${'x' * 200}'),
+          const ChatMessage('assistant', 'Here is the response.'),
+        ];
+      final c = DesktopSession(api);
+      addTearDown(c.dispose);
+      await c.start();
+      await mountConversation(tester, c, size: size);
+      await tester.pumpAndSettle();
+      final bubbles = find.byKey(const Key('user-message-bubble'));
+      expect(bubbles, findsNWidgets(2));
+      final short = tester.getRect(bubbles.first);
+      final long = tester.getRect(bubbles.last);
+      expect(short.width, lessThan(long.width));
+      expect(long.right, lessThanOrEqualTo(size.width));
+      expect(short.right, closeTo(long.right, 1));
+      expect(
+          find.descendant(
+              of: bubbles, matching: find.byTooltip('Copy message')),
+          findsNWidgets(2));
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('examples fill the draft and blank drafts cannot submit',
       (tester) async {
     final api = ConversationFixtureApi();

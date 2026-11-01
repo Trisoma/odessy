@@ -60,6 +60,7 @@ class SettingsPage extends StatefulWidget {
     this.onOpenGetStarted,
     this.onOpenVoice,
     this.onOpenDevices,
+    this.onOpenConversation,
     this.installed = false,
     this.modelConfigured = false,
     this.voiceEnabled = false,
@@ -75,6 +76,7 @@ class SettingsPage extends StatefulWidget {
   final SettingsFormController<int>? formController;
   final String installationRoot, initialSection;
   final VoidCallback? onOpenManagement, onOpenGetStarted, onOpenDevices;
+  final VoidCallback? onOpenConversation;
   final VoidCallback? onOpenVoice;
   final VoidCallback? onOpenInstaller, onOpenMaintenance;
   final bool maintenanceBlocked;
@@ -89,6 +91,9 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   final count = TextEditingController();
+  final _modelSettingsKey = GlobalKey();
+  final _modelChecksKey = GlobalKey();
+  final _modelProfilesKey = GlobalKey();
   final fallbackField = SettingField<int>(
       source: 'user collaboration configuration',
       applyTiming: 'new sessions',
@@ -322,8 +327,19 @@ class _SettingsPageState extends State<SettingsPage> {
               key: ValueKey(name),
               controller: components!,
               section: name,
+              checksKey: name == 'llm' ? _modelChecksKey : null,
               picker: const FileSelectorPicker()),
         ]);
+
+  void _showModelSection(GlobalKey target, {GlobalKey? fallback}) {
+    final element = target.currentContext ?? fallback?.currentContext;
+    if (element == null) return;
+    Scrollable.ensureVisible(element,
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 250),
+        curve: Curves.easeOut);
+  }
 
   Widget _content(BuildContext context) =>
       Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -365,7 +381,38 @@ class _SettingsPageState extends State<SettingsPage> {
           _card(context, 'Collaboration', [_collaborationForm(context)]),
         ],
         if (section == SettingsSections.models) ...[
+          _card(context, 'Set up a model', [
+            const Text(
+                '1. Configure the startup model, or add a session profile.'),
+            const SizedBox(height: 8),
+            Text(components == null
+                ? '2. Model checks are unavailable for this connection.'
+                : '2. Check the configuration or run a model test below. A model test asks for confirmation and cloud usage may be billed.'),
+            const SizedBox(height: 8),
+            const Text(
+                '3. Apply saved startup changes as indicated. Return to Assistant and choose the model for the next turn. New profiles are available to new sessions.'),
+            const SizedBox(height: 12),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              OutlinedButton(
+                  onPressed: () => _showModelSection(_modelSettingsKey),
+                  child: const Text('Startup model')),
+              if (components != null)
+                OutlinedButton(
+                    onPressed: () => _showModelSection(_modelChecksKey,
+                        fallback: _modelSettingsKey),
+                    child: const Text('Model checks')),
+              OutlinedButton(
+                  onPressed: () => _showModelSection(_modelProfilesKey),
+                  child: const Text('Saved profiles')),
+              if (widget.onOpenConversation != null)
+                TextButton(
+                    onPressed: widget.onOpenConversation,
+                    child: const Text('Return to Assistant')),
+            ]),
+          ]),
           _card(context, 'Session profiles', [
+            _row('Coordinator',
+                widget.controller.connected ? 'Connected' : 'Offline'),
             _row(
                 'Next-turn model',
                 widget.controller.connected
@@ -379,32 +426,41 @@ class _SettingsPageState extends State<SettingsPage> {
                     : 'Unavailable'),
             if (widget.controller.api.isDemo)
               const Text('These profiles belong to the demo session.'),
+            const Text(
+                'A connected coordinator does not confirm that the selected model is available.'),
           ]),
-          ModelProfiles(
-              session: widget.controller,
-              onDialogChange: (open) => _dialogOpen = open),
+          KeyedSubtree(
+              key: _modelProfilesKey,
+              child: ModelProfiles(
+                  session: widget.controller,
+                  onDialogChange: (open) => _dialogOpen = open)),
           const Text(
               'Save your API key securely below, or use it for this session only. Environment-provided keys remain supported and read-only.'),
-          if (components != null)
-            _component('llm')
-          else
-            _card(context, 'Model', [
-              _row('State',
-                  widget.modelConfigured ? 'Configured' : 'Not reported'),
-              const SizedBox(height: OdessyTokens.spaceCompact),
-              const Text(
-                  'Choosing a model and endpoint is a reviewed configuration change. It does not start the model or contact a provider.',
-                  style: TextStyle(fontSize: 12)),
-              Align(
-                  alignment: Alignment.centerLeft,
-                  child: OutlinedButton(
-                      onPressed: widget.onOpenGetStarted == null
-                          ? null
-                          : () => _openStandalone(widget.onOpenGetStarted!),
-                      child: Text(widget.modelConfigured
-                          ? 'Change model'
-                          : 'Configure a model'))),
-            ]),
+          KeyedSubtree(
+              key: _modelSettingsKey,
+              child: components != null
+                  ? _component('llm')
+                  : _card(context, 'Model', [
+                      _row(
+                          'State',
+                          widget.modelConfigured
+                              ? 'Configured'
+                              : 'Not reported'),
+                      const SizedBox(height: OdessyTokens.spaceCompact),
+                      const Text(
+                          'Choosing a model and endpoint is a reviewed configuration change. It does not start the model or contact a provider.',
+                          style: TextStyle(fontSize: 12)),
+                      Align(
+                          alignment: Alignment.centerLeft,
+                          child: OutlinedButton(
+                              onPressed: widget.onOpenGetStarted == null
+                                  ? null
+                                  : () =>
+                                      _openStandalone(widget.onOpenGetStarted!),
+                              child: Text(widget.modelConfigured
+                                  ? 'Change model'
+                                  : 'Configure a model'))),
+                    ])),
           if (widget.onConnectSaved != null)
             Padding(
                 padding: const EdgeInsets.only(bottom: 24),

@@ -21,6 +21,9 @@ void main() {
     await (FontLoader('MaterialIcons')
           ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf')))
         .load();
+    await (FontLoader('OdessyMono')
+          ..addFont(rootBundle.load('assets/fonts/roboto-mono.ttf')))
+        .load();
     tester.view.physicalSize = const Size(1440, 1100);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -30,7 +33,8 @@ void main() {
       ..messages = [
         const ChatMessage('user', 'Check the repository status.'),
         const ChatMessage('assistant',
-            'I will inspect the changes after you review the requested action.'),
+            'I will inspect the changes after you review the requested action.\n'
+            '\x60\x60\x60sh\ngit status --short\n\x60\x60\x60'),
       ];
     Future<void> capture(String name) async {
       final boundary =
