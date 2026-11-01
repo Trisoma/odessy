@@ -152,10 +152,11 @@ python -m odessy --model-backend deepseek "让 claude 写一份加法函数的�
 这种单次命令结束时会取消运行中的任务，所以走完全流程要用服务模式，让两轮对话留在同一个会话里：
 
 ```bash
+export ODESSY_API_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 ODESSY_MODEL_BACKEND=deepseek python -m odessy serve --host 127.0.0.1 --port 8765
 ```
 
-打开 `http://127.0.0.1:8765/`，填入启动时打印的 token，新建会话后发第 1 句话并批准。第一步结束后再发“把结果交给下一步”，审批内容里应出现产出的 SHA-256，批准后第二步开始运行。
+打开 `http://127.0.0.1:8765/`，填入自己配置的 `ODESSY_API_TOKEN`（服务不会打印凭据），新建会话后发第 1 句话并批准。第一步结束后再发“把结果交给下一步”，审批内容里应出现产出的 SHA-256，批准后第二步开始运行。
 
 ### 怎么反馈
 

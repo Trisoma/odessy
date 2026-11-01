@@ -1,4 +1,5 @@
 import asyncio
+import os
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
@@ -126,6 +127,84 @@ def test_handoff_needs_the_hash_that_was_offered_and_an_unchanged_worktree(repo)
             await runs.continue_run(run_id, approved=True)
         assert runs.get(run_id)['state'] == 'needs_attention'
         assert len(calls) == 1
+    asyncio.run(run())
+
+
+def test_committed_changes_during_the_pause_are_refused(repo):
+    async def run():
+        async def runner(*args, **kwargs):
+            return document('The spec')
+        _, runs = managers(repo, runner)
+        run_id = (await runs.start(*DOCUMENT, approved=True))['run_id']
+        waiting = await settled(runs, run_id, 'awaiting_handoff')
+        tree = Path(waiting['worktree'])
+        (tree / 'app.py').write_text('unreviewed change\n')
+        git(tree, 'add', '.')
+        git(tree, '-c', 'commit.gpgsign=false', 'commit', '-m', 'changed while paused')
+        with pytest.raises(ValueError, match='changed'):
+            await runs.continue_run(run_id, approved=True)
+        assert runs.get(run_id)['state'] == 'needs_attention'
+    asyncio.run(run())
+
+
+def test_binary_changes_during_the_pause_are_refused(repo):
+    (repo / 'data.bin').write_bytes(b'\0baseline')
+    git(repo, 'add', '.')
+    git(repo, '-c', 'commit.gpgsign=false', 'commit', '-m', 'binary fixture')
+    async def run():
+        async def runner(command, *, cwd, **kwargs):
+            (Path(cwd) / 'data.bin').write_bytes(b'\0first')
+            return document('changed')
+        _, runs = managers(repo, runner)
+        run_id = (await runs.start(*REVIEW, approved=True))['run_id']
+        waiting = await settled(runs, run_id, 'awaiting_handoff')
+        (Path(waiting['worktree']) / 'data.bin').write_bytes(b'\0second')
+        with pytest.raises(ValueError, match='changed'):
+            await runs.continue_run(run_id, approved=True)
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('symlink', [False, True])
+def test_preexisting_handoff_paths_are_not_overwritten(repo, symlink):
+    async def run():
+        async def runner(*args, **kwargs):
+            return document('The spec')
+        _, runs = managers(repo, runner)
+        run_id = (await runs.start(*DOCUMENT, approved=True))['run_id']
+        waiting = await settled(runs, run_id, 'awaiting_handoff')
+        target = repo / 'outside.txt'
+        target.write_text('keep me')
+        directory = Path(waiting['worktree']) / HANDOFF_DIR
+        directory.mkdir()
+        path = directory / 't1.md'
+        if symlink:
+            try:
+                os.symlink(target, path)
+            except OSError:
+                await runs.close()
+                pytest.skip('Creating file symlinks requires OS permission')
+        else:
+            path.write_text('keep me')
+        with pytest.raises(ValueError):
+            await runs.continue_run(run_id, approved=True)
+        assert target.read_text() == 'keep me'
+        assert path.read_text() == 'keep me'
+        assert runs.get(run_id)['steps'][1]['job_id'] is None
+    asyncio.run(run())
+
+
+def test_read_only_step_cannot_hide_changes_in_a_commit(repo):
+    async def run():
+        async def runner(command, *, cwd, **kwargs):
+            tree = Path(cwd)
+            (tree / 'app.py').write_text('changed and committed\n')
+            git(tree, 'add', '.')
+            git(tree, '-c', 'commit.gpgsign=false', 'commit', '-m', 'hidden write')
+            return document('The spec')
+        _, runs = managers(repo, runner)
+        run_id = (await runs.start(*DOCUMENT, approved=True))['run_id']
+        result = await settled(runs, run_id, 'awaiting_handoff', 'needs_attention')
+        assert result['state'] == 'needs_attention'
     asyncio.run(run())
 
 

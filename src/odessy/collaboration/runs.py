@@ -96,6 +96,7 @@ class RunManager:
                    'transfers': [{'transfer_id': 't1', 'from': 's1', 'to': 's2', 'state': 'waiting', 'artifact': None}]}
             self._runs[run_id] = run
             self._private[run_id] = {'to_task': to_task, 'text': None, 'tree': None}
+            self._private[run_id]['initial_tree'] = await self._tree_fingerprint(run)
             self._latest = run_id
             await self._start_step(run, 0, from_task)
         except Exception:
@@ -128,8 +129,11 @@ class RunManager:
                 raise ValueError('the worktree changed after the output was offered')
             relative = f'{HANDOFF_DIR}/{transfer["transfer_id"]}.md'
             path = Path(run['worktree']) / relative
-            path.parent.mkdir(exist_ok=True)
-            path.write_text(f'{_HANDOFF_NOTICE}\n\n{private["text"]}\n', encoding='utf-8')
+            # This reserved directory must be new. Never follow an agent-created
+            # directory link or overwrite a preexisting handoff-file symlink.
+            path.parent.mkdir()
+            with path.open('x', encoding='utf-8') as stream:
+                stream.write(f'{_HANDOFF_NOTICE}\n\n{private["text"]}\n')
             transfer['path'] = relative
             transfer['state'] = 'delivered'
             await self._start_step(run, 1, f'{private["to_task"]}\n\nBefore you start, read {relative}. '
@@ -199,7 +203,9 @@ class RunManager:
     async def _tree_fingerprint(self, run):
         tree = run['worktree']
         await self.jobs._git(tree, 'add', '-N', '.')
-        return _sha256(await self.jobs._git(tree, 'diff', '--no-ext-diff', 'HEAD'))
+        head = await self.jobs._git(tree, 'rev-parse', 'HEAD')
+        diff = await self.jobs._git(tree, 'diff', '--no-ext-diff', '--no-textconv', 'HEAD')
+        return _sha256(head + '\0' + diff)
 
     async def _start_step(self, run, index, task):
         step = run['steps'][index]
@@ -234,7 +240,7 @@ class RunManager:
         tree = await self._tree_fingerprint(run)
         if run['flow'] == 'document_to_code':
             kind, text = 'document', _result_text(job['result'] or '').strip()
-            if job['changed_files']:
+            if job['changed_files'] or tree != self._private[run['run_id']]['initial_tree']:
                 return self._finish(run, 'needs_attention', 'the read-only step changed files')
         else:
             kind, text = 'diff', (job['diff'] or '').strip()

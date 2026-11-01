@@ -303,10 +303,33 @@ void main() {
       await second?.release();
       await first!.release();
       await otherMode!.release();
+      expect(
+          File('${directory.path}${Platform.pathSeparator}setup-abc.lock')
+              .existsSync(),
+          isTrue);
       final third = await InstanceGuard.acquire('abc',
           directory: directory, mode: 'setup');
       expect(third, isNotNull);
+      await first.release(); // Releasing an old owner cannot release a new one.
+      expect(await InstanceGuard.acquire('abc', directory: directory), isNull);
       await third!.release();
+      expect(
+          await File('${directory.path}${Platform.pathSeparator}setup-abc.lock')
+              .readAsString(),
+          '$pid');
+    });
+
+    test('instance guard admits only one concurrent acquisition', () async {
+      final directory = await Directory.systemTemp.createTemp('odessy-guard-');
+      addTearDown(() => directory.delete(recursive: true));
+      final guards = await Future.wait([
+        InstanceGuard.acquire('abc', directory: directory),
+        InstanceGuard.acquire('abc', directory: directory),
+      ]);
+      expect(guards.whereType<InstanceGuard>(), hasLength(1));
+      for (final guard in guards) {
+        await guard?.release();
+      }
     });
   });
 }
