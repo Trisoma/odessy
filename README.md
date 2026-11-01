@@ -1,8 +1,8 @@
 # Odessy
 
-> **Unstable developer preview.** Expect bugs, breaking changes and rough edges.
-> No production release exists yet — the maintainers are still testing this build,
-> and outside help is welcome.
+> **Unstable developer preview.** Odessy is experimental software. Expect bugs,
+> breaking changes and rough edges. No stable release exists yet. See the support
+> matrix below for tested platforms and known limitations.
 
 Hi, this is Odessy, not Odyssey! ⛵
 
@@ -26,6 +26,38 @@ custom wake word and MCU devices are not shipped in this preview. See
 [release notes](docs/releases/v0.5.0-unstable-notes.md) and the
 [changelog](CHANGELOG.md).
 
+## Build Odessy with us
+
+> Curious how this started? [Read the story behind Odessy](Story.md).
+
+We’re a small team of two regular contributors, with three others helping out on a short-term basis—and we’d love some company. Help fix a bug, improve a component, or work with us on a larger part of the project.
+
+Some areas we'd love help with:
+
+- **AI agents:** orchestration, tool calling, model integration and memory.
+- **Hardware exploration:** Jetson, Raspberry Pi, BLE and MCU communication.
+  These are areas of interest, not claims of current device support.
+- **Systems:** Rust, networking, mTLS and secure execution.
+- **Desktop:** Flutter, Dart, accessibility and UI/UX.
+- **Infrastructure:** Go, monitoring, telemetry and multi-host management.
+- **Voice:** STT, TTS, wake-word detection and audio processing.
+
+Odessy is an independent, volunteer-driven project. Contributions are unpaid,
+and there's no fixed time commitment—help when you can.
+
+Start with [Contributing](CONTRIBUTING.md), browse
+[open issues](https://github.com/Trisoma/odessy/issues), or suggest an idea.
+For larger changes, discuss the approach with us before starting.
+
+### Community and contributing
+
+- **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Code of conduct:** [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- **Bugs and feature requests:** [issue chooser](https://github.com/Trisoma/odessy/issues/new/choose) · [hardware report form](.github/ISSUE_TEMPLATE/hardware_report.yml)
+- **What is planned:** [roadmap](docs/ROADMAP.md)
+- **How it fits together:** [architecture](docs/ARCHITECTURE.md)
+- **Security issues:** report them privately per [SECURITY.md](SECURITY.md) — never in a public issue
+
 ## Documentation
 
 | Goal | Start here |
@@ -35,7 +67,6 @@ custom wake word and MCU devices are not shipped in this preview. See
 | Change what tools may do | [Permissions](docs/reference/permissions.mdx) · [Hooks](docs/reference/hooks.mdx) · [Sandbox](docs/reference/sandbox.mdx) |
 | Run two machines | [Host pairing](docs/reference/host-pairing.mdx) · [Jetson + Windows guide](docs/setup/jetson-windows-lan-execution.md) |
 | Add voice | [Voice reference](docs/reference/voice-integration.mdx) |
-| Contribute | [CONTRIBUTING.md](CONTRIBUTING.md) · [Issue chooser](https://github.com/Trisoma/odessy/issues/new/choose) |
 
 ## Get started
 
