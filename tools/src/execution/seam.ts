@@ -19,9 +19,12 @@ import {
   type IsolationRequirement,
   type Limitation,
   type Mode,
+  type NetworkPolicy,
 } from "./contract.js";
+import type { LimitReport } from "./limits.js";
 import { UnconfinedProvider } from "./providers/unconfined.js";
 import type { ProviderRegistry } from "./registry.js";
+import { extraWritableRoots, hiddenRoots } from "./roots.js";
 
 /** A backend together with the policy it confines under. */
 export interface Confinement {
@@ -34,6 +37,12 @@ export interface SandboxReport {
   readonly provider_id: string;
   readonly enforcement: Enforcement;
   readonly limitations: readonly Limitation[];
+  /** Whether the network was cut, when a policy asked; only when the backend did it. */
+  readonly network?: "denied" | "open";
+  /** How many paths were hidden; 0 when the backend cannot hide them. */
+  readonly hidden_paths?: number;
+  readonly limits?: LimitReport;
+  readonly limit_exceeded?: string;
 }
 
 /** The named absence of a backend, so every run still passes through `confine()`. */
@@ -74,14 +83,35 @@ export function confineArgv(
       ? UNCONFINED.confine(argv, inertPolicy(workspaceRoot))
       : confinement.provider.confine(argv, confinement.policy);
 
+  const sandbox: SandboxReport = {
+    provider_id: result.providerId,
+    enforcement: result.enforcement,
+    limitations: [...result.limitations].sort(),
+  };
+  if (confinement === undefined) {
+    return { argv: result.argv, sandbox };
+  }
+  const confined = result.enforcement !== "none";
+  const policy = confinement.policy;
   return {
     argv: result.argv,
     sandbox: {
-      provider_id: result.providerId,
-      enforcement: result.enforcement,
-      limitations: [...result.limitations].sort(),
+      ...sandbox,
+      network:
+        confined && policy.network === "deny" && !result.limitations.includes("cannot_restrict_network")
+          ? "denied"
+          : "open",
+      hidden_paths:
+        confined && !result.limitations.includes("cannot_hide_paths") ? (policy.hiddenPaths ?? []).length : 0,
     },
   };
+}
+
+/** How the authority layer shaped this call's confinement, beyond its mode. */
+export interface ConfinementShape {
+  readonly network?: NetworkPolicy;
+  readonly hidden_paths?: readonly string[];
+  readonly extra_writable?: readonly string[];
 }
 
 /**
@@ -102,9 +132,18 @@ export function confinementFromRegistry(
   isolation: IsolationRequirement,
   workspaceRoot: string,
   registry: ProviderRegistry,
+  shape: ConfinementShape = {},
 ): Confinement {
+  const hiddenPaths = hiddenRoots(shape.hidden_paths ?? [], workspaceRoot);
   const selection = registry.select({
-    policy: { mode, workspaceRoot, deviceGrants: [] },
+    policy: {
+      mode,
+      workspaceRoot,
+      deviceGrants: [],
+      network: shape.network === "deny" ? "deny" : "allow",
+      hiddenPaths,
+      extraWritable: extraWritableRoots(shape.extra_writable ?? [], hiddenPaths),
+    },
     isolation,
     capabilities: ["process-exec"],
   });
@@ -112,7 +151,7 @@ export function confinementFromRegistry(
 }
 
 /** What the peer sent about how this call should be confined. */
-export interface ConfinementRequest {
+export interface ConfinementRequest extends ConfinementShape {
   readonly mode?: Mode;
   readonly isolation?: IsolationRequirement;
 }
@@ -145,5 +184,5 @@ export function resolveHostConfinement(
         "a requirement this host was sent with",
     );
   }
-  return confinementFromRegistry(request.mode, request.isolation, workspaceRoot, registry);
+  return confinementFromRegistry(request.mode, request.isolation, workspaceRoot, registry, request);
 }

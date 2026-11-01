@@ -5,6 +5,8 @@ Its presentation layer uses typed controllers; execution, authorization and devi
 identity remain in the existing Python, Node and Rust components. User-facing UI is
 in English. See [handoff](handoff.md), [architecture](architecture.md),
 [design](design.md) and [API contract](api-contract.md) for contribution boundaries.
+The shared navigation and component contracts are described in
+[desktop UX](desktop-ux-contract.md) and [settings draft lifecycle](settings-draft-lifecycle.md).
 
 ## Windows local development
 

@@ -110,6 +110,10 @@ def remote_tool_server_urls(env: Mapping[str, str] | None = None) -> list[str]:
 
 
 def deployment_mode(env: Mapping[str, str] | None = None) -> Deployment:
+    if env is None:
+        from odessy.tools.lan_executor import current
+        if current() is not None:
+            return 'split'
     source = os.environ if env is None else env
     raw = source.get(DEPLOYMENT_ENV, "").strip().lower()
     if _paired_alias(source):
@@ -121,6 +125,11 @@ def deployment_mode(env: Mapping[str, str] | None = None) -> Deployment:
         try:
             validate_configuration(source)
         except PairedConfigError as error:
+            if env is None:
+                # Runtime may still converse and use explicitly local tools.
+                # Remote admission independently refuses this configuration;
+                # keep host naming split so remote intent never becomes local.
+                return 'split'
             raise DeploymentConfigError(str(error)) from error
         return "split"
     if not raw:
@@ -188,7 +197,7 @@ def environment_prompt(
     """
 
     source = os.environ if env is None else env
-    mode = deployment_mode(source)
+    mode = deployment_mode(env)
     tools = set(offered) if offered is not None else set(model_tool_names(mode))
     local = local_os(source)
     here = f"{_OS_DESCRIPTIONS[local]}. {_SHELL_HINTS[local]}"

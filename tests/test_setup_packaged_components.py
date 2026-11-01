@@ -36,7 +36,7 @@ def test_incomplete_bundle_is_rejected_and_absent_components_are_reported(tmp_pa
     assert not (manager.root/'versions').exists()
     # The optional Node tool server is reported rather than invented.
     (payload/'setup-context.json').write_text(json.dumps({'schema_version':1,'components':['desktop'],'files':{'desktop/app.exe':digest(path)}}))
-    assert manager.plan(source,selection)['absent_components']==['node','tools']
+    assert manager.plan(source,selection)['absent_components']==['monitor','node','tools']
 
 
 def test_install_journal_reports_real_stages(tmp_path):

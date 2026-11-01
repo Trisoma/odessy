@@ -432,6 +432,7 @@ void main() {
     await tester.tap(find
         .byKey(const ValueKey('settings-section-${SettingsSections.models}')));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Configure a model'));
     await tester.tap(find.text('Configure a model'));
     expect(openedConfiguration, 1);
     expect(find.byKey(const Key('consultation-limit')), findsWidgets);

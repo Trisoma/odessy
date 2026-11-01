@@ -7,7 +7,7 @@ import json
 import time
 import uuid
 from collections.abc import Callable, Collection, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Protocol
 
 from mcp import Client
@@ -18,6 +18,8 @@ from odessy.authority.audit import current_audit
 from odessy.authority.redaction import redact_value
 from odessy.tools.external_tools import NamespacedServer, external_tool, public_name
 from odessy.authority.policy import OdessyPolicy
+from odessy.runtime.hook_rules import TurnState, call_target
+from odessy.runtime.hooks import MAX_FINAL_TEXT_CHARS, HookSet, HookVerdict, tighten
 from odessy.runtime.repeat_guard import RepeatGuard, build_guard
 from odessy.tools.tool_contracts import validate_tool_arguments
 from odessy.runtime.tool_timeout import Deadline, ToolTimeoutPolicy
@@ -30,6 +32,7 @@ from odessy.runtime.types import (
     LogEntry,
     ModelTurnDiagnostics,
     ModelAction,
+    PolicyDecision,
     ToolObservation,
     ToolRequest,
     ToolBatch,
@@ -147,6 +150,34 @@ class _BoundArguments(dict):
             raise PermissionError('Action or authority changed before dispatch') from exc
 
 
+class _TurnLog(list):
+    """The turn log. Each entry is also handed to the turn's observer as it is written.
+
+    An observer only watches: what it raises is dropped, and it cannot change the
+    entry the log keeps.
+    """
+
+    def __init__(self, observer: Callable[[LogEntry], None] | None, entries: Sequence[LogEntry] = ()) -> None:
+        super().__init__()
+        self._observer = observer
+        for entry in entries:
+            self.append(entry)
+
+    def append(self, entry: LogEntry) -> None:
+        super().append(entry)
+        self.announce(entry)
+
+    def announce(self, entry: LogEntry) -> None:
+        """Hand an entry to the observer without keeping it (a call starting: the
+        log records the call when it finishes)."""
+
+        if self._observer is not None:
+            try:
+                self._observer(entry)
+            except Exception:
+                pass
+
+
 class OdessyAgent:
     """Single-turn Odessy runtime loop with model-independent tool execution."""
 
@@ -166,6 +197,7 @@ class OdessyAgent:
         timeouts: ToolTimeoutPolicy | None = None,
         tool_concurrency: int = 1,
         confirm_action: Callable | None = None,
+        hooks: HookSet | None = None,
     ) -> None:
         if not 1 <= tool_concurrency <= 8:
             raise ValueError("tool_concurrency must be from 1 to 8")
@@ -224,6 +256,19 @@ class OdessyAgent:
         #: that a second concurrent entry would corrupt.
         self._model_lock = asyncio.Lock()
         self._timeouts = timeouts or ToolTimeoutPolicy()
+        #: Programs the user configured in hooks.toml (``odessy.runtime.hooks``).
+        self._hooks = hooks
+        #: Pre-tool verdicts for this turn's calls, keyed by ``id(request)``; the
+        #: request is kept with its verdict so the id cannot be reused.
+        self._hook_verdicts: dict[int, tuple[ToolRequest, HookVerdict]] = {}
+        #: Turn-end hooks still running; they do not hold up the answer.
+        self._background: set[asyncio.Task] = set()
+        #: What the hooks learned this turn (taints, rule counts, a stop), and what a
+        #: hook is told about where in the session a call sits.
+        self._turn_state = TurnState()
+        self._turn_id = ""
+        self._turn_text = ""
+        self._call_index = 0
 
     async def _generate(self, call: Callable[[], ModelAction] | str, *args: Any) -> ModelAction:
         """Run one synchronous model call without blocking the event loop.
@@ -291,6 +336,226 @@ class OdessyAgent:
         conversation_context: tuple = (),
         context: ConversationContext | None = None,
         initial_observation: ToolObservation | None = None,
+        observer: Callable[[LogEntry], None] | None = None,
+    ) -> AgentTurnResult:
+        """Run one turn. ``observer`` receives each turn-log entry as it is written.
+
+        The observer gets the raw entry (arguments and results included), so it is
+        for in-process code such as the session, which passes on only public fields.
+        """
+
+        self._hook_verdicts = {}
+        if self._hooks is not None:
+            self._hooks = self._hooks.verify()
+        self._turn_state = TurnState()
+        self._turn_id = uuid.uuid4().hex[:12]
+        self._turn_text = user_text
+        self._call_index = 0
+        try:
+            result = await self._run_turn(
+                user_text,
+                status_callback=status_callback,
+                stop_event=stop_event,
+                conversation_context=conversation_context,
+                context=context,
+                initial_observation=initial_observation,
+                observer=observer,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self._after_turn(user_text, "error", str(error), (), None, stop_event)
+            raise
+        self._after_turn(user_text, "answered", result.final_text, result.tool_observations, result.log, stop_event)
+        return result
+
+    async def wait_for_hooks(self) -> None:
+        """Wait for turn-end hooks still running (tests, and an orderly shutdown)."""
+
+        while self._background:
+            await asyncio.gather(*tuple(self._background), return_exceptions=True)
+
+    def _after_turn(self, user_text, outcome, final_text, observations, log, stop_event) -> None:
+        """Start the turn-end hooks in the background: the answer does not wait for them."""
+
+        if self._hooks is None or not self._hooks.for_event("turn_end"):
+            return
+        from odessy.authority.redaction import redact_text
+
+        payload = {
+            "outcome": "stopped" if self._stop_requested(stop_event) else outcome,
+            "request": redact_text(user_text)[:MAX_FINAL_TEXT_CHARS],
+            "final_text": redact_text(final_text or "")[:MAX_FINAL_TEXT_CHARS],
+            "tools": [observation.request.name for observation in observations],
+        }
+        hooks = self._hooks
+
+        async def run() -> None:
+            for failure in await hooks.turn_end(payload):
+                if log is not None:
+                    log.append(LogEntry("hook_failed", {"event": "turn_end", **failure}))
+
+        task = asyncio.get_running_loop().create_task(run())
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    async def _screen(self, request: ToolRequest, log: list[LogEntry], *, call_id: str | None = None) -> PolicyDecision:
+        """The decision for one proposed call: the policy's, made stricter by pre-tool hooks.
+
+        Every path (one call, a batch, a bound approval) screens a call here first
+        and reads its decision afterwards through ``_evaluate``, so the path a call
+        takes cannot skip a hook. A hook runs once per call, not once per check.
+        """
+
+        decision = self._policy.evaluate(request)
+        if self._hooks is not None:
+            self._hooks = self._hooks.verify()
+        if self._hooks is not None and decision.action != "deny" and id(request) not in self._hook_verdicts:
+            self._call_index += 1
+            context = self._hook_context(request, decision)
+            verdict = await self._hooks.pre_tool(request, decision, context, self._turn_state)
+            if verdict.action != "deny":
+                # The escalation is screened with the call, so every path that reads
+                # the call's verdict sees it: no approval can be asked for first.
+                escalation = await self._hooks.pre_escalation(request, decision, context)
+                if escalation.action == "deny":
+                    verdict = replace(escalation, results=verdict.results + escalation.results)
+                else:
+                    verdict = replace(verdict, results=verdict.results + escalation.results)
+            self._hook_verdicts[id(request)] = (request, verdict)
+            ids = {"call_id": call_id} if call_id else {}
+            for item in verdict.results:
+                log.append(LogEntry("hook_decision", {"name": request.name, **item, **ids}))
+        return self._evaluate(request)
+
+    def _hook_context(self, request: ToolRequest, decision: PolicyDecision) -> dict[str, Any]:
+        """Where a call runs and where it sits in the session, for a hook's JSON.
+
+        ``mode`` is the sandbox mode the policy's decision implies, before any
+        escalation; ``escalation`` is what the call asks for, if anything.
+        """
+
+        from odessy.authority.redaction import redact_text
+
+        requirement = self._policy.requirement_for(request, decision)
+        escalation = None
+        if "sandbox_permissions" in request.arguments:
+            escalation = {
+                "requested": request.arguments.get("sandbox_permissions"),
+                "justification": redact_text(str(request.arguments.get("justification") or "")),
+            }
+        return {
+            "execution": {
+                "target": call_target(request.name),
+                "mode": requirement.policy.mode if requirement is not None else None,
+                "isolation": self._policy.isolation_for(request.name),
+                "escalation": escalation,
+            },
+            "session": {"turn_id": self._turn_id, "call_index": self._call_index},
+            "request": redact_text(self._turn_text)[:MAX_FINAL_TEXT_CHARS],
+        }
+
+    def _evaluate(self, request: ToolRequest) -> PolicyDecision:
+        """The policy's current decision with this call's hook verdict applied.
+
+        The policy is asked again each time (it can change mid-turn); the hooks are
+        not. A call that reaches here unscreened while a hook matches it is denied.
+        """
+
+        decision = self._policy.evaluate(request)
+        if self._hooks is None or decision.action == "deny":
+            return decision
+        if self._hooks.tampered is not None:
+            return replace(
+                decision,
+                action="deny",
+                reason=f"the hooks cannot be trusted: {self._hooks.tampered}",
+                rule="hook:integrity",
+                preapproved=False,
+            )
+        entry = self._hook_verdicts.get(id(request))
+        if entry is not None and entry[0] is request:
+            return tighten(decision, entry[1])
+        if self._hooks.screens(request, decision.risk):
+            return replace(
+                decision,
+                action="deny",
+                reason="this call was not checked by its pre-tool hooks",
+                rule="hook:unscreened",
+                preapproved=False,
+            )
+        return decision
+
+    async def _post_tool_hooks(self, request: ToolRequest, result: dict[str, Any], log: list[LogEntry], *, call_id: str | None = None) -> None:
+        """Apply what the post-tool hooks and taint rules asked for.
+
+        Notes go beside the tool's own fields. A taint marks the turn for later rules
+        and hooks; ``quarantine`` replaces what the model sees with a notice (the
+        result itself stays in the turn log); ``stop`` ends the turn after this call.
+        Hooks changed by this call do not run, and it ends the turn: the result cannot
+        be screened, and nothing after it could be.
+        """
+
+        if self._hooks is None:
+            return
+        decision = self._policy.evaluate(request)
+        state = self._turn_state
+        self._hooks = self._hooks.verify()
+        if self._hooks.tampered is not None:
+            ids = {"call_id": call_id} if call_id else {}
+            log.append(LogEntry("hook_failed", {"event": "post_tool", "name": request.name, "hook": "integrity",
+                                                "error": self._hooks.tampered, **ids}))
+            if state.stop is None:
+                state.stop = ("integrity", self._hooks.tampered)
+            return
+        records = await self._hooks.post_tool(request, result, decision.risk, self._hook_context(request, decision), state)
+        ids = {"call_id": call_id} if call_id else {}
+        notes = []
+        for record in records:
+            hook = record["hook"]
+            if "error" in record:
+                log.append(LogEntry("hook_failed", {"event": "post_tool", "name": request.name, **record, **ids}))
+                continue
+            if record.get("taint"):
+                state.taints.update(record["taint"])
+                log.append(LogEntry("hook_taint", {"name": request.name, "hook": hook, "taint": record["taint"], **ids}))
+            if record.get("quarantine") and "quarantined" not in result:
+                original = dict(result)
+                log.append(LogEntry("hook_quarantine", {"name": request.name, "hook": hook,
+                                                        "reason": record.get("reason", ""), "result": original, **ids}))
+                result.clear()
+                result.update(
+                    status=original.get("status", "ok"),
+                    quarantined=(
+                        f"The user's {hook} hook withheld this result"
+                        + (f" ({record['reason']})" if record.get("reason") else "")
+                        + ". Do not try to obtain it another way; tell the user it was withheld."
+                    ),
+                )
+            if record.get("stop") and state.stop is None:
+                state.stop = (hook, record.get("reason") or "no reason given")
+                log.append(LogEntry("hook_stop", {"name": request.name, "hook": hook, "reason": state.stop[1], **ids}))
+            if record.get("note"):
+                notes.append({"hook": hook, "exit_code": record.get("exit_code"), "note": record["note"]})
+                log.append(LogEntry("hook_note", {"event": "post_tool", "name": request.name, "hook": hook,
+                                                  "exit_code": record.get("exit_code"), **ids}))
+        if notes:
+            result["hook_notes"] = {"source": "the user's own hooks, not the tool", "notes": notes}
+
+    def _hook_stop_text(self) -> str | None:
+        stop = self._turn_state.stop
+        return None if stop is None else f"Stopped by the {stop[0]} hook: {stop[1]}"
+
+    async def _run_turn(
+        self,
+        user_text: str,
+        *,
+        status_callback: Callable[[str], None] | None,
+        stop_event: asyncio.Event | None,
+        conversation_context: tuple,
+        context: ConversationContext | None,
+        initial_observation: ToolObservation | None,
+        observer: Callable[[LogEntry], None] | None,
     ) -> AgentTurnResult:
         self._turn_stop_event = stop_event
         turn_started = time.perf_counter()
@@ -307,7 +572,7 @@ class OdessyAgent:
             )
             context = ConversationContext((*((context.turns) if context else ()), reference))
         metrics = AgentTurnMetrics()
-        log: list[LogEntry] = [LogEntry("user_input", {"text": user_text})]
+        log: list[LogEntry] = _TurnLog(observer, [LogEntry("user_input", {"text": user_text})])
         if self._stop_requested(stop_event):
             return _finish_turn_result(
                 final_text="Stopped before generation.",
@@ -399,7 +664,7 @@ class OdessyAgent:
                 failure = None
                 reminders = {}
                 for call in action.calls:
-                    batch_decision = self._policy.evaluate(call.request)
+                    batch_decision = await self._screen(call.request, log, call_id=call.call_id)
                     if batch_decision.action == "deny":
                         self._audit_decision(call.request, batch_decision, confirmed=None)
                         failure = "Policy denied request: " + batch_decision.reason
@@ -428,7 +693,7 @@ class OdessyAgent:
                         answers = await self._ask_batch(action.calls, log)
                         def safe(call):
                             request = call.request
-                            decision = self._policy.evaluate(request)
+                            decision = self._evaluate(request)
                             return is_concurrency_safe(request) and decision.allowed and self._policy.requirement_for(request, decision) is None
                         async def prepare(call):
                             nonlocal dispatched
@@ -444,6 +709,7 @@ class OdessyAgent:
                             dispatched += 1
                             return args
                         async def dispatch(call, args):
+                            log.announce(LogEntry("tool_dispatch", {"name": call.request.name, "call_id": call.call_id, "batch_id": batch_id}))
                             started = time.perf_counter()
                             try:
                                 result = await self._call_tool(call.request.name, args, tool_registry)
@@ -463,10 +729,13 @@ class OdessyAgent:
                     timing = observation.result.pop("_dispatch_timing", None)
                     if timing:
                         log.append(LogEntry("mcp_tool_called", {"name": observation.request.name, "call_id": observation.call_id, "batch_id": batch_id, "index": index, **timing}))
+                        await self._post_tool_hooks(observation.request, observation.result, log, call_id=observation.call_id)
                         last_request, last_result = observation.request, observation.result
                         _add_ms(metrics, "mcp_execution_ms", (timing["completed"]-timing["started"])*1000)
                     log.append(LogEntry("tool_observation", {"name": observation.request.name, "call_id": observation.call_id, "batch_id": batch_id, "index": index, "result": observation.result}))
                 observations.extend(batch_observations)
+                if self._hook_stop_text() is not None and not stopped:
+                    stopped = self._hook_stop_text()
                 if stopped:
                     event = "continuation_budget_exhausted" if "limit" in stopped else "batch_stopped"
                     log.append(LogEntry(event, {"reason": stopped}))
@@ -501,7 +770,7 @@ class OdessyAgent:
 
             _status(status_callback, "Validating action")
             policy_started = time.perf_counter()
-            preflight_decision = self._policy.evaluate(action)
+            preflight_decision = await self._screen(action, log)
             _add_ms(metrics, "policy_validation_ms", _elapsed_ms(policy_started))
             if preflight_decision.action == "deny":
                 self._audit_decision(action, preflight_decision, confirmed=None)
@@ -607,6 +876,7 @@ class OdessyAgent:
                     tool_result=last_result,
                     tool_observations=observations,
                 )
+            log.announce(LogEntry("tool_dispatch", {"name": action.name}))
             result = await self._call_tool(action.name, call_arguments, tool_registry)
             log.append(LogEntry("mcp_tool_called", {"name": action.name}))
 
@@ -634,6 +904,7 @@ class OdessyAgent:
                     LogEntry("tool_timeout", {"name": action.name, **timeout_info})
                 )
 
+            await self._post_tool_hooks(action, structured_result, log)
             observation = ToolObservation(request=action, result=structured_result)
             observations.append(observation)
             log.append(
@@ -642,6 +913,16 @@ class OdessyAgent:
                     {"name": action.name, "result": structured_result},
                 )
             )
+            if self._hook_stop_text() is not None:
+                return _finish_turn_result(
+                    final_text=self._hook_stop_text(),
+                    log=log,
+                    metrics=metrics,
+                    turn_started=turn_started,
+                    tool_request=last_request,
+                    tool_result=last_result,
+                    tool_observations=observations,
+                )
 
             _status(status_callback, "Generating response")
             final_started = time.perf_counter()
@@ -690,7 +971,7 @@ class OdessyAgent:
     async def _prepare_call(self, action, tool_registry, log, metrics, answer: bool | None = None, call_id=None):
         """Authorize one call. ``answer`` is the user's reply already given in a batch prompt."""
         policy_started = time.perf_counter()
-        decision = self._policy.evaluate(action)
+        decision = self._evaluate(action)
         _add_ms(metrics, "policy_validation_ms", _elapsed_ms(policy_started))
         if decision.action == "deny":
             self._audit_decision(action, decision, confirmed=None)
@@ -777,7 +1058,10 @@ class OdessyAgent:
             # permissively would be the executor weakening the authority layer's
             # requirement -- a `required` demand silently satisfied by a `partial`
             # backend. They are a pair, like the escalation arguments themselves.
-            call_arguments["isolation"] = self._policy.isolation
+            call_arguments["isolation"] = self._policy.isolation_for(action.name)
+            # The rest of the sandbox decision (sandbox.toml) travels the same way and
+            # overwrites anything of the same name, so the model can never set it.
+            call_arguments.update(self._policy.execution_arguments(action, resolved_mode))
             log.append(
                 LogEntry(
                     "execution_mode_resolved",
@@ -821,7 +1105,7 @@ class OdessyAgent:
                 raise PermissionError('Turn stopped before dispatch')
             self._assert_execution_target(action.name, registry)
             self._validate_tool_request(action, registry)
-            current = self._policy.evaluate(action)
+            current = self._evaluate(action)
             if not plan.matches(action, current, self._policy,
                     execution_target=self._target_identity(action, registry)):
                 raise PermissionError('Action, execution target or policy changed; a new authorization decision is required')
@@ -856,7 +1140,8 @@ class OdessyAgent:
                 approval=EscalationApproval(OneUseApprover(), self, plan.call_id, action.name))
             arguments.pop('sandbox_permissions', None)
             arguments.pop('justification', None)
-            arguments.update(mode=mode, isolation=self._policy.isolation)
+            arguments.update(mode=mode, isolation=self._policy.isolation_for(action.name))
+            arguments.update(self._policy.execution_arguments(action, mode))
             log.append(LogEntry('execution_mode_resolved', {'name': action.name, 'mode': mode}))
         return _BoundArguments(arguments, revalidate)
 
@@ -936,7 +1221,7 @@ class OdessyAgent:
             return {}
         pending = []
         for call in calls:
-            decision = self._policy.evaluate(call.request)
+            decision = self._evaluate(call.request)
             if decision.requires_confirmation and not decision.preapproved:
                 pending.append((call, decision))
         if len(pending) < 2:

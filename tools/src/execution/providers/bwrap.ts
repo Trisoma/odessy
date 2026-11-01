@@ -55,8 +55,14 @@ export class BwrapProvider extends ConfiningProvider {
     return [USABLE.includes(bwrap.availability), bwrap.detail];
   }
 
-  protected limitations(_policy: ExecutionPolicy): readonly Limitation[] {
-    return ["cannot_restrict_reads", "cannot_restrict_network", "host_kernel_shared"];
+  protected limitations(policy: ExecutionPolicy): readonly Limitation[] {
+    // Reads stay unrestricted outside the hidden paths, which bwrap does hide; the
+    // network is cut when the policy asks (`--unshare-net`).
+    return [
+      "cannot_restrict_reads",
+      ...(policy.network === "deny" ? [] : (["cannot_restrict_network"] as const)),
+      "host_kernel_shared",
+    ];
   }
 
   protected wrap(argv: readonly string[], policy: ExecutionPolicy): readonly string[] {

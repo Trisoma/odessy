@@ -161,6 +161,10 @@ class PolicyDecision:
     #: A confirmation the user gave in advance (``commands.toml``): the call runs
     #: without asking, still with the confirmed outcome's execution mode.
     preapproved: bool = False
+    #: The outcome the sandbox mode follows, when a hook made the decision stricter
+    #: (``odessy.runtime.hooks``): a hook asking to confirm an allowed command must
+    #: not widen it from read-only to workspace-write. None means ``action``.
+    mode_outcome: Literal["allow", "confirm"] | None = None
 
     @property
     def allowed(self) -> bool:

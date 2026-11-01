@@ -45,9 +45,13 @@ class InstalledStartup extends ChangeNotifier {
       InstalledCoordinator(
           python: spec['python'] as String,
           root: spec['root'] as String,
-          workspace: spec['workspace'] as String);
+          workspace: spec['workspace'] as String,
+          expectedFingerprint: spec['expected_configuration'] as String?);
 
-  Future<void> begin() async {
+  Future<void> begin() => _begin();
+  Future<void> restartWithFingerprint(String fingerprint) =>
+      _begin(expectedConfiguration: fingerprint);
+  Future<void> _begin({String? expectedConfiguration}) async {
     if (_disposed) return;
     final epoch = ++_epoch;
     spec = const {};
@@ -71,6 +75,10 @@ class InstalledStartup extends ChangeNotifier {
       }
       if (_disposed || epoch != _epoch) return;
       spec = reply.result;
+      if (expectedConfiguration != null) {
+        spec = {...spec, 'expected_configuration': expectedConfiguration};
+        await _stopCoordinator();
+      }
       final role = spec['role'];
       if (role == 'execution') {
         phase = InstalledPhase.configure;
@@ -342,8 +350,10 @@ class _InstalledApplicationState extends State<InstalledApplication> {
           api: DisconnectedApi(),
           installed: _startup.spec,
           managementBackend: widget.backend,
-          onExitApproved: _desktopExitApproved,
-          onConfigured: () => _startup.begin());
+          setupBackend: widget.backend,
+          onRestartSaved: _startup.restartWithFingerprint,
+          onConfigured: () => _startup.begin(),
+          onShutdownOwned: _desktopExitApproved);
     }
     final api = _startup.api;
     if (_startup.phase == InstalledPhase.ready && api != null) {
@@ -351,7 +361,9 @@ class _InstalledApplicationState extends State<InstalledApplication> {
           api: api,
           installed: _startup.spec,
           managementBackend: widget.backend,
-          onExitApproved: _desktopExitApproved);
+          setupBackend: widget.backend,
+          onRestartSaved: _startup.restartWithFingerprint,
+          onShutdownOwned: _desktopExitApproved);
     }
     return MaterialApp(
         navigatorKey: _navigator,

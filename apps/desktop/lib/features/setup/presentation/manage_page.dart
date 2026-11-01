@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:odessy_client/odessy_client.dart';
 
 import '../controllers/installed_manage_controller.dart';
+import '../../../app/setup/platform_copy.dart';
 
 /// Installed maintenance without internal-path entry: the root, interpreter and
 /// payload come from the installation record. Mutations require an exact review.
@@ -29,6 +30,7 @@ class ManagePage extends StatelessWidget {
       builder: (context, _) {
         final c = controller;
         final version = c.activeVersion;
+        final portable = c.spec['portable'] == true;
         return SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(28, 24, 28, 40),
             child: Column(
@@ -78,24 +80,26 @@ class ManagePage extends StatelessWidget {
                         icon: const Icon(Icons.tune, size: 18),
                         label: const Text('Change configuration')),
                     OutlinedButton.icon(
-                        onPressed: c.busy || c.uninstalled
+                        onPressed: c.busy || c.uninstalled || portable
                             ? null
                             : () => _services(context, c),
                         icon: const Icon(Icons.settings_power_outlined, size: 18),
                         label: const Text('Service controls')),
                     OutlinedButton.icon(
-                        onPressed: c.busy || c.uninstalled ? null : c.launch,
+                        onPressed: c.busy || c.uninstalled || portable ? null : c.launch,
                         icon: const Icon(Icons.play_arrow_outlined, size: 18),
                         label: const Text('Start Odessy')),
                     OutlinedButton.icon(
-                        onPressed: c.busy || c.uninstalled ? null : c.register,
+                        onPressed: c.busy || c.uninstalled || portable ? null : c.register,
                         icon: const Icon(Icons.app_shortcut_outlined, size: 18),
-                        label: const Text('Repair Start-menu entry')),
+                        label: Text(repairRegistrationLabel)),
                   ]),
                   const SizedBox(height: 22),
                   if (c.uninstalled)
                     Text('This installation has been removed. Close this window.',
                         style: Theme.of(context).textTheme.titleMedium)
+                  else if (portable)
+                    const Text('Portable build: close Odessy and remove its extracted folder. Settings, models and workspaces are separate and preserved.')
                   else if (c.status.isNotEmpty)
                     _uninstall(context, c),
                   const SizedBox(height: 18),
@@ -251,8 +255,7 @@ class ManagePage extends StatelessWidget {
         builder: (context) => AlertDialog(
                 title: const Text('Background service'),
                 content: Column(mainAxisSize: MainAxisSize.min, children: [
-                  const Text(
-                      'The service runs for this Windows account. Registering one requires an existing workspace directory.'),
+                  Text('$serviceAccountCopy Registering one requires an existing workspace directory.'),
                   const SizedBox(height: 16),
                   Wrap(spacing: 8, runSpacing: 8, children: [
                     OutlinedButton(

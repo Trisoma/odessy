@@ -23,7 +23,7 @@ def validate_binding(host, port):
 
 async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
                      backend=None, token=None, workspace=None, watch_stdin=False,
-                     print_token=True):
+                     print_token=True, runtime_configuration=None, desktop_voice=None):
     host, port = validate_binding(host, port)
     try:
         import uvicorn
@@ -43,12 +43,15 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
 
     def profiles():
         config = load_config()
-        return {'current': {'name': 'current', 'model': 'fake' if use_fake_model else backend or 'lfm'},
+        from odessy.models.cloud_model import CLOUD_PROVIDERS
+        chosen = backend or os.environ.get('ODESSY_MODEL_BACKEND', 'lfm')
+        model = (os.environ.get('ODESSY_CLOUD_MODEL') or CLOUD_PROVIDERS[chosen].default_model) if chosen in CLOUD_PROVIDERS else os.environ.get('ODESSY_MODEL_NAME') or os.environ.get('ODESSY_OLLAMA_MODEL') or chosen
+        return {'current': {'name': 'current', 'provider': chosen, 'model': 'fake' if use_fake_model else model},
                 'auto': {'name': 'auto', 'adapter': 'auto'},
                 'local': {'name': 'local', 'adapter': 'lfm'},
                 **{name: profile.public_dict() for name, profile in config.participants.items()}}
 
-    app = create_app(factory, config=load_config(), profiles=profiles,
+    app = create_app(factory, config=load_config(), profiles=profiles, runtime_configuration=runtime_configuration, desktop_voice=desktop_voice,
                      token=token if token is not None else os.environ.get('ODESSY_API_TOKEN') or None)
     address = f'[{host}]' if ':' in host else host
     print(f'[odessy] HTTP API: http://{address}:{port}', file=sys.stderr, flush=True)
@@ -57,6 +60,7 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
     print('[odessy] Open / for diagnostics; send Authorization: Bearer <token> on every /v1 request.',
           file=sys.stderr, flush=True)
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, access_log=False, log_level='warning'))
+
     if watch_stdin:
         # The owning desktop keeps this pipe open; EOF means it is gone, so the
         # coordinator must not outlive the application that started it.
@@ -64,12 +68,20 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
 
         def watch():
             try:
-                while sys.stdin.buffer.readline():
-                    pass
-            except (OSError, ValueError):
+                while raw := sys.stdin.buffer.readline(65537):
+                    # The owned desktop may rotate session-only credentials.
+                    # This private channel is not an HTTP/pairing operation.
+                    from odessy.credentials import acknowledge_startup
+                    import io
+                    acknowledge_startup(io.BytesIO(raw), sys.stdout)
+            except (OSError, ValueError, RuntimeError):
                 pass
             server.should_exit = True
 
         threading.Thread(target=watch, name='odessy-parent-watch', daemon=True).start()
-    await server.serve()
 
+    try:
+        await server.serve()
+    finally:
+        from odessy.tools.lan_executor import clear
+        clear()

@@ -235,6 +235,10 @@ class MonitoringClient {
       }
       if (buffer.trim().isNotEmpty)
         throw const FormatException('Truncated monitoring stream');
+    } catch (_) {
+      // Closing an owned transport while headers are pending is cancellation,
+      // not a new service failure. Otherwise preserve the real stream error.
+      if (!_closed) rethrow;
     } finally {
       _streams.remove(client);
       client.close(force: true);

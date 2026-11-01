@@ -1,8 +1,10 @@
 from __future__ import annotations
+from odessy.voice.providers import create_stt, create_tts, close_providers, cancel_provider
 
 import argparse
 import asyncio
 import contextlib
+import functools
 import logging
 import os
 import sys
@@ -24,7 +26,17 @@ from odessy.config.deployment import (
     model_tool_scope,
     remote_tool_server_urls,
 )
-from odessy.execution.contract import ISOLATION_REQUIREMENTS, IsolationRequirement
+from odessy.config.sandbox import (
+    ISOLATION_SETTINGS,
+    SandboxConfigError,
+    SandboxSettings,
+    load_sandbox_settings,
+    sandbox_file,
+)
+from odessy.execution.contract import IsolationRequirement
+from odessy.execution.posture import host_posture, resolve_isolation
+from odessy.execution.providers import default_execution_providers
+from odessy.execution.registry import ProviderRegistry, with_unconfined_fallback
 from odessy.execution.escalation import ApprovalRequest, EscalationDeniedError, EscalationOutcome
 from odessy.models.fake_model import FakeModel
 from odessy.models.lfm_model import LlamaCppLFMModel
@@ -45,6 +57,7 @@ from odessy.models.ollama_model import OllamaModel
 from odessy.authority.audit import AuditLogError, ExternalAuditLog, audit_scope
 from odessy.authority.policy import OdessyPolicy
 from odessy.config.commands import CommandsConfigError, load_preapproved_commands
+from odessy.runtime.hooks import HookConfigError, load_hooks, protected_paths
 from odessy.runtime.confirmation import TerminalConfirmer, printable
 from odessy.runtime.types import PolicyDecision, ToolRequest
 from odessy.voice.audio_io import CommandAudioIO
@@ -130,24 +143,38 @@ def _build_agent(
         preapproved = load_preapproved_commands(workspace_root)
     except CommandsConfigError as error:
         raise SystemExit(str(error)) from error
+    try:
+        hooks = load_hooks(workspace_root)
+    except HookConfigError as error:
+        raise SystemExit(str(error)) from error
+    try:
+        sandbox = load_sandbox_settings()
+    except SandboxConfigError as error:
+        raise SystemExit(str(error)) from error
+    isolation, target_isolation = _sandbox_isolation(workspace_root, sandbox)
     confirmer = TerminalConfirmer(workspace_root)
     return OdessyAgent(
         tool_concurrency=concurrency_from_env(),
         model=model,
         policy=OdessyPolicy(
             workspace_root=workspace_root,
-            isolation=_isolation_from_env(),
+            isolation=isolation,
+            target_isolation=target_isolation,
+            sandbox=sandbox,
             preapproved_commands=preapproved,
+            # sandbox.toml is protected like hooks.toml, whether or not it exists yet.
+            protected_paths=(*protected_paths(hooks=hooks), sandbox_file(), sandbox_file().parent),
         ),
         mcp_server=(
             mcp_servers
             if mcp_servers is not None
-            else (ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root)),)
+            else (ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root, registry=execution_registry())),)
         ),
         confirm=confirmer,
         confirm_batch=confirmer.batch,
         approver=TerminalEscalationApprover(),
         max_model_calls=_max_model_calls_from_env(cloud=model_uses_cloud(model), mode=mode),
+        hooks=hooks,
     )
 
 
@@ -228,21 +255,62 @@ class TerminalEscalationApprover:
         return "allowed-once" if answer.strip().lower() == "yes" else "rejected"
 
 
-def _isolation_from_env() -> IsolationRequirement:
-    """How strict this deployment is about isolation.
+@functools.lru_cache(maxsize=1)
+def execution_registry() -> ProviderRegistry:
+    """The confinement backends this host offers to the Python ``terminal.run``.
 
-    Defaults to ``preferred``, which is the behaviour every existing caller already has.
-    It is deliberately **not** ``required`` by default: a host with no confinement backend
-    would then refuse every process-spawning command, including on this machine, where
-    the Python side has no Windows backend. Raising it is a deployment decision, so it is
-    configuration rather than a constant.
+    The shipped backends (bwrap, landlock, seatbelt), each probing whether this host
+    can actually enforce it, then the unconfined fallback, which only a request that
+    does not require isolation can select. Built once: the probes describe the host,
+    not the call.
     """
 
-    raw = (os.environ.get("ODESSY_ISOLATION") or "preferred").strip().lower()
-    if raw not in ISOLATION_REQUIREMENTS:
-        allowed = ", ".join(ISOLATION_REQUIREMENTS)
+    return with_unconfined_fallback(default_execution_providers())
+
+
+def _isolation_from_env() -> str | None:
+    """``ODESSY_ISOLATION``, validated, or None when it is not set.
+
+    ``auto`` (the default when neither this nor ``sandbox.toml`` says otherwise) is
+    resolved per target by :func:`_sandbox_isolation`.
+    """
+
+    raw = (os.environ.get("ODESSY_ISOLATION") or "").strip().lower()
+    if not raw:
+        return None
+    if raw not in ISOLATION_SETTINGS:
+        allowed = ", ".join(ISOLATION_SETTINGS)
         raise SystemExit(f"ODESSY_ISOLATION must be one of: {allowed} (got {raw!r})")
-    return cast(IsolationRequirement, raw)
+    return raw
+
+
+_WARNED_UNCONFINED = False
+
+
+def _sandbox_isolation(
+    workspace_root: Path, sandbox: SandboxSettings
+) -> tuple[IsolationRequirement, dict[str, IsolationRequirement]]:
+    """The isolation for local commands, and for the laptop's when it differs.
+
+    ``auto`` is ``required`` where this host can fully confine both modes (bwrap,
+    seatbelt, landlock on a recent kernel) and ``preferred`` elsewhere; on the
+    laptop, which this side cannot probe, it is ``preferred``. When local commands
+    would run with no sandbox at all, that is said once, on stderr.
+    """
+
+    global _WARNED_UNCONFINED
+    setting = _isolation_from_env() or sandbox.isolation or "auto"
+    registry = execution_registry()
+    local = resolve_isolation(setting, registry, str(workspace_root))
+    laptop_setting = sandbox.isolation_setting_for("laptop") or setting
+    laptop = resolve_isolation(laptop_setting, registry, str(workspace_root), target="laptop")
+    if local != "required" and not _WARNED_UNCONFINED:
+        read_only = host_posture(registry, str(workspace_root))[0]
+        if read_only.provider_id in ("unconfined", "none"):
+            _WARNED_UNCONFINED = True
+            print("[odessy] No sandbox backend is usable here: Python-side commands run unconfined. "
+                  "`python -m odessy doctor` shows why and how to add one.", file=sys.stderr, flush=True)
+    return local, ({"laptop": laptop} if laptop != local else {})
 
 
 def _confirm_tool_call(decision: PolicyDecision, request: ToolRequest) -> bool:
@@ -322,6 +390,12 @@ async def _hybrid_voice_async(use_fake_model: bool, backend: str | None = None, 
 async def _run_voice_turn(agent: OdessyAgent, config: VoiceConfig) -> None:
     controller = getattr(agent, 'controller', None)
     broker = controller.interactions if controller is not None else None
+    stt = create_stt(config, builtin_factory=WhisperCppSTT)
+    try:
+        tts = create_tts(config, builtin_factory=KokoroTTS)
+    except BaseException:
+        close_providers(stt)
+        raise
     loop = VoiceLoop(
         agent=agent,
         audio_io=CommandAudioIO(
@@ -330,16 +404,8 @@ async def _run_voice_turn(agent: OdessyAgent, config: VoiceConfig) -> None:
             input_device=config.audio_input_device,
             output_device=config.audio_output_device,
         ),
-        stt=WhisperCppSTT(
-            whisper_bin=config.whisper_bin,
-            model_path=config.whisper_model,
-        ),
-        tts=KokoroTTS(
-            model_path=config.kokoro_model,
-            voices_path=config.kokoro_voices,
-            provider=config.onnx_provider,
-            cache_dir=config.onnx_cache_dir,
-        ),
+        stt=stt,
+        tts=tts,
         tmp_dir=config.tmp_dir,
         seconds=config.voice_seconds,
         status_callback=print,
@@ -358,29 +424,35 @@ async def _run_voice_turn(agent: OdessyAgent, config: VoiceConfig) -> None:
         from odessy.interaction.terminal import TerminalInteractionHandler, race_handlers
         broker.handler = race_handlers(loop.handle_interaction,
             TerminalInteractionHandler(broker, stop_turn=controller.stop, mark_ready=False))
-    result = await loop.run_once()
-    attempts = 1 + config.blank_retries
-    attempt = 1
-    while result.status == "blank" and attempt < attempts:
-        attempt += 1
-        # The model was never called for the blank turn, so retrying costs a
-        # recording and nothing else. It is not a retry of a request.
-        print(
-            f"No usable speech in that recording ({result.error}). "
-            f"Recording again ({attempt}/{attempts})."
-        )
+    try:
         result = await loop.run_once()
-    if result.transcript:
-        print(f"Transcript: {result.transcript}")
-    if result.final_text:
-        print(f"Odessy: {result.final_text}")
-    if result.status == "blank":
-        raise SystemExit(
-            f"Heard no usable speech after {attempt} recording(s): {result.error}. "
-            "Nothing was sent to the model."
-        )
-    if result.status != "ok":
-        raise SystemExit(f"Voice turn failed with status {result.status}: {result.error}")
+        attempts = 1 + config.blank_retries
+        attempt = 1
+        while result.status == "blank" and attempt < attempts:
+            attempt += 1
+            # The model was never called for the blank turn, so retrying costs a
+            # recording and nothing else. It is not a retry of a request.
+            print(
+                f"No usable speech in that recording ({result.error}). "
+                f"Recording again ({attempt}/{attempts})."
+            )
+            result = await loop.run_once()
+        if result.transcript:
+            print(f"Transcript: {result.transcript}")
+        if result.final_text:
+            print(f"Odessy: {result.final_text}")
+        if result.status == "blank":
+            raise SystemExit(
+                f"Heard no usable speech after {attempt} recording(s): {result.error}. "
+                "Nothing was sent to the model."
+            )
+        if result.status != "ok":
+            raise SystemExit(f"Voice turn failed with status {result.status}: {result.error}")
+
+    finally:
+        cancel_provider(stt)
+        cancel_provider(tts)
+        await asyncio.to_thread(close_providers, stt, tts)
 
 
 async def _listen_async(
@@ -403,13 +475,12 @@ async def _listen_async(
     model = _build_model(use_fake_model, backend=backend, model_name=config.ollama_model)
     _announce_model(model)
 
-    stt = WhisperCppSTT(whisper_bin=config.whisper_bin, model_path=config.whisper_model)
-    tts = KokoroTTS(
-        model_path=config.kokoro_model,
-        voices_path=config.kokoro_voices,
-        provider=config.onnx_provider,
-        cache_dir=config.onnx_cache_dir,
-    )
+    stt = create_stt(config, builtin_factory=WhisperCppSTT)
+    try:
+        tts = create_tts(config, builtin_factory=KokoroTTS)
+    except BaseException:
+        close_providers(stt)
+        raise
     player = CommandPlayer(player=config.audio_player, output_device=config.audio_output_device)
     stream = CommandAudioStream(
         recorder=config.audio_recorder, input_device=config.audio_input_device
@@ -516,6 +587,9 @@ async def _listen_async(
                 player.stop()
             finally:
                 stream.close()
+            cancel_provider(stt)
+            cancel_provider(tts)
+            await asyncio.to_thread(close_providers, stt, tts)
 
 
 def _announce_model(model: object) -> None:
@@ -616,8 +690,9 @@ def _model_backend_argument(parser: argparse.ArgumentParser) -> None:
 #: Printed when ``single`` mode runs without the Node tool server.
 _NO_NODE_WARNING = (
     "[odessy] Node tool server is not installed, so only time.now, calculator.eval and "
-    "terminal.run are available (no file, search or git tools), and commands run with "
-    "no confinement backend. Run `python -m odessy doctor` for the setup steps."
+    "terminal.run are available (no file, search or git tools). Commands use bwrap, "
+    "landlock or seatbelt where this host has one; on Windows they run unconfined. "
+    "Run `python -m odessy doctor` for the setup steps."
 )
 
 
@@ -663,79 +738,95 @@ async def _tool_servers(workspace_root: Path, *, cloud: bool = False) -> AsyncIt
 
 @asynccontextmanager
 async def _builtin_tool_servers(workspace_root: Path) -> AsyncIterator[tuple[object, ...]]:
-    """The MCP servers for this deployment, kept running for the duration of the block.
+    """Local tools are independent of optional, explicitly configured remotes.
 
-    Each is wrapped in `ExecutionTarget` because this IS the authorization act: the
-    composition root names the servers it means to execute on. A server that is merely
-    reachable -- discovered, or supplied by a future dynamic source -- is not executable,
-    so trust is never inherited from construction.
+    Unavailable remote targets are omitted, never replaced by another remote or
+    mapped to local execution. Commands still pass the same policy/approval gates.
     """
-
+    from odessy.tools.lan_executor import current as current_lan_execution, OptionalExecutionServer
     try:
         mode = deployment_mode()
     except DeploymentConfigError as error:
         raise SystemExit(str(error)) from error
-
-    if mode == "split":
-        paired = _paired_host()
-        if paired is not None:
-            # Only the paired transport is offered. A paired host that cannot answer is
-            # an error, never a reason to use a legacy remote URL instead.
-            async with ExternalSessions() as sessions:
-                server = paired.server(sessions)
-                try:
-                    tools = await asyncio.wait_for(
-                        server.list_tools(), timeout=paired.server_config().timeout
-                    )
-                except Exception as error:  # noqa: BLE001 - reported, not swallowed
-                    raise SystemExit(
-                        f"Paired host {paired.alias!r} is unavailable: {error}\n"
-                        "Run `odessy-link connect --peer " + paired.alias + "` to test it, or "
-                        "`python -m odessy doctor`. No legacy transport is used instead."
-                    ) from error
-                print(
-                    f"[odessy] paired host {paired.alias}: {len(tools)} tools over mTLS",
-                    file=sys.stderr,
-                )
-                yield (
-                    ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root)),
-                    ExecutionTarget(server),
-                )
+    connection = current_lan_execution()
+    # A LAN target is additive: retain the native local Node backend when present.
+    async with _local_tool_servers(workspace_root, use_node=mode == "single" or connection is not None,
+                                   terminal_only=connection is not None) as local:
+        if connection is not None:
+            yield (*local, ExecutionTarget(connection.server()))
             return
-        yield (
-            ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root)),
-            *(ExecutionTarget(url) for url in remote_tool_server_urls()),
-        )
-        return
+        if mode != "split":
+            yield local
+            return
 
-    if not node_tool_server_dependencies_installed():
-        print(_NO_NODE_WARNING, file=sys.stderr)
-        server = build_odessy_mcp_server(workspace_root=workspace_root)
-        async with Client(server) as client:
-            tools = await client.list_tools()
-        with model_tool_scope(tool.name for tool in getattr(tools, "tools", tools)):
-            yield (ExecutionTarget(server),)
-        return
+        async def optional(server):
+            wrapper = OptionalExecutionServer(server)
+            try:
+                await asyncio.wait_for(wrapper.discover(), timeout=2)
+            except Exception:
+                print("[odessy] Execution host unavailable; chat and local tools remain available. Remote commands will not run locally.", file=sys.stderr)
+                return None
+            return ExecutionTarget(wrapper)
 
-    # Loopback only, on a free port, for this run only. The Node server registers its
-    # command tool as `terminal.run` in single mode, so the Python server leaves it out.
-    node = NodeToolServerHttp(workspace_root, host="127.0.0.1", extra_env={DEPLOYMENT_ENV: "single"})
-    try:
-        url = await node.__aenter__()
-    except (RuntimeError, TimeoutError) as error:
-        raise SystemExit(
-            f"Could not start the local Node tool server: {error}\n"
-            "Run `python -m odessy doctor` to check the setup."
-        ) from error
-    try:
-        yield (
-            ExecutionTarget(
-                build_odessy_mcp_server(workspace_root=workspace_root, include_terminal=False)
-            ),
-            ExecutionTarget(url),
-        )
-    finally:
-        await node.__aexit__(None, None, None)
+        try:
+            paired = await asyncio.wait_for(asyncio.to_thread(_paired_host), timeout=2)
+        except (Exception, SystemExit):
+            # Invalid/unavailable legacy enrollment disables only that remote.
+            # Do not try an unrelated legacy URL as a replacement.
+            print("[odessy] Paired execution configuration unavailable; only local tools are offered.", file=sys.stderr)
+            yield local
+            return
+        if paired is not None:
+            async with ExternalSessions() as sessions:
+                remote = await optional(paired.server(sessions))
+                yield (*local, remote) if remote is not None else local
+            return
+        remotes = await asyncio.gather(*(optional(url) for url in remote_tool_server_urls()))
+        yield (*local, *(target for target in remotes if target is not None))
+
+
+@asynccontextmanager
+async def _local_tool_servers(workspace_root: Path, *, use_node=True, terminal_only=False):
+    """Keep chat/local execution available if optional Node startup fails."""
+    node = None
+    if use_node and node_tool_server_dependencies_installed():
+        node = NodeToolServerHttp(workspace_root, host="127.0.0.1", extra_env={DEPLOYMENT_ENV: "single"})
+        try:
+            url = await node.__aenter__()
+        except (RuntimeError, TimeoutError, OSError):
+            # NodeToolServerHttp cleans up an interrupted __aenter__ itself.
+            node = None
+            print("[odessy] Local Node tools unavailable; using the local Python tool backend. Run doctor for details.", file=sys.stderr)
+        else:
+            try:
+                local_target = url
+                if terminal_only:
+                    from odessy.tools.lan_executor import OptionalExecutionServer
+                    local_target = OptionalExecutionServer(url, local=True)
+                    schema_server = build_odessy_mcp_server(workspace_root=workspace_root)
+                    async with Client(schema_server) as schema_client:
+                        schemas = await schema_client.list_tools()
+                    # Mixed-host mode already exposes the remote's filesystem/git
+                    # names. Keep native local terminal.run without shadowing them.
+                    local_target.tools = [tool for tool in getattr(schemas, 'tools', schemas) if tool.name == 'terminal.run']
+                yield (ExecutionTarget(build_odessy_mcp_server(workspace_root=workspace_root, include_terminal=False)),
+                       ExecutionTarget(local_target))
+            finally:
+                await node.__aexit__(None, None, None)
+            return
+    local = build_odessy_mcp_server(workspace_root=workspace_root, registry=execution_registry())
+    if use_node:
+        from odessy.tools.lan_executor import current
+        connection = current()
+        names = ['time.now', 'calculator.eval', 'terminal.run']
+        if connection is not None:
+            names.extend(tool.name for tool in connection.tools)
+        if node is None:
+            print(_NO_NODE_WARNING, file=sys.stderr)
+        with model_tool_scope(names):
+            yield (ExecutionTarget(local),)
+    else:
+        yield (ExecutionTarget(local),)
 
 
 def _quiet_transport_logs() -> None:
@@ -825,6 +916,17 @@ def main(argv: list[str] | None = None) -> None:
         args = parser.parse_args(argv[1:])
         _print_egress(args.limit)
         return
+    if argv[:2] == ["sandbox", "cleanup"]:
+        parser = argparse.ArgumentParser(
+            prog="python -m odessy sandbox cleanup",
+            description="List (and with --apply remove) the write ACEs the windows-acl sandbox leaves on a workspace.",
+        )
+        parser.add_argument("--workspace", type=Path, default=Path.cwd(), help="The workspace folder (default: here).")
+        parser.add_argument("--apply", action="store_true", help="Remove the ACEs instead of only listing them.")
+        args = parser.parse_args(argv[2:])
+        from odessy.execution.acl_cleanup import main as cleanup_main
+
+        raise SystemExit(cleanup_main(args.workspace.resolve(), apply=args.apply))
     if argv[:1] == ["doctor"]:
         parser = argparse.ArgumentParser(
             prog="python -m odessy doctor",

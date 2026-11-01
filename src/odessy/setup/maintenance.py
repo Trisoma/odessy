@@ -237,7 +237,8 @@ class ManagedInstallation:
         record=self.record()
         if not record['active']: raise ValueError('repair the installation before changing configuration')
         configuration=self.configuration(selection,workspace)
-        payload={'installation_id':record['id'],'active':record['active'],'configuration':configuration}
+        payload={'installation_id':record['id'],'active':record['active'],'configuration':configuration,
+                 'previous':read_json(self.root/'configuration.json') if (self.root/'configuration.json').exists() else None}
         payload['plan_id']=hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':')).encode()).hexdigest()
         return payload
 
@@ -247,7 +248,8 @@ class ManagedInstallation:
             record=self.record()
             if not record['active']: raise ValueError('repair the installation before changing configuration')
             configuration=self.configuration(selection,workspace)
-            payload={'installation_id':record['id'],'active':record['active'],'configuration':configuration}
+            payload={'installation_id':record['id'],'active':record['active'],'configuration':configuration,
+                 'previous':read_json(self.root/'configuration.json') if (self.root/'configuration.json').exists() else None}
             token=hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':')).encode()).hexdigest()
             if confirm!=token: raise ValueError('review the exact configuration change before applying it')
             atomic(self.root/'configuration.json',configuration)

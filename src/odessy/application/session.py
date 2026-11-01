@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import re
 import threading
@@ -12,6 +13,7 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from odessy.authority.redaction import redact_text, looks_like_secret_name
+from odessy.runtime.hooks import public_event
 from odessy.runtime.types import ToolObservation, ToolRequest
 from odessy.voice.memory import ConversationMemory
 from odessy.collaboration.context import collaboration_scope
@@ -19,11 +21,22 @@ from odessy.interaction.broker import InteractionBroker
 from odessy.interaction.context import interaction_scope
 
 
+# These are public measurement counters, not credential-bearing token fields.
+_TOKEN_METRICS = frozenset({
+    'prompt_tokens', 'completion_tokens', 'cached_prompt_tokens', 'total_tokens',
+    'input_tokens', 'output_tokens', 'cache_creation_input_tokens',
+    'cache_read_input_tokens', 'generation_tokens_per_sec',
+    'generation_tokens_per_second',
+})
+
+
 def public(value):
     if is_dataclass(value):
         value = asdict(value)
     if isinstance(value, dict):
-        return {str(k): '<redacted>' if isinstance(v, str) and looks_like_secret_name(str(k)) else public(v) for k, v in value.items()}
+        return {str(k): '<redacted>' if looks_like_secret_name(str(k)) and not (
+            str(k) in _TOKEN_METRICS and (v is None or type(v) in (int, float))
+        ) else public(v) for k, v in value.items()}
     if isinstance(value, (tuple, list)):
         return [public(v) for v in value]
     if isinstance(value, str):
@@ -218,6 +231,24 @@ class SessionController:
             return False
         return await self.interactions.request_approval(details)
 
+    async def _screen_direct(self, name, arguments, risk):
+        """Screen a request that does not pass through the agent loop (a desktop job).
+
+        The same rules and pre-tool hooks apply. A hooks file that cannot be read, or
+        that changed since this process read it, fails closed.
+        """
+        from pathlib import Path
+        from odessy.runtime.hooks import HookConfigError, load_hooks, screen_request
+        from odessy.runtime.types import PolicyDecision
+        try:
+            hooks = load_hooks(Path.cwd())
+        except HookConfigError as error:
+            raise PermissionError(f'{name} refused: {error}') from error
+        decision = PolicyDecision('confirm', f'{name} requested directly', risk)
+        screened = await screen_request(hooks, ToolRequest(name, dict(arguments)), decision)
+        if screened.action == 'deny':
+            raise PermissionError(f'{name} refused: {screened.reason}')
+
     async def confirm(self, decision, request):
         # Direct job/API callers do not have runtime's canonical approval plan.
         # Describe their actual request rather than accepting a generated summary.
@@ -226,6 +257,8 @@ class SessionController:
         name = request_value.get('name', 'unknown action')
         arguments = request_value.get('arguments', {})
         risk = decision_value.get('risk', 'high')
+        if name == 'agent.delegate':
+            await self._screen_direct(name, arguments, risk)
         if name == 'agent.delegate' and hasattr(self.jobs, 'preflight_submission'):
             from pathlib import Path
             from odessy.authority.action_approval import build_action_approval
@@ -323,6 +356,14 @@ class SessionController:
             if reset:
                 reset()
             agent = self.agent_factory(model, confirm=self.confirm)
+            if _accepts(agent.run_turn, 'observer'):
+                # Tool, policy and hook events as they happen, with names and
+                # outcomes only (public_event); the full entries stay in the turn log.
+                def observe(entry):
+                    event = public_event(entry)
+                    if event is not None:
+                        self.emit(*event)
+                kwargs['observer'] = observe
             with collaboration_scope(self.collaboration), interaction_scope(self.interactions):
                 result = await agent.run_turn(text, **kwargs)
             # Routing notes and peer results were raised on a worker thread, so they
@@ -381,3 +422,11 @@ class SessionController:
             if queue.full():
                 queue.get_nowait()
             queue.put_nowait(None)
+
+
+def _accepts(function, name):
+    try:
+        parameters = inspect.signature(function).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(p.name == name or p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters)

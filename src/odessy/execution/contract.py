@@ -89,6 +89,7 @@ Mode = Literal["read-only", "workspace-write", "danger-full-access"]
 ConfinedMode = Literal["read-only", "workspace-write"]
 Enforcement = Literal["full", "partial", "none"]
 IsolationRequirement = Literal["required", "preferred", "not-required"]
+NetworkPolicy = Literal["allow", "deny"]
 EscalationOutcome = Literal["allowed-once", "rejected", "cancelled", "unavailable"]
 EscalationSubject = Literal["command", "operation"]
 
@@ -124,6 +125,7 @@ Limitation = Literal[
     "reliance_on_everyone_ace",
     "no_console_isolation",
     "host_kernel_shared",
+    "cannot_hide_paths",
 ]
 
 MODES: tuple[Mode, ...] = ("read-only", "workspace-write", "danger-full-access")
@@ -157,6 +159,7 @@ ISOLATION_REQUIREMENTS: tuple[IsolationRequirement, ...] = (
     "not-required",
 )
 
+NETWORK_POLICIES: tuple[NetworkPolicy, ...] = ("allow", "deny")
 CAPABILITIES: tuple[Capability, ...] = (
     "process-exec",
     "fs-read",
@@ -189,6 +192,7 @@ LIMITATIONS: tuple[Limitation, ...] = (
     "reliance_on_everyone_ace",
     "no_console_isolation",
     "host_kernel_shared",
+    "cannot_hide_paths",
 )
 
 # --------------------------------------------------------------------------
@@ -288,6 +292,17 @@ class ExecutionPolicy:
     mode: Mode
     workspace_root: str
     device_grants: frozenset[str] = field(default_factory=frozenset)
+    #: ``deny`` asks the backend to cut the network. Best effort: a backend that
+    #: cannot keeps reporting ``cannot_restrict_network``, so the result says
+    #: whether it held.
+    network: NetworkPolicy = "allow"
+    #: Absolute paths the confined process must not see (credential folders and
+    #: the like), already expanded and checked by the executor. A backend that
+    #: cannot hide them reports ``cannot_hide_paths``.
+    hidden_paths: tuple[str, ...] = ()
+    #: Absolute folders added to ``workspace-write``'s writable roots (package
+    #: caches). Ignored under ``read-only``.
+    extra_writable: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -53,12 +53,12 @@ export class SeatbeltProvider extends ConfiningProvider {
     return [seatbelt.available, seatbelt.detail];
   }
 
-  protected limitations(_policy: ExecutionPolicy): readonly Limitation[] {
+  protected limitations(policy: ExecutionPolicy): readonly Limitation[] {
     // Derived from the profile's shape: what it denies, and what it therefore
     // leaves alone. Not verified against a live macOS host.
     return [
       "cannot_restrict_reads",
-      "cannot_restrict_network",
+      ...(policy.network === "deny" ? [] : (["cannot_restrict_network"] as const)),
       "cannot_restrict_process_visibility",
       "cannot_restrict_ioctl",
       "host_kernel_shared",

@@ -74,6 +74,16 @@ def window_icon(root, size=16):
 def ico_bytes():
     """Render the mark to an .ico payload for the Windows EXE build."""
     from PIL import Image
+    source = icon_path().with_name('application_icon.png')
+    if source.is_file():
+        import io
+        image = Image.open(source).convert('RGBA')
+        side = max(image.size)
+        canvas = Image.new('RGBA', (side, side), (0, 0, 0, 0))
+        canvas.alpha_composite(image, ((side-image.width)//2, (side-image.height)//2))
+        output = io.BytesIO()
+        canvas.save(output, format='ICO', sizes=[(n,n) for n in (16,24,32,48,64,128,256)])
+        return output.getvalue()
     base = Image.new('RGBA', (16, 16))
     for y, row in enumerate(ROWS):
         for x, pixel in enumerate(row):

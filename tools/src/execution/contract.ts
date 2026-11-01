@@ -38,6 +38,7 @@ interface RawContract {
   escalation_subjects: readonly string[];
   enforcement_levels: readonly string[];
   isolation_requirements: readonly string[];
+  network_policies: readonly string[];
   capabilities: readonly string[];
   device_capabilities: readonly string[];
   limitations: readonly string[];
@@ -90,6 +91,7 @@ export type Mode = "read-only" | "workspace-write" | "danger-full-access";
 export type ConfinedMode = "read-only" | "workspace-write";
 export type Enforcement = "full" | "partial" | "none";
 export type IsolationRequirement = "required" | "preferred" | "not-required";
+export type NetworkPolicy = "allow" | "deny";
 export type EscalationOutcome = "allowed-once" | "rejected" | "cancelled" | "unavailable";
 export type EscalationSubject = "command" | "operation";
 
@@ -122,7 +124,8 @@ export type Limitation =
   | "cannot_restrict_hardlink_alias"
   | "reliance_on_everyone_ace"
   | "no_console_isolation"
-  | "host_kernel_shared";
+  | "host_kernel_shared"
+  | "cannot_hide_paths";
 
 export const MODES = [
   "read-only",
@@ -163,6 +166,8 @@ export const ISOLATION_REQUIREMENTS = [
   "not-required",
 ] as const satisfies readonly IsolationRequirement[];
 
+export const NETWORK_POLICIES = ["allow", "deny"] as const satisfies readonly NetworkPolicy[];
+
 export const CAPABILITIES = [
   "process-exec",
   "fs-read",
@@ -195,6 +200,7 @@ export const LIMITATIONS = [
   "reliance_on_everyone_ace",
   "no_console_isolation",
   "host_kernel_shared",
+  "cannot_hide_paths",
 ] as const satisfies readonly Limitation[];
 
 /**
@@ -349,6 +355,15 @@ export interface ExecutionPolicy {
   mode: Mode;
   workspaceRoot: string;
   deviceGrants: readonly string[];
+  /** `deny` asks the backend to cut the network; best effort, reported through
+   * `cannot_restrict_network`. Absent means `allow`. */
+  network?: NetworkPolicy;
+  /** Absolute paths the confined process must not see, already expanded and
+   * checked by the executor. A backend that cannot hide them reports
+   * `cannot_hide_paths`. */
+  hiddenPaths?: readonly string[];
+  /** Absolute folders added to `workspace-write`'s writable roots. */
+  extraWritable?: readonly string[];
 }
 
 /** What a consumer is asking for, including how strict it is about it. */

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import functools
 import re
-from dataclasses import dataclass, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,7 @@ from odessy.execution.escalation import (
     validate_escalation_args,
 )
 from odessy.config.commands import matches_preapproved
+from odessy.config.sandbox import DEFAULT_SETTINGS, SandboxSettings
 from odessy.tools.external_tools import ExternalTool, external_tool
 from odessy.runtime.types import PolicyDecision, ToolRequest
 from odessy.authority.workspace_authority import WorkspaceAuthority, WorkspaceAuthorityError
@@ -70,6 +73,41 @@ class OdessyPolicy:
     #: Command prefixes the user approved in advance for this workspace, from
     #: ``commands.toml`` (``odessy.config.commands``). Only ``terminal.run``.
     preapproved_commands: tuple[tuple[str, ...], ...] = ()
+    #: Files and folders the agent may not change: the hooks file, its folder and the
+    #: hook scripts (``odessy.runtime.hooks.protected_paths``). A hook runs as the
+    #: user outside the sandbox, so writing one would be a way out of it.
+    protected_paths: tuple[Path, ...] = ()
+    #: Isolation for the paired laptop's commands when it differs from ``isolation``
+    #: (``sandbox.toml`` ``[targets.laptop]``, or ``auto`` resolved per target).
+    target_isolation: Mapping[str, IsolationRequirement] = field(default_factory=dict)
+    #: How commands are confined beyond their mode (``sandbox.toml``): network,
+    #: hidden paths, extra writable folders, limits, and whether escalation is asked.
+    sandbox: SandboxSettings = DEFAULT_SETTINGS
+
+    def isolation_for(self, tool_name: str) -> IsolationRequirement:
+        """The isolation requirement for a command on the tool's target."""
+
+        return self.target_isolation.get(_target(tool_name), self.isolation)
+
+    def execution_arguments(self, request: ToolRequest, mode: Mode) -> dict[str, Any]:
+        """The rest of the sandbox decision for one command, sent with its mode.
+
+        A command the policy ran without asking gets ``network.read_only`` (deny by
+        default); one you confirmed gets ``network.workspace_write``, except that a
+        package install always keeps the network it exists to use.
+        """
+
+        network = self.sandbox.network_for(mode)
+        command = request.arguments.get("command")
+        if network == "deny" and mode == "workspace-write" and isinstance(command, str):
+            if _matches_install_rule(command.strip().lower().replace("\\", "/").split()):
+                network = "allow"
+        arguments: dict[str, Any] = {"network": network, "hidden_paths": list(self.sandbox.hidden_paths)}
+        if self.sandbox.extra_writable:
+            arguments["extra_writable"] = list(self.sandbox.extra_writable)
+        if self.sandbox.limits is not None:
+            arguments["limits"] = self.sandbox.limits.to_arguments()
+        return arguments
 
     @property
     def authority(self) -> WorkspaceAuthority:
@@ -222,6 +260,15 @@ class OdessyPolicy:
         lowered = command.strip().lower()
         tokens = lowered.replace("\\", "/").split()
 
+        # The laptop has its own files; these paths are this machine's.
+        if tool_name == "terminal.run" and _names_protected_path(lowered, self.protected_paths):
+            return PolicyDecision(
+                "deny",
+                f"{tool_name} denied because it names Odessy's hooks configuration, which the agent may not change",
+                "high",
+                rule="protected_config",
+            )
+
         if _matches_background_or_detach_rule(lowered, tokens):
             return PolicyDecision(
                 "deny",
@@ -351,7 +398,9 @@ class OdessyPolicy:
 
         if request.name not in _PROCESS_TOOL_NAMES:
             return None
-        return _MODE_BY_OUTCOME.get(decision.action)
+        if decision.action == "deny":
+            return None
+        return _MODE_BY_OUTCOME.get(decision.mode_outcome or decision.action)
 
     def requirement_for(
         self, request: ToolRequest, decision: PolicyDecision
@@ -376,7 +425,7 @@ class OdessyPolicy:
                 mode=mode,
                 workspace_root=str(self.workspace_root),
             ),
-            isolation=self.isolation,
+            isolation=self.isolation_for(request.name),
         )
 
     def preflight_execution_mode(
@@ -397,7 +446,15 @@ class OdessyPolicy:
             raise EscalationDeniedError("This action has no execution mode to escalate")
         if target not in ESCALATION_TARGETS:
             raise EscalationArgumentError(f"unknown sandbox_permissions target: {target}")
-        if target == "danger-full-access" and self.isolation == "required":
+        setting = self.sandbox.escalation_for(_target(request.name))
+        if setting == "never":
+            raise EscalationDeniedError("sandbox escalation is turned off in sandbox.toml (escalation = \"never\")")
+        if setting == "workspace-write-only" and target == "danger-full-access":
+            raise EscalationDeniedError(
+                'sandbox escalation to "danger-full-access" is turned off in sandbox.toml '
+                '(escalation = "workspace-write-only")'
+            )
+        if target == "danger-full-access" and self.isolation_for(request.name) == "required":
             raise EscalationDeniedError(
                 f'sandbox escalation to "{target}" is refused because isolation is '
                 "required and this mode provides no confinement"
@@ -563,6 +620,13 @@ class OdessyPolicy:
         path_decision = self._check_workspace_path(path_value, "filesystem.write")
         if path_decision is not None:
             return path_decision
+        if _is_protected_path(Path(self.workspace_root), path_value, self.protected_paths):
+            return PolicyDecision(
+                "deny",
+                "filesystem.write denied because the path is Odessy's hooks configuration",
+                "high",
+                rule="protected_config",
+            )
 
         return PolicyDecision(
             "confirm",
@@ -693,6 +757,68 @@ def _matches_confirm_rule(command: str, tokens: list[str]) -> bool:
     if tokens[0] == "git" and not (_is_git_read(tokens) or _is_version_query(tokens)):
         return True
     return tokens[0] in write_commands
+
+def _target(tool_name: str) -> str:
+    return "laptop" if tool_name.startswith("laptop.") else "local"
+
+
+@functools.lru_cache(maxsize=32)
+def _protected_spellings(paths: tuple[Path, ...]) -> tuple[str, ...]:
+    """How a command might name each protected path: absolute, and relative to home.
+
+    A command is text, so this is a screen, not a boundary: the fingerprint check in
+    ``odessy.runtime.hooks`` catches a change made some other way.
+    """
+
+    try:
+        home = Path.home().resolve()
+    except (OSError, RuntimeError):
+        home = None
+    spellings: set[str] = set()
+    for path in paths:
+        try:
+            absolute = Path(path).expanduser().resolve()
+        except OSError:
+            absolute = Path(path)
+        spellings.add(absolute.as_posix().lower())
+        if absolute.name.lower() == "hooks.toml":
+            spellings.add("hooks.toml")
+        if home is not None:
+            try:
+                relative = absolute.relative_to(home).as_posix().lower()
+            except ValueError:
+                continue
+            if "/" in relative:
+                spellings.add(relative)
+    return tuple(sorted(spellings))
+
+
+def _names_protected_path(command: str, paths: tuple[Path, ...]) -> bool:
+    if not paths:
+        return False
+    text = command.replace("\\", "/").replace('"', "").replace("'", "")
+    return any(spelling in text for spelling in _protected_spellings(tuple(paths)))
+
+
+def _is_protected_path(workspace_root: Path, candidate: str, paths: tuple[Path, ...]) -> bool:
+    if not paths:
+        return False
+    target = Path(candidate).expanduser()
+    if not target.is_absolute():
+        target = workspace_root / target
+    try:
+        target = target.resolve()
+    except OSError:
+        return False
+    for path in paths:
+        try:
+            protected = Path(path).expanduser().resolve()
+        except OSError:
+            continue
+        if target == protected or protected in target.parents:
+            return True
+    return False
+
 
 def _matches_deny_rule(command: str, tokens: list[str]) -> bool:
     if not tokens:

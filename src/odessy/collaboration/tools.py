@@ -48,15 +48,19 @@ def authorized_remote_targets(targets):
     from mcp import Client
     from odessy.runtime.agent_loop import ExecutionTarget
     from odessy.tools.external_tools import NamespacedServer
+    from odessy.tools.lan_executor import OptionalExecutionServer
 
     result = {}
     for item in targets:
         if not isinstance(item, ExecutionTarget):
             continue
         server = item.server
-        if isinstance(server, NamespacedServer):
-            name = server.config.name
-        elif isinstance(server, str):
+        if isinstance(server, OptionalExecutionServer) and server.local:
+            continue
+        original = server.server if isinstance(server, OptionalExecutionServer) else server
+        if isinstance(original, NamespacedServer):
+            name = original.config.name
+        elif isinstance(original, str):
             name = "laptop"
         else:
             continue
@@ -66,7 +70,7 @@ def authorized_remote_targets(targets):
                     "consult": "model.consult"}[action]
             if action == "start":
                 payload = {key: value for key, value in payload.items() if key in {"participant", "task", "mode", "workspace"}}
-            if isinstance(server, NamespacedServer):
+            if isinstance(server, (NamespacedServer, OptionalExecutionServer)):
                 response = await server.call_tool(name, payload)
             else:
                 async with Client(server) as client:

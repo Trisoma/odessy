@@ -78,14 +78,30 @@ class VoiceSelection:
     whisper_model: str = ''
     kokoro_model: str = ''
     kokoro_voices: str = ''
+    stt_provider: str = 'whisper.cpp'
+    tts_provider: str = 'kokoro'
+    stt_executable: str = ''
+    stt_model: str = ''
+    tts_executable: str = ''
+    tts_model: str = ''
+    audio_backend: str = 'auto'
+    audio_input_device: str = ''
+    audio_output_device: str = ''
+    wake_model: str = ''
 
     def __post_init__(self):
         if not isinstance(self.enabled, bool):
             raise ValueError('voice.enabled must be a boolean')
-        for name in ('whisper_bin', 'whisper_model', 'kokoro_model', 'kokoro_voices'):
+        for name in ('whisper_bin', 'whisper_model', 'kokoro_model', 'kokoro_voices', 'stt_executable', 'stt_model', 'tts_executable', 'tts_model'):
             object.__setattr__(self, name, text(getattr(self, name), name, optional=True))
-        if not self.enabled and any((self.whisper_bin, self.whisper_model, self.kokoro_model, self.kokoro_voices)):
-            raise ValueError('enable voice before supplying voice paths')
+        from odessy.voice.providers import validate_selector
+        validate_selector(self.stt_provider)
+        validate_selector(self.tts_provider)
+        if self.audio_backend not in ('auto','command','native'):raise ValueError('unknown audio backend')
+        for name in ('audio_input_device','audio_output_device','wake_model'):
+            object.__setattr__(self,name,text(getattr(self,name),name,optional=True))
+        # Disabled voice may retain independently configured component paths.
+
 
 
 @dataclass(frozen=True)
@@ -114,7 +130,7 @@ class SetupSelection:
         if data.get('model') is not None:
             data['model'] = ModelSelection.from_dict(data['model'])
         if 'voice' in data:
-            data['voice'] = VoiceSelection(**fields(data['voice'], {'enabled', 'whisper_bin', 'whisper_model', 'kokoro_model', 'kokoro_voices'}, 'voice'))
+            data['voice'] = VoiceSelection(**fields(data['voice'], {'enabled', 'whisper_bin', 'whisper_model', 'kokoro_model', 'kokoro_voices', 'stt_provider', 'tts_provider', 'stt_executable', 'stt_model', 'tts_executable', 'tts_model','audio_backend','audio_input_device','audio_output_device','wake_model'}, 'voice'))
         try:
             return cls(**data)
         except TypeError:

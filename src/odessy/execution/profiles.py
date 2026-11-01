@@ -21,6 +21,8 @@ reverse.
 
 from __future__ import annotations
 
+import os
+
 from collections.abc import Sequence
 
 from odessy.execution.contract import CONFINED_MODES, ExecutionPolicy
@@ -59,7 +61,12 @@ def bwrap_profile_args(policy: ExecutionPolicy) -> list[str]:
     restricted by absence rather than by permission.
 
     ``workspace-write`` adds an ephemeral ``/tmp`` and a writable bind of the
-    workspace root.
+    workspace root, and of each extra writable folder.
+
+    ``network="deny"`` adds a private network namespace with only loopback, and
+    each hidden path is covered: a folder by an empty tmpfs, a file by
+    ``/dev/null``. Hidden paths go before the writable binds, which the executor
+    has already checked do not overlap the workspace.
     """
 
     _require_confined(policy, "bwrap")
@@ -75,9 +82,18 @@ def bwrap_profile_args(policy: ExecutionPolicy) -> list[str]:
         "/proc",
         "--die-with-parent",
     ]
+    if policy.network == "deny":
+        args.append("--unshare-net")
+    for hidden in policy.hidden_paths:
+        if os.path.isdir(hidden):
+            args.extend(["--tmpfs", hidden])
+        else:
+            args.extend(["--ro-bind", "/dev/null", hidden])
     if policy.mode == "workspace-write":
         args.extend(["--tmpfs", "/tmp"])
         args.extend(["--bind", policy.workspace_root, policy.workspace_root])
+        for extra in policy.extra_writable:
+            args.extend(["--bind", extra, extra])
     return args
 
 
@@ -110,6 +126,8 @@ def landlock_profile_args(policy: ExecutionPolicy) -> list[str]:
     args = ["--ro", "/", "--rw", "/dev/null"]
     if policy.mode == "workspace-write":
         args.extend(["--rw", "/tmp", "--rw", policy.workspace_root])
+        for extra in policy.extra_writable:
+            args.extend(["--rw", extra])
     return args
 
 
@@ -154,6 +172,11 @@ def seatbelt_profile_args(policy: ExecutionPolicy) -> list[str]:
         "(deny file-write*)",
         f"(allow file-write* (literal {_sbpl_string('/dev/null')}))",
     ]
+    if policy.network == "deny":
+        forms.append("(deny network*)")
+    for hidden in policy.hidden_paths:
+        kind = "subpath" if os.path.isdir(hidden) else "literal"
+        forms.append(f"(deny file-read* ({kind} {_sbpl_string(hidden)}))")
 
     roots = writable_roots(policy)
     if roots:

@@ -12,8 +12,9 @@
  * instead; this side gets the correct behaviour from the runtime.
  */
 
-import { realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, realpathSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import path from "node:path";
 
 import type { ExecutionPolicy } from "./contract.js";
 
@@ -51,5 +52,71 @@ export function writableRoots(policy: ExecutionPolicy): string[] {
   if (policy.mode !== "workspace-write") {
     return [];
   }
-  return [...new Set([policy.workspaceRoot, "/tmp", tmpdir()].map(canonicalPath))];
+  return [
+    ...new Set(
+      [policy.workspaceRoot, "/tmp", tmpdir(), ...(policy.extraWritable ?? [])].map(canonicalPath),
+    ),
+  ];
+}
+
+/**
+ * Never accepted as an extra writable folder: writing there would reach the
+ * protections themselves, or everything.
+ */
+const FORBIDDEN_WRITABLE = ["~", "~/.config", "~/.config/odessy", "~/.ssh", "~/.local", "~/AppData", "~/Library"];
+
+function expandHome(pattern: string): string {
+  return pattern === "~" || pattern.startsWith("~/") || pattern.startsWith("~\\")
+    ? path.join(homedir(), pattern.slice(1))
+    : pattern;
+}
+
+function inside(child: string, parent: string): boolean {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+/**
+ * The paths to hide from one confined run, from patterns the authority layer sent.
+ *
+ * `~` is this host's home. A path that does not exist is dropped (nothing to hide),
+ * and so is one that contains the workspace or lies inside it: hiding the workspace
+ * would break the run, and a workspace file is the workspace's business. Same rule
+ * as the Python `hidden_roots`.
+ */
+export function hiddenRoots(patterns: readonly string[], workspaceRoot: string): string[] {
+  const workspace = canonicalPath(workspaceRoot);
+  const roots: string[] = [];
+  for (const pattern of patterns) {
+    const expanded = expandHome(pattern);
+    if (!path.isAbsolute(expanded) || !existsSync(expanded)) continue;
+    const resolved = canonicalPath(expanded);
+    if (inside(workspace, resolved) || inside(resolved, workspace)) continue;
+    if (!roots.includes(resolved)) roots.push(resolved);
+  }
+  return roots;
+}
+
+/**
+ * Extra writable folders from the authority layer: absolute after `~` expansion,
+ * existing, and never a filesystem root, a forbidden folder, or anything overlapping
+ * a `hiddenRoots` entry. A writable bind over a hidden path would uncover it.
+ *
+ * The authority layer checks its own file, but it cannot see this host's links, and
+ * a link can be created or retargeted later. So this runs for every command, on the
+ * canonical paths the backend will use. Same rule as the Python `extra_writable_roots`.
+ */
+export function extraWritableRoots(patterns: readonly string[], hidden: readonly string[] = []): string[] {
+  const forbidden = FORBIDDEN_WRITABLE.map((item) => canonicalPath(expandHome(item)));
+  const roots: string[] = [];
+  for (const pattern of patterns) {
+    const expanded = expandHome(pattern);
+    if (!path.isAbsolute(expanded) || !existsSync(expanded)) continue;
+    const resolved = canonicalPath(expanded);
+    if (path.dirname(resolved) === resolved) continue;
+    if (forbidden.some((item) => inside(resolved, item) && inside(item, resolved))) continue;
+    if (hidden.some((secret) => inside(resolved, secret) || inside(secret, resolved))) continue;
+    if (!roots.includes(resolved)) roots.push(resolved);
+  }
+  return roots;
 }

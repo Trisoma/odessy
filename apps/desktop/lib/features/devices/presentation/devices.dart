@@ -13,11 +13,12 @@ class DevicePage extends StatefulWidget {
       required this.controller,
       this.monitoringOverview,
       this.monitoringHistory,
-      this.onManagePairing});
+      this.onManagePairing,
+      this.onPair});
   final String device;
   final DesktopSession controller;
   final Widget? monitoringOverview, monitoringHistory;
-  final VoidCallback? onManagePairing;
+  final VoidCallback? onManagePairing, onPair;
 
   @override
   State<DevicePage> createState() => _DevicePageState();
@@ -345,13 +346,13 @@ class _DevicePageState extends State<DevicePage> {
                 'Pairing and permissions are managed on this computer. Verify the peer identity before changing access; selecting this device does not identify or authorize a peer.'),
             const SizedBox(height: OdessyTokens.spaceRegular),
             Tooltip(
-              message: widget.onManagePairing == null
+              message: (widget.onManagePairing ?? widget.onPair) == null
                   ? 'Local pairing tools are unavailable in this context.'
                   : 'Open local pairing tools without changing access.',
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: OutlinedButton(
-                    onPressed: widget.onManagePairing,
+                    onPressed: widget.onManagePairing ?? widget.onPair,
                     child: const Text('Manage pairing')),
               ),
             ),

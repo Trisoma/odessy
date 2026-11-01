@@ -40,8 +40,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('DEMO'), findsNothing);
     expect(
-        find.text('Connect to a local service to use Odessy.'), findsOneWidget);
-    await tester.tap(find.text('Connect').first);
+        find.text('Connect to your local service to continue.'), findsOneWidget);
+    await tester.tap(find.byTooltip('Connect local service'));
     await tester.pumpAndSettle();
     expect(find.text('Use demo'), findsNothing);
     await tester.tap(find.text('Cancel').last);

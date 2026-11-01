@@ -1,222 +1,110 @@
-import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:odessy_client/odessy_client.dart';
 import '../../../app/session_controller.dart';
 
-/// A short-lived session lease; never starts voice during connection or recovery.
+/// Bound to the existing API/session. No recorder, provider or permissions in Dart.
 class VoiceController extends ChangeNotifier {
   VoiceController(this.session) {
-    session.addListener(_bind);
-    _bind();
+    session.addListener(_changed);
+    _changed();
   }
   final DesktopSession session;
   OdessyApi? _api;
   String? _sid;
-  Timer? _lease;
-  Object? _heartbeatTicket;
+  bool _disposed = false;
   int _epoch = 0;
-  int _lastVoiceEvent = 0;
-  bool _disposed = false, pending = false, uncertain = false;
-  String state = 'off', error = '';
-  bool inputAvailable = false, outputAvailable = false;
-  bool get available => session.connected && _sid != null && _api is VoiceApi;
-  bool _current(int epoch, OdessyApi api, String sid) =>
-      !_disposed &&
-      epoch == _epoch &&
-      identical(api, session.api) &&
-      session.connected &&
-      session.session?.id == sid;
-  void _notify() {
-    if (!_disposed) notifyListeners();
-  }
-
-  void _bind() {
-    final api = session.api,
-        sid = session.connected ? session.session?.id : null;
-    if (identical(api, _api) && sid == _sid) {
-      _readVoiceErrors();
-      return;
-    }
-    final old = _api, oldSid = _sid;
-    final wasActive = state != 'off' || pending || uncertain;
-    _lease?.cancel();
-    _heartbeatTicket = null;
-    if (wasActive && old is VoiceApi && oldSid != null) {
-      unawaited((old as VoiceApi)
-          .stopVoice(oldSid)
-          .catchError((Object _) => <String, dynamic>{}));
-    }
-    ++_epoch;
-    _api = api;
-    _sid = sid;
-    _lastVoiceEvent = session.lastEvent;
-    pending = false;
-    uncertain = false;
-    state = 'off';
-    error = '';
-    inputAvailable = outputAvailable = false;
-    _notify();
-  }
-
-  void _readVoiceErrors() {
-    final events = session.session?.events ?? const <SessionEvent>[];
-    var changed = false;
-    for (final event in events) {
-      if (event.id <= _lastVoiceEvent) continue;
-      _lastVoiceEvent = event.id;
-      if (event.type != 'voice_error' || (!pending && state == 'off')) continue;
-      error = switch (event.data['stage']) {
-        'capture' =>
-          'Microphone capture failed. Check the input device and local audio setup.',
-        'wake' =>
-          'Wake detection failed. Check the local wake model and voice assets.',
-        'stt' =>
-          'Speech recognition failed. Check the local recognition setup and voice assets.',
-        'synthesis' =>
-          'Speech synthesis failed. Check the local voice output assets.',
-        'playback' =>
-          'Voice playback failed. Check the output device and local audio setup.',
-        _ => 'Voice audio failed. Check the local audio and voice setup.',
-      };
-      changed = true;
-    }
-    if (changed) _notify();
-  }
-
-  void _apply(Json response) {
-    state = response['state'] as String;
-    inputAvailable = response['input_available'] as bool;
-    outputAvailable = response['output_available'] as bool;
-    if (state == 'off' || state == 'unavailable') _lease?.cancel();
-  }
-
-  Future<void> start() async {
-    if (!available ||
-        pending ||
-        uncertain ||
-        state != 'off' ||
-        session.busy ||
-        session.session?.running == true) {
-      return;
-    }
-    final api = _api!, sid = _sid!, epoch = ++_epoch;
-    _lastVoiceEvent = session.lastEvent;
-    pending = true;
-    error = '';
-    _notify();
-    try {
-      final response = await (api as VoiceApi).startVoice(sid);
-      if (!_current(epoch, api, sid)) return;
-      _apply(response);
-      if (state == 'starting' || state == 'active') {
-        _lease?.cancel();
-        _lease = Timer.periodic(
-            const Duration(seconds: 5), (_) => unawaited(_heartbeat()));
-      }
-    } catch (failure) {
-      if (_current(epoch, api, sid)) {
-        if (failure is ApiFailure &&
-            const {400, 401, 404, 405, 409}.contains(failure.status)) {
-          error = 'Voice could not start for this session.';
-        } else {
-          uncertain = true;
-          error =
-              'Voice start was not confirmed. Stop voice before trying again; the service lease also expires automatically.';
-          try {
-            await (api as VoiceApi).stopVoice(sid);
-            if (_current(epoch, api, sid)) uncertain = false;
-          } catch (_) {}
-        }
-      }
-    } finally {
-      if (_current(epoch, api, sid)) {
-        pending = false;
-        _notify();
-      }
-    }
-  }
-
-  Future<void> _heartbeat() async {
-    if (!available || pending || uncertain || _heartbeatTicket != null) return;
-    final api = _api!, sid = _sid!, epoch = _epoch;
-    final ticket = _heartbeatTicket = Object();
-    try {
-      final response = await (api as VoiceApi).heartbeatVoice(sid);
-      if (!_current(epoch, api, sid)) return;
-      _apply(response);
-      _notify();
-    } catch (_) {
-      if (!_current(epoch, api, sid)) return;
-      _lease?.cancel();
-      try {
-        final response = await (api as VoiceApi).voiceStatus(sid);
-        if (!_current(epoch, api, sid)) return;
-        _apply(response);
-        if (state == 'unavailable') {
-          if (error.isEmpty) {
-            error =
-                'Voice input is unavailable. Check local audio and voice assets.';
-          }
-        } else if (state == 'stop_failed') {
-          uncertain = true;
-          error =
-              'Voice shutdown failed. Restart the local service to release audio.';
-        } else if (state != 'off') {
-          uncertain = true;
-          error = 'Voice status is uncertain. Stop voice before continuing.';
-        }
-      } catch (_) {
-        if (_current(epoch, api, sid)) {
-          uncertain = true;
-          error = 'Voice status is uncertain. The service lease will expire.';
-        }
-      }
-      _notify();
-    } finally {
-      if (identical(_heartbeatTicket, ticket)) _heartbeatTicket = null;
-    }
-  }
-
-  Future<void> stop() async {
-    if (!available || pending) return;
-    final api = _api!, sid = _sid!, epoch = ++_epoch;
-    _heartbeatTicket = null;
-    pending = true;
-    _lease?.cancel();
-    _notify();
-    try {
-      final response = await (api as VoiceApi).stopVoice(sid);
-      if (!_current(epoch, api, sid)) return;
-      _apply(response);
-      uncertain = false;
+  int _operation = 0, _event = 0;
+  VoiceSnapshot? snapshot;
+  String error = '';
+  bool busy = false;
+  bool get recording => snapshot?.state == 'recording';
+  bool get supported => snapshot?.supported == true && session.connected;
+  void _changed() {
+    final sid = session.session?.id;
+    if (!identical(_api, session.api) || _sid != sid) {
+      _api = session.api;
+      _sid = sid;
+      _epoch++;
+      snapshot = null;
       error = '';
+      busy = false;
+      _event = 0;
+      if (sid != null) refresh();
+    }
+    for (final event in (session.session?.events ?? <SessionEvent>[])
+        .where((e) => e.id > _event)) {
+      _event = event.id;
+      if (event.type == 'voice_state') {
+        try {
+          snapshot = VoiceSnapshot.fromJson(event.data);
+          if (!_disposed) notifyListeners();
+        } catch (_) {/* Unknown event remains in activity. */}
+      }
+    }
+  }
+
+  Future<void> refresh() async {
+    final api = _api, sid = _sid, epoch = _epoch;
+    if (api is! DesktopVoiceApi || sid == null) return;
+    try {
+      final value = await (api as DesktopVoiceApi).voiceState(sid);
+      if (!_disposed && epoch == _epoch) {
+        snapshot = value;
+        notifyListeners();
+      }
     } catch (_) {
-      if (_current(epoch, api, sid)) {
-        uncertain = true;
-        error = 'Voice stop was not confirmed. The service lease will expire.';
+      if (!_disposed && epoch == _epoch) {
+        error = 'Desktop audio unavailable. Text remains available.';
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> command(String action) async {
+    if (action == 'cancel_capture' && snapshot?.mode == 'wake') {
+      action = 'disable_wake';
+    }
+    final api = _api, sid = _sid, epoch = _epoch;
+    if (api is! DesktopVoiceApi ||
+        sid == null ||
+        (busy &&
+            action != 'cancel_capture' &&
+            action != 'stop_playback' &&
+            action != 'disable_wake')) {
+      return;
+    }
+    final operation = ++_operation;
+    busy = true;
+    error = '';
+    notifyListeners();
+    final pending = session.session?.pending ?? [];
+    final interaction =
+        pending.length == 1 ? pending.first['id'] as String? : null;
+    try {
+      final value = await (api as DesktopVoiceApi).voiceCommand(sid, action,
+          captureId: snapshot?.captureId, interactionId: interaction);
+      if (!_disposed && epoch == _epoch && operation == _operation) {
+        snapshot = value;
+      }
+    } catch (_) {
+      if (!_disposed && epoch == _epoch && operation == _operation) {
+        error =
+            'Audio action failed. Check voice settings or answer in text; no model request was retried.';
       }
     } finally {
-      if (_current(epoch, api, sid)) {
-        pending = false;
-        _notify();
+      if (!_disposed && epoch == _epoch && operation == _operation) {
+        busy = false;
+        notifyListeners();
+        await refresh();
       }
     }
   }
 
   @override
   void dispose() {
-    session.removeListener(_bind);
-    _lease?.cancel();
-    final api = _api, sid = _sid;
-    if ((state != 'off' || pending || uncertain) &&
-        api is VoiceApi &&
-        sid != null) {
-      unawaited((api as VoiceApi)
-          .stopVoice(sid)
-          .catchError((Object _) => <String, dynamic>{}));
-    }
     _disposed = true;
-    ++_epoch;
+    _epoch++;
+    session.removeListener(_changed);
     super.dispose();
   }
 }

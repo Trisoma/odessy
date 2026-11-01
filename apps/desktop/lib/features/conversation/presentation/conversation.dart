@@ -2,14 +2,18 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../app/session_controller.dart';
+import '../../../app/readiness_controller.dart';
 import '../../../app/theme.dart';
 import '../controllers/voice_controller.dart';
 import 'interaction_card.dart';
 import 'session_activity.dart';
 
 class ConversationPage extends StatefulWidget {
-  const ConversationPage({super.key, required this.controller});
+  const ConversationPage(
+      {super.key, required this.controller, this.readiness, this.voice});
   final DesktopSession controller;
+  final ReadinessController? readiness;
+  final VoiceController? voice;
   @override
   State<ConversationPage> createState() => _ConversationPageState();
 }
@@ -21,6 +25,13 @@ class _ConversationPageState extends State<ConversationPage> {
   Object? contentStamp;
   int scrollEpoch = 0;
   late VoiceController voice;
+  bool _ownsVoice = false;
+
+  void _bindVoice() {
+    _ownsVoice = widget.voice == null;
+    voice = widget.voice ?? VoiceController(widget.controller);
+    voice.addListener(_voiceChanged);
+  }
 
   @override
   void initState() {
@@ -28,17 +39,18 @@ class _ConversationPageState extends State<ConversationPage> {
     input.addListener(_draftChanged);
     scroll.addListener(_scrolled);
     widget.controller.addListener(_sessionChanged);
-    voice = VoiceController(widget.controller)..addListener(_voiceChanged);
+    _bindVoice();
     contentStamp = _stamp();
   }
 
   @override
   void didUpdateWidget(covariant ConversationPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.controller != widget.controller) {
+    if (oldWidget.controller != widget.controller ||
+        oldWidget.voice != widget.voice) {
       voice.removeListener(_voiceChanged);
-      voice.dispose();
-      voice = VoiceController(widget.controller)..addListener(_voiceChanged);
+      if (_ownsVoice) voice.dispose();
+      _bindVoice();
       oldWidget.controller.removeListener(_sessionChanged);
       widget.controller.addListener(_sessionChanged);
       contentStamp = _stamp();
@@ -137,7 +149,7 @@ class _ConversationPageState extends State<ConversationPage> {
   void dispose() {
     widget.controller.removeListener(_sessionChanged);
     voice.removeListener(_voiceChanged);
-    voice.dispose();
+    if (_ownsVoice) voice.dispose();
     input.removeListener(_draftChanged);
     scroll.removeListener(_scrolled);
     input.dispose();
@@ -427,19 +439,26 @@ class _ConversationPageState extends State<ConversationPage> {
                                 border: InputBorder.none,
                                 enabledBorder: InputBorder.none)))),
                 IconButton(
-                    tooltip: !voice.available
-                        ? 'Desktop voice is unavailable'
-                        : voice.state == 'off' && !voice.uncertain
-                            ? 'Start voice input'
-                            : 'Stop voice input',
-                    onPressed: !voice.available || voice.pending
-                        ? null
-                        : voice.state == 'off' && !voice.uncertain
-                            ? (c.busy || running ? null : voice.start)
-                            : voice.stop,
+                    tooltip: voice.recording
+                        ? 'Finish recording and submit speech'
+                        : 'Record on the coordinator computer',
+                    onPressed: voice.supported &&
+                            !voice.busy &&
+                            voice.snapshot?.mode != 'wake'
+                        ? () => voice.command(voice.recording
+                            ? 'finish_capture'
+                            : 'start_capture')
+                        : null,
                     icon: Icon(
-                        voice.inputAvailable ? Icons.mic : Icons.mic_none,
+                        voice.recording
+                            ? Icons.stop_circle_outlined
+                            : Icons.mic_none,
                         size: 20)),
+                if (voice.snapshot?.captureId != null)
+                  IconButton(
+                      tooltip: 'Cancel recording without submitting',
+                      onPressed: () => voice.command('cancel_capture'),
+                      icon: const Icon(Icons.close)),
                 IconButton.filled(
                     key: const Key('send-or-stop'),
                     tooltip: running ? 'Stop current turn' : 'Send message',
@@ -467,16 +486,36 @@ class _ConversationPageState extends State<ConversationPage> {
         if (c.api.isDemo)
           Text('Demo · no model or tool executes',
               style: Theme.of(context).textTheme.bodySmall),
-        if (voice.state == 'starting')
-          const Text('Starting voice on the local service…'),
-        if (voice.state == 'active' && voice.inputAvailable)
-          Text(voice.outputAvailable
-              ? 'Microphone and voice output active on the local service'
-              : 'Microphone active; voice output unavailable'),
-        if (voice.state == 'active' && !voice.inputAvailable)
-          const Text(
-              'Voice input is unavailable; stop voice to release audio.'),
-        if (voice.state == 'unavailable') const Text('Voice input unavailable'),
+        if (voice.snapshot?.message.isNotEmpty == true)
+          Text(voice.snapshot!.message),
+        TextButton(
+            onPressed: voice.refresh,
+            child: const Text('Check voice availability')),
+        if (voice.supported)
+          TextButton(
+              onPressed: voice.busy && voice.snapshot?.mode != 'wake'
+                  ? null
+                  : () => voice.command(voice.snapshot?.mode == 'wake'
+                      ? 'disable_wake'
+                      : 'enable_wake'),
+              child: Text(voice.snapshot?.mode == 'wake'
+                  ? 'Stop wake listening'
+                  : 'Enable wake listening on coordinator')),
+        if (voice.supported &&
+            voice.snapshot?.mode != 'wake' &&
+            !voice.busy &&
+            !voice.recording) ...[
+          TextButton(
+              onPressed: () => voice.command('test_input'),
+              child: const Text('Test speech input · no model call')),
+          TextButton(
+              onPressed: () => voice.command('test_output'),
+              child: const Text('Test speech output')),
+        ],
+        if (voice.supported)
+          TextButton(
+              onPressed: () => voice.command('stop_playback'),
+              child: const Text('Stop playback')),
         if (voice.error.isNotEmpty) Text(voice.error),
       ]),
     ]);

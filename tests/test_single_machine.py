@@ -80,11 +80,15 @@ async def test_split_mode_uses_the_local_server_and_the_configured_laptop(
     monkeypatch.setenv("ODESSY_TOOL_SERVER_URL", "http://10.1.1.1:8765/mcp")
     monkeypatch.setattr(cli, "NodeToolServerHttp", _FakeNode)
     _FakeNode.instances = []
+    from odessy.tools.lan_executor import OptionalExecutionServer
+    async def discovered(self):
+        self.tools = []
+    monkeypatch.setattr(OptionalExecutionServer, 'discover', discovered)
 
     async with cli._tool_servers(tmp_path) as servers:
         local, laptop = _servers_of(servers)
 
-    assert laptop == "http://10.1.1.1:8765/mcp"
+    assert laptop.server == "http://10.1.1.1:8765/mcp"
     assert "terminal.run" in await _tool_names(local)
     assert _FakeNode.instances == []
 
@@ -166,9 +170,9 @@ async def test_single_mode_node_startup_failure_points_at_doctor(
     monkeypatch.setattr(cli, "node_tool_server_dependencies_installed", lambda: True)
     monkeypatch.setattr(cli, "NodeToolServerHttp", _Broken)
 
-    with pytest.raises(SystemExit, match="doctor"):
-        async with cli._tool_servers(tmp_path):
-            pass
+    async with cli._tool_servers(tmp_path) as servers:
+        assert len(servers) == 1
+        assert 'terminal.run' in await _tool_names(servers[0].server)
 
 
 @pytest.mark.anyio

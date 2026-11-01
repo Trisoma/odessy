@@ -63,3 +63,20 @@ are verified; they do not establish final packaged acceptance. No per-host daemo
 is introduced.
 
 See [API and UI handoff](api.md) and [qualification evidence](qualification.md).
+
+## Desktop panel
+
+Open **Monitor** in the desktop sidebar. Connect through the cable button to the
+same authenticated Python service configured above. No additional token is needed
+for monitoring. Demo mode deliberately shows no fabricated telemetry.
+
+The panel lists hosts, independently displays trust/connectivity/access, reports
+collector status and observation timestamps, and plots past-hour CPU history.
+It refreshes every five seconds and responds to SSE changes. Reconnection refreshes
+read-only snapshots; it never replays model/tool work. Missing history and disabled
+monitoring remain visible. Metric details retain backend field names and units;
+polished per-device charts and additional presentation remain future UI work.
+
+Rebuild the desktop executable to see this panel; an already installed copy or
+older setup EXE is not automatically updated. Native visual acceptance remains
+outstanding even when the desktop build succeeds.

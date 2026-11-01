@@ -83,6 +83,10 @@ class ServerConfig:
     trust: Trust = "untrusted"
     #: Per-tool overrides, keyed by the server's own tool name.
     tool_policies: Mapping[str, ToolPolicy] = field(default_factory=dict)
+    #: HTTP headers, as header name -> the environment variable holding its value.
+    #: Indirection keeps a paired host's execution credential out of servers.toml;
+    #: the value is read when the connection is made, never stored here.
+    headers: Mapping[str, str] = field(default_factory=dict)
     #: Argument names that hold paths; they are checked against the workspace.
     workspace_paths: tuple[str, ...] = ()
     timeout: int = DEFAULT_SERVER_TIMEOUT_SECONDS
@@ -94,7 +98,17 @@ class ServerConfig:
         """What ``mcp.Client`` connects to: a URL, or the parameters to launch a command."""
 
         if self.transport == "http":
-            return self.url
+            source = os.environ if environ is None else environ
+            resolved = {name: source[value] for name, value in self.headers.items()
+                        if isinstance(source.get(value), str) and source.get(value)}
+            if not resolved:
+                return self.url
+            # The credential rides an authenticated client, not the URL, so it
+            # cannot leak into logs, error text or a redirect target.
+            import httpx2
+            from mcp.client.streamable_http import streamable_http_client
+
+            return streamable_http_client(self.url, http_client=httpx2.AsyncClient(headers=resolved))
         from mcp.client.stdio import StdioServerParameters
 
         source = os.environ if environ is None else environ
@@ -360,7 +374,8 @@ def _parse_server(path: Path, name: str, raw: Any) -> ServerConfig:
     if name in RESERVED_SERVER_NAMES:
         raise fail("name is reserved for a built-in tool family")
 
-    known = {"transport", "url", "command", "env", "trust", "tools", "workspace_paths", "timeout"}
+    known = {"transport", "url", "command", "env", "trust", "tools", "workspace_paths", "timeout",
+             "headers"}
     unknown = sorted(set(raw) - known)
     if unknown:
         raise fail(f"unknown keys {unknown}")
@@ -409,6 +424,12 @@ def _parse_server(path: Path, name: str, raw: Any) -> ServerConfig:
     if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout < 1:
         raise fail("timeout must be a positive integer (seconds)")
 
+    headers = raw.get("headers", {})
+    if not isinstance(headers, dict) or not all(
+            isinstance(key, str) and key and isinstance(value, str) and value
+            for key, value in headers.items()):
+        raise fail("headers must map a header name to an environment variable name")
+
     return ServerConfig(
         name=name,
         transport=transport,
@@ -416,6 +437,7 @@ def _parse_server(path: Path, name: str, raw: Any) -> ServerConfig:
         command=tuple(command),
         env=tuple(env),
         trust=trust,
+        headers=dict(headers),
         tool_policies=policies,
         workspace_paths=tuple(workspace_paths),
         timeout=timeout,

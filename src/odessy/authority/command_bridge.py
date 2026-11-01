@@ -14,10 +14,14 @@ from odessy.execution.contract import (
     ExecutionProvider,
     IsolationRequirement,
     Mode,
+    ProviderContractError,
     ProviderUnavailableError,
     Requirement,
 )
+from odessy.execution.limits import ResourceLimits, exceeded_limit, limit_report, posix_preexec, windows_limit_argv
 from odessy.execution.providers import UnconfinedProvider
+from odessy.execution.registry import ProviderRegistry
+from odessy.execution.roots import extra_writable_roots, hidden_roots
 from odessy.authority.output_retention import TextRetainer, format_retention_notice
 from odessy.authority.redaction import looks_like_secret_name, redact_text
 from odessy.authority.spill import SpillStore
@@ -85,6 +89,11 @@ class CommandBridge:
     #: resolves to is the authority layer's decision, not this bridge's, so this is
     #: supplied rather than derived here.
     policy: ExecutionPolicy | None = None
+    #: The backends this host offers, selected per call by the mode and isolation the
+    #: authority layer sent (the same rule as the Node server's
+    #: `resolveHostConfinement`). The composition root passes the shipped backends
+    #: with an unconfined fallback; `required` can never select the fallback.
+    registry: ProviderRegistry | None = None
 
     def __post_init__(self) -> None:
         if (self.provider is None) != (self.policy is None):
@@ -92,6 +101,11 @@ class CommandBridge:
                 "CommandBridge requires provider and policy together: a policy "
                 "without a backend confines nothing, and a backend without a "
                 "policy has no mode to confine under"
+            )
+        if self.registry is not None and self.provider is not None:
+            raise ValueError(
+                "CommandBridge takes a fixed provider or a registry, not both: two "
+                "sources of confinement would leave it unclear which one ran"
             )
 
     def run(
@@ -102,15 +116,37 @@ class CommandBridge:
         timeout: int = 10,
         mode: Mode | None = None,
         isolation: IsolationRequirement | None = None,
+        network: str | None = None,
+        hidden_paths: list[str] | tuple[str, ...] | None = None,
+        extra_writable: list[str] | tuple[str, ...] | None = None,
+        limits: dict[str, Any] | None = None,
     ) -> TerminalRunResult:
+        """Run one command. Everything after ``timeout`` is the authority layer's
+        sandbox decision for this call, injected by the agent loop, never the model's.
+
+        ``network``, ``hidden_paths`` and ``extra_writable`` shape the confinement
+        policy; ``limits`` are applied at spawn. What each achieved is reported in
+        the result's ``sandbox`` field.
+        """
+
         resolved_cwd = self.resolve_cwd(cwd)
         effective_timeout = min(max(1, timeout), self.max_timeout)
+        hidden = hidden_roots(tuple(hidden_paths or ()), str(self.workspace_root))
+        shape = {
+            "network": "deny" if network == "deny" else "allow",
+            "hidden_paths": hidden,
+            "extra_writable": extra_writable_roots(tuple(extra_writable or ()), hidden),
+        }
+        resource_limits = ResourceLimits.from_arguments(limits)
         # Confinement happens before anything is spawned, and it raises rather than
         # falling back: a caller that asked for a boundary must never receive an
         # unconfined run instead. `ProviderUnavailableError`, the
         # `danger-full-access` refusal, and a policy that no backend satisfies all
         # therefore propagate out of `run()`.
-        argv, sandbox = self._confine(_shell_command(command), mode, isolation)
+        argv, sandbox = self._confine(_shell_command(command), mode, isolation, shape)
+        if resource_limits is not None:
+            sandbox["limits"] = limit_report(resource_limits)
+        argv = windows_limit_argv(resource_limits, argv)
         start = time.monotonic()
         process: subprocess.Popen[str] | None = None
 
@@ -127,8 +163,12 @@ class CommandBridge:
                 text=True,
                 creationflags=_creation_flags(),
                 start_new_session=os.name != "nt",
+                preexec_fn=posix_preexec(resource_limits),
             )
             stdout, stderr = process.communicate(timeout=effective_timeout)
+            limit_hit = exceeded_limit(process.returncode) if resource_limits is not None else None
+            if limit_hit is not None:
+                sandbox["limit_exceeded"] = limit_hit
             duration = time.monotonic() - start
             stdout, stdout_truncated, stdout_spill = self._prepare_output(
                 stdout, label="stdout", max_chars=self.max_stdout_chars
@@ -199,6 +239,7 @@ class CommandBridge:
         argv: list[str],
         mode: Mode | None = None,
         isolation: IsolationRequirement | None = None,
+        shape: dict[str, Any] | None = None,
     ) -> tuple[list[str], dict[str, Any]]:
         """Route the argv through the configured backend.
 
@@ -216,12 +257,24 @@ class CommandBridge:
         fail closed rather than over-grant.
         """
 
+        if self.registry is not None:
+            return self._confine_selected(argv, mode, isolation, shape or {})
+
         if self.provider is None:
             # `__post_init__` pairs the two fields, so the policy is None here too.
-            result = _UNCONFINED.confine(
-                argv,
-                ExecutionPolicy(mode="read-only", workspace_root=str(self.workspace_root)),
-            )
+            inert = ExecutionPolicy(mode="read-only", workspace_root=str(self.workspace_root))
+            if isolation == "required":
+                # No backend is configured, so nothing here can meet a `required`
+                # demand. Running unconfined would be the silent downgrade `required`
+                # exists to rule out -- by omission, the one path the contract names.
+                evaluation = _UNCONFINED.evaluate(
+                    Requirement(policy=replace(inert, mode=mode or "read-only"), isolation="required")
+                )
+                raise ProviderUnavailableError(
+                    mode or "read-only",
+                    f"required isolation is not met: no confinement backend is configured ({evaluation.reason})",
+                )
+            result = _UNCONFINED.confine(argv, inert)
             return list(result.argv), _sandbox_report(result)
 
         assert self.policy is not None  # `__post_init__` pairs the two fields.
@@ -244,6 +297,44 @@ class CommandBridge:
 
         result = self.provider.confine(argv, policy)
         return list(result.argv), _sandbox_report(result)
+
+    def _confine_selected(
+        self,
+        argv: list[str],
+        mode: Mode | None,
+        isolation: IsolationRequirement | None,
+        shape: dict[str, Any],
+    ) -> tuple[list[str], dict[str, Any]]:
+        """Select a backend from the registry for this call's mode and isolation.
+
+        No mode and no isolation is a caller that expressed no requirement: the run is
+        unconfined and says so. One without the other is refused rather than
+        completed with a default, because a default would be this side guessing how
+        strict the authority layer is. When nothing satisfies the request the
+        registry raises, so `required` never falls back to the unconfined provider.
+        """
+
+        if mode is None and isolation is None:
+            result = _UNCONFINED.confine(
+                argv,
+                ExecutionPolicy(mode="read-only", workspace_root=str(self.workspace_root)),
+            )
+            return list(result.argv), _sandbox_report(result)
+        if mode is None or isolation is None:
+            raise ProviderContractError(
+                "confinement requires mode and isolation together: a mode alone would "
+                "leave this side to infer how strict the caller is"
+            )
+        assert self.registry is not None
+        selection = self.registry.select(
+            Requirement(
+                policy=ExecutionPolicy(mode=mode, workspace_root=str(self.workspace_root), **shape),
+                isolation=isolation,
+            )
+        )
+        policy = selection.requirement.policy
+        result = selection.provider.confine(argv, policy)
+        return list(result.argv), _sandbox_report(result, policy)
 
     def _spill_store(self) -> SpillStore:
         if self.spill_store is not None:
@@ -298,19 +389,30 @@ class CommandBridge:
 _UNCONFINED = UnconfinedProvider()
 
 
-def _sandbox_report(result: ConfineResult) -> dict[str, Any]:
+def _sandbox_report(result: ConfineResult, policy: ExecutionPolicy | None = None) -> dict[str, Any]:
     """The confinement facts a caller needs, in the contract's own vocabulary.
 
     `provider_id` matters as much as `enforcement`: "unconfined" and "confined,
     but only partially" are different answers, and a caller that cannot tell them
-    apart cannot act on either.
+    apart cannot act on either. With a policy, it also says whether the network
+    was cut and how many paths were hidden -- each only when the backend did it.
     """
 
-    return {
+    report: dict[str, Any] = {
         "provider_id": result.provider_id,
         "enforcement": result.enforcement,
         "limitations": sorted(result.limitations),
     }
+    if policy is not None:
+        confined = result.enforcement != "none"
+        report["network"] = (
+            "denied" if confined and policy.network == "deny" and "cannot_restrict_network" not in result.limitations
+            else "open"
+        )
+        report["hidden_paths"] = (
+            len(policy.hidden_paths) if confined and "cannot_hide_paths" not in result.limitations else 0
+        )
+    return report
 
 
 def _shell_command(command: str) -> list[str]:

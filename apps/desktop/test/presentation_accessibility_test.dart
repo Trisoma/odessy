@@ -96,7 +96,7 @@ void main() {
       verifyPaintColors(tester, find.text('Approve once'),
           '${brightness.name}: approval action');
       verifyPaintColors(
-          tester, find.text('Tool'), '${brightness.name}: request label');
+          tester, find.text('Exact arguments'), '${brightness.name}: request label');
       await mountAccessible(
           tester,
           MonitoringDetails(
@@ -123,7 +123,7 @@ void main() {
           'Accessible workstation'
         ),
         (ConversationPage(controller: c), 'Session'),
-        (SettingsPage(controller: c), 'Global settings'),
+        (SettingsPage(controller: c), 'Preferences'),
         (
           SingleChildScrollView(
               child: InteractionCard(

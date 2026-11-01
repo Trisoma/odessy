@@ -171,6 +171,11 @@ SETTINGS: tuple[Setting, ...] = (
        choices=("windows", "linux", "macos", "win32", "darwin", "mac", "osx")),
     _s("ODESSY_TOOL_SERVER_URL", "url", "the laptop tool server's MCP endpoint",
        allow_empty=True),
+    # Returned by the paired laptop when its own user accepted this coordinator.
+    # Optional: an unpaired or token-free endpoint stays valid, and a secret's
+    # value is never echoed in a report.
+    _s("ODESSY_TOOL_SERVER_TOKEN", "secret",
+       "bearer token returned by the paired laptop's tool server", allow_empty=True),
     _s("ODESSY_MCP_SERVER_URLS", "url_list", "comma-separated remote MCP endpoints",
        allow_empty=True),
     # -- local model --------------------------------------------------------
@@ -190,7 +195,8 @@ SETTINGS: tuple[Setting, ...] = (
     _s("ODESSY_TOOL_CONCURRENCY", "int", "tools allowed to overlap, from 1 to 8",
        minimum=1, maximum=8),
     _s("ODESSY_ISOLATION", "enum", "how strict this deployment is about isolation",
-       choices=("required", "preferred", "not-required")),
+       choices=("auto", "required", "preferred", "not-required")),
+    _s("ODESSY_SANDBOX_FILE", "path", "the sandbox settings file (default ~/.config/odessy/sandbox.toml)"),
     # -- automatic model selection -----------------------------------------
     _s("ODESSY_AUTO_FAST_MODEL", "model", "the model used for fast text-only requests"),
     _s("ODESSY_AUTO_CAPABLE_BACKEND", "enum", "the backend used for capable requests",
@@ -255,6 +261,12 @@ SETTINGS: tuple[Setting, ...] = (
        "the cloud egress log (empty turns it off)", allow_empty=True),
     _s("ODESSY_API_TOKEN", "secret", "the API server's bearer token", allow_empty=True),
     # -- voice --------------------------------------------------------------
+    _s("ODESSY_STT_PROVIDER", "text", "registered name or trusted module:factory"),
+    _s("ODESSY_TTS_PROVIDER", "text", "registered name or trusted module:factory"),
+    _s("ODESSY_STT_EXECUTABLE", "file", "custom STT executable", command=True, allow_empty=True),
+    _s("ODESSY_TTS_EXECUTABLE", "file", "custom TTS executable", command=True, allow_empty=True),
+    _s("ODESSY_STT_MODEL", "file", "custom STT model", allow_empty=True),
+    _s("ODESSY_TTS_MODEL", "file", "custom TTS model", allow_empty=True),
     _s("ODESSY_WHISPER_BIN", "file", "the whisper.cpp executable",
        required_in=("voice",), fallback="whisper-cli", command=True),
     _s("ODESSY_WHISPER_MODEL", "file", "the Whisper model file",
@@ -290,6 +302,7 @@ SETTINGS: tuple[Setting, ...] = (
        choices=("auto", "tensorrt", "cuda", "cpu")),
     _s("ODESSY_ONNX_CACHE_DIR", "path", "the ONNX Runtime cache directory",
        allow_empty=True),
+    _s("ODESSY_AUDIO_BACKEND", "enum", "native PortAudio or existing commands", choices=("auto","native","command")),
     _s("ODESSY_AUDIO_RECORDER", "text", "the recording command"),
     _s("ODESSY_AUDIO_PLAYER", "text", "the playback command"),
     _s("ODESSY_AUDIO_INPUT_DEVICE", "text", "the recording device", allow_empty=True),
@@ -300,6 +313,9 @@ SETTINGS: tuple[Setting, ...] = (
     _s("ODESSY_DEBUG_MODEL_REPAIR", "enum", "set to 1 to trace model repairs",
        choices=("0", "1"), allow_empty=True),
     # -- written by Odessy or by the installer ------------------------------
+    _s("ODESSY_PORTABLE_ROOT", "path", "verified portable payload root", internal=True),
+    _s("ODESSY_PORTABLE_STATE", "path", "external portable configuration directory", internal=True),
+    _s("ODESSY_NODE_TOOLS_DIR", "path", "bundled precompiled Node tool server", internal=True),
     _s("ODESSY_WORKSPACE_ROOT", "path", "the tool server's workspace", internal=True),
     _s("ODESSY_MCP_HOST", "text", "the tool server's bind address", internal=True),
     _s("ODESSY_MCP_PORT", "int", "the tool server's port",
@@ -395,6 +411,15 @@ def setting(name: str) -> Setting | None:
 
 
 def _check_setting(setting: Setting, source: Mapping[str, str], active: frozenset[str]) -> list[Issue]:
+    if ((setting.name.startswith('ODESSY_WHISPER_') and source.get('ODESSY_STT_PROVIDER', 'whisper.cpp') != 'whisper.cpp') or
+        (setting.name in ('ODESSY_KOKORO_MODEL', 'ODESSY_KOKORO_VOICES') and source.get('ODESSY_TTS_PROVIDER', 'kokoro') != 'kokoro')) and setting.name not in source:
+        return []
+    if setting.name in ('ODESSY_STT_PROVIDER', 'ODESSY_TTS_PROVIDER') and source.get(setting.name):
+        from odessy.voice.providers import validate_selector
+        try:
+            validate_selector(source[setting.name])
+        except ValueError as error:
+            return [_issue('error', setting, str(error))]
     optional_audio = 'hybrid' in active and bool(set(setting.required_in) & {'voice', 'wake'})
     required = not optional_audio and bool(setting.required_in) and bool(active.intersection(setting.required_in))
     present = setting.name in source

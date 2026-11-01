@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:odessy_client/odessy_client.dart';
 
+import '../../../app/setup/platform_copy.dart';
+
 /// Explicit, reviewed maintenance of one installed version.
 ///
 /// The installation root and the maintenance payload come from the installation
@@ -272,7 +274,7 @@ class InstalledManageController extends ChangeNotifier {
           'package-register', {if (payload.isNotEmpty) 'payload': payload});
       if (_disposed || epoch != _epoch) return;
       result = value;
-      notice = 'The Start-menu entry and Installed-apps record were rewritten.';
+      notice = registrationRewrittenCopy;
       status = await _execute('package-status', const {});
     } catch (failure) {
       _failed(epoch, failure);

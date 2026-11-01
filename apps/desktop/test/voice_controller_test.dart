@@ -1,138 +1,67 @@
-import 'dart:async';
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/app/session_controller.dart';
-import 'package:odessy_desktop/features/conversation/presentation/conversation.dart';
-import 'conversation_presentation_test.dart';
+import 'package:odessy_desktop/features/conversation/controllers/voice_controller.dart';
 
-class VoiceFixture extends ConversationFixtureApi implements VoiceApi {
-  int starts = 0, stops = 0, heartbeats = 0;
-  bool failStart = false, failStop = false;
-  Completer<Json>? heartbeatGate;
-  Json state(String state) => {
+class AudioApi extends DemoApi implements DesktopVoiceApi {
+  final commands = <String>[];
+  String state = 'idle';
+  bool fail = false;
+  VoiceSnapshot get value => VoiceSnapshot.fromJson({
+        'supported': true,
         'state': state,
-        'input_available': state == 'active',
-        'output_available': state == 'active'
-      };
+        'capture_id': state == 'recording' ? 'capture' : null,
+        'recorder_host': 'coordinator-test'
+      });
   @override
-  Future<Json> startVoice(String sid) async {
-    starts++;
-    if (failStart) throw const ApiFailure(503);
-    return state('starting');
+  Future<VoiceSnapshot> voiceState(String sid) async => value;
+  @override
+  Future<VoiceSnapshot> voiceCommand(String sid, String action,
+      {String? captureId, String? interactionId}) async {
+    commands.add(action);
+    if (fail) throw const ApiFailure(503);
+    if (action == 'finish_capture') expect(captureId, 'capture');
+    state = action == 'start_capture' ? 'recording' : 'idle';
+    return value;
   }
-
-  @override
-  Future<Json> heartbeatVoice(String sid) async {
-    heartbeats++;
-    return heartbeatGate?.future ?? state('active');
-  }
-
-  @override
-  Future<Json> stopVoice(String sid) async {
-    stops++;
-    if (failStop) throw const ApiFailure(503);
-    return state('off');
-  }
-
-  @override
-  Future<Json> voiceStatus(String sid) async => state('off');
 }
 
 void main() {
-  testWidgets(
-      'voice errors identify the failed stage without exposing diagnostics',
-      (tester) async {
-    final api = VoiceFixture();
-    final session = DesktopSession(api);
-    addTearDown(session.dispose);
-    await session.start();
-    await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: ConversationPage(controller: session))));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Start voice input'));
-    await tester.pump();
-    api.activity = [
-      SessionEvent(
-          1, 'voice_error', {'stage': 'capture', 'message': 'private path'})
-    ];
-    await session.refresh();
-    await tester.pump();
-    expect(find.textContaining('Microphone capture failed'), findsOneWidget);
-    expect(find.textContaining('private path'), findsNothing);
-    await tester.tap(find.byTooltip('Stop voice input'));
-    await tester.pump();
-    expect(find.textContaining('Microphone capture failed'), findsNothing);
-    await tester.tap(find.byTooltip('Start voice input'));
-    await tester.pump();
-    expect(find.textContaining('Microphone capture failed'), findsNothing);
-    await tester.pumpWidget(const SizedBox.shrink());
+  TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+      'explicit capture uses current session and cancellation never submits text',
+      () async {
+    final api = AudioApi(), session = DesktopSession(AudioApi());
+    await session.replace(api);
+    final voice = VoiceController(session);
+    await voice.refresh();
+    expect(api.commands, isEmpty);
+    await voice.command('start_capture');
+    expect(voice.recording, isTrue);
+    await voice.command('cancel_capture');
+    expect(voice.recording, isFalse);
+    expect(session.session!.messages, isEmpty);
+    await voice.command('start_capture');
+    await voice.command('finish_capture');
+    expect(api.commands,
+        ['start_capture', 'cancel_capture', 'start_capture', 'finish_capture']);
+    voice.dispose();
+    await session.shutdown();
+    session.dispose();
   });
-  testWidgets('late heartbeat cannot reactivate voice after stop',
-      (tester) async {
-    final api = VoiceFixture()..heartbeatGate = Completer<Json>();
-    final session = DesktopSession(api);
-    addTearDown(session.dispose);
-    await session.start();
-    await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: ConversationPage(controller: session))));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Start voice input'));
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 5));
-    expect(api.heartbeats, 1);
-    await tester.tap(find.byTooltip('Stop voice input'));
-    await tester.pump();
-    api.heartbeatGate!.complete(api.state('active'));
-    await tester.pump();
-    expect(find.byTooltip('Start voice input'), findsOneWidget);
-    expect(find.text('Microphone and voice output active on the local service'),
-        findsNothing);
-    expect(api.stops, 1);
-  });
-
-  testWidgets('voice requires an explicit start and stops when leaving',
-      (tester) async {
-    final api = VoiceFixture();
-    final session = DesktopSession(api);
-    addTearDown(session.dispose);
-    await session.start();
-    await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: ConversationPage(controller: session))));
-    await tester.pumpAndSettle();
-    expect(api.starts, 0);
-    await tester.tap(find.byTooltip('Start voice input'));
-    await tester.pump();
-    expect(api.starts, 1);
-    expect(find.text('Starting voice on the local service…'), findsOneWidget);
-    await tester.pump(const Duration(seconds: 5));
-    await tester.pump();
-    expect(api.heartbeats, 1);
-    expect(find.text('Microphone and voice output active on the local service'),
-        findsOneWidget);
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
-    expect(api.stops, 1);
-  });
-
-  testWidgets('unconfirmed start never automatically retries', (tester) async {
-    final api = VoiceFixture()
-      ..failStart = true
-      ..failStop = true;
-    final session = DesktopSession(api);
-    addTearDown(session.dispose);
-    await session.start();
-    await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: ConversationPage(controller: session))));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Start voice input'));
-    await tester.pump();
-    expect(api.starts, 1);
-    expect(find.byTooltip('Stop voice input'), findsOneWidget);
-    expect(
-        find.textContaining('Voice start was not confirmed'), findsOneWidget);
-    await tester.pump(const Duration(seconds: 10));
-    expect(api.starts, 1);
-    expect(api.heartbeats, 0);
+  test('audio failure does not change transcript or disable typed session',
+      () async {
+    final api = AudioApi(), session = DesktopSession(AudioApi());
+    await session.replace(api);
+    final voice = VoiceController(session);
+    await voice.refresh();
+    api.fail = true;
+    await voice.command('start_capture');
+    expect(voice.error, isNotEmpty);
+    expect(session.connected, isTrue);
+    expect(session.session!.messages, isEmpty);
+    voice.dispose();
+    await session.shutdown();
+    session.dispose();
   });
 }

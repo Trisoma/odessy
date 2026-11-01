@@ -1,6 +1,9 @@
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:odessy_client/odessy_client.dart';
+
+import 'setup/disconnected_api.dart';
 
 /// Owns transport identity and admission. Presentation never constructs requests.
 class DesktopSession extends ChangeNotifier {
@@ -8,8 +11,18 @@ class DesktopSession extends ChangeNotifier {
   OdessyApi api;
   Session? session;
   List<String> profiles = [];
+  Map<String, Profile> profileDetails = {};
+  String profileLabel(String name) {
+    final detail = profileDetails[name];
+    final model = detail?.model;
+    if (model == null || model.isEmpty || model == name) return name;
+    final provider = detail?.provider;
+    return "$model${provider == null ? '' : ' · $provider'} ($name)";
+  }
+
   String status = 'Connecting', error = '', route = '';
   bool connected = false, busy = false, stopping = false, _disposed = false;
+
   int _epoch = 0;
   Future<void>? _shutdown;
   Json? _consultationVersion;
@@ -24,16 +37,31 @@ class DesktopSession extends ChangeNotifier {
 
   Future<void> start() async {
     if (_disposed || busy) return;
+    if (api is DisconnectedApi) {
+      error = '';
+      connected = false;
+      status = 'Not connected';
+      _notify();
+      return;
+    }
     final epoch = ++_epoch;
     busy = true;
     error = '';
     _notify();
+    // A laptop may have no model and no session yet, but its user still has to
+    // answer a request. The pairing stream is therefore opened first, and its
+    // failure never blocks the session.
+
     try {
       final legacyProfiles = await api.profiles();
+      final details = api is ProfileMetadataApi
+          ? await (api as ProfileMetadataApi).profileMetadata()
+          : <Profile>[];
       final fresh = await api.createSession();
       final values = fresh.availableProfiles ?? legacyProfiles;
       if (_disposed || epoch != _epoch) return;
       profiles = values;
+      profileDetails = {for (final detail in details) detail.name: detail};
       session = fresh;
       connected = true;
       status = 'Ready';
@@ -48,26 +76,55 @@ class DesktopSession extends ChangeNotifier {
     }
   }
 
+  Future<void> reloadExecutionTarget() async {
+    if (busy || session?.running == true) {
+      throw StateError('Stop the active turn first.');
+    }
+    await _subscription?.cancel();
+    _subscription = null;
+    final old = session;
+    if (old != null) await api.deleteSession(old.id);
+    session = null;
+    await start();
+  }
+
   String _safeError(Object e) => e is ApiFailure
       ? e.toString()
       : 'Connection unavailable. Check that the local service is running.';
+
   void _listen(int epoch) {
     final sid = session!.id;
-    _subscription = api.events(sid, lastEvent).listen((event) async {
-      if (_disposed || epoch != _epoch) return;
-      if (event.type == 'selection') {
-        route = '${event.data['profile']} · ${event.data['reason'] ?? ''}';
-      }
-      if (event.type == 'stopped') {
-        status = 'Stopped · completed actions remain completed';
-      }
-      if (event.type == 'error') {
-        error = 'The turn failed. Inspect the local service diagnostics.';
-      }
-      await refresh(epoch: epoch);
-    },
-        onError: (Object e) => _disconnected(epoch, e),
-        onDone: () => _disconnected(epoch, StateError('Closed')));
+    _subscription = api
+        .events(sid, lastEvent)
+        .listen(
+          (event) async {
+            if (_disposed || epoch != _epoch) return;
+            if (event.type == 'selection') {
+              route =
+                  '${event.data['profile']} · ${event.data['reason'] ?? ''}';
+            }
+            if (event.type == 'stopped') {
+              status = 'Stopped · completed actions remain completed';
+            }
+            if (event.type == 'error') {
+              final detail = event.data['message'];
+              final text = detail is String
+                  ? detail.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ').trim()
+                  : '';
+              error = text.isEmpty
+                  ? 'The turn failed without an error detail.'
+                  : text.substring(0, text.length > 600 ? 600 : text.length);
+              status = 'Failed';
+            }
+            await refresh(epoch: epoch);
+            if (event.type == 'error' && epoch == _epoch && !_disposed) {
+              status = 'Failed';
+              _notify();
+            }
+          },
+          onError: (Object e) => _disconnected(epoch, e),
+          onDone: () => _disconnected(epoch, StateError('Closed')),
+        );
   }
 
   void _disconnected(int epoch, Object error) {
@@ -109,7 +166,7 @@ class DesktopSession extends ChangeNotifier {
       if (value.running) {
         status = value.pending.isNotEmpty ? 'Waiting for you' : 'Working';
       } else if (!status.startsWith('Stopped')) {
-        status = 'Ready';
+        status = error.isEmpty ? 'Ready' : 'Failed';
       }
       _notify();
     } catch (e) {
@@ -121,8 +178,10 @@ class DesktopSession extends ChangeNotifier {
     }
   }
 
-  Future<bool> command(Future<void> Function(String sid) operation,
-      {bool requireIdle = false}) async {
+  Future<bool> command(
+    Future<void> Function(String sid) operation, {
+    bool requireIdle = false,
+  }) async {
     if (_disposed ||
         busy ||
         stopping ||
@@ -188,15 +247,15 @@ class DesktopSession extends ChangeNotifier {
       throw StateError('Safe settings updates are unavailable.');
     }
     final epoch = _epoch;
-    final result =
-        await (transport as ConsultationLimitApi).readConsultationLimit();
+    final result = await (transport as ConsultationLimitApi)
+        .readConsultationLimit();
     if (_disposed || epoch != _epoch || !identical(transport, api)) {
       throw StateError('Connection changed.');
     }
     _consultationVersion = result;
     _consultationTransport = transport;
     return {
-      'settings': {'max_consultations': result['max_consultations']}
+      'settings': {'max_consultations': result['max_consultations']},
     };
   }
 
@@ -229,7 +288,7 @@ class DesktopSession extends ChangeNotifier {
     }
     await transport.saveSettings({
       ...latest,
-      'settings': {...latest['settings'] as Map, 'max_consultations': value}
+      'settings': {...latest['settings'] as Map, 'max_consultations': value},
     });
   }
 
@@ -263,9 +322,11 @@ class DesktopSession extends ChangeNotifier {
       _notify();
       return;
     }
-    await command((sid) => approved != null
-        ? api.approve(sid, id, approved)
-        : api.answer(sid, id, answer!));
+    await command(
+      (sid) => approved != null
+          ? api.approve(sid, id, approved)
+          : api.answer(sid, id, answer!),
+    );
   }
 
   Future<void> replace(OdessyApi next) async {
@@ -286,7 +347,9 @@ class DesktopSession extends ChangeNotifier {
     if (sid != null) {
       try {
         await previous.deleteSession(sid);
-      } catch (_) {/* Closing the client never retries work. */}
+      } catch (_) {
+        /* Closing the client never retries work. */
+      }
     }
     previous.close();
     if (_disposed || transition != _epoch) {
@@ -331,8 +394,7 @@ class DesktopSession extends ChangeNotifier {
       if (!_disposed && epoch == _epoch) {
         busy = false;
         status = 'Offline';
-        error =
-            'The previous session could not be closed. Reconnect or restart the app to continue.';
+        error = 'The previous session could not be closed. Reconnect or restart the app to continue.';
         _notify();
       }
     }

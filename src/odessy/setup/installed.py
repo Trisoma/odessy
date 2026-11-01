@@ -14,8 +14,9 @@ from pathlib import Path
 from .contracts import SetupSelection, public
 from .lifecycle import format_of
 from .maintenance import ManagedInstallation, default_workspace, digest, guard, read_json, validated_workspace
+from .platform_installation import DESKTOP_RELATIVE
 
-EXECUTABLES=('Scripts/python.exe','bin/python3','desktop/odessy_desktop.exe')
+EXECUTABLES=('Scripts/python.exe','bin/python3',DESKTOP_RELATIVE)
 MAX_CONFIGURATION_BYTES=65536
 
 
@@ -34,6 +35,9 @@ def active_configuration(root):
 
 def spec(root):
     """Validate the installed version, executables and configuration before launch."""
+    if os.environ.get("ODESSY_PORTABLE_ROOT"):
+        from .portable import spec as portable_spec
+        return portable_spec(root)
     root=guard(root)
     kind=format_of(root)
     if kind!='versioned':
@@ -51,7 +55,7 @@ def spec(root):
         path=guard(base/name)
         if not path.is_file() or digest(path)!=files[name]:changed.append(name)
     if python_name not in files:raise ValueError('the installed runtime is incomplete; repair it in management')
-    if 'desktop/odessy_desktop.exe' not in files:
+    if DESKTOP_RELATIVE not in files:
         raise ValueError('this installation has no desktop application; open Odessy management instead')
     if changed:
         raise ValueError('installed files were modified or damaged; repair before launching: '+', '.join(sorted(set(changed))))
@@ -66,18 +70,19 @@ def spec(root):
         selection=SetupSelection.from_dict(configuration['selection'])
         workspace=validated_workspace(configuration['workspace'],root)
         source='configuration'
-    helper=record.get('windows_registration',{}).get('helper')
+    registration=record.get('windows_registration') or record.get('linux_registration') or {}
+    helper=registration.get('helper')
     payload=None
     if isinstance(helper,str) and helper:
         candidate=guard(Path(helper))
         if candidate.is_dir() and (candidate/'setup-context.json').is_file():payload=str(candidate)
     return {'schema_version':1,'root':str(root),'installation_id':record['id'],'version':version,
-            'python':str(guard(base/python_name)),'desktop':str(guard(base/'desktop/odessy_desktop.exe')),
+            'python':str(guard(base/python_name)),'desktop':str(guard(base/DESKTOP_RELATIVE)),
             'selection':public(selection),'configuration_source':source,'role':selection.role,
             'model_configured':selection.model is not None,'voice_enabled':selection.voice.enabled,
             'workspace':str(workspace),'workspace_exists':workspace.is_dir(),
             'config':str(root/'configuration.json'),'payload':payload,
-            'registration':record.get('windows_registration',{}).get('state','none'),
+            'registration':registration.get('state','none'),
             'service_recorded':(root/'service.json').exists(),
             'ready':selection.model is not None and selection.role!='execution'}
 
@@ -88,9 +93,14 @@ def serve(argv=None):
     parser.add_argument('--root',required=True)
     parser.add_argument('--host',default='127.0.0.1')
     parser.add_argument('--port',type=int,required=True)
+    parser.add_argument('--expected-fingerprint')
     parser.add_argument('--exit-on-stdin-close',action='store_true',
         help='Stop when the owning launcher closes its stdin pipe.')
+    parser.add_argument('--credentials-stdin', action='store_true')
     args=parser.parse_args(argv)
+    if args.credentials_stdin:
+        from odessy.credentials import acknowledge_startup
+        acknowledge_startup(sys.stdin.buffer, sys.stdout)
     info=spec(args.root)
     if info['role']=='execution':
         raise ValueError('this installation is an execution node; start its service instead of a coordinator')
@@ -102,11 +112,14 @@ def serve(argv=None):
     if not (1<=args.port<=65535):
         raise ValueError('invalid loopback port')
     workspace=Path(info['workspace'])
-    workspace.mkdir(parents=True,exist_ok=True)
     selection=SetupSelection.from_dict(info['selection'])
     from .service_entry import run
+    from odessy.application.capabilities import configuration_owner, configuration_descriptor
+    if args.expected_fingerprint and configuration_descriptor(selection,workspace,owner=configuration_owner(args.root,info['installation_id']))['fingerprint'] != args.expected_fingerprint:
+        raise ValueError('Saved configuration changed after restart review. Review it again.')
+    workspace.mkdir(parents=True,exist_ok=True)
     return run(selection,workspace=workspace,host=args.host,port=args.port,token=token,
-               watch_stdin=args.exit_on_stdin_close)
+               watch_stdin=args.exit_on_stdin_close,configuration_owner=configuration_owner(args.root,info['installation_id']))
 
 
 def main(argv=None):

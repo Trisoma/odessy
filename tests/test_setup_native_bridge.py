@@ -82,7 +82,6 @@ def test_pairing_grant_is_explicit_and_never_inferred(tmp_path):
     executable=tmp_path/'odessy-link';executable.write_bytes(b'executable')
     with pytest.raises(ValueError): pair({'action':'grant','link':str(executable),'alias':'laptop','review':True})
 
-
 def test_telemetry_grant_requires_review_and_binds_registry_without_execution_grant(tmp_path):
     from odessy.setup.native_bridge import pair
     executable = tmp_path / 'odessy-link'
@@ -159,3 +158,14 @@ def test_selective_revoke_binds_review_to_peer_fingerprint_and_revision(tmp_path
     assert pair({**params, 'confirm': plan['plan_id']}, runner=runner)['grants_changed'] is True
     state['output'] = 'already absent ' + capability + ' for laptop'
     assert pair({**params, 'confirm': plan['plan_id']}, runner=runner)['grants_changed'] is False
+
+
+def test_pairing_telemetry_grant_does_not_grant_execution_and_revision_invalidates(tmp_path):
+    from odessy.setup.native_bridge import pair
+    executable=tmp_path/'odessy-link';executable.write_bytes(b'executable')
+    params={'action':'grant','link':str(executable),'alias':'laptop','capability':'telemetry.read'}
+    peer = {'alias': 'laptop', 'fingerprint_sha256': 'a' * 64}
+    plan=pair({**params,'review':True},runner=lambda _: json.dumps({'peers':[peer], 'grant_revision':1}))
+    assert plan['arguments'][3:5]==['--capability','telemetry.read'] and '--workspace' not in plan['arguments']
+    with pytest.raises(ValueError,match='review'):
+        pair({**params,'confirm':plan['plan_id']},runner=lambda _: json.dumps({'peers':[peer], 'grant_revision':2}))

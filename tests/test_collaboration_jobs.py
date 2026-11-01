@@ -65,7 +65,8 @@ def test_submission_authorization_workspace_and_repo_lock(tmp_path):
     asyncio.run(run())
 
 
-def test_patch_collects_diff_without_touching_original_and_refuses_dirty_repo(tmp_path):
+def test_patch_collects_diff_without_touching_original_and_refuses_dirty_repo(isolated_patch_repo):
+    tmp_path=isolated_patch_repo
     subprocess.run(['git', 'init', str(tmp_path)], check=True, capture_output=True)
     subprocess.run(['git', '-C', str(tmp_path), '-c', 'user.name=T', '-c', 'user.email=t@t', 'commit', '--allow-empty', '-m', 'initial'], check=True, capture_output=True)
     async def run():

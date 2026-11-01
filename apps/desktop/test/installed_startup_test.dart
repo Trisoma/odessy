@@ -166,9 +166,9 @@ void main() {
     startup.resolve();
     await tester.pump();
     await tester.pump();
-    expect(find.textContaining('Model not configured'), findsWidgets);
+    expect(find.textContaining('Choose a model in Settings'), findsWidgets);
     expect(find.text('DEMO'), findsNothing);
-    expect(find.text('Conversation'), findsWidgets);
+    expect(find.text('Assistant'), findsWidgets);
     await tester.pumpWidget(const SizedBox());
   });
   testWidgets('acknowledgement waits for concurrent management inspection',

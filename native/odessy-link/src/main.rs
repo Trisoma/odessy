@@ -208,6 +208,7 @@ fn peers_list(arguments: &[String]) -> Result<(), Failure> {
                     "address": peer.address,
                     "capability_mcp": peer.capability_mcp,
                     "capability_telemetry": peer.capability_telemetry,
+                    "revoked": peer.revoked,
                     "workspace": peer.workspace,
                     "grant_revision": revision,
                 })

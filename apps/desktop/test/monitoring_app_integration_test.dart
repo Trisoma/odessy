@@ -149,7 +149,7 @@ void main() {
                 (c) => c.contains('/v1/monitoring') && !c.startsWith('GET ')),
             isEmpty);
         monitoringDown = true;
-        await tester.tap(find.widgetWithText(ListTile, 'Conversation'));
+        await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
         await tester.pump();
         await tester.tap(find.byTooltip('Refresh devices'));
         await ready(

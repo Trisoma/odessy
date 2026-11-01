@@ -58,7 +58,9 @@ repair the Start-menu entry and uninstall. Every mutation requires an exact revi
 - Internal paths (Python, wheelhouse, payload) are never typed by the user. The
   installation records the owned interpreter and the cached maintenance payload.
 - Management keeps working after the downloaded installer is deleted because the
-  verified payload is cached under `%LOCALAPPDATA%\OdessyMaintenance\<id>\<hash>`.
+  verified payload is cached outside the installation, under
+  `%LOCALAPPDATA%\OdessyMaintenance\<id>\<hash>` on Windows and
+  `${XDG_DATA_HOME:-~/.local/share}/odessy/maintenance/<id>/<hash>` on Linux.
 - Uninstall runs from that external cache: a running installation cannot remove the
   files it executes. The installed app offers **Open maintenance to uninstall**
   instead of removing itself.
@@ -69,7 +71,23 @@ repair the Start-menu entry and uninstall. Every mutation requires an exact revi
   No recursive cleanup or delayed self-deletion is scheduled.
 - A failed Installed-apps registry write is recorded as a partial registration. The
   Start-menu shortcut is written first, so the installation stays reachable and
-  **Repair Start-menu entry** rewrites both.
+  **Repair Start-menu entry** rewrites both. On Linux the launcher is written before
+  the application-menu entry for the same reason, and the management button reads
+  **Repair application-menu entry**.
+
+## Per-user registration
+
+Setup never elevates. It registers the installed copy for the current user only, and
+the same ownership rules apply on both platforms.
+
+| Platform | Launcher | Menu surface | Removal record |
+|---|---|---|---|
+| Windows | `launch.ps1` in the installation | Start-menu shortcut `Odessy-<id>.lnk` | `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\Odessy-<id>` |
+| Linux | `launch.sh` in the installation | `~/.local/share/applications/odessy-<id>.desktop`, with Manage and Uninstall actions | the same `.desktop` entry |
+
+On Linux the launcher reads the active version from `installation.json`, so a rollback
+only needs the entry refreshed rather than registered again. Both registered files are
+recorded with digests; uninstall removes them only when they are still unchanged.
 
 ## Run from a checkout
 

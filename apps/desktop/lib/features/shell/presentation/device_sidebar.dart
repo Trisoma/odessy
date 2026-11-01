@@ -33,6 +33,9 @@ class DeviceSidebar extends StatelessWidget {
       this.error,
       this.demo = false,
       this.connectionLabel = 'Service not connected',
+      this.conversationLabel = 'Conversation',
+      this.navigationFocus,
+      this.primaryDestinations = const [],
       this.destinations = const []});
   final List<MonitoringHost> hosts;
   final ValueChanged<String> onInspect;
@@ -41,7 +44,9 @@ class DeviceSidebar extends StatelessWidget {
   final String? selectedHostId, error;
   final bool conversationSelected, settingsSelected, loading, retained, demo;
   final String connectionLabel;
-  final List<SidebarDestination> destinations;
+  final String conversationLabel;
+  final Map<String, FocusNode>? navigationFocus;
+  final List<SidebarDestination> primaryDestinations, destinations;
   bool get _lastKnown => hosts.isNotEmpty && (retained || error != null);
 
   @override
@@ -62,8 +67,11 @@ class DeviceSidebar extends StatelessWidget {
                 key: const Key('device-sidebar-scroll'),
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 children: [
-              _navigation(context, 'Conversation', Icons.chat_bubble_outline,
+              _navigation(context, conversationLabel, Icons.chat_bubble_outline,
                   conversationSelected, onConversation),
+              for (final destination in primaryDestinations)
+                _navigation(context, destination.label, destination.icon,
+                    destination.selected, destination.onTap),
               const SizedBox(height: 20),
               Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -164,8 +172,12 @@ class DeviceSidebar extends StatelessWidget {
       ]));
 
   Widget _navigation(BuildContext context, String title, IconData icon,
-          bool selected, VoidCallback? onTap) =>
-      ListTile(
+          bool selected, VoidCallback? onTap) {
+    final focus = navigationFocus?.putIfAbsent(
+        title, () => FocusNode(debugLabel: 'Navigation: $title'));
+    return ListTile(
+        key: ValueKey('nav-$title'),
+        focusNode: focus,
         selected: selected,
         dense: true,
         selectedTileColor:
@@ -173,8 +185,15 @@ class DeviceSidebar extends StatelessWidget {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         leading: Icon(icon, size: 19),
         title: Text(title),
-        onTap: onTap,
+        onTap: onTap == null
+            ? null
+            : () {
+                focus?.requestFocus();
+                FocusManager.instance.applyFocusChangesIfNeeded();
+                onTap();
+              },
       );
+  }
 
   String _label(String value) => switch (value) {
         'online' => 'Online',

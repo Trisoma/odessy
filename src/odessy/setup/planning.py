@@ -45,13 +45,22 @@ def build_plan(selection: SetupSelection, discovery: DiscoveryReport | None = No
             env['ODESSY_CLOUD_MODEL'] = model.name
             if model.endpoint:
                 env['ODESSY_CLOUD_BASE_URL'] = model.endpoint
-            warnings.append('Cloud credentials must be supplied through the provider environment; no credential is saved.')
+            warnings.append('Cloud credentials are supplied separately through OS secure storage, a session key or the provider environment; no credential is saved in this configuration.')
         warnings.append('Selected model compatibility and tool capability have not been established by listing/configuration.')
     if selection.role == 'coordinator':
         warnings.append('A coordinator uses split deployment; configure its paired execution node separately before tool work.')
     voice = selection.voice
     if voice.enabled:
-        components.extend(['whisper.cpp', 'kokoro', 'onnxruntime'])
+        env['ODESSY_AUDIO_BACKEND']=voice.audio_backend
+        for name in ('audio_input_device','audio_output_device','wake_model'):
+            if getattr(voice,name):env['ODESSY_'+name.upper()]=getattr(voice,name)
+        if voice.stt_provider == 'whisper.cpp':
+            components.append('whisper.cpp')
+        if voice.tts_provider == 'kokoro':
+            components.extend(['kokoro', 'onnxruntime'])
+        for name in ('stt_provider', 'tts_provider', 'stt_executable', 'stt_model', 'tts_executable', 'tts_model'):
+            if getattr(voice, name):
+                env['ODESSY_' + name.upper()] = getattr(voice, name)
         for name, key in [('whisper_bin', 'ODESSY_WHISPER_BIN'), ('whisper_model', 'ODESSY_WHISPER_MODEL'),
                           ('kokoro_model', 'ODESSY_KOKORO_MODEL'), ('kokoro_voices', 'ODESSY_KOKORO_VOICES')]:
             if getattr(voice, name):

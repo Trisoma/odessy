@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import os
+import socket
 import sys
 from pathlib import Path
 
 from .configuration import consent_id, destination, export_environment, export_selection
 from .contracts import DiscoveryRequest, ModelSelection, ROLES, SetupSelection, VoiceSelection, public
 from .discovery import discover
+from .lan_pair import PairingDeclined, PairingFailed, request_pairing, scan_execution_hosts
 from .planning import build_plan
 from .verification import verify
 
@@ -35,11 +39,88 @@ def _load(path: str) -> SetupSelection:
     return SetupSelection.from_dict(data)
 
 
+def _pair_record_path() -> Path:
+    """Where a pairing record goes. Deliberately not the runtime env export."""
+    return Path.home() / '.config' / 'odessy' / 'odessy-pair.json'
+
+
+def _write_pair_record(path: Path, record: dict) -> None:
+    """Create the record owner-only; never replace one that already exists."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(record, indent=2) + '\n'
+    try:
+        # The mode is applied at creation, so the token is never briefly readable.
+        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError as error:
+        raise ValueError(f'{path} already exists; remove it to pair again') from error
+    with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+        stream.write(payload)
+
+
+def _pair_host(argv: list[str], *, stdin, stdout, stderr) -> int:
+    """Listen for execution hosts on this LAN, then ask one to pair with us."""
+    parser = argparse.ArgumentParser(
+        prog='odessy setup pair-host',
+        description='Find an execution host on this LAN and ask its user to accept this computer as a coordinator. Creates one new pairing record and never overwrites one.')
+    parser.add_argument('--timeout', type=float, default=3.0, help='seconds to listen for hosts')
+    parser.add_argument('--host', help='1-based number of the host to pair with')
+    parser.add_argument('--coordinator-name', default='', help='name this computer shows on the other computer (default: this host name)')
+    parser.add_argument('--output', help='pairing record to create (default: ~/.config/odessy/odessy-pair.json)')
+    parser.add_argument('--non-interactive', action='store_true', help='never prompt; --host is then required')
+    args = parser.parse_args(argv)
+    try:
+        hosts = scan_execution_hosts(args.timeout)
+        if not hosts:
+            print('No execution hosts found on this LAN.', file=stderr)
+            return 1
+        if args.host is not None:
+            index = int(args.host)
+        elif args.non_interactive or not stdin.isatty():
+            raise ValueError('explicit --host is required without an interactive terminal')
+        else:
+            for position, host in enumerate(hosts, 1):
+                print(f'{position}. {host["name"]} at {host["host"]}:{host["port"]}', file=stderr)
+            print('Pair with which host? ', end='', file=stderr, flush=True)
+            index = int(stdin.readline().strip())
+        if not 1 <= index <= len(hosts):
+            raise ValueError(f'--host must be a number from 1 to {len(hosts)}')
+        chosen = hosts[index - 1]
+        target = Path(args.output).expanduser() if args.output else _pair_record_path()
+        try:
+            # The device ID comes from the advertisement. Without it the host
+            # cannot tell a current request from one aimed at its previous run,
+            # and refuses with 409 rather than prompting its user.
+            paired = asyncio.run(request_pairing(chosen['host'], chosen['port'],
+                                                 args.coordinator_name.strip() or socket.gethostname(),
+                                                 device_id=chosen.get('id')))
+        except PairingDeclined:
+            print('The laptop user declined or did not respond.', file=stderr)
+            return 1
+        except PairingFailed as error:
+            print(f'Pairing failed: {error}', file=stderr)
+            return 1
+        _write_pair_record(target, {'tool_server_url': paired['url'],
+                                    'tool_server_token': paired['credential']})
+        # Printed once, because the operator has to export it; the machine-readable
+        # result below never repeats the token.
+        print(f'Paired. Set ODESSY_TOOL_SERVER_URL={paired["url"]} and '
+              f'ODESSY_TOOL_SERVER_TOKEN={paired["credential"]} to use this host.', file=stderr)
+        print(json.dumps({'paired': True, 'host': chosen, 'url': paired['url'],
+                          'record': str(target)}, indent=2), file=stdout)
+        return 0
+    except (ValueError, TypeError, OSError) as error:
+        print(json.dumps({'error': str(error)}), file=stderr)
+        return 2
+
+
 def main(argv: list[str] | None = None, *, input_stream=None, output_stream=None, error_stream=None) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments[:1] == ['manage']:
         from .manage import main as manage_main
         return manage_main(arguments[1:])
+    if arguments[:1] == ['pair-host']:
+        return _pair_host(arguments[1:], stdin=input_stream or sys.stdin,
+                          stdout=output_stream or sys.stdout, stderr=error_stream or sys.stderr)
     parser = argparse.ArgumentParser(prog='odessy setup', description='Configure existing components without installing services or downloading models.')
     parser.add_argument('--role', choices=ROLES)
     parser.add_argument('--config', help='Validated selection JSON or a previous setup export.')
@@ -47,8 +128,10 @@ def main(argv: list[str] | None = None, *, input_stream=None, output_stream=None
     parser.add_argument('--model', help='Explicit existing model name; no default LFM.')
     parser.add_argument('--endpoint', help='Explicit model endpoint (discovery only when --discover is supplied).')
     parser.add_argument('--credential-env', default='', help='Credential environment-variable reference; never the key itself.')
-    parser.add_argument('--voice', action='store_true', help='Opt in to existing Whisper.cpp/Kokoro assets.')
-    for name in ('whisper-bin', 'whisper-model', 'kokoro-model', 'kokoro-voices'):
+    parser.add_argument('--voice', action='store_true', help='Opt in to configured speech providers (Whisper.cpp/Kokoro by default).')
+    parser.add_argument('--stt-provider', default='whisper.cpp')
+    parser.add_argument('--tts-provider', default='kokoro')
+    for name in ('whisper-bin', 'whisper-model', 'kokoro-model', 'kokoro-voices', 'stt-executable', 'stt-model', 'tts-executable', 'tts-model'):
         parser.add_argument('--' + name, default='')
     parser.add_argument('--discover', action='store_true', help='Read only the selected Ollama endpoint model inventory.')
     parser.add_argument('--timeout', type=float, default=3.0)
@@ -64,7 +147,9 @@ def main(argv: list[str] | None = None, *, input_stream=None, output_stream=None
     try:
         if args.config:
             if any((args.role, args.provider, args.model, args.endpoint, args.voice, args.credential_env,
-                    args.whisper_bin, args.whisper_model, args.kokoro_model, args.kokoro_voices)):
+                    args.whisper_bin, args.whisper_model, args.kokoro_model, args.kokoro_voices,
+                    args.stt_provider != 'whisper.cpp', args.tts_provider != 'kokoro',
+                    args.stt_executable, args.stt_model, args.tts_executable, args.tts_model)):
                 raise ValueError('--config cannot be combined with selection overrides')
             selection = _load(args.config)
         else:
@@ -78,7 +163,8 @@ def main(argv: list[str] | None = None, *, input_stream=None, output_stream=None
                 raise ValueError('--provider and --model must be supplied together')
             if args.credential_env and not args.model:
                 raise ValueError('--credential-env requires a model')
-            voice = VoiceSelection(args.voice, args.whisper_bin, args.whisper_model, args.kokoro_model, args.kokoro_voices)
+            voice = VoiceSelection(args.voice, args.whisper_bin, args.whisper_model, args.kokoro_model, args.kokoro_voices,
+                args.stt_provider, args.tts_provider, args.stt_executable, args.stt_model, args.tts_executable, args.tts_model)
             model = ModelSelection(args.provider, args.model, args.endpoint or '', args.credential_env) if args.model else None
             selection = SetupSelection(role=role, model=model, voice=voice)
         endpoint = selection.model.endpoint if selection.model and selection.model.provider in ('ollama', 'lfm') else args.endpoint

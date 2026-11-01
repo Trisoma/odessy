@@ -1,166 +1,180 @@
-"""Explicit, leased desktop voice over the existing session authority."""
-from __future__ import annotations
-
+"""One explicit coordinator microphone lease; session/broker retain all authority."""
 import asyncio
 import contextlib
+import uuid
+from odessy.voice.interaction import resolve_spoken_answer, voice_allowed
+from odessy.interaction.phrases import is_cancel
 
-
-class VoiceBusy(RuntimeError):
-    pass
-
-
-def _default_factory(controller, submit, report):
-    from odessy.voice.config import VoiceConfig
-    from odessy.voice.hybrid import HybridAudioAdapter
-    return HybridAudioAdapter(config=VoiceConfig.from_env(), submit_voice=submit,
-                              stop_turn=controller.stop, report_audio_error=report,
-                              memory=controller.memory)
-
+class VoiceError(RuntimeError):
+    def __init__(self,message,code=409):super().__init__(message);self.code=code
 
 class DesktopVoice:
-    """One owner per service. No microphone opens until an explicit start.
+    def __init__(self,audio_factory,*,host):
+        self.factory=audio_factory;self.host=host;self.audio=None
+        self.owner=None;self.capture_id=None;self.expected=None;self.state='idle';self.error=''
+        self._epoch=0;self._decoding=False;self._preparing=False;self._speaking=False;self._playback=None;self._draining=None
+        self.wake=None;self._wake_controller=None;self._previous_handler=None;self._wake_handler=None
+    @property
+    def busy(self):return self.owner is not None or self._playback is not None
+    def snapshot(self,controller):
+        own=self.owner==controller.id
+        return {'supported':True,'state':self.state if own or self.owner is None else 'busy',
+                'capture_id':self.capture_id if own else None,'recorder_host':self.host,
+                'message':self.error if own or not self.owner else '', 'mode':'wake' if own and self.wake is not None else 'push_to_talk'}
+    def _emit(self,c):c.emit('voice_state',self.snapshot(c))
+    async def typed(self,c,active):
+        if self.wake is not None and self.owner==c.id:await self.wake.set_typed_turn(active)
 
-    A short lease closes the owned adapter if the desktop stops heartbeating.
-    Model work and approvals remain owned by the existing session controller.
-    """
-    def __init__(self, *, factory=None, lease_seconds=20):
-        self.factory = factory or _default_factory
-        self.lease_seconds = lease_seconds
-        self._lock = asyncio.Lock()
-        self._owner = self._adapter = self._start_task = self._watchdog = None
-        self._state = 'off'
-        self._failed_owner = None
-        self._expires = 0.0
-        self._generation = 0
-
-    def status(self, controller):
-        if self._owner is not controller:
-            return {'state': 'unavailable' if self._failed_owner is controller else 'off',
-                    'input_available': False, 'output_available': False}
-        adapter = self._adapter
-        return {'state': self._state,
-                'input_available': bool(adapter and adapter.input_available),
-                'output_available': bool(adapter and adapter.output_available)}
-
-    def _emit(self, controller):
-        controller.emit('voice', self.status(controller))
-
-    async def start(self, controller, *, reserved=lambda: False):
-        async with self._lock:
-            if self._owner is not None:
-                raise VoiceBusy('Voice is already active or starting')
-            if controller.running or reserved():
-                raise VoiceBusy('Wait for the current turn to finish')
-            generation = self._generation = self._generation + 1
-            loop = asyncio.get_running_loop()
-
-            async def submit(text, stop_event, context):
-                if self._owner is not controller or controller.running or reserved() or stop_event.is_set():
-                    return ''
+    async def start_wake(self,c,submit,stop):
+        if self.busy or c.running or c.interactions.pending:raise VoiceError('Finish current work and audio before enabling wake listening')
+        self.owner=c.id;self._wake_controller=c;self.state='preparing';self._preparing=True
+        self._epoch+=1;epoch=self._epoch;self._emit(c)
+        try:
+            if self.audio is not None:await self.audio.close()
+            self.audio=self.factory()
+            def status(message):
+                if epoch!=self._epoch:return
+                self.state={'Listening':'listening','Recording speech':'recording','Transcribing speech':'transcribing','Speaking':'speaking'}.get(message,'listening')
+                self._emit(c)
+            def failure(stage,message):
+                if epoch!=self._epoch:return
+                self.error='Wake audio unavailable; disable listening and retry, or use text.'
+                self.state='error';self._emit(c)
+            self.wake=self.audio.make_wake(submit_voice=submit,stop_turn=stop,interactions=c.interactions,
+                report_status=status,report_audio_error=failure)
+            self._previous_handler=c.interactions.handler
+            async def handle(entry):
+                from odessy.voice.hybrid import AudioUnavailable
                 try:
-                    result = await controller.run_turn(text, context=context, stop_event=stop_event)
-                    return result.final_text
-                except Exception:
-                    return ''  # Controller emits failure; do not replay a turn.
+                    if not voice_allowed(entry):raise AudioUnavailable('This action requires keyboard or authenticated UI confirmation.')
+                    if self.wake is None:raise AudioUnavailable('Wake audio stopped; answer in the application.')
+                    await self.wake.handle_interaction(entry)
+                except AudioUnavailable as error:
+                    # Preserve the same pending request and stronger-channel gate.
+                    if c.interactions.is_pending(entry['id']):c.interactions.mark_ready(entry['id'])
+                    c.emit('interaction_unavailable',{'id':entry['id'],'message':str(error)})
+            self._wake_handler=handle;c.interactions.handler=handle
+            available=await self._owned(c,self.wake.start())
+            if epoch!=self._epoch:raise VoiceError('Wake startup superseded',410)
+            if not available:raise VoiceError('Wake input unavailable. Check microphone, wake model, VAD and speech dependencies.',503)
+            self.state='listening';self.error='';self._emit(c)
+            return self.snapshot(c)
+        except Exception:
+            await self._stop_wake();self.owner=None;self.state='error';self._emit(c);raise
+        finally:self._preparing=False
 
-            def report(stage, _message):
-                # Do not expose device diagnostics or paths in the UI event.
-                def deliver():
-                    if self._owner is not controller or self._generation != generation:
-                        return
-                    controller.emit('voice_error', {'stage': stage if stage in
-                        {'capture', 'wake', 'stt', 'synthesis', 'playback'} else 'audio'})
-                    if stage in {'capture', 'wake', 'stt'} and self._state == 'active':
-                        self._state = 'unavailable'
-                        self._emit(controller)
-                        asyncio.create_task(self.stop(controller, failed=True))
-                if not loop.is_closed():
-                    loop.call_soon_threadsafe(deliver)
-
-            adapter = self.factory(controller, submit, report)
-            self._failed_owner = None
-            self._owner, self._adapter, self._state = controller, adapter, 'starting'
-            self._expires = asyncio.get_running_loop().time() + self.lease_seconds
-            self._start_task = asyncio.create_task(self._open(controller, adapter, generation))
-            self._watchdog = asyncio.create_task(self._lease(controller, generation))
-            self._emit(controller)
-            return self.status(controller)
-
-    async def _open(self, controller, adapter, generation):
-        try:
-            ready = await adapter.start()
-            if self._generation != generation or self._owner is not controller:
-                return
-            if not ready:
-                self._state = 'unavailable'
-                self._emit(controller)
-                await self.stop(controller, failed=True)
-                return
-            self._state = 'active'
-            self._emit(controller)
+    async def _stop_wake(self):
+        wake,self.wake=self.wake,None
+        controller,self._wake_controller=self._wake_controller,None
+        if controller is not None and wake is not None:
+            if controller.interactions.handler is self._wake_handler:controller.interactions.handler=self._previous_handler
+        self._previous_handler=None
+        self._wake_handler=None
+        if wake is not None:await wake.aclose(preserve_turn=True)
+        if controller is not None:
+            for entry in controller.interactions.pending:
+                if controller.interactions.is_pending(entry['id']):controller.interactions.mark_ready(entry['id'])
+        if self.audio is not None:await self.audio.close()
+        self.audio=None
+    async def _owned(self,c,operation):
+        task=asyncio.create_task(operation)
+        try:return await asyncio.shield(task)
         except asyncio.CancelledError:
+            self._epoch+=1;self.state='cancelling';self._emit(c)
+            async def drain():
+                try:
+                    await self._cancel_audio()
+                    await asyncio.gather(task,return_exceptions=True)
+                    await self._cancel_audio()
+                finally:
+                    self.owner=None;self.capture_id=None;self.expected=None;self.state='idle';self._draining=None;self._emit(c)
+            self._draining=asyncio.create_task(drain())
             raise
-        except Exception:
-            if self._generation == generation and self._owner is controller and self._state != 'stop_failed':
-                self._state = 'unavailable'
-                self._emit(controller)
-                with contextlib.suppress(Exception):
-                    await self.stop(controller, failed=True)
-
-    async def _lease(self, controller, generation):
+    def _entry(self,c,identifier):
+        return next((e for e in c.interactions.pending if e['id']==identifier and c.interactions.is_pending(identifier)),None)
+    async def start(self,c,expected=None,*,preview=False):
+        if self.busy:raise VoiceError('Audio is already owned by another capture or playback')
+        pending=c.interactions.pending
+        if preview and pending:raise VoiceError('Answer the pending interaction before testing speech input')
+        entry=self._entry(c,expected) if expected else None
+        if pending and entry is None:raise VoiceError('Select the exact pending question or approval before recording')
+        if entry is not None and not voice_allowed(entry):raise VoiceError('This action requires keyboard or authenticated UI confirmation.',403)
+        if c.running and entry is None:raise VoiceError('Finish or stop the current task before recording')
+        self._epoch+=1;epoch=self._epoch;self.owner=c.id;self.expected=expected
+        self.capture_id=uuid.uuid4().hex;self.state='preparing';self.error='';self._emit(c)
+        self.preview=preview
         try:
-            while self._generation == generation and self._owner is controller:
-                remaining = self._expires - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    await self.stop(controller)
-                    return
-                await asyncio.sleep(min(remaining, 2))
-        except asyncio.CancelledError:
-            pass
+            self._preparing=True
+            if self.audio is None:self.audio=self.factory()
+            await self._owned(c,self.audio.start())
+            if epoch!=self._epoch:raise VoiceError('Capture superseded',410)
+            if entry is not None:c.interactions.mark_ready(entry['id'])
+            self.state='recording';self._emit(c);return self.snapshot(c)
         except Exception:
-            # A failed close is reported in status; no automatic turn is retried.
-            pass
-
-    async def heartbeat(self, controller):
-        async with self._lock:
-            if self._owner is not controller:
-                raise VoiceBusy('Voice is not active for this session')
-            if self._state == 'stop_failed':
-                raise VoiceBusy('Voice shutdown failed')
-            self._expires = asyncio.get_running_loop().time() + self.lease_seconds
-            return self.status(controller)
-
-    async def set_typed_turn(self, controller, active):
-        if self._owner is controller and self._adapter is not None:
-            await self._adapter.set_typed_turn(active)
-
-    async def stop(self, controller=None, *, failed=False):
-        async with self._lock:
-            owner, adapter = self._owner, self._adapter
-            if owner is None:
-                if controller is None or self._failed_owner is controller:
-                    self._failed_owner = None
-                return
-            if controller is not None and owner is not controller:
-                return
-            if self._state == 'stop_failed':
-                raise VoiceBusy('Voice shutdown failed; restart the local service')
-            self._generation += 1
-            self._state = 'stopping'
-            self._emit(owner)
-            current = asyncio.current_task()
-            for task in (self._start_task, self._watchdog):
-                if task is not None and task is not current and not task.done():
-                    task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await task
-            try:
-                await adapter.aclose()
-            except Exception:
-                self._state = 'stop_failed'
-                self._emit(owner)
-                raise
-            self._owner = self._adapter = self._start_task = self._watchdog = None
-            self._state = 'off'
-            self._failed_owner = owner if failed else None
-            self._emit(owner)
+            await self._cancel_audio();self.owner=None;self.state='error';self.error='Audio input unavailable. Typed input remains available.';self._emit(c)
+            raise
+        finally:self._preparing=False
+    async def finish(self,c,identifier,submit):
+        if self.owner!=c.id or identifier!=self.capture_id or self.state!='recording':raise VoiceError('Capture is stale or already consumed',410)
+        self.state='transcribing';self._decoding=True;epoch=self._epoch;self._emit(c)
+        try:
+            text=await self._owned(c,self.audio.finish())
+            if epoch!=self._epoch:raise VoiceError('Transcription superseded',410)
+            if not text.strip():raise VoiceError('No speech recognized. Retry recording or type instead.',422)
+            c.emit('voice_transcript',{'text':c._public(text),'capture_id':identifier})
+            if self.preview:
+                c.emit('voice_test_result',{'text':c._public(text),'source':'speech_input_test'})
+            elif self.expected:
+                entry=self._entry(c,self.expected)
+                if entry is None:raise VoiceError('Interaction already resolved or expired',410)
+                if is_cancel(text):await c.stop()
+                elif not resolve_spoken_answer(entry,c.interactions,text):raise VoiceError('Answer not accepted. Positive approval requires the exact displayed phrase.',422)
+            elif c.interactions.pending:raise VoiceError('A new interaction needs a fresh recording',410)
+            elif is_cancel(text):await c.stop()
+            else:await submit(c,text)
+            self.state='idle';self.error='';return self.snapshot(c)
+        except VoiceError as error:
+            self.state='error';self.error=str(error);raise
+        except Exception:
+            self.error='Transcription unavailable. Typed input remains available.';self.state='error'
+            raise VoiceError(self.error,503) from None
+        finally:
+            self._decoding=False
+            if self._draining is None:self.owner=None;self.capture_id=None;self.expected=None
+            self._emit(c)
+    async def _cancel_audio(self):
+        if self.wake is not None:await self._stop_wake()
+        if self.audio is not None:
+            with contextlib.suppress(Exception):await self.audio.cancel()
+    async def cancel(self,c,identifier=None):
+        if self.owner is not None and self.owner!=c.id:raise VoiceError('Another session owns audio')
+        if identifier is not None and identifier!=self.capture_id:raise VoiceError('Capture is stale',410)
+        self._epoch+=1;await self._cancel_audio()
+        if not self._decoding and not self._preparing and not self._speaking and self._draining is None:self.owner=None;self.capture_id=None;self.expected=None;self.state='idle'
+        else:self.state='cancelling'
+        self._emit(c);return self.snapshot(c)
+    async def stop_playback(self,c):
+        if self.owner is not None and self.owner!=c.id:raise VoiceError('Another session owns audio')
+        if self.wake is not None:self.wake.stop_speaking()
+        elif self._speaking:await self._cancel_audio()
+        self._emit(c);return self.snapshot(c)
+    async def speak(self,c,text):
+        if self.busy:raise VoiceError('Finish capture before playback')
+        self.owner=c.id;self.state='speaking';self._speaking=True;self._emit(c)
+        try:
+            if self.audio is None:self.audio=self.factory()
+            await self._owned(c,self.audio.speak(text))
+        except Exception:
+            self.error='Audio output unavailable. The completed text answer was not retried.'
+            c.emit('audio_error',{'message':self.error})
+        finally:
+            self._speaking=False
+            if self._draining is None:self.owner=None;self.state='idle'
+            self._emit(c)
+    async def close(self):
+        self._epoch+=1
+        if self.wake is not None:await self._stop_wake()
+        if self.audio is not None:await self.audio.close()
+        if self._draining is not None:
+            await asyncio.wait({self._draining},timeout=6)
+        self.owner=None

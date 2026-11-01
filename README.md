@@ -163,6 +163,12 @@ Voice (`python -m odessy voice`) currently needs Whisper.cpp, Kokoro, and the Li
 
 ## Configuration
 
+For the current experimental headless LAN executor, follow the
+[Jetson + Windows step-by-step guide](docs/setup/jetson-windows-lan-execution.md).
+It covers dependencies, Wi-Fi/Ethernet selection, terminal Y/N approval and an
+actual remote tool check. This trusted-LAN HTTP prototype is separate from the
+Rust/mTLS enrollment flow below.
+
 Optional authenticated split deployment uses `ODESSY_PAIRED_HOST=<enrolled-alias>`
 and the Rust `odessy-link` transport. Enroll both hosts, then grant the permitted
 workspace on the execution host; see [host pairing](docs/reference/host-pairing.mdx).
@@ -193,6 +199,22 @@ offered as `<server>.<tool>`. Calls require confirmation by default; explicit
 per-tool config may allow or deny them, and trusted read-only annotations may
 allow them under the documented rules. Each call is recorded in an audit log, and
 `python -m odessy doctor` checks the servers. See `docs/reference/external-servers.mdx`.
+
+Hooks are programs you list in `~/.config/odessy/hooks.toml` to run before a tool
+call, before a sandbox escalation, after a call, or when a turn ends; rules in the
+same file deny or confirm calls by pattern without a program, and
+`presets = ["recommended"]` adds rules for force pushes, piping downloads into a
+shell, publishing packages and the like. They can deny a call or ask for
+confirmation, never allow more than the policy does; a post-tool hook can add a
+note, mark the turn for later rules, stop it, or withhold a result from the model.
+See [hooks](docs/reference/hooks.mdx).
+
+Commands run in a per-call sandbox (bwrap on Linux, seatbelt on macOS, a partial
+windows-acl boundary on Windows). By default a command run without asking has no
+network and cannot read credential folders such as `~/.ssh` (where the backend can
+enforce it), and every command gets memory, file-size and CPU limits.
+`~/.config/odessy/sandbox.toml` tunes this, and `python -m odessy doctor` shows what
+this machine enforces. See [sandbox](docs/reference/sandbox.mdx).
 
 `ODESSY_MAX_MODEL_CALLS` caps the model calls in one turn, counting corrections and
 follow-up steps. With a cloud backend (about 2 s a call) the default is 8 for a spoken

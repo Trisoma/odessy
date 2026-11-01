@@ -265,7 +265,10 @@ class VoiceSession:
             if self.state != "ERROR":
                 self.state = "STOPPING"
 
-    async def aclose(self) -> None:
+    async def aclose(self, *, preserve_turn: bool = False) -> None:
+        self._preserve_turn = self._preserve_turn or preserve_turn
+        if preserve_turn and self._interaction_done is not None and not self._interaction_done.done():
+            self._interaction_done.set_result(None)
         self._closing = True
         if not self._preserve_turn:
             self._cancel_interaction('voice session closed')

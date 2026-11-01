@@ -137,7 +137,8 @@ class MaintenanceController extends ChangeNotifier {
                 'fingerprint',
                 'address',
                 'workspace',
-                'output'
+                'output',
+                'capability'
               }
             : {
                 'root',
@@ -217,7 +218,9 @@ class MaintenanceController extends ChangeNotifier {
         selection: const {},
         parameters: parameters);
     final reply = await backend.execute(request);
-    if (!reply.ok) throw StateError(reply.error);
+    if (!reply.ok) {
+      throw StateError(reply.reason.isEmpty ? reply.error : reply.reason);
+    }
     return reply.result;
   }
 
@@ -271,7 +274,15 @@ class MaintenanceController extends ChangeNotifier {
           : action;
       final value = await _call(readAction, review: reviewing);
       if (_disposed || epoch != _epoch) return;
-      if (!reviewing && action == 'pair:list') _setPeers(value, peerSource);
+      if (!reviewing && action == 'pair:list') {
+        final source = peerSource is String && peerSource.isNotEmpty
+            ? peerSource
+            : value['link'];
+        _setPeers(value, source);
+        if (peerSource == null || peerSource == '') {
+          fields = Map.unmodifiable({...fields, 'link': source});
+        }
+      }
       result = value;
       if (reviewing) {
         final token = value['plan_id'] ??

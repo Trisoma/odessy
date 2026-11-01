@@ -32,6 +32,25 @@
       }
     },
     {
+      "name": "ODESSY_AUDIO_BACKEND",
+      "kind": "enum",
+      "summary": "native PortAudio or existing commands",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [
+          "auto",
+          "native",
+          "command"
+        ],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
       "name": "ODESSY_AUDIO_INPUT_DEVICE",
       "kind": "text",
       "summary": "the recording device",
@@ -754,6 +773,7 @@
       "apply_timing": "runtime startup",
       "validation": {
         "choices": [
+          "auto",
           "required",
           "preferred",
           "not-required"
@@ -1144,6 +1164,21 @@
       }
     },
     {
+      "name": "ODESSY_NODE_TOOLS_DIR",
+      "kind": "path",
+      "summary": "bundled precompiled Node tool server",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
       "name": "ODESSY_OLLAMA_MODEL",
       "kind": "model",
       "summary": "the model the ollama backend requests",
@@ -1209,6 +1244,36 @@
       }
     },
     {
+      "name": "ODESSY_PORTABLE_ROOT",
+      "kind": "path",
+      "summary": "verified portable payload root",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_PORTABLE_STATE",
+      "kind": "path",
+      "summary": "external portable configuration directory",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
       "name": "ODESSY_PROBE_READONLY",
       "kind": "text",
       "summary": "a probe marker, not a setting",
@@ -1227,6 +1292,21 @@
       "name": "ODESSY_PROBE_WRITABLE",
       "kind": "text",
       "summary": "a probe marker, not a setting",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_SANDBOX_FILE",
+      "kind": "path",
+      "summary": "the sandbox settings file (default ~/.config/odessy/sandbox.toml)",
       "source": "runtime environment",
       "screen": "Advanced runtime settings",
       "status": "unavailable",
@@ -1269,6 +1349,51 @@
       }
     },
     {
+      "name": "ODESSY_STT_EXECUTABLE",
+      "kind": "file",
+      "summary": "custom STT executable",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_STT_MODEL",
+      "kind": "file",
+      "summary": "custom STT model",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_STT_PROVIDER",
+      "kind": "text",
+      "summary": "registered name or trusted module:factory",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
       "name": "ODESSY_TOOL_CONCURRENCY",
       "kind": "int",
       "summary": "tools allowed to overlap, from 1 to 8",
@@ -1284,11 +1409,71 @@
       }
     },
     {
+      "name": "ODESSY_TOOL_SERVER_TOKEN",
+      "kind": "secret",
+      "summary": "bearer token returned by the paired laptop's tool server",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
       "name": "ODESSY_TOOL_SERVER_URL",
       "kind": "url",
       "summary": "the laptop tool server's MCP endpoint",
       "source": "runtime environment",
       "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_TTS_EXECUTABLE",
+      "kind": "file",
+      "summary": "custom TTS executable",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_TTS_MODEL",
+      "kind": "file",
+      "summary": "custom TTS model",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_TTS_PROVIDER",
+      "kind": "text",
+      "summary": "registered name or trusted module:factory",
+      "source": "runtime environment",
+      "screen": "Voice and audio",
       "status": "unavailable",
       "reason": "No desktop configuration management API exists.",
       "apply_timing": "runtime startup",

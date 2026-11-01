@@ -7,19 +7,20 @@ import socket
 import subprocess
 import sys
 import tempfile
+from odessy.credentials import tool_environment
 from collections.abc import Mapping
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from types import TracebackType
 from typing import IO, Any
 
-from mcp.client.stdio import StdioServerParameters, stdio_client
 
 # TODO: Potentially a dead code: this class and the following function code:
 class NodeToolServerTransport(AbstractAsyncContextManager):
     """MCP stdio transport for Odessy's laptop-side Node tool server."""
 
     def __init__(self, workspace_root: Path | str) -> None:
+        from mcp.client.stdio import StdioServerParameters, stdio_client
         public_repo_root = Path(__file__).resolve().parents[3]
         self._context = stdio_client(
             StdioServerParameters(
@@ -27,7 +28,7 @@ class NodeToolServerTransport(AbstractAsyncContextManager):
                 args=["run", "start", "--silent"],
                 cwd=_node_tools_dir(public_repo_root),
                 env={
-                    **os.environ,
+                    **tool_environment(os.environ),
                     "ODESSY_WORKSPACE_ROOT": str(Path(workspace_root).resolve()),
                 },
                 encoding="utf-8",
@@ -76,7 +77,7 @@ class NodeToolServerHttp(AbstractAsyncContextManager):
             )
 
         npm = shutil.which("npm")
-        if npm is None:
+        if npm is None and not os.environ.get("ODESSY_PORTABLE_ROOT"):
             raise RuntimeError("npm is required to run the Odessy Node MCP tool server")
 
         port = self._port or _find_free_port(self._host)
@@ -84,14 +85,14 @@ class NodeToolServerHttp(AbstractAsyncContextManager):
         tools_dir = _node_tools_dir(public_repo_root)
         node = shutil.which("node")
         env = {
-            **os.environ,
+            **tool_environment(os.environ),
             "ODESSY_WORKSPACE_ROOT": str(self._workspace_root),
             "ODESSY_MCP_HOST": self._host,
             "ODESSY_MCP_PORT": str(port),
             "ODESSY_MCP_TRANSPORT": "http",
             **self._extra_env,
         }
-        if node is not None and _build_is_current(tools_dir):
+        if node is not None and (os.environ.get("ODESSY_PORTABLE_ROOT") or _build_is_current(tools_dir)):
             command = [node, str(_built_server_entry(tools_dir)), "--http"]
         else:
             command = [npm, "run", "start:http", "--silent"]
@@ -159,6 +160,10 @@ def node_tool_server_dependencies_installed() -> bool:
     tool_server = _node_tools_dir(_public_repo_root())
     bin_dir = tool_server / "node_modules" / ".bin"
     tsc = bin_dir / ("tsc.cmd" if os.name == "nt" else "tsc")
+    if os.environ.get("ODESSY_PORTABLE_ROOT"):
+        return (shutil.which("node") is not None
+                and (tool_server / "node_modules" / "@modelcontextprotocol" / "sdk").exists()
+                and _built_server_entry(tool_server).is_file())
     return (
         shutil.which("npm") is not None
         and (tool_server / "node_modules" / "@modelcontextprotocol" / "sdk").exists()
@@ -169,6 +174,12 @@ def _public_repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 def _node_tools_dir(public_repo_root: Path) -> Path:
+    portable = os.environ.get("ODESSY_NODE_TOOLS_DIR")
+    if portable:
+        path = Path(portable)
+        if not path.is_absolute():
+            raise ValueError("ODESSY_NODE_TOOLS_DIR must be absolute")
+        return path
     return public_repo_root / "tools"
 
 def _built_server_entry(tools_dir: Path) -> Path:

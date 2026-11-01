@@ -69,6 +69,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(
           find.text('Device details and available settings.'), findsOneWidget);
+      if (compact) {
+        await tester.tap(find.byTooltip('Open navigation menu'));
+        await tester.pumpAndSettle();
+      }
       expect(tester.getRect(footer), footerRect);
 
       await tester.tap(footer);
@@ -77,7 +81,7 @@ void main() {
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
         await tester.pumpAndSettle();
       }
-      expect(find.text('Global settings').hitTestable(), findsOneWidget);
+      expect(find.text('Preferences').hitTestable(), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();

@@ -28,6 +28,7 @@ class VoiceConfig:
     onnx_cache_dir: Path | None = None
     audio_recorder: str = "arecord"
     audio_player: str = "aplay"
+    audio_backend: str = "command"
     audio_input_device: str | None = None
     audio_output_device: str | None = None
     voice_seconds: int = 5
@@ -46,8 +47,18 @@ class VoiceConfig:
     max_utterance_seconds: int = DEFAULT_MAX_UTTERANCE_SECONDS
     #: Speak a streaming (cloud) model's answer sentence by sentence as it arrives.
     stream_speech: bool = True
+    stt_provider: str = "whisper.cpp"
+    tts_provider: str = "kokoro"
+    stt_executable: str = ""
+    stt_model: str = ""
+    tts_executable: str = ""
+    tts_model: str = ""
 
     def __post_init__(self) -> None:
+        if self.audio_backend not in ('auto','command','native'):raise ValueError('Unknown audio backend')
+        from .providers import validate_selector
+        validate_selector(self.stt_provider)
+        validate_selector(self.tts_provider)
         if not 0 <= self.settling_ms <= 10000:
             raise ValueError("ODESSY_VOICE_SETTLING_MS must be from 0 to 10000")
         if self.interaction not in INTERACTIONS:
@@ -65,6 +76,12 @@ class VoiceConfig:
         load_config_env()
         wake_model = os.environ.get("ODESSY_WAKE_MODEL", "").strip()
         return cls(
+            stt_provider=os.environ.get("ODESSY_STT_PROVIDER", "whisper.cpp"),
+            tts_provider=os.environ.get("ODESSY_TTS_PROVIDER", "kokoro"),
+            stt_executable=os.environ.get("ODESSY_STT_EXECUTABLE", ""),
+            stt_model=os.environ.get("ODESSY_STT_MODEL", ""),
+            tts_executable=os.environ.get("ODESSY_TTS_EXECUTABLE", ""),
+            tts_model=os.environ.get("ODESSY_TTS_MODEL", ""),
             whisper_bin=os.environ.get("ODESSY_WHISPER_BIN", "whisper-cli"),
             whisper_model=os.environ.get("ODESSY_WHISPER_MODEL", "models/ggml-tiny.en.bin"),
             kokoro_model=os.environ.get("ODESSY_KOKORO_MODEL", "kokoro-v1.0.int8.onnx"),
@@ -74,6 +91,7 @@ class VoiceConfig:
             onnx_cache_dir=_env_path("ODESSY_ONNX_CACHE_DIR"),
             audio_recorder=os.environ.get("ODESSY_AUDIO_RECORDER", "arecord"),
             audio_player=os.environ.get("ODESSY_AUDIO_PLAYER", "windows-native" if sys.platform == 'win32' else "aplay"),
+            audio_backend=os.environ.get("ODESSY_AUDIO_BACKEND", "auto"),
             audio_input_device=os.environ.get("ODESSY_AUDIO_INPUT_DEVICE") or None,
             audio_output_device=os.environ.get("ODESSY_AUDIO_OUTPUT_DEVICE") or None,
             voice_seconds=_env_int("ODESSY_VOICE_SECONDS", 5),

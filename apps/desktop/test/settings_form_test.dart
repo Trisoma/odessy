@@ -39,6 +39,8 @@ void main() {
     expect(c.error, isNotNull);
     expect(f.dirty, true);
     expect(f.value, 4);
+    expect(c.canSave, isFalse,
+        reason: 'Unknown writes require explicit inspection');
     fail = false;
     await c.save();
     expect(stored, 1);

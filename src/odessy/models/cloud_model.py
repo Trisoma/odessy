@@ -70,65 +70,8 @@ from odessy.runtime.types import (
     ToolCall,
 )
 
-Protocol = Literal["anthropic", "openai"]
+from odessy.model_providers import CLOUD_PROVIDERS, CloudProvider, Protocol
 
-
-@dataclass(frozen=True)
-class CloudProvider:
-    name: str
-    protocol: Protocol
-    base_url: str
-    api_key_env: str
-    default_model: str
-
-
-#: Built-in providers. Every field can be overridden through ``ODESSY_CLOUD_*``.
-CLOUD_PROVIDERS: dict[str, CloudProvider] = {
-    "claude": CloudProvider(
-        name="claude",
-        protocol="anthropic",
-        base_url="https://api.anthropic.com",
-        api_key_env="ANTHROPIC_API_KEY",
-        default_model="claude-opus-5-5",
-    ),
-    "openai": CloudProvider(
-        name="openai",
-        protocol="openai",
-        base_url="https://api.openai.com/v1",
-        api_key_env="OPENAI_API_KEY",
-        default_model="gpt-5",
-    ),
-    "deepseek": CloudProvider(
-        name="deepseek",
-        protocol="openai",
-        base_url="https://api.deepseek.com/v1",
-        api_key_env="DEEPSEEK_API_KEY",
-        default_model="deepseek-chat",
-    ),
-    "qwen": CloudProvider(
-        name="qwen",
-        protocol="openai",
-        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        api_key_env="DASHSCOPE_API_KEY",
-        default_model="qwen-plus",
-    ),
-    "kimi": CloudProvider(
-        name="kimi",
-        protocol="openai",
-        base_url="https://api.moonshot.cn/v1",
-        api_key_env="MOONSHOT_API_KEY",
-        default_model="kimi-k2-turbo-preview",
-    ),
-    # Any other OpenAI-compatible endpoint (OpenRouter, Zhipu, a local vLLM, ...).
-    # ODESSY_CLOUD_BASE_URL and ODESSY_CLOUD_MODEL are required.
-    "custom": CloudProvider(
-        name="custom",
-        protocol="openai",
-        base_url="",
-        api_key_env="ODESSY_CLOUD_API_KEY",
-        default_model="",
-    ),
-}
 
 #: Claude models that accept server-side refusal fallbacks (``fallbacks: "default"``).
 _CLAUDE_FALLBACK_MODELS = frozenset(
@@ -351,6 +294,8 @@ class CloudModel:
     keep_recent_results: int = DEFAULT_KEEP_RECENT_RESULTS
 
     conversation_context: tuple = ()
+    _credential_resolver: Any = field(default=None, repr=False)
+    _client_key: str | None = field(default=None, repr=False, init=False)
 
     _messages: list[Any] = field(default_factory=list, init=False, repr=False)
     _pending_call_id: str | None = field(default=None, init=False, repr=False)
@@ -362,6 +307,7 @@ class CloudModel:
     _history_turns: int = field(default=0, init=False, repr=False)
     _last_usage: dict[str, int | None] = field(default_factory=dict, init=False, repr=False)
     _final_call: bool = field(default=False, init=False, repr=False)
+    _diagnostic_only: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.provider not in CLOUD_PROVIDERS:
@@ -382,6 +328,20 @@ class CloudModel:
         return self.usage if self.usage is not None else process_ledger()
 
     # -- ModelAdapter -------------------------------------------------------
+
+    def test_connection(self) -> str:
+        """One text-only diagnostic exchange; no tools, repair or failover."""
+        self._diagnostics = ModelTurnDiagnostics()
+        self._messages = [{"role": "user", "content": "Say hello briefly."}]
+        self._final_call = True
+        self._diagnostic_only = True
+        try:
+            reply = self._exchange("proposal_generation_ms")
+        finally:
+            self._diagnostic_only = False
+        if reply.calls or reply.refused or not reply.text.strip():
+            raise ValueError('Model test did not return a plain text response.')
+        return reply.text
 
     def propose(self, user_text: str, *, context: Any = None) -> ModelAction:
         from odessy.models.ollama_model import _context_messages
@@ -724,7 +684,9 @@ class CloudModel:
         }
         if self.effort:
             params["output_config"] = {"effort": self.effort}
-        if self.refusal_fallbacks and self.model in _CLAUDE_FALLBACK_MODELS:
+        if self._diagnostic_only:
+            params.pop('tools',None);params.pop('tool_choice',None)
+        if self.refusal_fallbacks and self.model in _CLAUDE_FALLBACK_MODELS and not self._diagnostic_only:
             params["betas"] = [_CLAUDE_FALLBACK_BETA]
             params["fallbacks"] = "default"
         response = self._create_message(params) if speech is None else self._stream_message(params, speech)
@@ -761,14 +723,29 @@ class CloudModel:
 
     def _anthropic_client(self, anthropic: Any) -> Any:
         from odessy.models.generation_control import generation_guard
+        key = self._resolved_api_key()
+        if self._client is not None and self._client_key != key and self._credential_resolver is not None:
+            self._client.close()
+            self._client = None
         if self._client is None:
+            import httpx
             self._client = anthropic.Anthropic(
-                api_key=self.api_key,
+                api_key=key,
                 base_url=self.base_url or None,
                 timeout=float(self.timeout),
                 max_retries=0 if generation_guard.get() is not None else self.retries,
+                http_client=httpx.Client(follow_redirects=False, timeout=float(self.timeout)),
             )
+            self._client_key = key
         return self._client
+
+    def _resolved_api_key(self):
+        key = self._credential_resolver() if self._credential_resolver else self.api_key
+        if not key:
+            raise CloudModelConfigError('The model credential is unavailable. Configure an API key in Settings.')
+        # Existing session/output redactors consult this private backend state.
+        self.api_key = key
+        return key
 
     def _create_message(self, params: dict[str, Any]) -> Any:
         """One Messages API call. Overridden in tests."""
@@ -779,7 +756,7 @@ class CloudModel:
                 return client.beta.messages.create(**params)
             return client.messages.create(**params)
         except (anthropic.APIStatusError, anthropic.APIConnectionError) as error:
-            raise _claude_error(anthropic, error) from error
+            raise _claude_error(anthropic, error, self._client_key or self.api_key) from error
 
     def _stream_message(self, params: dict[str, Any], speech: SpeechStream) -> Any:
         """One streamed Messages API call; returns the same message as ``_create_message``.
@@ -800,7 +777,7 @@ class CloudModel:
                         speech.feed(event.text)
                 return stream.get_final_message()
         except (anthropic.APIStatusError, anthropic.APIConnectionError) as error:
-            raise _claude_error(anthropic, error) from error
+            raise _claude_error(anthropic, error, self._client_key or self.api_key) from error
 
     # -- OpenAI-compatible (GPT, DeepSeek, Qwen, Kimi, custom) --------------
 
@@ -815,8 +792,16 @@ class CloudModel:
             # the bill to match.
             "max_tokens": self.openai_max_tokens,
         }
+        if self.provider == "deepseek":
+            # DeepSeek thinking mode rejects tool_choice. With no tools allowed,
+            # omit their definitions too, preserving the text-only boundary.
+            payload.pop("tool_choice")
+            if not tools_allowed:
+                payload.pop("tools")
         if self.provider == "deepseek" and self.effort:
             payload["reasoning_effort"] = self.effort
+        if self._diagnostic_only:
+            payload.pop('tools',None);payload.pop('tool_choice',None)
         # The plain call shape when not streaming, which tests and wrappers replace.
         data = self._post_chat(payload) if speech is None else self._post_chat(payload, speech)
         choices = data.get("choices") or []
@@ -887,20 +872,21 @@ class CloudModel:
         return self._send_chat(payload, lambda response: read_chat_stream(response, speech, provider=self.provider))
 
     def _send_chat(self, payload: dict[str, Any], read: Any) -> dict[str, Any]:
+        key = self._resolved_api_key()
         request = urllib.request.Request(
             f"{self.base_url.rstrip('/')}/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
+                "Authorization": f"Bearer {key}",
             },
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.build_opener(_CredentialRedirect()).open(request, timeout=self.timeout) as response:
                 return read(response)
         except urllib.error.HTTPError as error:
-            message = f"{self.provider} API call failed ({error.code}): {_read_error_body(error)}"
+            message = f"{self.provider} API call failed ({error.code}): {_read_error_body(error).replace(key, '<redacted>')}"
             if error.code in _TRANSIENT_STATUS:
                 raise _TransientCloudError(message, _retry_after(error)) from error
             raise RuntimeError(message) from error
@@ -912,12 +898,26 @@ class CloudModel:
             raise _TransientCloudError(f"{self.provider} API call failed: {error!r}") from error
 
 
-def _claude_error(anthropic: Any, error: Exception) -> RuntimeError:
+class _CredentialRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        from urllib.parse import urlsplit
+        def origin(url):
+            parsed = urlsplit(url)
+            return parsed.scheme, parsed.hostname, parsed.port or (443 if parsed.scheme == 'https' else 80)
+        if origin(req.full_url) != origin(newurl):
+            raise urllib.error.HTTPError(req.full_url, code, 'Cross-origin provider redirect refused', headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _claude_error(anthropic: Any, error: Exception, key: str = '') -> RuntimeError:
+    detail = str(getattr(error, 'message', error))
+    if key:
+        detail = detail.replace(key, '<redacted>')
     if isinstance(error, anthropic.APIConnectionError):
         # Includes timeouts (APITimeoutError is a connection error).
-        return CloudUnavailableError(f"Claude API connection failed: {error}")
+        return CloudUnavailableError(f"Claude API connection failed: {redact_for_log(detail)}")
     status = getattr(error, "status_code", None)
-    message = f"Claude API call failed ({status}): {redact_for_log(str(getattr(error, 'message', error)))}"
+    message = f"Claude API call failed ({status}): {redact_for_log(detail)}"
     return CloudUnavailableError(message) if status in _TRANSIENT_STATUS else RuntimeError(message)
 
 
@@ -990,9 +990,10 @@ def read_chat_stream(lines: Iterable[bytes], speech: SpeechStream, *, provider: 
     return {"choices": [{"message": message}], "usage": usage}
 
 
-def build_cloud_model(provider: str, env: dict[str, str] | None = None) -> CloudModel:
+def build_cloud_model(provider: str, env: dict[str, str] | None = None, *, credential_ref: str = '') -> CloudModel:
     """Build a cloud adapter from ``ODESSY_CLOUD_*`` settings and the provider's key."""
 
+    supplied_env = env
     env = dict(os.environ) if env is None else env
     preset = CLOUD_PROVIDERS.get(provider)
     if preset is None:
@@ -1000,11 +1001,17 @@ def build_cloud_model(provider: str, env: dict[str, str] | None = None) -> Cloud
         raise CloudModelConfigError(f"Unknown cloud provider {provider!r}; expected one of: {allowed}")
     model = (env.get("ODESSY_CLOUD_MODEL") or preset.default_model).strip()
     base_url = (env.get("ODESSY_CLOUD_BASE_URL") or preset.base_url).strip()
-    api_key = (env.get("ODESSY_CLOUD_API_KEY") or env.get(preset.api_key_env) or "").strip()
     if not base_url:
         raise CloudModelConfigError(f"Provider {provider!r} needs ODESSY_CLOUD_BASE_URL")
     if not model:
         raise CloudModelConfigError(f"Provider {provider!r} needs ODESSY_CLOUD_MODEL")
+    from odessy.credentials import CredentialError, model_scope, resolve
+    try:
+        scope = model_scope(provider, base_url, credential_ref)
+    except CredentialError as error:
+        raise CloudModelConfigError(str(error)) from error
+    resolve_key = lambda: resolve(scope, environ=supplied_env)
+    api_key = resolve_key()
     if not api_key:
         raise CloudModelConfigError(
             f"Provider {provider!r} needs an API key: set {preset.api_key_env} "
@@ -1014,6 +1021,7 @@ def build_cloud_model(provider: str, env: dict[str, str] | None = None) -> Cloud
         provider=provider,
         model=model,
         api_key=api_key,
+        _credential_resolver=resolve_key,
         base_url=base_url,
         timeout=_positive_int(env.get("ODESSY_CLOUD_TIMEOUT"), DEFAULT_CLOUD_TIMEOUT_SECONDS),
         max_tokens=_positive_int(env.get("ODESSY_CLOUD_MAX_TOKENS"), DEFAULT_CLAUDE_MAX_TOKENS),

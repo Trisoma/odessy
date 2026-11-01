@@ -198,7 +198,7 @@ void main() {
     addTearDown(c.dispose);
     await c.start();
     await mountSettings(tester, c);
-    expect(find.text('Global settings'), findsOneWidget);
+    expect(find.text('Preferences'), findsOneWidget);
     expect(find.text('Connected'), findsOneWidget);
     expect(find.text('Not managed by this app'), findsOneWidget);
     expect(find.text('Installed'), findsNothing);

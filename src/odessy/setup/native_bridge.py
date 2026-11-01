@@ -58,7 +58,7 @@ def _packaged(parameters,*,cancelled=lambda:False):
         data,root=_versioned_root({key:value for key,value in parameters.items() if key!='log_cursor'},'packaged status')
         return ManagedInstallation(root).status(log_cursor=cursor)
     if action=='package-launch':
-        from .windows_installation import launch
+        from .platform_installation import launch
         launch_id=parameters.get('launch_id')
         data,root=_versioned_root({key:value for key,value in parameters.items() if key!='launch_id'},'packaged launch')
         mode=data.get('mode') or 'app'
@@ -70,7 +70,7 @@ def _packaged(parameters,*,cancelled=lambda:False):
         data,root=_versioned_root(parameters,'packaged verify')
         manager=ManagedInstallation(root)
         record=manager.record()
-        return dict(manager.verify(),registration=record.get('windows_registration',{}).get('state','none'))
+        return dict(manager.verify(),registration=(record.get('windows_registration') or record.get('linux_registration') or {}).get('state','none'))
     if action in ('package-configure-review','package-configure'):
         from .contracts import SetupSelection
         from .maintenance import ManagedInstallation
@@ -89,7 +89,7 @@ def _packaged(parameters,*,cancelled=lambda:False):
         return dispatch({'action':'uninstall','root':str(root),'confirm':plan['plan_id']},cancelled=cancelled)
     if action=='package-register':
         from .maintenance import ManagedInstallation, atomic
-        from .windows_installation import register
+        from .platform_installation import register
         data,root=_versioned_root(parameters,'packaged registration')
         manager=ManagedInstallation(root)
         record=manager.record()
@@ -106,7 +106,7 @@ def _packaged(parameters,*,cancelled=lambda:False):
     from .package_context import context
     from .contracts import SetupSelection
     from .maintenance import ManagedInstallation, atomic
-    from .windows_installation import register
+    from .platform_installation import register
     data=fields(parameters,{'action','root','payload','selection','confirm'},'packaged operation')
     package=context(payload=data.get('payload'),root=data.get('root'))
     root=guard(package['root'])
@@ -135,6 +135,9 @@ def _packaged(parameters,*,cancelled=lambda:False):
 
 
 def manage(parameters,*,cancelled=lambda:False):
+    if os.environ.get("ODESSY_PORTABLE_ROOT"):
+        from .portable import dispatch
+        return dispatch(parameters)
     if parameters.get('action') in PACKAGE_ACTIONS:
         return _packaged(parameters,cancelled=cancelled)
     if parameters.get('action')=='context':
@@ -191,9 +194,13 @@ def bounded_native(argv,timeout=15):
 
 
 def pair(parameters,*,runner=None):
-    data=fields(parameters,{'action','link','alias','certificate','fingerprint','address','workspace','output','review','confirm','expected_peer_fingerprint','expected_peer_revision'},'pairing')
-    action=data.get('action');link=guard(data.get('link',''))
-    if not data.get('link') or not link.is_file(): raise ValueError('select an existing odessy-link executable')
+    data=fields(parameters,{'action','link','alias','certificate','fingerprint','address','workspace','output','review','confirm','capability','expected_peer_fingerprint','expected_peer_revision'},'pairing')
+    action=data.get('action')
+    if data.get('link'):link=guard(data['link'])
+    else:
+        from odessy.tools.paired import link_binary
+        link=link_binary().resolve()
+    if not link.is_file(): raise ValueError('select an existing odessy-link executable')
     argv=[str(link)]
     alias=data.get('alias','')
     if action in ('enroll','grant','grant-telemetry','revoke','revoke-telemetry','revoke-execution') and not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_-]{0,63}',alias): raise ValueError('invalid peer alias')
@@ -216,12 +223,15 @@ def pair(parameters,*,runner=None):
         if address:
             if len(address)>512 or any(c.isspace() for c in address):raise ValueError('invalid peer address')
             argv+=['--address',address]
-    elif action=='grant':
-        workspace=guard(data.get('workspace',''))
-        if not data.get('workspace') or not workspace.is_dir():raise ValueError('explicit local workspace required')
-        argv+=['peers','grant',alias,'--capability','mcp','--workspace',str(workspace)]
-    elif action=='grant-telemetry':
-        argv+=['peers','grant',alias,'--capability','telemetry.read']
+    elif action in ('grant','grant-telemetry'):
+        capability=data.get('capability','telemetry.read' if action=='grant-telemetry' else 'mcp')
+        if capability not in ('mcp','telemetry.read'):raise ValueError('unsupported local capability')
+        if action=='grant-telemetry' and capability!='telemetry.read':raise ValueError('invalid telemetry capability')
+        argv+=['peers','grant',alias,'--capability',capability]
+        if capability=='mcp':
+            workspace=guard(data.get('workspace',''))
+            if not data.get('workspace') or not workspace.is_dir():raise ValueError('explicit local workspace required')
+            argv+=['--workspace',str(workspace)]
     elif action=='revoke':argv+=['peers','revoke',alias]
     elif action in ('revoke-telemetry','revoke-execution'):
         argv+=['peers','revoke',alias,'--capability', 'telemetry.read' if action=='revoke-telemetry' else 'mcp']
@@ -264,6 +274,6 @@ def pair(parameters,*,runner=None):
         text=bounded_native(argv)
     else:text=runner(argv)
     changed = text.startswith('revoked ') if action in ('revoke-telemetry','revoke-execution') else action in ('grant','grant-telemetry','revoke')
-    return {'operation':action,'peers':json.loads(text) if action=='list' else None,'message':text if action!='list' else '', 'grants_changed':changed,'node_local_only':True}
+    return {'operation':action,'link':str(link),'peers':json.loads(text) if action=='list' else None,'message':text if action!='list' else '', 'grants_changed':changed,'node_local_only':True}
 
 

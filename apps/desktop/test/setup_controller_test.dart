@@ -35,6 +35,98 @@ class Backend implements SetupBackend {
 }
 
 void main() {
+  test('finish automatically reviews verifies saves and connects', () async {
+    final backend = Backend();
+    var connected = false;
+    final controller = SetupController(backend, onConnect: (_) async {
+      connected = true;
+    });
+    controller.update({
+      'role': 'combined',
+      'model': {'provider': 'ollama', 'name': 'existing'}
+    }, '/tmp/setup.json');
+    await controller.finish();
+    expect(backend.requests.map((r) => r.operation),
+        ['review', 'verify', 'save', 'launch', 'activate']);
+    expect(connected, isTrue);
+    expect(controller.error, isEmpty);
+    controller.dispose();
+  });
+
+  test('startup failure retries without another save', () async {
+    final backend = Backend();
+    var attempts = 0;
+    final c = SetupController(backend, onConnect: (_) async {
+      if (++attempts == 1) throw StateError('service unavailable');
+    });
+    c.update({
+      'role': 'combined',
+      'model': {'provider': 'ollama', 'name': 'existing'}
+    }, '/tmp/retry.json');
+    await c.finish();
+    expect(c.error, contains('service unavailable'));
+    await c.finish();
+    expect(c.error, isEmpty);
+    expect(attempts, 2);
+    expect(backend.requests.where((r) => r.operation == 'save').length, 1);
+    c.dispose();
+  });
+
+  test('cancelling startup stops the owned connector', () async {
+    final ready = Completer<void>();
+    final entered = Completer<void>();
+    var cancelled = false;
+    final c = SetupController(Backend(), onConnect: (_) async {
+      entered.complete();
+      await ready.future;
+    }, onCancelConnect: () async {
+      cancelled = true;
+      ready.complete();
+    });
+    c.update({
+      'role': 'combined',
+      'model': {'provider': 'ollama', 'name': 'existing'}
+    }, '/tmp/cancel.json');
+    final completion = c.finish();
+    await entered.future;
+    await c.cancel();
+    await completion;
+    expect(cancelled, isTrue);
+    expect(c.status, isNot('Connected to your configured model'));
+    c.dispose();
+  });
+
+  test('restore uses saved model and never repeats a save', () async {
+    final backend = RestoringBackend();
+    Json? connected;
+    final controller = SetupController(backend, onConnect: (spec) async {
+      connected = spec;
+    });
+    await controller.restore();
+    expect(backend.requests.map((r) => r.operation), ['resume']);
+    expect(controller.saved, isTrue);
+    expect(controller.activeSelection!['model']['name'], 'saved-q8');
+    expect(connected!['config'], '/tmp/saved.env');
+    expect(controller.error, isEmpty);
+    controller.dispose();
+  });
+
+  test('review adopts backend revision path before saving changed model',
+      () async {
+    final backend = RevisionBackend();
+    final c = SetupController(backend, onConnect: (_) async {});
+    c.update({
+      'role': 'combined',
+      'model': {'provider': 'deepseek', 'name': 'deepseek-flash'}
+    }, '/tmp/old.json');
+    await c.finish();
+    expect(c.output, '/tmp/new.json');
+    expect(backend.requests.first.parameters['new_revision'], isTrue);
+    expect(backend.requests.firstWhere((r) => r.operation == 'save').output,
+        '/tmp/new.json');
+    c.dispose();
+  });
+
   test('discovery works before choosing a model name', () async {
     final backend = Backend();
     final controller = SetupController(backend);
@@ -109,4 +201,54 @@ void main() {
     expect(backend.requests.last.selection['role'], 'combined');
     controller.dispose();
   });
+}
+
+class RestoringBackend extends Backend {
+  @override
+  Future<SetupReply> execute(SetupRequest request) async {
+    if (request.operation == 'component-settings') {
+      return SetupReply.fromJson({
+        'id': request.id,
+        'status': 'ok',
+        'result': {
+          'revision': 'saved',
+          'selection': {
+            'role': 'combined',
+            'model': {'provider': 'lfm', 'name': 'saved-q8'},
+            'voice': {'enabled': false}
+          }
+        }
+      }, request.id);
+    }
+    if (request.operation != 'resume') return super.execute(request);
+    requests.add(request);
+    return SetupReply.fromJson({
+      'id': request.id,
+      'status': 'ok',
+      'result': {
+        'config': '/tmp/saved.env',
+        'format': 'env',
+        'python': 'python',
+        'sha256': 'hash',
+        'selection': {
+          'role': 'combined',
+          'model': {'provider': 'lfm', 'name': 'saved-q8'},
+          'voice': {'enabled': false}
+        }
+      }
+    }, request.id);
+  }
+}
+
+class RevisionBackend extends Backend {
+  @override
+  Future<SetupReply> execute(SetupRequest request) async {
+    if (request.operation != 'review') return super.execute(request);
+    requests.add(request);
+    return SetupReply.fromJson({
+      'id': request.id,
+      'status': 'ok',
+      'result': {'plan_id': 'revision-id', 'output': '/tmp/new.json'}
+    }, request.id);
+  }
 }

@@ -60,15 +60,15 @@ class SeatbeltProvider(ConfiningProvider):
     def limitations(self, policy: ExecutionPolicy) -> frozenset[Limitation]:
         # Derived from the profile's shape: what it denies, and what it therefore
         # leaves alone. Not verified against a live macOS host.
-        return frozenset(
-            {
-                "cannot_restrict_reads",
-                "cannot_restrict_network",
-                "cannot_restrict_process_visibility",
-                "cannot_restrict_ioctl",
-                "host_kernel_shared",
-            }
-        )
+        limitations: set[Limitation] = {
+            "cannot_restrict_reads",
+            "cannot_restrict_process_visibility",
+            "cannot_restrict_ioctl",
+            "host_kernel_shared",
+        }
+        if policy.network != "deny":
+            limitations.add("cannot_restrict_network")
+        return frozenset(limitations)
 
     def wrap(self, argv: Sequence[str], policy: ExecutionPolicy) -> Sequence[str]:
         executable = self._executable or self._host().seatbelt.path

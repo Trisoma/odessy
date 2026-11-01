@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'dart:io' show Platform;
 
 import 'app/app.dart';
+import 'app/setup/disconnected_api.dart';
+import 'package:odessy_client/odessy_client.dart';
 import 'app/setup/installed_startup.dart';
 import 'app/setup/instance_guard.dart';
 import 'app/setup/native_picker.dart';
@@ -55,7 +57,9 @@ Widget applicationFor(
         installRoot: installRoot, launchId: launchId, picker: picker);
   }
   return mode == null
-      ? const OdessyApp()
+      ? arguments.contains('--demo')
+          ? OdessyApp(api: DemoApi())
+          : OdessyApp(api: DisconnectedApi(), restoreConfiguration: true)
       : SetupApplication(
           mode: mode,
           payloadRoot: payload,

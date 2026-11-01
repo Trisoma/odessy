@@ -108,6 +108,9 @@ class LandlockProvider(ConfiningProvider):
             "cannot_restrict_process_visibility",
             "host_kernel_shared",
         }
+        # `--ro /` cannot carve a path back out, so hidden paths stay visible.
+        if policy.hidden_paths:
+            limitations.add("cannot_hide_paths")
 
         # Gaps: rights the negotiated ABI does not govern.
         if abi is None or abi < self.TRUNCATE_ABI:

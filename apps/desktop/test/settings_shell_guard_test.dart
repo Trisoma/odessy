@@ -8,6 +8,7 @@ import 'package:odessy_desktop/app/setup/installed_startup.dart';
 import 'package:odessy_desktop/features/settings/presentation/settings.dart';
 import 'settings_presentation_test.dart';
 import 'installed_startup_test.dart' show Backend, ControlledStartup, specWith;
+import 'component_settings_test.dart' show SavedComponents;
 
 class _TrackedApi extends SettingsFixtureApi {
   bool closed = false;
@@ -64,13 +65,24 @@ class _Startup extends ControlledStartup {
   }
 }
 
+class _InstalledBackend extends Backend {
+  _InstalledBackend(super.spec);
+  final components = SavedComponents();
+  @override
+  Future<SetupReply> execute(SetupRequest request) =>
+      request.operation == 'component-settings'
+          ? components.execute(request)
+          : super.execute(request);
+}
+
 Future<void> _mount(WidgetTester tester, _TrackedApi api,
     {Size size = const Size(1400, 1300), Future<void> Function()? exit}) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  await tester.pumpWidget(OdessyApp(api: api, onExitApproved: exit));
+  await tester.pumpWidget(OdessyApp(
+      api: api, setupBackend: SavedComponents(), onExitApproved: exit));
   await tester.pumpAndSettle();
 }
 
@@ -91,6 +103,10 @@ Future<void> _settings(WidgetTester tester) async {
 }
 
 Future<void> _answer(WidgetTester tester, String answer) async {
+  if (find.text('Unsaved collaboration setting').evaluate().isNotEmpty) {
+    if (answer == 'Cancel') answer = 'Keep editing';
+    if (answer == 'Discard changes') answer = 'Discard';
+  }
   await tester.tap(find.widgetWithText(TextButton, answer).evaluate().isNotEmpty
       ? find.widgetWithText(TextButton, answer)
       : find.widgetWithText(FilledButton, answer));
@@ -120,16 +136,16 @@ void main() {
     api.readGate = Completer<Json>();
     await tester.tap(find.widgetWithText(ListTile, 'Settings'));
     await tester.pump();
-    await tester.tap(find.widgetWithText(ListTile, 'Conversation'));
+    await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
     await tester.pump();
-    expect(find.text('Global settings'), findsOneWidget);
+    expect(find.text('Preferences'), findsOneWidget);
     expect(await tester.binding.handleRequestAppExit(), AppExitResponse.cancel);
     expect(api.closed, false);
     api.readGate!.complete(api.document);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ListTile, 'Conversation'));
+    await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
     await tester.pumpAndSettle();
-    expect(find.text('Global settings'), findsNothing);
+    expect(find.text('Preferences'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
   testWidgets('same-page navigation and theme changes preserve dirty draft',
@@ -152,17 +168,17 @@ void main() {
       await _mount(tester, api);
       await _settings(tester);
       await editLimit(tester, draft);
-      await tester.tap(find.widgetWithText(ListTile, 'Conversation'));
+      await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
       await tester.pumpAndSettle();
-      expect(find.text('Discard unsaved changes?'), findsOneWidget);
+      expect(find.text('Unsaved collaboration setting'), findsOneWidget);
       await _answer(tester, 'Cancel');
       expect(tester.widget<TextField>(limitField).controller!.text, draft);
       expect(api.writes, 0);
       expect(api.closed, false);
-      await tester.tap(find.widgetWithText(ListTile, 'Conversation'));
+      await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
       await tester.pumpAndSettle();
       await _answer(tester, 'Discard changes');
-      expect(find.text('Global settings'), findsNothing);
+      expect(find.text('Preferences'), findsNothing);
       await _settings(tester);
       expect(tester.widget<TextField>(limitField).controller!.text, '1');
       await tester.pumpWidget(const SizedBox());
@@ -183,11 +199,11 @@ void main() {
     await selectSettingsSection(tester, SettingsSections.devices);
     await tester.tap(find.text('Open devices'));
     await tester.pumpAndSettle();
-    expect(find.text('Discard unsaved changes?'), findsOneWidget);
+    expect(find.text('Unsaved collaboration setting'), findsOneWidget);
     await _answer(tester, 'Discard changes');
-    expect(find.text('Discard unsaved changes?'), findsNothing);
-    expect(find.text('Jetson'), findsNWidgets(2));
-    expect(find.text('Global settings'), findsNothing);
+    expect(find.text('Unsaved collaboration setting'), findsNothing);
+    expect(find.text('Jetson'), findsOneWidget);
+    expect(find.text('Preferences'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
   testWidgets('connection cancellation preserves draft and old transport',
@@ -220,15 +236,15 @@ void main() {
     api.failWrite = true;
     await tester.tap(saveSettingsButton);
     await tester.pump();
-    await tester.tap(find.widgetWithText(ListTile, 'Conversation'));
+    await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
     await tester.pump();
     expect(await tester.binding.handleRequestAppExit(), AppExitResponse.cancel);
     expect(api.closed, false);
     expect(api.deletes, 0);
-    expect(find.text('Global settings'), findsOneWidget);
+    expect(find.text('Preferences'), findsOneWidget);
     api.writeGate!.complete();
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ListTile, 'Conversation'));
+    await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
     await tester.pumpAndSettle();
     await _answer(tester, 'Cancel');
     expect(tester.widget<TextField>(limitField).controller!.text, '4');
@@ -242,14 +258,14 @@ void main() {
     await editLimit(tester, '4');
     await tester.tap(saveSettingsButton);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ListTile, 'Conversation'));
+    await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
     await tester.pumpAndSettle();
     expect(find.text('Discard unsaved changes?'), findsNothing);
     await _settings(tester);
     expect(tester.widget<TextField>(limitField).controller!.text, '4');
-    await tester.tap(find.widgetWithText(ListTile, 'Conversation'));
+    await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
     await tester.pumpAndSettle();
-    expect(find.text('Global settings'), findsNothing);
+    expect(find.text('Preferences'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
   testWidgets(
@@ -266,7 +282,7 @@ void main() {
     settings.onOpenDevices!();
     settings.onOpenDevices!();
     await tester.pumpAndSettle();
-    expect(find.text('Discard unsaved changes?'), findsOneWidget);
+    expect(find.text('Unsaved collaboration setting'), findsOneWidget);
     expect(await tester.binding.handleRequestAppExit(), AppExitResponse.cancel);
     await _answer(tester, 'Cancel');
     final first = tester.binding.handleRequestAppExit();
@@ -295,7 +311,7 @@ void main() {
     await editLimit(tester, '4');
     await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ListTile, 'Conversation'));
+    await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
     await tester.pumpAndSettle();
     await _answer(tester, 'Cancel');
     final scaffold = tester.state<ScaffoldState>(find.byType(Scaffold).first);
@@ -312,7 +328,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final api = _TrackedApi();
     final installedApi = _InstalledApi(api);
-    final backend = Backend(specWith(model: true));
+    final backend = _InstalledBackend(specWith(model: true));
     final startup = _Startup(backend)
       ..spec = specWith(model: true)
       ..phase = InstalledPhase.ready

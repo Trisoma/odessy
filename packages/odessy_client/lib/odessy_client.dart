@@ -3,12 +3,18 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
 import 'src/models.dart';
 import 'src/monitoring/client.dart';
 export 'src/models.dart';
 export 'src/credentials.dart';
+export 'src/model_credentials.dart';
 export 'src/setup.dart';
 export 'src/monitoring/client.dart';
+export 'src/capabilities.dart';
+import 'src/capabilities.dart';
+export 'src/voice.dart';
+import 'src/voice.dart';
 
 /// Bounded SSE parsing. UTF-8 decoding belongs to the transport, before this parser.
 Stream<SessionEvent> decodeEvents(Stream<String> chunks) async* {
@@ -118,11 +124,19 @@ abstract interface class ModelProfileLimitsApi {
   Future<Json> saveModelProfileLimits(String name, Json update);
 }
 
-abstract interface class VoiceApi {
-  Future<Json> voiceStatus(String sid);
-  Future<Json> startVoice(String sid);
-  Future<Json> heartbeatVoice(String sid);
-  Future<Json> stopVoice(String sid);
+/// Local coordinator commands. Remote credentials stay entirely inside Python.
+abstract interface class ExecutionHostsApi {
+  Future<Json> scanExecutionHosts();
+  Future<Json> executionHostStatus();
+  Future<Json> connectExecutionHost(String id);
+  Future<void> disconnectExecutionHost();
+}
+
+class ExecutionConnectionFailure implements Exception {
+  const ExecutionConnectionFailure(this.message);
+  final String message;
+  @override
+  String toString() => message;
 }
 
 class ApiFailure implements Exception {
@@ -130,13 +144,11 @@ class ApiFailure implements Exception {
   final int status;
   @override
   String toString() => switch (status) {
-        401 => 'Authentication failed. Check the bearer token.',
-        404 ||
-        409 ||
-        410 =>
-          'Request is stale, already resolved, or unavailable. Refresh the session.',
-        _ => 'Odessy service returned HTTP $status.',
-      };
+    401 => 'Authentication failed. Check the bearer token.',
+    404 || 409 || 410 => 'Request is stale, already resolved, or unavailable. Refresh the session.',
+    503 => 'The coordinator could not start the model. Check your API key and model settings.',
+    _ => 'Odessy service returned HTTP $status.',
+  };
 }
 
 class LocalApi
@@ -155,7 +167,9 @@ class LocalApi
         ModelProfilePricingApi,
         ModelCredentialReferenceApi,
         ModelProfileLimitsApi,
-        VoiceApi {
+        RuntimeConfigurationApi,
+        DesktopVoiceApi,
+        ExecutionHostsApi {
   LocalApi(this.base, String token) : _token = token {
     if (!['http', 'https'].contains(base.scheme) ||
         !['localhost', '127.0.0.1', '::1'].contains(base.host) ||
@@ -167,10 +181,12 @@ class LocalApi
         base.port > 65535 ||
         token.trim().isEmpty) {
       throw ArgumentError(
-          'Use a loopback HTTP address and a nonempty bearer token.');
+        'Use a loopback HTTP address and a nonempty bearer token.',
+      );
     }
     _http.connectionTimeout = const Duration(seconds: 5);
   }
+
   final Uri base;
   final String _token;
   final HttpClient _http = HttpClient()..autoUncompress = true;
@@ -182,8 +198,11 @@ class LocalApi
   MonitoringClient createMonitoringClient() {
     if (_closed) throw StateError('Local client is closed.');
     late final MonitoringClient client;
-    client =
-        _OwnedMonitoringClient(base, _token, () => _monitoring.remove(client));
+    client = _OwnedMonitoringClient(
+      base,
+      _token,
+      () => _monitoring.remove(client),
+    );
     _monitoring.add(client);
     return client;
   }
@@ -192,10 +211,13 @@ class LocalApi
   bool get isDemo => false;
   @override
   String get identity => base.origin;
-  Future<HttpClientResponse> _open(String path, String method,
-      [Json? data,
-      HttpClient? client,
-      Duration responseTimeout = const Duration(seconds: 12)]) async {
+  Future<HttpClientResponse> _open(
+    String path,
+    String method, [
+    Json? data,
+    HttpClient? client,
+    Duration responseTimeout = const Duration(seconds: 12),
+  ]) async {
     if (_closed) throw StateError('Local client is closed.');
     final request = await (client ?? _http)
         .openUrl(method, base.resolve(path))
@@ -221,10 +243,12 @@ class LocalApi
     return response;
   }
 
-  Future<Json> _json(String path,
-      [String method = 'GET',
-      Json? data,
-      Duration responseTimeout = const Duration(seconds: 12)]) async {
+  Future<Json> _json(
+    String path, [
+    String method = 'GET',
+    Json? data,
+    Duration responseTimeout = const Duration(seconds: 12),
+  ]) async {
     final response = await _open(path, method, data, null, responseTimeout);
     if (response.statusCode == 204) return {};
     final bytes = <int>[];
@@ -236,48 +260,54 @@ class LocalApi
     return jsonDecode(utf8.decode(bytes)) as Json;
   }
 
-  String _session(String sid) => '/v1/sessions/${Uri.encodeComponent(sid)}';
-
-  Future<Json> _voice(String sid, [String action = '']) async {
-    final response = await _json(
-        '${_session(sid)}/voice$action', action.isEmpty ? 'GET' : 'POST');
-    if (!const {
-          'off',
-          'starting',
-          'active',
-          'stopping',
-          'unavailable',
-          'stop_failed'
-        }.contains(response['state']) ||
-        response['input_available'] is! bool ||
-        response['output_available'] is! bool ||
-        response.keys.any((key) => !const {
-              'state',
-              'input_available',
-              'output_available'
-            }.contains(key))) {
-      throw const FormatException('Invalid voice state');
-    }
-    return freezeJson(response);
+  @override
+  Future<Json> scanExecutionHosts() => _json('/v1/execution-hosts');
+  @override
+  Future<Json> executionHostStatus() => _json('/v1/execution-hosts/status');
+  @override
+  Future<void> disconnectExecutionHost() async {
+    await _json('/v1/execution-hosts/disconnect', 'POST');
   }
 
   @override
-  Future<Json> voiceStatus(String sid) => _voice(sid);
-  @override
-  Future<Json> startVoice(String sid) => _voice(sid, '/start');
-  @override
-  Future<Json> heartbeatVoice(String sid) => _voice(sid, '/heartbeat');
-  @override
-  Future<Json> stopVoice(String sid) => _voice(sid, '/stop');
+  Future<Json> connectExecutionHost(String id) async {
+    try {
+      final response = await _open(
+        '/v1/execution-hosts/connect',
+        'POST',
+        {'id': id},
+        null,
+        const Duration(seconds: 90),
+      );
+      final bytes = <int>[];
+      await for (final chunk in response.timeout(const Duration(seconds: 12))) {
+        bytes.addAll(chunk);
+        if (bytes.length > 65536)
+          throw const FormatException('Connection response exceeds 64 KiB');
+      }
+      return jsonDecode(utf8.decode(bytes)) as Json;
+    } on ApiFailure catch (error) {
+      throw ExecutionConnectionFailure(switch (error.status) {
+        403 => 'The execution host declined or did not answer. Press Connect to ask again.',
+        409 => 'Stop any active turn, disconnect the current host, or refresh nearby hosts before retrying.',
+        503 => 'The execution host could not connect its tools. Restart sharing there and retry. Chat remains available.',
+        _ => 'Connection request failed. Check the local coordinator and execution host.',
+      });
+    }
+  }
+
+  String _session(String sid) => '/v1/sessions/${Uri.encodeComponent(sid)}';
 
   @override
   Future<Json> runtimeSettings() async {
     final result = await _json('/v1/runtime-settings');
-    if (result.keys.any((key) => !const {
-              'schema_version',
-              'instance_id',
-              'settings'
-            }.contains(key)) ||
+    if (result.keys.any(
+          (key) => !const {
+            'schema_version',
+            'instance_id',
+            'settings',
+          }.contains(key),
+        ) ||
         result['schema_version'] != 1 ||
         result['instance_id'] is! String ||
         (result['instance_id'] as String).isEmpty ||
@@ -298,15 +328,17 @@ class LocalApi
           item['sensitive'] is! bool ||
           item['internal'] is! bool ||
           item['editable'] != false ||
-          item.keys.any((key) => !const {
-                'name',
-                'kind',
-                'summary',
-                'configured',
-                'sensitive',
-                'internal',
-                'editable'
-              }.contains(key))) {
+          item.keys.any(
+            (key) => !const {
+              'name',
+              'kind',
+              'summary',
+              'configured',
+              'sensitive',
+              'internal',
+              'editable',
+            }.contains(key),
+          )) {
         throw const FormatException('Invalid runtime setting');
       }
     }
@@ -327,10 +359,9 @@ class LocalApi
         (after != null && !RegExp(r'^[a-f0-9]{32}$').hasMatch(after))) {
       throw const FormatException('Invalid job page');
     }
-    final query = Uri(queryParameters: {
-      'limit': '$limit',
-      if (after != null) 'after': after,
-    }).query;
+    final query = Uri(
+      queryParameters: {'limit': '$limit', if (after != null) 'after': after},
+    ).query;
     final result = await _json('${_session(sid)}/jobs?$query');
     if (result['jobs'] is! List ||
         (result['jobs'] as List).length > limit ||
@@ -358,26 +389,67 @@ class LocalApi
   Future<Json> readJob(String sid, String jobId) => _json(_job(sid, jobId));
   @override
   Future<Json> submitJob(String sid, Json request) => _json(
-      '${_session(sid)}/jobs', 'POST', request, const Duration(minutes: 5));
+    '${_session(sid)}/jobs',
+    'POST',
+    request,
+    const Duration(minutes: 5),
+  );
   @override
   Future<Json> cancelJob(String sid, String jobId) =>
       _json('${_job(sid, jobId)}/cancel', 'POST');
+
+  @override
+  Future<VoiceSnapshot> voiceState(String sid) async =>
+      VoiceSnapshot.fromJson(await _json('${_session(sid)}/voice'));
+  @override
+  Future<VoiceSnapshot> voiceCommand(
+    String sid,
+    String action, {
+    String? captureId,
+    String? interactionId,
+  }) async => VoiceSnapshot.fromJson(
+    await _json('${_session(sid)}/voice', 'POST', {
+      'action': action,
+      if (captureId != null) 'capture_id': captureId,
+      if (interactionId != null) 'expected_interaction_id': interactionId,
+    }),
+  );
+  @override
+  Future<RuntimeCapabilities> runtimeCapabilities() async =>
+      RuntimeCapabilities.fromJson(await _json('/v1/capabilities'));
+  @override
+  Future<String> prepareRestart(String serviceInstance) async =>
+      (await _json('/v1/lifecycle/prepare-restart', 'POST', {
+            'service_instance_id': serviceInstance,
+          }))['ticket']
+          as String;
+  @override
+  Future<void> resumeAdmission(String ticket) async {
+    await _json('/v1/lifecycle/resume', 'POST', {'ticket': ticket});
+  }
+
   @override
   Future<List<String>> profiles() async =>
-      ((await _json('/v1/profiles'))['profiles'] as Map)
-          .keys
+      ((await _json('/v1/profiles'))['profiles'] as Map).keys
           .cast<String>()
           .toList();
   @override
   Future<List<Profile>> profileMetadata() async {
     final values = (await _json('/v1/profiles'))['profiles'] as Map;
-    return List.unmodifiable(values.entries.map((e) => Profile(e.key as String,
-        e.value is Map ? Map<String, dynamic>.from(e.value) : {})));
+    return List.unmodifiable(
+      values.entries.map(
+        (e) => Profile(
+          e.key as String,
+          e.value is Map ? Map<String, dynamic>.from(e.value) : {},
+        ),
+      ),
+    );
   }
 
   @override
-  Future<Session> createSession() async =>
-      Session.fromJson(await _json('/v1/sessions', 'POST'));
+  Future<Session> createSession() async => Session.fromJson(
+    await _json('/v1/sessions', 'POST', null, const Duration(seconds: 90)),
+  );
   @override
   Future<Session> snapshot(String sid) async =>
       Session.fromJson(await _json(_session(sid)));
@@ -388,38 +460,52 @@ class LocalApi
     var cancelled = false;
     StreamSubscription<SessionEvent>? subscription;
     late final StreamController<SessionEvent> output;
-    output = StreamController<SessionEvent>(onListen: () {
-      unawaited(() async {
-        try {
-          final response = await _open(
-              '${_session(sid)}/events?after_id=$after', 'GET', null, client);
-          if (cancelled) return;
-          subscription = decodeEvents(utf8.decoder
-                  .bind(response.timeout(const Duration(seconds: 35))))
-              .listen((event) {
-            if (!cancelled) output.add(event);
-          }, onError: (Object error, StackTrace stack) {
-            if (!cancelled) output.addError(error, stack);
-          }, onDone: () {
-            _streams.remove(client);
-            client.close(force: true);
-            unawaited(output.close());
-          });
-        } catch (error, stack) {
-          if (!cancelled) {
-            output.addError(error, stack);
-            unawaited(output.close());
+    output = StreamController<SessionEvent>(
+      onListen: () {
+        unawaited(() async {
+          try {
+            final response = await _open(
+              '${_session(sid)}/events?after_id=$after',
+              'GET',
+              null,
+              client,
+            );
+            if (cancelled) return;
+            subscription =
+                decodeEvents(
+                  utf8.decoder.bind(
+                    response.timeout(const Duration(seconds: 35)),
+                  ),
+                ).listen(
+                  (event) {
+                    if (!cancelled) output.add(event);
+                  },
+                  onError: (Object error, StackTrace stack) {
+                    if (!cancelled) output.addError(error, stack);
+                  },
+                  onDone: () {
+                    _streams.remove(client);
+                    client.close(force: true);
+                    unawaited(output.close());
+                  },
+                );
+          } catch (error, stack) {
+            if (!cancelled) {
+              output.addError(error, stack);
+              unawaited(output.close());
+            }
           }
-        }
-      }());
-    }, onCancel: () {
-      cancelled = true;
-      _streams.remove(client);
-      // Close this stream's socket before cancelling the async parser, whose
-      // pending read otherwise waits for the next heartbeat indefinitely.
-      client.close(force: true);
-      unawaited(subscription?.cancel().catchError((Object _) {}));
-    });
+        }());
+      },
+      onCancel: () {
+        cancelled = true;
+        _streams.remove(client);
+        // Close this stream's socket before cancelling the async parser, whose
+        // pending read otherwise waits for the next heartbeat indefinitely.
+        client.close(force: true);
+        unawaited(subscription?.cancel().catchError((Object _) {}));
+      },
+    );
     return output.stream;
   }
 
@@ -440,14 +526,20 @@ class LocalApi
 
   @override
   Future<void> approve(String sid, String id, bool approved) async {
-    await _json('${_session(sid)}/approvals/${Uri.encodeComponent(id)}', 'POST',
-        {'approved': approved});
+    await _json(
+      '${_session(sid)}/approvals/${Uri.encodeComponent(id)}',
+      'POST',
+      {'approved': approved},
+    );
   }
 
   @override
   Future<void> answer(String sid, String id, String answer) async {
-    await _json('${_session(sid)}/questions/${Uri.encodeComponent(id)}', 'POST',
-        {'answer': answer});
+    await _json(
+      '${_session(sid)}/questions/${Uri.encodeComponent(id)}',
+      'POST',
+      {'answer': answer},
+    );
   }
 
   @override
@@ -456,8 +548,11 @@ class LocalApi
   Future<Json> saveSettings(Json value) => _json('/v1/settings', 'PUT', value);
 
   Json _validConsultationLimit(Json value) {
-    if (value.keys.toSet().difference(
-            {'instance_id', 'revision', 'max_consultations'}).isNotEmpty ||
+    if (value.keys.toSet().difference({
+          'instance_id',
+          'revision',
+          'max_consultations',
+        }).isNotEmpty ||
         value.length != 3 ||
         value['instance_id'] is! String ||
         (value['instance_id'] as String).isEmpty ||
@@ -478,7 +573,8 @@ class LocalApi
   @override
   Future<Json> saveConsultationLimit(Json update) async =>
       _validConsultationLimit(
-          await _json('/v1/settings/consultation-limit', 'PUT', update));
+        await _json('/v1/settings/consultation-limit', 'PUT', update),
+      );
 
   Json _validContextLimit(Json value) {
     if (value.length != 3 ||
@@ -499,7 +595,8 @@ class LocalApi
       _validContextLimit(await _json('/v1/settings/context-limit'));
   @override
   Future<Json> saveContextLimit(Json update) async => _validContextLimit(
-      await _json('/v1/settings/context-limit', 'PUT', update));
+    await _json('/v1/settings/context-limit', 'PUT', update),
+  );
 
   Json _validRoundLimit(Json value) {
     if (value.length != 3 ||
@@ -536,11 +633,13 @@ class LocalApi
 
   @override
   Future<Json> readCollaborationEnabled() async => _validCollaborationEnabled(
-      await _json('/v1/settings/collaboration-enabled'));
+    await _json('/v1/settings/collaboration-enabled'),
+  );
   @override
   Future<Json> saveCollaborationEnabled(Json update) async =>
       _validCollaborationEnabled(
-          await _json('/v1/settings/collaboration-enabled', 'PUT', update));
+        await _json('/v1/settings/collaboration-enabled', 'PUT', update),
+      );
 
   Json _validModelProfiles(Json data) {
     if (data.length != 3 ||
@@ -579,15 +678,19 @@ class LocalApi
 
   @override
   Future<Json> updateModelProfile(String name, Json update) async =>
-      _validModelProfiles(await _json(
+      _validModelProfiles(
+        await _json(
           '/v1/settings/model-profiles/${Uri.encodeComponent(name)}',
           'PUT',
-          update));
+          update,
+        ),
+      );
 
   @override
   Future<Json> modelProfileLimits(String name) async {
     final result = await _json(
-        '/v1/settings/model-profiles/${Uri.encodeComponent(name)}/limits');
+      '/v1/settings/model-profiles/${Uri.encodeComponent(name)}/limits',
+    );
     if (result.length != 4 ||
         result['instance_id'] is! String ||
         (result['instance_id'] as String).isEmpty ||
@@ -606,10 +709,13 @@ class LocalApi
 
   @override
   Future<Json> saveModelProfileLimits(String name, Json update) async =>
-      _validModelProfiles(await _json(
+      _validModelProfiles(
+        await _json(
           '/v1/settings/model-profiles/${Uri.encodeComponent(name)}/limits',
           'PUT',
-          update));
+          update,
+        ),
+      );
 
   @override
   Future<List<Json>> modelProfileProviders() async {
@@ -639,26 +745,34 @@ class LocalApi
 
   @override
   Future<Json> createModelProfile(Json value) async => _validModelProfiles(
-      await _json('/v1/settings/model-profiles', 'POST', value));
+    await _json('/v1/settings/model-profiles', 'POST', value),
+  );
 
   @override
   Future<Json> deleteModelProfile(String name, Json version) async =>
-      _validModelProfiles(await _json(
+      _validModelProfiles(
+        await _json(
           '/v1/settings/model-profiles/${Uri.encodeComponent(name)}',
           'DELETE',
-          version));
+          version,
+        ),
+      );
 
   @override
   Future<Json> switchModelProvider(String name, Json update) async =>
-      _validModelProfiles(await _json(
+      _validModelProfiles(
+        await _json(
           '/v1/settings/model-profiles/${Uri.encodeComponent(name)}/provider',
           'PUT',
-          update));
+          update,
+        ),
+      );
 
   @override
   Future<Json> modelProfilePricing(String name) async {
     final data = await _json(
-        '/v1/settings/model-profiles/${Uri.encodeComponent(name)}/pricing');
+      '/v1/settings/model-profiles/${Uri.encodeComponent(name)}/pricing',
+    );
     if (data.length != 3 ||
         data['instance_id'] is! String ||
         (data['instance_id'] as String).isEmpty ||
@@ -673,10 +787,12 @@ class LocalApi
             pricing.length != 4 ||
             pricing['currency'] is! String ||
             (pricing['currency'] as String).length > 32 ||
-            ['input', 'cached_input', 'output'].any((key) =>
-                pricing[key] is! num ||
-                !(pricing[key] as num).isFinite ||
-                (pricing[key] as num) < 0))) {
+            ['input', 'cached_input', 'output'].any(
+              (key) =>
+                  pricing[key] is! num ||
+                  !(pricing[key] as num).isFinite ||
+                  (pricing[key] as num) < 0,
+            ))) {
       throw const FormatException('Invalid pricing');
     }
     return freezeJson(data);
@@ -684,15 +800,19 @@ class LocalApi
 
   @override
   Future<Json> saveModelProfilePricing(String name, Json update) async =>
-      _validModelProfiles(await _json(
+      _validModelProfiles(
+        await _json(
           '/v1/settings/model-profiles/${Uri.encodeComponent(name)}/pricing',
           'PUT',
-          update));
+          update,
+        ),
+      );
 
   @override
   Future<Json> modelCredentialReference(String name) async {
     final data = await _json(
-        '/v1/settings/model-profiles/${Uri.encodeComponent(name)}/credential-reference');
+      '/v1/settings/model-profiles/${Uri.encodeComponent(name)}/credential-reference',
+    );
     if (data.length != 4 ||
         data['instance_id'] is! String ||
         (data['instance_id'] as String).isEmpty ||
@@ -708,11 +828,16 @@ class LocalApi
   }
 
   @override
-  Future<Json> saveModelCredentialReference(String name, Json update) async =>
-      _validModelProfiles(await _json(
-          '/v1/settings/model-profiles/${Uri.encodeComponent(name)}/credential-reference',
-          'PUT',
-          update));
+  Future<Json> saveModelCredentialReference(
+    String name,
+    Json update,
+  ) async => _validModelProfiles(
+    await _json(
+      '/v1/settings/model-profiles/${Uri.encodeComponent(name)}/credential-reference',
+      'PUT',
+      update,
+    ),
+  );
   @override
   Future<void> deleteSession(String sid) async {
     await _json(_session(sid), 'DELETE');
@@ -770,9 +895,9 @@ class DemoApi implements OdessyApi {
       'max_context_chars': 8000,
       'max_rounds': 1,
       'default_participant': '',
-      'rules': []
+      'rules': [],
     },
-    'participants': <String, dynamic>{}
+    'participants': <String, dynamic>{},
   };
   @override
   bool get isDemo => true;
@@ -790,13 +915,15 @@ class DemoApi implements OdessyApi {
   @override
   Future<Session> createSession() => snapshot('demo');
   @override
-  Future<Session> snapshot(String sid) async => Session('demo',
-      selectedProfile: _selected,
-      activeProfile: _active,
-      running: _running,
-      messages: List.unmodifiable(_messages),
-      pending: List.unmodifiable(_pending),
-      events: List.unmodifiable(_events));
+  Future<Session> snapshot(String sid) async => Session(
+    'demo',
+    selectedProfile: _selected,
+    activeProfile: _active,
+    running: _running,
+    messages: List.unmodifiable(_messages),
+    pending: List.unmodifiable(_pending),
+    events: List.unmodifiable(_events),
+  );
   @override
   Stream<SessionEvent> events(String sid, int after) => _stream.stream;
   @override
@@ -807,34 +934,39 @@ class DemoApi implements OdessyApi {
     final generation = ++_generation;
     _messages.add(ChatMessage('user', text));
     _emit('transcript', {'role': 'user', 'text': text});
-    _emit('selection',
-        {'profile': _active, 'reason': 'Demo: pinned for this turn'});
-    unawaited(Future<void>.delayed(delay, () {
-      if (_closed || generation != _generation) return;
-      if (text == '/approval' || text == '/question') {
-        final approval = text == '/approval';
-        final entry = <String, dynamic>{
-          'id': 'demo-$generation',
-          'kind': approval ? 'approval' : 'question',
-          'prompt':
-              'Odessy requests permission to run the exact command below.',
-          'question': 'Which repository should I inspect?',
-          'tool': 'terminal.run',
-          'arguments': {'command': 'git status --short'},
-          'host': 'Demo workstation',
-          'risk': 'medium',
-          'allowed_channels': ['authenticated_ui'],
-          'choices': ['Odessy', 'Other'],
-          'allow_free_text': true,
-          'expires_at': DateTime.now().millisecondsSinceEpoch / 1000 + 120
-        };
-        _pending.add(entry);
-        _emit(approval ? 'approval_required' : 'question_required', entry);
-      } else {
-        _finish(
-            'This is a demonstration response. No model or tool ran. Connect a local Odessy service for a real conversation.');
-      }
-    }));
+    _emit('selection', {
+      'profile': _active,
+      'reason': 'Demo: pinned for this turn',
+    });
+    unawaited(
+      Future<void>.delayed(delay, () {
+        if (_closed || generation != _generation) return;
+        if (text == '/approval' || text == '/question') {
+          final approval = text == '/approval';
+          final entry = <String, dynamic>{
+            'id': 'demo-$generation',
+            'kind': approval ? 'approval' : 'question',
+            'prompt':
+                'Odessy requests permission to run the exact command below.',
+            'question': 'Which repository should I inspect?',
+            'tool': 'terminal.run',
+            'arguments': {'command': 'git status --short'},
+            'host': 'Demo workstation',
+            'risk': 'medium',
+            'allowed_channels': ['authenticated_ui'],
+            'choices': ['Odessy', 'Other'],
+            'allow_free_text': true,
+            'expires_at': DateTime.now().millisecondsSinceEpoch / 1000 + 120,
+          };
+          _pending.add(entry);
+          _emit(approval ? 'approval_required' : 'question_required', entry);
+        } else {
+          _finish(
+            'This is a demonstration response. No model or tool ran. Connect a local Odessy service for a real conversation.',
+          );
+        }
+      }),
+    );
   }
 
   void _finish(String text) {
@@ -870,7 +1002,8 @@ class DemoApi implements OdessyApi {
     _resolve(id);
     _emit('approval_answered', {'id': id});
     _finish(
-        'Demo action ${approved ? 'approved' : 'denied'}. Nothing was executed.');
+      'Demo action ${approved ? 'approved' : 'denied'}. Nothing was executed.',
+    );
   }
 
   @override

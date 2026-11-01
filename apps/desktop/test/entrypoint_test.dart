@@ -1,4 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:odessy_desktop/app/app.dart';
+import 'package:odessy_desktop/app/setup/disconnected_api.dart';
 import 'package:odessy_desktop/app/setup/installed_startup.dart';
 import 'package:odessy_desktop/app/setup/native_picker.dart';
 import 'package:odessy_desktop/app/setup/setup_application.dart';
@@ -7,12 +9,23 @@ import 'package:odessy_desktop/main.dart';
 /// The packaged build reaches these surfaces only through the entrypoint, so the
 /// injected adapters are asserted here rather than assumed.
 void main() {
+  test('ordinary desktop starts disconnected; preview requires explicit opt-in',
+      () {
+    final normal = applicationFor(const []) as OdessyApp;
+    expect(normal.api, isA<DisconnectedApi>());
+    expect(normal.restoreConfiguration, isTrue);
+    final preview = applicationFor(const ['--demo']) as OdessyApp;
+    expect(preview.api!.isDemo, isTrue);
+    expect(preview.restoreConfiguration, isFalse);
+  });
+
   test('the entrypoint injects the real native picker and forwards the intent',
       () {
     final setup = applicationFor(const ['--setup', '--payload', r'C:\payload']);
     expect(setup, isA<SetupApplication>());
     expect((setup as SetupApplication).picker, isA<FileSelectorPicker>(),
-        reason: 'without it the Browse buttons would be unavailable at runtime');
+        reason:
+            'without it the Browse buttons would be unavailable at runtime');
     expect(setup.payloadRoot, r'C:\payload');
   });
 

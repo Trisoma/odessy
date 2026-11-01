@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:odessy_client/odessy_client.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_desktop/features/setup/controllers/setup_controller.dart';
 import 'package:odessy_desktop/features/setup/presentation/setup_wizard.dart';
@@ -6,34 +8,80 @@ import 'setup_controller_test.dart' show Backend;
 
 void main() {
   testWidgets(
-      'wizard requires review before save and reports configuration only',
+      'successful navigation never cancels coordinator during activation',
+      (tester) async {
+    final backend = DelayedActivationBackend();
+    final visible = ValueNotifier(true);
+    var cancelled = false;
+    final c = SetupController(backend, onConnect: (_) async {
+      visible.value = false;
+    }, onCancelConnect: () async {
+      cancelled = true;
+    });
+    c.update({
+      'role': 'combined',
+      'model': {'provider': 'ollama', 'name': 'existing'}
+    }, '/tmp/setup.json');
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: ValueListenableBuilder<bool>(
+                valueListenable: visible,
+                builder: (_, show, __) => show
+                    ? SetupWizardPage(controller: c)
+                    : const Text('Live conversation')))));
+    await tester.pumpAndSettle();
+    final operation = c.finish();
+    await tester.pump();
+    expect(find.text('Live conversation'), findsOneWidget);
+    expect(cancelled, isFalse);
+    expect(backend.cancelled, isFalse);
+    backend.activation.complete();
+    await operation;
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+    visible.dispose();
+  });
+
+  testWidgets('save connects automatically and details stay collapsed',
       (tester) async {
     final backend = Backend();
-    final controller = SetupController(backend);
+    var connected = false;
+    final controller = SetupController(backend, onConnect: (_) async {
+      connected = true;
+    });
+    controller.update({
+      'role': 'combined',
+      'model': {
+        'provider': 'ollama',
+        'name': 'existing',
+        'endpoint': 'http://127.0.0.1:11434'
+      }
+    }, '/tmp/configuration.json');
     await tester.pumpWidget(MaterialApp(
         home: Scaffold(body: SetupWizardPage(controller: controller))));
-    expect(find.text('Set up this computer'), findsOneWidget);
     for (var index = 0; index < 5; index++) {
       await tester.ensureVisible(find.text('Continue'));
       await tester.tap(find.text('Continue'));
       await tester.pumpAndSettle();
     }
-    await tester.enterText(
-        find.byKey(const ValueKey('setup-output')), '/tmp/configuration.json');
-    final save =
-        find.widgetWithText(FilledButton, 'Confirm & save configuration');
-    expect(tester.widget<FilledButton>(save).onPressed, isNull);
-    await tester.ensureVisible(find.text('Review changes'));
-    await tester.tap(find.text('Review changes'));
-    await tester.pumpAndSettle();
-    expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+    expect(find.text('Review changes'), findsNothing);
+    expect(find.text('Run diagnostics'), findsNothing);
+    expect(find.textContaining('"plan_id"'), findsNothing);
+    final save = find.widgetWithText(FilledButton, 'Save and connect');
+    await tester.ensureVisible(save);
     await tester.tap(save);
     await tester.pumpAndSettle();
-    expect(backend.requests.last.operation, 'save');
-    expect(
-        find.text(
-            'Configuration saved — components are not installed or started'),
-        findsOneWidget);
+    expect(backend.requests.last.operation, 'activate');
+    expect(connected, isTrue);
+    expect(find.text('Connected to your configured model'), findsOneWidget);
+    controller.recoveryRequired = true;
+    controller.notifyListeners();
+    await tester.pump();
+    final field = find.byKey(const ValueKey('setup-output'));
+    expect(tester.widget<TextField>(field).enabled, isTrue);
+    await tester.enterText(field, '/tmp/new.json');
+    await tester.pumpAndSettle();
+    expect(controller.output, '/tmp/new.json');
     await tester.pumpWidget(const SizedBox());
     controller.dispose();
   });
@@ -66,4 +114,13 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     controller.dispose();
   });
+}
+
+class DelayedActivationBackend extends Backend {
+  final activation = Completer<void>();
+  @override
+  Future<SetupReply> execute(SetupRequest request) async {
+    if (request.operation == 'activate') await activation.future;
+    return super.execute(request);
+  }
 }

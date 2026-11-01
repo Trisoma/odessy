@@ -9,6 +9,7 @@ import 'package:odessy_desktop/app/session_controller.dart';
 import 'package:odessy_desktop/app/theme.dart';
 import 'package:odessy_desktop/features/settings/presentation/settings.dart';
 import 'settings_presentation_test.dart';
+import 'component_settings_test.dart' show SavedComponents;
 
 void main() {
   testWidgets('render global settings screenshots', (tester) async {
@@ -36,7 +37,7 @@ void main() {
     }
 
     await tester.pumpWidget(
-        RepaintBoundary(key: key, child: OdessyApp(api: SettingsFixtureApi())));
+        RepaintBoundary(key: key, child: OdessyApp(api: SettingsFixtureApi(), setupBackend: SavedComponents())));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ListTile, 'Settings'));
     await tester.pumpAndSettle();

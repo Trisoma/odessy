@@ -62,6 +62,8 @@ the exact installed distribution's license files are authoritative.
 | [FastAPI](https://github.com/fastapi/fastapi/blob/master/LICENSE) | MIT |
 | [Uvicorn](https://github.com/encode/uvicorn/blob/main/LICENSE.md) | BSD-3-Clause |
 | [NumPy](https://github.com/numpy/numpy/blob/main/LICENSE.txt) | BSD-3-Clause core; wheel includes additional component licenses |
+| [python-sounddevice](https://github.com/spatialaudio/python-sounddevice/blob/0.5.1/LICENSE) (optional voice extra) | MIT; preserve its copyright/license when distributing the installed package |
+| [PortAudio](https://portaudio.com/license.html) (native audio library) | MIT; retain the exact binary distribution's notices, including any platform-specific bundled components |
 | openwakeword, kokoro-onnx, onnxruntime | See the voice table above |
 | pytest / AnyIO / HTTPX (test extra) | MIT / MIT / BSD-3-Clause |
 | setuptools (build backend) | MIT |

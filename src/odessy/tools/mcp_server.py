@@ -10,6 +10,7 @@ from mcp.server import MCPServer
 from odessy.tools.calculator import CalculatorEvalResult, evaluate_arithmetic_expression
 from odessy.authority.command_bridge import CommandBridge, TerminalRunResult
 from odessy.execution.contract import ExecutionPolicy, ExecutionProvider, ProviderError
+from odessy.execution.registry import ProviderRegistry
 
 
 class TimeNowResult(TypedDict):
@@ -56,6 +57,7 @@ def build_odessy_mcp_server(
     workspace_root: Path | str | None = None,
     provider: ExecutionProvider | None = None,
     policy: ExecutionPolicy | None = None,
+    registry: ProviderRegistry | None = None,
     include_terminal: bool = True,
 ) -> MCPServer:
     """Build the Odessy tool server.
@@ -68,7 +70,8 @@ def build_odessy_mcp_server(
     resolves to are decisions that belong to the caller's composition root, not to
     the tool surface. Omitting both is legal and runs every command unconfined,
     with each result reporting ``enforcement: "none"`` so the absence is visible
-    rather than implied.
+    rather than implied; a call that requires isolation is then refused.
+    ``registry`` instead selects a backend per call (see `CommandBridge.registry`).
     """
 
     server = MCPServer("odessy-v0.1.0")
@@ -77,6 +80,7 @@ def build_odessy_mcp_server(
         Path(workspace_root or ".").resolve(),
         provider=provider,
         policy=policy,
+        registry=registry,
     )
 
     @server.tool(name="time.now")
@@ -94,6 +98,10 @@ def build_odessy_mcp_server(
         timeout: int = 10,
         mode: str | None = None,
         isolation: str | None = None,
+        network: str | None = None,
+        hidden_paths: list[str] | None = None,
+        extra_writable: list[str] | None = None,
+        limits: dict[str, int] | None = None,
     ) -> TerminalRunResult:
         """Run a workspace-bound command and return structured output.
 
@@ -101,7 +109,8 @@ def build_odessy_mcp_server(
         resolved for this call, and they travel as a pair. Neither is a model-settable
         argument: the agent loop injects them after policy and escalation, which is what
         keeps the mode out of the model's reach and stops this side inferring a
-        requirement the authority layer never expressed.
+        requirement the authority layer never expressed. ``network``, ``hidden_paths``,
+        ``extra_writable`` and ``limits`` come the same way, from ``sandbox.toml``.
         """
 
         try:
@@ -111,6 +120,10 @@ def build_odessy_mcp_server(
                 timeout=timeout,
                 mode=mode,  # type: ignore[arg-type]
                 isolation=isolation,  # type: ignore[arg-type]
+                network=network,
+                hidden_paths=hidden_paths,
+                extra_writable=extra_writable,
+                limits=limits,
             )
         except ProviderError as exc:
             # A refusal is RETURNED, not raised. Raising would let it cross the MCP
