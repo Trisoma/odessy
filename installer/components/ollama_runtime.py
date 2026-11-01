@@ -187,7 +187,10 @@ def managed_service(runtime: Path, models: Path, state: Path, endpoint: str, mod
         if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
             probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         try:
-            probe.bind((url.hostname, url.port))
+            # local_endpoint already rejects non-loopback endpoints. Keep the
+            # bind target explicit as well, never allowing None or an empty host.
+            bind_host = url.hostname or ('::1' if family == socket.AF_INET6 else '127.0.0.1')
+            probe.bind((bind_host, url.port))
         except OSError as error:
             raise ValueError('The endpoint port is occupied; preserve it and choose another --endpoint.') from error
     manifest, resources = load_release(resources_path)

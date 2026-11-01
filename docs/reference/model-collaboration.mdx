@@ -126,11 +126,12 @@ confirms delegation. It does not expose an unauthenticated network listener.
 
 ```sh
 python -m pip install -e '.[ui]'
+export ODESSY_API_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 python -m odessy serve --fake-model --host 127.0.0.1 --port 8765
 ```
 
-Only loopback binding is accepted. The service prints a bearer token; set
-`ODESSY_API_TOKEN` to supply one. Open `http://127.0.0.1:8765/` and enter it into
+Only loopback binding is accepted. Set `ODESSY_API_TOKEN` before manual startup;
+the service never logs it. Open `http://127.0.0.1:8765/` and enter that token into
 the diagnostic client. The public static shell contains no credentials. Every
 `/v1` request, including events, requires `Authorization: Bearer <token>`.
 The client provides session creation, model selection, explicit consultation,

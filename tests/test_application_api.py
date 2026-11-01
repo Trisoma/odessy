@@ -340,7 +340,7 @@ def test_diagnostic_snapshot_restores_pending_controls_and_ignores_stale_replay(
     node = shutil.which('node')
     if node is None:
         pytest.skip('Node is needed for diagnostic client behavior verification')
-    script = re.search(r'<script>(.*?)</script>', _DIAGNOSTIC, re.S)[1]
+    script = re.search(r'<script>(.*?)</script>', _DIAGNOSTIC, re.S | re.I)[1]
     harness = r'''
 const assert=require('node:assert/strict');
 const nodes=new Map();

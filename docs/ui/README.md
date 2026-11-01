@@ -40,7 +40,7 @@ For a real local session, from the Python checkout with `odessy[ui]` installed:
 python -m odessy serve --fake-model
 ```
 
-Click the cable icon, enter the loopback address and printed bearer token. The
+Click the cable icon, enter the loopback address and the token you configured in `ODESSY_API_TOKEN` before starting the backend. The backend does not print credentials. The
 token remains in memory. Try `hello` or `what time is it?`. Only requests submitted
 after connecting use the real service. Use a fake-model service first; omitting
 `--fake-model` invokes the configured real models and their existing budgets.

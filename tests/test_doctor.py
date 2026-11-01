@@ -52,7 +52,7 @@ def test_ollama_down_is_a_failure_with_the_install_step() -> None:
     checks = run_checks("lfm", {"ODESSY_DEPLOYMENT": "single"}, _probes(ollama_down=True))
     (model,) = _by_section(checks, "Model")
     assert model.status == "fail"
-    assert "ollama.com" in (model.fix or "")
+    assert model.fix == "Install Ollama from https://ollama.com and start it, or set ODESSY_MODEL_ENDPOINT."
     assert "problem(s) to fix" in render(checks)
 
 
@@ -93,7 +93,8 @@ def test_missing_node_is_a_warning_because_odessy_still_runs() -> None:
     checks = run_checks("lfm", {"ODESSY_DEPLOYMENT": "single"}, _probes(on_path=set()))
     (tool_server,) = _by_section(checks, "Tool server")
     assert tool_server.status == "warn"
-    assert "nodejs.org" in (tool_server.fix or "")
+    from odessy.config.doctor import RECOMMENDED_NODE_MAJOR
+    assert tool_server.fix == f"Install Node.js {RECOMMENDED_NODE_MAJOR} or newer from https://nodejs.org"
 
 
 def test_uninstalled_or_stale_tools_say_how_to_build() -> None:

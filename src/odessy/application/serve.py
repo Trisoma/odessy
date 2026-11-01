@@ -25,6 +25,9 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
                      backend=None, token=None, workspace=None, watch_stdin=False,
                      print_token=True, runtime_configuration=None, desktop_voice=None):
     host, port = validate_binding(host, port)
+    token = token if token is not None else os.environ.get('ODESSY_API_TOKEN') or None
+    if print_token and not token:
+        raise ValueError('Set ODESSY_API_TOKEN before starting the manual HTTP server; credentials are never printed to logs.')
     try:
         import uvicorn
     except ImportError as exc:
@@ -52,11 +55,11 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
                 **{name: profile.public_dict() for name, profile in config.participants.items()}}
 
     app = create_app(factory, config=load_config(), profiles=profiles, runtime_configuration=runtime_configuration, desktop_voice=desktop_voice,
-                     token=token if token is not None else os.environ.get('ODESSY_API_TOKEN') or None)
+                     token=token)
     address = f'[{host}]' if ':' in host else host
     print(f'[odessy] HTTP API: http://{address}:{port}', file=sys.stderr, flush=True)
     if print_token:
-        print(f'[odessy] Bearer token: {app.state.auth_token}', file=sys.stderr, flush=True)
+        print('[odessy] Authentication uses the configured API token; its value is not logged.', file=sys.stderr, flush=True)
     print('[odessy] Open / for diagnostics; send Authorization: Bearer <token> on every /v1 request.',
           file=sys.stderr, flush=True)
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, access_log=False, log_level='warning'))
