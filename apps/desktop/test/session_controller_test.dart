@@ -4,51 +4,6 @@ import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/app/session_controller.dart';
 
 void main() {
-  test(
-      'explicit new session closes the previous session without closing transport',
-      () async {
-    final api = LifecycleApi();
-    final controller = DesktopSession(api);
-    await controller.start();
-    await controller.newSession();
-    expect(api.deletes, 1);
-    expect(api.closes, 0);
-    expect(controller.connected, isTrue);
-    expect(controller.session, isNotNull);
-    await controller.shutdown();
-    expect(api.deletes, 2);
-    controller.dispose();
-  });
-  test('session profile list is parsed and preserved by snapshot reduction',
-      () {
-    final parsed = Session.fromJson({
-      'id': 'session',
-      'selected_profile': 'current',
-      'available_profiles': ['current', 'local'],
-    });
-    expect(reduceSessionSnapshot(null, parsed).availableProfiles,
-        ['current', 'local']);
-    expect(
-        Session.fromJson({'id': 'old', 'selected_profile': 'current'})
-            .availableProfiles,
-        isNull);
-    expect(
-        () => Session.fromJson({
-              'id': 'invalid',
-              'selected_profile': 'current',
-              'available_profiles': ['current', 42]
-            }),
-        throwsA(isA<TypeError>()));
-  });
-  test('session model choices come from its own snapshot', () async {
-    final c = DesktopSession(SessionProfilesApi());
-    await c.start();
-    expect(c.profiles, ['current', 'session-model']);
-    await c.refresh();
-    expect(c.profiles, ['current', 'session-model']);
-    c.dispose();
-  });
-
   test('provider failure is shown from sanitized backend error event',
       () async {
     final api = ReconnectApi();
@@ -131,16 +86,6 @@ void main() {
     expect(second.writes, 0);
     c.dispose();
   });
-  test('non-demo service without guarded settings cannot perform legacy save',
-      () async {
-    final api = LegacySettingsApi();
-    final c = DesktopSession(api);
-    await c.start();
-    await expectLater(c.loadSettings(), throwsStateError);
-    await expectLater(c.updateConsultationLimit(4), throwsStateError);
-    expect(api.writes, 0);
-    c.dispose();
-  });
   test('one foreground turn, pinned model and stale response protection',
       () async {
     final c = DesktopSession(DemoApi(delay: const Duration(milliseconds: 30)));
@@ -165,17 +110,6 @@ void main() {
     expect(c.error, contains('Stop'));
     c.dispose();
   });
-}
-
-class SessionProfilesApi extends DemoApi {
-  @override
-  Future<List<String>> profiles() async => ['global-only'];
-  @override
-  Future<Session> createSession() => snapshot('demo');
-  @override
-  Future<Session> snapshot(String sid) async => Session(sid,
-      selectedProfile: 'current',
-      availableProfiles: ['current', 'session-model']);
 }
 
 class FailedStopApi extends DemoApi {
@@ -214,17 +148,6 @@ class DelayedSettingsApi extends DemoApi {
   int writes = 0;
   @override
   Future<Json> settings() => gate.future;
-  @override
-  Future<Json> saveSettings(Json value) async {
-    writes++;
-    return value;
-  }
-}
-
-class LegacySettingsApi extends DemoApi {
-  int writes = 0;
-  @override
-  bool get isDemo => false;
   @override
   Future<Json> saveSettings(Json value) async {
     writes++;

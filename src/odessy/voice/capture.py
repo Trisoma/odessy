@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import sys
 from dataclasses import dataclass, field
 from threading import Lock
 from pathlib import Path
@@ -139,7 +138,10 @@ class CommandPlayer:
             sequence = self._sequence
             previous, self._process = self._process, None
         self._terminate(previous)
-        argv = self._argv(audio_path)
+        argv = [self.player]
+        if self.output_device:
+            argv.extend(["-D", self.output_device])
+        argv.append(str(audio_path))
         # Popen can block. Never hold the state lock across process creation:
         # stop must invalidate a startup even before a process handle exists.
         try:
@@ -148,7 +150,6 @@ class CommandPlayer:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
-                **self._popen_options(),
             )
         except OSError as error:
             raise AudioStreamError(f"could not start {self.player}: {error}") from error
@@ -160,27 +161,11 @@ class CommandPlayer:
             self._terminate(process)
             return
         try:
-            code = process.wait(timeout=300)
-            with self._lock:
-                still_current = self._process is process and generation == self._generation
-            if still_current and isinstance(code, int) and code != 0:
-                raise AudioStreamError('audio playback failed')
-        except subprocess.TimeoutExpired as error:
-            self._terminate(process)
-            raise AudioStreamError('audio playback timed out') from error
+            process.wait(timeout=300)
         finally:
             with self._lock:
                 if self._process is process:
                     self._process = None
-
-    def _argv(self, audio_path: Path) -> list[str]:
-        argv = [self.player]
-        if self.output_device:
-            argv.extend(["-D", self.output_device])
-        return [*argv, str(audio_path)]
-
-    def _popen_options(self) -> dict:
-        return {}
 
     def stop(self) -> None:
         with self._lock:
@@ -199,16 +184,6 @@ class CommandPlayer:
         except subprocess.TimeoutExpired:  # pragma: no cover - unresponsive device
             process.kill()
             process.wait()
-
-
-class WindowsNativePlayer(CommandPlayer):
-    """Use an owned process so stopping playback does not affect other audio."""
-
-    def _argv(self, audio_path: Path) -> list[str]:
-        return [sys.executable, '-m', 'odessy.voice.windows_playback', str(audio_path)]
-
-    def _popen_options(self) -> dict:
-        return {'creationflags': getattr(subprocess, 'CREATE_NO_WINDOW', 0)}
 
 
 def recorder_available(recorder: str = "arecord") -> bool:

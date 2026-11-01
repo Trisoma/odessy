@@ -40,23 +40,10 @@ odessy-link pair add --alias <name> --certificate <bundle> --expect-sha256 <fing
 odessy-link peers list [--json]
 odessy-link peers grant <peer> --capability mcp --workspace <path>
 odessy-link peers revoke <peer>
-odessy-link peers revoke <peer> --capability telemetry.read --expect-sha256 <fingerprint> --expect-revision <revision>
-odessy-link peers revoke <peer> --capability mcp --expect-sha256 <fingerprint> --expect-revision <revision>
 odessy-link discover [--seconds <n>]
 odessy-link serve --listen <address> --workspace <path> --node-server <entry> [--advertise]
 odessy-link connect --peer <alias> [--address <host:port>] [--discover]
 ```
-
-Selective revocation removes only the specified grant. The fingerprint and grant
-revision must match the reviewed peer state inside the registry transaction; a
-stale review is rejected. Revoking `mcp` also clears its workspace grant. Existing
-sessions are subject to their normal per-request revocation checks.
-The local desktop bridge also supplies `--expect-sha256` and `--expect-revision`
-for grants and full revocation; the registry checks them in the same transaction
-as the change. Direct CLI calls without these options retain legacy behavior.
-For enrollment the bridge additionally binds the exact bundle bytes, the previous
-identity (or an empty slot), and the grant revision. The native program verifies
-the bundle digest and checks the reviewed slot within the registry transaction.
 
 `ODESSY_LINK_MAX_SESSION_ITEMS` caps how many request ids one session may use
 (default 4096). Reaching it ends the session; ids are never evicted to make room.

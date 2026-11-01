@@ -15,10 +15,6 @@ import (
 func buildFakeWorker(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	dir = filepath.Join(dir, "profile~1")
-	if err := os.Mkdir(dir, 0700); err != nil {
-		t.Fatal(err)
-	}
 	out := filepath.Join(dir, "fakeworker")
 	if strings.HasSuffix(strings.ToLower(out), "fakeworker") && os.PathSeparator == '\\' {
 		out += ".exe"

@@ -379,7 +379,19 @@ class SessionController:
                     self.memory.add(self._public(text), self._public(result.final_text))
                 self.emit('transcript', {'role': 'assistant', 'text': result.final_text})
             self.emit('usage', getattr(result, 'metrics', {}))
-            self.emit('cost', ledger.report())
+            profile_costs = []
+            for (participant, provider, model_name), entry in ledger.profiles.items():
+                pricing, turn = entry['pricing'], entry['turn']
+                turn_cost = None if pricing is None else pricing.cost(
+                    prompt=turn.prompt, cached=turn.cached, completion=turn.completion)
+                profile_costs.append({'participant': participant, 'provider': provider, 'model': model_name,
+                    'turn': asdict(turn), 'total': asdict(entry['total']),
+                    'turn_cost': turn_cost, 'total_cost': entry['cost'],
+                    'pricing': asdict(pricing) if pricing is not None else None,
+                    'price_status': entry['price_status']})
+            self.emit('cost', {'turn': asdict(ledger.turn), 'total': asdict(ledger.total),
+                               'turn_cost': ledger.cost(ledger.turn), 'total_cost': ledger.cost(),
+                               'profiles': profile_costs})
             self.emit('result', result)
             return result
         except asyncio.CancelledError:

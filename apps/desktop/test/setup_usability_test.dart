@@ -297,23 +297,11 @@ void main() {
       final second = await InstanceGuard.acquire('abc',
           directory: directory, mode: 'setup');
       expect(second, isNull);
-      final dart = Platform.isWindows ? 'dart.exe' : 'dart';
-      Future<ProcessResult> probe() => Process.run(
-          dart, ['test/fixtures/instance_guard_probe.dart', directory.path]);
-      final whileHeld = await probe();
-      expect(whileHeld.exitCode, 0, reason: '${whileHeld.stderr}');
-      expect('${whileHeld.stdout}'.trim(), 'busy');
       final otherMode = await InstanceGuard.acquire('abc',
           directory: directory, mode: 'manage');
       expect(otherMode, isNotNull);
       await second?.release();
       await first!.release();
-      // The lock file must remain stable so another process cannot lock a
-      // different inode while an existing owner is still using the first one.
-      expect(await File('${directory.path}/setup-abc.lock').exists(), isTrue);
-      final afterRelease = await probe();
-      expect(afterRelease.exitCode, 0, reason: '${afterRelease.stderr}');
-      expect('${afterRelease.stdout}'.trim(), 'locked');
       await otherMode!.release();
       final third = await InstanceGuard.acquire('abc',
           directory: directory, mode: 'setup');

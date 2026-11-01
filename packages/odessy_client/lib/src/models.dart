@@ -10,22 +10,15 @@ class Session {
       {this.selectedProfile = 'auto',
       this.activeProfile,
       this.running = false,
-      List<String>? availableProfiles,
       List<ChatMessage> messages = const [],
       List<Json> pending = const [],
       List<SessionEvent> events = const []})
-      : availableProfiles = availableProfiles == null
-            ? null
-            : List.unmodifiable(availableProfiles),
-        messages = List.unmodifiable(messages),
+      : messages = List.unmodifiable(messages),
         pending = List.unmodifiable(pending.map(freezeJson)),
         events = List.unmodifiable(events);
   final String id, selectedProfile;
   final String? activeProfile;
   final bool running;
-
-  /// Null means an older service did not provide session-scoped profiles.
-  final List<String>? availableProfiles;
   final List<ChatMessage> messages;
   final List<Json> pending;
   final List<SessionEvent> events;
@@ -57,9 +50,6 @@ class Session {
         selectedProfile: json['selected_profile'] as String,
         activeProfile: json['active_profile'] as String?,
         running: json['running'] == true,
-        availableProfiles: json['available_profiles'] == null
-            ? null
-            : List<String>.from(json['available_profiles'] as List),
         messages: List.unmodifiable(messages),
         events: List.unmodifiable(events),
         pending: List<Json>.unmodifiable([
@@ -117,7 +107,6 @@ Session reduceSessionSnapshot(Session? current, Session incoming) {
       selectedProfile: incoming.selectedProfile,
       activeProfile: incoming.activeProfile,
       running: incoming.running,
-      availableProfiles: incoming.availableProfiles,
       messages: incoming.messages,
       pending: incoming.pending,
       events: events);

@@ -251,34 +251,11 @@ def test_session_cost_events_include_profile_identity_and_redact_coding_credenti
         assert cost['profiles'][0]['provider'] == 'openai'
         assert cost['profiles'][0]['model'] == 'example'
         assert cost['profiles'][0]['price_status'] == 'unknown'
-        assert cost['currency'] is None and cost['total_cost'] is None
         assert cost['profiles'][0]['total']['prompt'] == 10
         assert 'opaque-coding-credential' not in str(controller.events)
         assert 'opaque-coding-credential' not in str(controller.memory.turns)
         await controller.close()
         reset_process_ledger()
-    asyncio.run(run())
-
-
-def test_session_cost_event_includes_configured_currency():
-    async def run():
-        from odessy.models.usage import Pricing, UsageLedger, reset_process_ledger
-        ledger = UsageLedger(pricing=Pricing(1, 1, 1, 'CNY'))
-        reset_process_ledger(ledger)
-        class PricedAgent(Agent):
-            async def run_turn(self, text, **kwargs):
-                ledger.record(prompt=10, cached=0, completion=2)
-                return AgentTurnResult('ok', [])
-        controller = SessionController(model_factory=lambda name: name,
-            agent_factory=PricedAgent, profiles={'local': {}})
-        try:
-            await controller.run_turn('hi')
-            cost = next(event['data'] for event in controller.events if event['type'] == 'cost')
-            assert cost['currency'] == 'CNY'
-            assert cost['total_cost'] == pytest.approx(12 / 1_000_000)
-        finally:
-            await controller.close()
-            reset_process_ledger()
     asyncio.run(run())
 
 def test_profile_factory_is_lazy_and_authoritative():

@@ -73,22 +73,13 @@ void main() {
     expect(find.widgetWithText(ListTile, 'Install Odessy'), findsNothing);
     expect(find.widgetWithText(ListTile, 'Runtime maintenance'), findsNothing);
     await tester.enterText(find.byKey(const Key('composer')), '/question');
-    await tester.pump();
     await tester.tap(find.byTooltip('Send message'));
-    await tester.pump(const Duration(seconds: 1));
     await tester.pumpAndSettle();
     for (final title in ['Devices', 'Workspaces', 'Settings', 'Assistant']) {
       await tester.tap(find.widgetWithText(ListTile, title));
       await tester.pumpAndSettle();
     }
-    expect((await api.snapshot('demo')).pending, hasLength(1));
-    await tester.scrollUntilVisible(find.text('One detail needed'), 200,
-        scrollable: find
-            .descendant(
-                of: find.byKey(const Key('conversation-transcript')),
-                matching: find.byType(Scrollable))
-            .first);
-    expect(find.text('One detail needed'), findsOneWidget);
+    expect(find.text('I need one detail…'), findsOneWidget);
     expect(api.creates, 1);
     expect(api.selections, 0);
     expect(api.stops, 0);

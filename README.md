@@ -109,16 +109,13 @@ CI-tested, with no GUI acceptance.
 
 **Then, for either route:**
 
-1. Set a private token, then start the backend and leave the window open:
+1. Start the backend and leave the window open:
 
    ```powershell
-   $env:ODESSY_API_TOKEN = python -c "import secrets; print(secrets.token_urlsafe(32))"
-   $env:ODESSY_API_TOKEN | Set-Clipboard
    python -m odessy serve
    ```
 
-   The service prints its address, but never prints the token. The token is on
-   the clipboard for the next step; clear the clipboard after connecting.
+   It prints `[odessy] HTTP API: http://127.0.0.1:8765` and a Bearer token.
 
 2. Launch `odessy_desktop.exe`, enter that address and token, then configure your existing
    model in **Settings**.
@@ -253,7 +250,7 @@ python -m odessy serve                       # backend for the desktop app
 | Every turn fails on the model | configured model name does not exist | `ollama list`, then correct `ODESSY_OLLAMA_MODEL` |
 | Settings seem ignored | a misspelled name | `doctor` reports unknown names with the closest real setting |
 | Commands run unconfined | no sandbox backend on this host | `doctor` shows what is enforced; read [sandbox](docs/reference/sandbox.mdx) |
-| Desktop app cannot connect | backend not started, or wrong token | Start `python -m odessy serve` with `ODESSY_API_TOKEN`, then use that token in the app |
+| Desktop app cannot connect | backend not started, or wrong token | `python -m odessy serve`, then copy the printed address and token |
 
 ## Configuration
 

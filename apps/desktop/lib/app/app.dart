@@ -1,19 +1,11 @@
 import 'dart:async';
-import 'dart:io';
-import '../features/devices/controllers/device_monitoring_controller.dart';
-import '../features/devices/presentation/devices.dart';
-import '../features/devices/presentation/monitoring_details.dart';
-import '../features/devices/presentation/monitoring_history.dart';
-import '../features/shell/presentation/device_sidebar.dart';
-import '../features/jobs/controllers/jobs_controller.dart';
-import '../features/jobs/presentation/jobs_page.dart';
-import 'connections/windows_credential_store.dart';
 import '../features/monitoring/controllers/monitor_controller.dart';
 import '../features/devices/presentation/devices_hub.dart';
 import '../features/devices/presentation/execution_hosts_page.dart';
 import 'execution_hosts_controller.dart';
 import '../features/workspaces/presentation/workspace_page.dart';
 import '../widgets/component_state_banner.dart';
+import '../widgets/pixel_boat.dart';
 import 'navigation.dart';
 import 'readiness_controller.dart';
 import '../features/conversation/controllers/voice_controller.dart';
@@ -50,9 +42,6 @@ class OdessyApp extends StatefulWidget {
       {super.key,
       this.api,
       this.installed,
-      this.localDesktop = false,
-      this.managementBackend,
-      this.onExitApproved,
       this.onConfigured,
       this.onRestartSaved,
       this.onShutdownOwned,
@@ -66,9 +55,6 @@ class OdessyApp extends StatefulWidget {
   final Future<void> Function(String fingerprint)? onRestartSaved;
   final Future<void> Function()? onShutdownOwned;
   final OdessyApi? api;
-  final bool localDesktop;
-  final SetupBackend? managementBackend;
-  final Future<void> Function()? onExitApproved;
 
   /// Recorded installed state when this process was started by the Windows
   /// launcher; null for the development preview.
@@ -82,8 +68,6 @@ class _OdessyAppState extends State<OdessyApp> {
   ExecutionHostsController? executionHosts;
   late final VoiceController voice;
   final monitoring = MonitorController();
-  final deviceInventory = DeviceMonitoringController();
-  late final JobsController jobs;
   late final SetupController setup;
   late final ComponentSettingsController componentSettings;
   final readiness = ReadinessController();
@@ -106,7 +90,6 @@ class _OdessyAppState extends State<OdessyApp> {
     if (!identical(observedApi, controller.api)) {
       observedApi = controller.api;
       readiness.bind(controller.api);
-      deviceInventory.bind(controller.api);
     }
   }
 
@@ -117,7 +100,7 @@ class _OdessyAppState extends State<OdessyApp> {
         controller.session?.running == true) {
       return;
     }
-    if (!await _mayNavigate(deferDiscard: true) || !mounted) return;
+    if (!await _mayNavigate() || !mounted) return;
     restarting = true;
     final original = controller.api;
     String? ticket;
@@ -157,7 +140,6 @@ class _OdessyAppState extends State<OdessyApp> {
           !identical(original, controller.api)) {
         return;
       }
-      if (!await _discardApprovedSettings() || !mounted) return;
       await componentSettings.load();
       if (componentSettings.error.isNotEmpty ||
           componentSettings.snapshot['revision'] != revision) {
@@ -194,7 +176,6 @@ class _OdessyAppState extends State<OdessyApp> {
   }
 
   final navigatorKey = GlobalKey<NavigatorState>();
-  final scaffoldKey = GlobalKey<ScaffoldState>();
   final navigationFocus = <String, FocusNode>{};
   bool _navigating = false;
 
@@ -211,7 +192,7 @@ class _OdessyAppState extends State<OdessyApp> {
                     ? 'Enter a whole number from 0 to 32.'
                     : null),
             read: () async {
-              final result = await controller.loadSettings();
+              final result = await owner.settings();
               if (!identical(owner, controller.api)) {
                 throw StateError('Connection changed');
               }
@@ -231,8 +212,6 @@ class _OdessyAppState extends State<OdessyApp> {
   late final MaintenanceController maintenance, pairing, installerEngine;
   InstalledManageController? installManagement;
   final CredentialStore credentials = MemoryCredentialStore();
-  final CredentialStore? credentialVault =
-      Platform.isWindows ? WindowsCredentialStore() : null;
   late final AppLifecycleListener lifecycle;
   ThemeMode mode = ThemeMode.dark;
   String page = 'Conversation';
@@ -268,58 +247,30 @@ class _OdessyAppState extends State<OdessyApp> {
 
   Future<void> _openSettings(
       [String section = SettingsSections.general]) async {
-    if (page == 'Settings' && settingsSection == section) {
-      scaffoldKey.currentState?.closeDrawer();
-      return;
-    }
     if (!await _mayNavigate() || !mounted) return;
     setState(() {
       page = 'Settings';
       settingsSection = section;
     });
-    scaffoldKey.currentState?.closeDrawer();
   }
 
   Future<void> _navigate(String route) async {
-    if (route == page) {
-      scaffoldKey.currentState?.closeDrawer();
-      return;
-    }
-    if (!await _mayNavigate() || !mounted) return;
+    if (route == page || !await _mayNavigate() || !mounted) return;
     setState(() => page = route);
-    scaffoldKey.currentState?.closeDrawer();
   }
 
-  Future<bool> _discardApprovedSettings() async {
-    final form = collaborationForms[controller.api];
-    if (form != null && form.dirty) {
-      await form.load();
-      if (form.error != null || form.dirty) return false;
-    }
-    final section = componentSettings.activeSection;
-    if (section != null && componentSettings.dirty) {
-      componentSettings.discard(section);
-    }
-    return true;
-  }
-
-  Future<bool> _mayNavigate({bool deferDiscard = false}) async {
-    if (_navigating || _settingsBusy) return false;
+  Future<bool> _mayNavigate() async {
+    if (_navigating) return false;
     final context = navigatorKey.currentContext;
     if (context == null) return true;
     _navigating = true;
     try {
-      if (!await confirmSettingsNavigation(context, componentSettings,
-          deferDiscard: true)) {
+      if (!await confirmSettingsNavigation(context, componentSettings)) {
         return false;
       }
       if (!mounted || !context.mounted) return false;
-      if (!await confirmFormNavigation(
-          context, collaborationForms[controller.api],
-          deferDiscard: true)) {
-        return false;
-      }
-      return deferDiscard || await _discardApprovedSettings();
+      return await confirmFormNavigation(
+          context, collaborationForms[controller.api]);
     } finally {
       _navigating = false;
     }
@@ -328,8 +279,7 @@ class _OdessyAppState extends State<OdessyApp> {
   @override
   void initState() {
     super.initState();
-    controller = DesktopSession(widget.api ?? DisconnectedApi());
-    jobs = JobsController(controller);
+    controller = DesktopSession(widget.api ?? DemoApi());
     voice = VoiceController(controller);
     controller.addListener(_observeConnection);
     _observeConnection();
@@ -344,17 +294,9 @@ class _OdessyAppState extends State<OdessyApp> {
     maintenance = MaintenanceController(LocalSetupBackend());
     installerEngine = MaintenanceController(LocalSetupBackend());
     pairing = MaintenanceController(LocalSetupBackend());
-    if (widget.localDesktop) {
-      const root = String.fromEnvironment('ODESSY_DESKTOP_ROOT');
-      final link = '$root/build/odessy-link/odessy-link.exe';
-      if (root.isNotEmpty && File(link).existsSync()) {
-        pairing.update({'link': link});
-      }
-    }
     final installed = widget.installed;
     if (installed != null) {
-      installManagement = InstalledManageController(
-          widget.managementBackend ?? LocalSetupBackend(),
+      installManagement = InstalledManageController(LocalSetupBackend(),
           spec: {...installed, 'root': installed['root']})
         ..load();
     }
@@ -368,13 +310,10 @@ class _OdessyAppState extends State<OdessyApp> {
       await setup.shutdown();
       await configuredCoordinator?.stop();
       await widget.onShutdownOwned?.call();
-      await widget.onExitApproved?.call();
-      await deviceInventory.shutdown();
       await maintenance.shutdown();
       await installerEngine.shutdown();
       await pairing.shutdown();
       installManagement?.dispose();
-      installManagement = null;
       return AppExitResponse.exit;
     });
     if (widget.restoreConfiguration && widget.installed == null) {
@@ -399,8 +338,6 @@ class _OdessyAppState extends State<OdessyApp> {
     }
     lifecycle.dispose();
     monitoring.dispose();
-    deviceInventory.dispose();
-    jobs.dispose();
     controller.removeListener(_observeConnection);
     executionHosts?.dispose();
     voice.dispose();
@@ -422,26 +359,19 @@ class _OdessyAppState extends State<OdessyApp> {
   @override
   Widget build(BuildContext context) => MaterialApp(
       navigatorKey: navigatorKey,
-      title: 'Odessy',
+      title: 'Odessy · Desktop preview',
       debugShowCheckedModeBanner: false,
       theme: odessyTheme(Brightness.light),
       darkTheme: odessyTheme(Brightness.dark),
       themeMode: mode,
       home: ListenableBuilder(
-          listenable: Listenable.merge([
-            controller,
-            setup,
-            componentSettings,
-            readiness,
-            voice,
-            deviceInventory
-          ]),
+          listenable: Listenable.merge(
+              [controller, setup, componentSettings, readiness, voice]),
           builder: (context, _) =>
               LayoutBuilder(builder: (context, constraints) {
                 final narrow = constraints.maxWidth < 900;
                 final sidebar = _sidebar(context);
                 return Scaffold(
-                    key: scaffoldKey,
                     drawer: narrow ? Drawer(child: sidebar) : null,
                     appBar: narrow ? AppBar(title: const Text('Odessy')) : null,
                     body: Row(children: [
@@ -486,15 +416,6 @@ class _OdessyAppState extends State<OdessyApp> {
                                           ? Colors.green
                                           : Colors.grey),
                               const SizedBox(width: 10),
-                              if (widget.localDesktop)
-                                IconButton(
-                                    tooltip: 'Start new session',
-                                    icon: const Icon(Icons.add_comment_outlined,
-                                        size: 20),
-                                    onPressed: controller.busy ||
-                                            controller.session?.running == true
-                                        ? null
-                                        : () => _newSession(context)),
                               IconButton(
                                   tooltip: 'Connect local service',
                                   icon: const Icon(Icons.cable_outlined,
@@ -573,8 +494,6 @@ class _OdessyAppState extends State<OdessyApp> {
                               tone: BannerTone.error),
                         Expanded(
                             child: switch (page) {
-                          'Device details' => _devicePage(),
-                          'Jobs' => JobsPage(controller: jobs),
                           'Monitor' || 'Devices' => DevicesHub(
                               session: controller,
                               monitoring: monitoring,
@@ -621,10 +540,6 @@ class _OdessyAppState extends State<OdessyApp> {
                           'Pairing' => ExecutionHostsPage(
                               key: const ValueKey('execution-hosts'),
                               controller: _executionHostController()),
-                          'Local pairing' => MaintenancePage(
-                              key: const ValueKey('pairing'),
-                              controller: pairing,
-                              pairing: true),
                           'Settings' => SettingsPage(
                               readiness: readiness,
                               onRestartSaved: ((configuredCoordinator != null ||
@@ -675,108 +590,88 @@ class _OdessyAppState extends State<OdessyApp> {
                       ])),
                     ]));
               })));
-  Future<void> _inspectDevice(String id) async {
-    if (!await _mayNavigate() || !mounted) return;
-    deviceInventory.select(id);
-    setState(() => page = 'Device details');
-    scaffoldKey.currentState?.closeDrawer();
-  }
-
-  Widget _sidebar(BuildContext context) => DeviceSidebar(
-          hosts: deviceInventory.hosts,
-          conversationLabel: 'Assistant',
-          navigationFocus: navigationFocus,
-          selectedHostId:
-              page == 'Device details' ? deviceInventory.selectedId : null,
-          conversationSelected: page == 'Conversation',
-          settingsSelected: page == 'Settings',
-          loading: deviceInventory.loadingInventory,
-          retained: deviceInventory.inventoryRetained,
-          error: deviceInventory.inventoryError,
-          demo: deviceInventory.demo,
-          connectionLabel: controller.api.isDemo
-              ? 'Demo · no tools execute'
-              : controller.api.identity,
-          onConversation: () => _navigate('Conversation'),
-          onSettings: _openSettings,
-          onInspect: _inspectDevice,
-          onRefresh: () => unawaited(deviceInventory.refresh()),
-          onPair: () => _navigate('Pairing'),
-          primaryDestinations: [
-            SidebarDestination(
-                label: 'Workspaces',
-                icon: Icons.folder_open_outlined,
-                selected: page == 'Workspaces',
-                onTap: () => _navigate('Workspaces')),
-            SidebarDestination(
-                label: 'Devices',
-                icon: Icons.devices_outlined,
-                selected: page == 'Devices' || page == 'Monitor',
-                onTap: () => _navigate('Devices')),
-          ],
-          destinations: [
-            SidebarDestination(
-                label: 'Jobs',
-                icon: Icons.work_outline,
-                selected: page == 'Jobs',
-                onTap: () => _navigate('Jobs')),
-            SidebarDestination(
-                label: 'Installation',
-                icon: Icons.settings_outlined,
-                selected: page == 'Installer' || page == 'Maintenance',
-                onTap: () => _openSettings(SettingsSections.installation)),
-            SidebarDestination(
-                label: 'Runtime maintenance',
-                icon: Icons.handyman_outlined,
-                selected: page == 'Maintenance',
-                onTap: controller.session?.running == true
-                    ? null
-                    : () => _navigate('Maintenance')),
-            SidebarDestination(
-                label: 'Local pairing tools',
-                icon: Icons.shield_outlined,
-                selected: page == 'Local pairing',
-                onTap: () => _navigate('Local pairing')),
-          ]);
-
-  Widget _devicePage() => DevicePage(
-      key: ValueKey(deviceInventory.selectedId),
-      device: deviceInventory.selectedHost?.name ?? '',
-      controller: controller,
-      onManagePairing: () => _navigate('Local pairing'),
-      monitoringOverview: MonitoringDetails(
-          showHeader: false,
-          host: deviceInventory.inspectedHost,
-          report: deviceInventory.metrics,
-          loading: deviceInventory.loadingMetrics ||
-              deviceInventory.loadingInventory,
-          retained: deviceInventory.metricsRetained,
-          error: deviceInventory.metricsError ?? deviceInventory.inventoryError,
-          demo: deviceInventory.demo,
-          onRefresh: () => unawaited(deviceInventory.refreshSelected())),
-      monitoringHistory:
-          Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        DropdownButton<HistoryWindow>(
-            key: const Key('monitoring-history-window'),
-            isExpanded: true,
-            value: deviceInventory.window,
-            items: [
-              for (final item in HistoryWindow.values)
-                DropdownMenuItem(value: item, child: Text(item.label))
-            ],
-            onChanged: (value) {
-              if (value != null) deviceInventory.setWindow(value);
-            }),
-        MonitoringHistory(
-            host: deviceInventory.inspectedHost,
-            report: deviceInventory.history,
-            loading: deviceInventory.loadingHistory,
-            retained: deviceInventory.historyRetained,
-            error: deviceInventory.historyError,
-            degradation: deviceInventory.degradation,
-            demo: deviceInventory.demo,
-            onRefresh: () => unawaited(deviceInventory.refreshHistory())),
-      ]));
+  Widget _sidebar(BuildContext context) => SafeArea(
+      child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 22, 16, 16),
+          child: ListView(children: [
+            Row(children: [
+              const PixelBoat(size: 30),
+              const SizedBox(width: 10),
+              const Expanded(
+                  child: Text('Odessy',
+                      style: TextStyle(
+                          fontSize: 23,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: -.7)))
+            ]),
+            const Padding(
+                padding: EdgeInsets.only(left: 40, top: 2, bottom: 34),
+                child: Text('DESKTOP PREVIEW · 0.5',
+                    style: TextStyle(fontSize: 9, letterSpacing: 1.3))),
+            for (final destination in DesktopNavigation.primary)
+              _nav(
+                  context,
+                  destination.label,
+                  destination.icon,
+                  DesktopNavigation.parent(page) == destination.route,
+                  () => _navigate(destination.route)),
+            const SizedBox(height: 24),
+            const Divider(),
+            _nav(
+                context,
+                DesktopNavigation.settings.label,
+                DesktopNavigation.settings.icon,
+                DesktopNavigation.parent(page) == 'Settings',
+                () => _openSettings()),
+            const SizedBox(height: 18),
+            Row(children: [
+              Icon(Icons.circle,
+                  size: 7,
+                  color: controller.connected
+                      ? const Color(0xff9bb9a7)
+                      : Colors.orange),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: Text(
+                      controller.api.isDemo
+                          ? 'Demo · no tools execute'
+                          : controller.api.identity,
+                      style: const TextStyle(fontSize: 11),
+                      overflow: TextOverflow.ellipsis))
+            ]),
+          ])));
+  Widget _nav(BuildContext context, String label, IconData icon, bool selected,
+          Future<void> Function() tap) =>
+      Builder(
+          builder: (tileContext) => Padding(
+              padding: const EdgeInsets.only(bottom: 5),
+              child: ListTile(
+                  key: ValueKey('nav-$label'),
+                  focusNode: navigationFocus.putIfAbsent(
+                      label, () => FocusNode(debugLabel: 'Navigation: $label')),
+                  dense: true,
+                  selected: selected,
+                  selectedTileColor: Theme.of(context)
+                      .colorScheme
+                      .primary
+                      .withValues(alpha: .12),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                  leading: Icon(icon, size: 19),
+                  title: Text(label, style: const TextStyle(fontSize: 13)),
+                  onTap: () async {
+                    // Pointer activation must retain the same return target as
+                    // keyboard activation before opening a guarded dialog.
+                    navigationFocus[label]!.requestFocus();
+                    FocusManager.instance.applyFocusChangesIfNeeded();
+                    final previousPage = page;
+                    await tap();
+                    if (tileContext.mounted &&
+                        (page != previousPage || selected)) {
+                      Scaffold.maybeOf(tileContext)?.closeDrawer();
+                    }
+                  })));
   Widget _badge(BuildContext context, String text, Color color) => Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
@@ -788,29 +683,6 @@ class _OdessyAppState extends State<OdessyApp> {
               fontSize: 9,
               fontWeight: FontWeight.w600,
               letterSpacing: 1)));
-
-  Future<void> _newSession(BuildContext context) async {
-    if (!await _mayNavigate(deferDiscard: true) || !context.mounted) return;
-    final approved = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-              title: const Text('Start a new session?'),
-              content: const Text(
-                  'This closes the current session, clears its conversation and requests cancellation of its running jobs. Completed work is not undone. A new session uses the latest saved model configuration.'),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(context, false),
-                    child: const Text('Cancel')),
-                FilledButton(
-                    onPressed: () => Navigator.pop(context, true),
-                    child: const Text('Start new session')),
-              ],
-            ));
-    if (approved == true && mounted && await _discardApprovedSettings()) {
-      await controller.newSession();
-    }
-  }
-
   Future<void> _connectConfigured(Json spec) async {
     if (_settingsBusy) {
       throw StateError(
@@ -874,19 +746,13 @@ class _OdessyAppState extends State<OdessyApp> {
                   ]));
       return;
     }
-    if (!await _mayNavigate(deferDiscard: true) || !context.mounted) return;
-    final result = await showConnectionDialog(context, credentials,
-        vault: credentialVault,
-        allowDemo: controller.api.isDemo && !widget.localDesktop);
+    if (!await _mayNavigate() || !context.mounted) return;
+    final result = await showConnectionDialog(context, credentials);
     if (!mounted) {
       result?.close();
       return;
     }
     if (result != null) {
-      if (!await _discardApprovedSettings() || !mounted) {
-        result.close();
-        return;
-      }
       await controller.replace(result);
       monitoring.bind(controller.api);
     }
