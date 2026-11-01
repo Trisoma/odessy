@@ -22,8 +22,9 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final key = GlobalKey();
-    await tester.pumpWidget(
-        RepaintBoundary(key: key, child: OdessyApp(api: DemoApi(), setupBackend: SavedComponents())));
+    await tester.pumpWidget(RepaintBoundary(
+        key: key,
+        child: OdessyApp(api: DemoApi(), setupBackend: SavedComponents())));
     await tester.pumpAndSettle();
     Future<void> capture(String name) async {
       final boundary =
@@ -86,7 +87,8 @@ void main() {
         scrollable: find.descendant(
             of: find.byKey(const Key('device-sidebar-scroll')),
             matching: find.byType(Scrollable)));
-    await tester.drag(find.byKey(const Key('device-sidebar-scroll')), const Offset(0, -220));
+    await tester.drag(
+        find.byKey(const Key('device-sidebar-scroll')), const Offset(0, -220));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Installation'));
     await tester.pumpAndSettle();

@@ -46,7 +46,8 @@ class SettingsFormController<T> extends ChangeNotifier {
       loaded = true;
     } catch (_) {
       if (!_disposed) {
-        error = 'Could not load settings. Connect the service and retry; safe updates require a compatible service.';
+        error =
+            'Could not load settings. Connect the service and retry; safe updates require a compatible service.';
       }
     } finally {
       if (!_disposed) {
@@ -83,7 +84,8 @@ class SettingsFormController<T> extends ChangeNotifier {
     } catch (_) {
       if (!_disposed) {
         inspectionRequired = true;
-        error = 'Save or reload failed, or settings changed. No success assumed; draft retained. Reload before retrying.';
+        error =
+            'Save or reload failed, or settings changed. No success assumed; draft retained. Reload before retrying.';
       }
     } finally {
       if (!_disposed) {

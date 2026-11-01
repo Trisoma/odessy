@@ -23,7 +23,7 @@ _DIAGNOSTIC = r'''<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Odessy diagnostics</title>
 <style>body{font:16px system-ui;max-width:960px;margin:2rem auto;padding:0 1rem;background:#10151d;color:#e2e8f0}input,select,textarea,button{font:inherit;margin:.3rem;padding:.5rem;background:#1f2937;color:inherit;border:1px solid #64748b;border-radius:4px}textarea{display:block;width:90%;min-height:5rem}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#18212e;padding:1rem;max-height:30rem;overflow:auto}button{cursor:pointer}label{display:inline-block}#approvals>div,#questions>div{padding:1rem;border:1px solid #eab308;margin:1rem 0}</style>
 <h1>Odessy diagnostics</h1>
-<p>Enter the bearer token printed by the local server. It stays in this page's memory.</p>
+<p>Enter the bearer token configured for the local server. It stays in this page's memory.</p>
 <label>Bearer token <input id="token" type="password" autocomplete="off"></label>
 <button id="connect">Connect / new session</button><p id="status" role="status">Disconnected</p>
 <section id="controls" hidden><label>Coordinator <select id="model"></select></label>

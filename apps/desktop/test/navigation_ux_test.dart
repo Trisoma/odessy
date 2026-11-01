@@ -83,9 +83,11 @@ void main() {
     }
     expect((await api.snapshot('demo')).pending, hasLength(1));
     await tester.scrollUntilVisible(find.text('One detail needed'), 200,
-        scrollable: find.descendant(
-            of: find.byKey(const Key('conversation-transcript')),
-            matching: find.byType(Scrollable)).first);
+        scrollable: find
+            .descendant(
+                of: find.byKey(const Key('conversation-transcript')),
+                matching: find.byType(Scrollable))
+            .first);
     expect(find.text('One detail needed'), findsOneWidget);
     expect(api.creates, 1);
     expect(api.selections, 0);

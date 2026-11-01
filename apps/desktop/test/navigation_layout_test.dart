@@ -43,7 +43,8 @@ void main() {
     addTearDown(t.view.resetDevicePixelRatio);
   }
 
-  Future<void> nav(WidgetTester tester, String label, {bool settle = true}) async {
+  Future<void> nav(WidgetTester tester, String label,
+      {bool settle = true}) async {
     if (find.widgetWithText(ListTile, label).evaluate().isEmpty) {
       await tester.tap(find.byTooltip('Open navigation menu'));
       await tester.pumpAndSettle();
@@ -69,7 +70,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Workspace configuration'), findsOneWidget);
     await nav(tester, 'Settings');
-    await tester.tap(find.byKey(const ValueKey('settings-section-Installation')));
+    await tester
+        .tap(find.byKey(const ValueKey('settings-section-Installation')));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Runtime maintenance'));
     await tester.tap(find.text('Runtime maintenance'));

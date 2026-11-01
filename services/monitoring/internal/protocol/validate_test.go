@@ -124,4 +124,7 @@ func TestHostIDShape(t *testing.T) {
 	if err := ValidateLinkBinary(`C:\Program Files\odessy\odessy-link.exe`); err != nil {
 		t.Fatalf("plain absolute path should be accepted: %v", err)
 	}
+	if err := ValidateLinkBinary(`C:\Users\RUNNER~1\odessy-link.exe`); err != nil {
+		t.Fatalf("Windows short path should be accepted: %v", err)
+	}
 }

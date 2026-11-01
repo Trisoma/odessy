@@ -39,7 +39,7 @@ class LocalDesktopEntryTest(unittest.TestCase):
                                  str(root / 'build/local-desktop/state/collaboration.toml'))
                 self.assertEqual(server.await_args.kwargs['backend'], 'lfm')
                 self.assertTrue(server.await_args.kwargs['watch_stdin'])
-                self.assertFalse(server.await_args.kwargs['print_token'])
+                self.assertEqual(server.await_args.kwargs['token'], 'fixture')
 
     def test_missing_monitor_does_not_inherit_enabled_state(self):
         with tempfile.TemporaryDirectory() as directory, \

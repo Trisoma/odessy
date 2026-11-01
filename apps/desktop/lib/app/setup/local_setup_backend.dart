@@ -10,32 +10,32 @@ import 'session_model_credentials.dart';
 class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
   @override
   SetupBackend createMetadataReader() => LocalSetupBackend(
-    python: python,
-    sourceRoot: sourceRoot,
-    payloadRoot: payloadRoot,
-    timeout: timeout,
-  );
+        python: python,
+        sourceRoot: sourceRoot,
+        payloadRoot: payloadRoot,
+        timeout: timeout,
+      );
   LocalSetupBackend({
     String python = const String.fromEnvironment('ODESSY_SETUP_PYTHON'),
     String sourceRoot = const String.fromEnvironment('ODESSY_SETUP_ROOT'),
     String? executablePath,
     this.payloadRoot = '',
     this.timeout = const Duration(seconds: 30),
-  }) : python = python.isNotEmpty
-           ? python
-           : (_bundledPython(executablePath) ??
-                 _installedPython(executablePath) ??
-                 _sourcePython(
-                   sourceRoot.isNotEmpty
-                       ? sourceRoot
-                       : _sourceRoot(executablePath),
-                 ) ??
-                 'python'),
-       sourceRoot = sourceRoot.isNotEmpty
-           ? sourceRoot
-           : (_bundledRoot(executablePath).isNotEmpty
-                 ? _bundledRoot(executablePath)
-                 : _sourceRoot(executablePath));
+  })  : python = python.isNotEmpty
+            ? python
+            : (_bundledPython(executablePath) ??
+                _installedPython(executablePath) ??
+                _sourcePython(
+                  sourceRoot.isNotEmpty
+                      ? sourceRoot
+                      : _sourceRoot(executablePath),
+                ) ??
+                'python'),
+        sourceRoot = sourceRoot.isNotEmpty
+            ? sourceRoot
+            : (_bundledRoot(executablePath).isNotEmpty
+                ? _bundledRoot(executablePath)
+                : _sourceRoot(executablePath));
 
   // A raw Flutter release remains a checkout build, not a portable distribution.
   // Locate only a verified ancestor project, never an arbitrary working folder.
@@ -93,17 +93,15 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
   static String? _bundledPython([String? executablePath]) {
     final root = _bundledRoot(executablePath);
     if (root.isEmpty) return null;
-    final relative = Platform.isWindows
-        ? 'runtime/python.exe'
-        : 'runtime/bin/python3';
+    final relative =
+        Platform.isWindows ? 'runtime/python.exe' : 'runtime/bin/python3';
     return '$root${Platform.pathSeparator}$relative';
   }
 
   /// An installed version keeps its owned interpreter beside the desktop build.
   static String? _installedPython([String? executablePath]) {
-    final versionDirectory = File(executablePath ?? Platform.resolvedExecutable)
-        .parent
-        .parent;
+    final versionDirectory =
+        File(executablePath ?? Platform.resolvedExecutable).parent.parent;
     final candidate = Platform.isWindows
         ? File(
             '${versionDirectory.path}${Platform.pathSeparator}Scripts${Platform.pathSeparator}python.exe',
@@ -115,8 +113,7 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
   }
 
   static String defaultOutput() {
-    final home =
-        Platform.environment['HOME'] ??
+    final home = Platform.environment['HOME'] ??
         Platform.environment['USERPROFILE'] ??
         Directory.current.path;
     return '$home${Platform.pathSeparator}odessy-setup.json';
@@ -192,16 +189,16 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
       final stderr = _read(process.stderr, 65536);
       process.stdin.add(payload);
       await process.stdin.close();
-      final results =
-          await Future.wait<Object>([
-            stdout,
-            stderr,
-            process.exitCode,
-          ], eagerError: true).timeout(
-            {'manage', 'installer'}.contains(request.operation)
-                ? const Duration(minutes: 12)
-                : timeout,
-          );
+      final results = await Future.wait<Object>([
+        stdout,
+        stderr,
+        process.exitCode,
+      ], eagerError: true)
+          .timeout(
+        {'manage', 'installer'}.contains(request.operation)
+            ? const Duration(minutes: 12)
+            : timeout,
+      );
       if (_closed || epoch != _epoch) throw const SetupCancelled();
       final value = jsonDecode(results[0] as String);
       if (value is! Json) {

@@ -204,11 +204,14 @@ class _SettingsPageState extends State<SettingsPage> {
           context: context,
           builder: (context) => AlertDialog(
                 title: const Text('Discard unsaved changes?'),
-                content: const Text('Your collaboration limit has not been saved.'),
+                content:
+                    const Text('Your collaboration limit has not been saved.'),
                 actions: [
-                  TextButton(onPressed: () => Navigator.pop(context, false),
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, false),
                       child: const Text('Cancel')),
-                  FilledButton(onPressed: () => Navigator.pop(context, true),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
                       child: const Text('Discard changes')),
                 ],
               ));
@@ -244,21 +247,24 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget _narrowPicker(BuildContext context) => KeyedSubtree(
       key: const Key('settings-section-picker'),
       child: DropdownButtonFormField<String>(
-      key: ValueKey('settings-section-picker-$section'),
-      initialValue: section,
-      isExpanded: true,
-      decoration: const InputDecoration(labelText: 'Settings section'),
-      items: [
-        for (final name in SettingsSections.all)
-          DropdownMenuItem(
-              value: name, child: Text(name, overflow: TextOverflow.ellipsis))
-      ],
-      onChanged: (name) {
-        if (name != null) _selectSection(name);
-      }));
+          key: ValueKey('settings-section-picker-$section'),
+          initialValue: section,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Settings section'),
+          items: [
+            for (final name in SettingsSections.all)
+              DropdownMenuItem(
+                  value: name,
+                  child: Text(name, overflow: TextOverflow.ellipsis))
+          ],
+          onChanged: (name) {
+            if (name != null) _selectSection(name);
+          }));
 
   Future<void> _selectSection(String name) async {
-    if (name == section || changingSection || _dialogOpen || form.loading) return;
+    if (name == section || changingSection || _dialogOpen || form.loading) {
+      return;
+    }
     changingSection = true;
     try {
       if (!await confirmSettingsNavigation(context, components) || !mounted) {
@@ -341,8 +347,11 @@ class _SettingsPageState extends State<SettingsPage> {
                         ? 'Connected'
                         : 'Not connected'),
             _row('State', widget.controller.status),
-            _row('Installation', widget.installed
-                ? 'Managed installation' : 'Not managed by this app'),
+            _row(
+                'Installation',
+                widget.installed
+                    ? 'Managed installation'
+                    : 'Not managed by this app'),
             if (widget.onToggleTheme != null)
               Align(
                   alignment: Alignment.centerLeft,
@@ -357,12 +366,17 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
         if (section == SettingsSections.models) ...[
           _card(context, 'Session profiles', [
-            _row('Next-turn model', widget.controller.connected
-                ? widget.controller.session?.selectedProfile ?? 'Unavailable'
-                : 'Unavailable'),
-            _row('Available profiles', widget.controller.connected
-                ? widget.controller.profiles.join('\n')
-                : 'Unavailable'),
+            _row(
+                'Next-turn model',
+                widget.controller.connected
+                    ? widget.controller.session?.selectedProfile ??
+                        'Unavailable'
+                    : 'Unavailable'),
+            _row(
+                'Available profiles',
+                widget.controller.connected
+                    ? widget.controller.profiles.join('\n')
+                    : 'Unavailable'),
             if (widget.controller.api.isDemo)
               const Text('These profiles belong to the demo session.'),
           ]),
@@ -382,14 +396,14 @@ class _SettingsPageState extends State<SettingsPage> {
                   'Choosing a model and endpoint is a reviewed configuration change. It does not start the model or contact a provider.',
                   style: TextStyle(fontSize: 12)),
               Align(
-                    alignment: Alignment.centerLeft,
-                    child: OutlinedButton(
-                        onPressed: widget.onOpenGetStarted == null
-                            ? null
-                            : () => _openStandalone(widget.onOpenGetStarted!),
-                        child: Text(widget.modelConfigured
-                            ? 'Change model'
-                            : 'Configure a model'))),
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton(
+                      onPressed: widget.onOpenGetStarted == null
+                          ? null
+                          : () => _openStandalone(widget.onOpenGetStarted!),
+                      child: Text(widget.modelConfigured
+                          ? 'Change model'
+                          : 'Configure a model'))),
             ]),
           if (widget.onConnectSaved != null)
             Padding(
@@ -403,22 +417,28 @@ class _SettingsPageState extends State<SettingsPage> {
           _card(context, 'Collaboration', [
             _collaborationForm(context),
             OutlinedButton(
-                onPressed: widget.controller.connected && !changedConnection &&
+                onPressed: widget.controller.connected &&
+                        !changedConnection &&
                         widget.controller.api is CollaborationEnabledApi &&
                         !widget.controller.api.isDemo
-                    ? () => _editCollaboration(enablement: true) : null,
+                    ? () => _editCollaboration(enablement: true)
+                    : null,
                 child: const Text('Edit collaboration availability')),
             OutlinedButton(
-                onPressed: widget.controller.connected && !changedConnection &&
+                onPressed: widget.controller.connected &&
+                        !changedConnection &&
                         widget.controller.api is ContextLimitApi &&
                         !widget.controller.api.isDemo
-                    ? () => _editCollaboration() : null,
+                    ? () => _editCollaboration()
+                    : null,
                 child: const Text('Edit context limit')),
             OutlinedButton(
-                onPressed: widget.controller.connected && !changedConnection &&
+                onPressed: widget.controller.connected &&
+                        !changedConnection &&
                         widget.controller.api is RoundLimitApi &&
                         !widget.controller.api.isDemo
-                    ? () => _editCollaboration(rounds: true) : null,
+                    ? () => _editCollaboration(rounds: true)
+                    : null,
                 child: const Text('Edit round limit')),
           ]),
         ],

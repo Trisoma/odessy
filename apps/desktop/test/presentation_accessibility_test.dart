@@ -95,8 +95,8 @@ void main() {
           brightness);
       verifyPaintColors(tester, find.text('Approve once'),
           '${brightness.name}: approval action');
-      verifyPaintColors(
-          tester, find.text('Exact arguments'), '${brightness.name}: request label');
+      verifyPaintColors(tester, find.text('Exact arguments'),
+          '${brightness.name}: request label');
       await mountAccessible(
           tester,
           MonitoringDetails(

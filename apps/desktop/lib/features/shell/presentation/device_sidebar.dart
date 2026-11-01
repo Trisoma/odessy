@@ -172,27 +172,27 @@ class DeviceSidebar extends StatelessWidget {
       ]));
 
   Widget _navigation(BuildContext context, String title, IconData icon,
-          bool selected, VoidCallback? onTap) {
+      bool selected, VoidCallback? onTap) {
     final focus = navigationFocus?.putIfAbsent(
         title, () => FocusNode(debugLabel: 'Navigation: $title'));
     return ListTile(
-        key: ValueKey('nav-$title'),
-        focusNode: focus,
-        selected: selected,
-        dense: true,
-        selectedTileColor:
-            Theme.of(context).colorScheme.primary.withValues(alpha: .12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        leading: Icon(icon, size: 19),
-        title: Text(title),
-        onTap: onTap == null
-            ? null
-            : () {
-                focus?.requestFocus();
-                FocusManager.instance.applyFocusChangesIfNeeded();
-                onTap();
-              },
-      );
+      key: ValueKey('nav-$title'),
+      focusNode: focus,
+      selected: selected,
+      dense: true,
+      selectedTileColor:
+          Theme.of(context).colorScheme.primary.withValues(alpha: .12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      leading: Icon(icon, size: 19),
+      title: Text(title),
+      onTap: onTap == null
+          ? null
+          : () {
+              focus?.requestFocus();
+              FocusManager.instance.applyFocusChangesIfNeeded();
+              onTap();
+            },
+    );
   }
 
   String _label(String value) => switch (value) {

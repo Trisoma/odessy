@@ -43,7 +43,7 @@ def main():
                               ODESSY_MONITOR_BIN=str(monitor), ODESSY_LINK_BIN=str(link))
     from odessy.application.serve import run_server
     asyncio.run(run_server(port=args.port, workspace=workspace, backend='lfm', watch_stdin=True,
-                           token=os.environ['ODESSY_API_TOKEN'], print_token=False))
+                           token=os.environ['ODESSY_API_TOKEN']))
 
 
 if __name__ == '__main__':

@@ -108,9 +108,8 @@ class _GetStartedPageState extends State<GetStartedPage> {
     final savedModel = selection is Map ? selection['model'] : null;
     if (savedModel is Map) {
       final provider = savedModel['provider'];
-      model.text = savedModel['name'] is String
-          ? savedModel['name'] as String
-          : '';
+      model.text =
+          savedModel['name'] is String ? savedModel['name'] as String : '';
       final savedEndpoint = savedModel['endpoint'] is String
           ? savedModel['endpoint'] as String
           : '';
@@ -119,9 +118,8 @@ class _GetStartedPageState extends State<GetStartedPage> {
           : '';
       if (provider == 'ollama' || provider == 'lfm') {
         localProvider = provider as String;
-        _localEndpoint = savedEndpoint.isEmpty
-            ? 'http://127.0.0.1:11434'
-            : savedEndpoint;
+        _localEndpoint =
+            savedEndpoint.isEmpty ? 'http://127.0.0.1:11434' : savedEndpoint;
         localCredential.text = savedCredential;
         _savedChoice = 'local';
       } else if (const {
@@ -170,39 +168,38 @@ class _GetStartedPageState extends State<GetStartedPage> {
   }
 
   Json get _selection => {
-    'role': c.role,
-    if (c.spec['selection'] is Map &&
-        (c.spec['selection'] as Map)['voice'] is Map)
-      'voice': (c.spec['selection'] as Map)['voice'],
-    if (choice == 'local')
-      'model': {
-        'provider': localProvider,
-        'name': model.text.trim(),
-        'endpoint': endpoint.text.trim(),
-        if (localCredential.text.trim().isNotEmpty)
-          'credential_env': localCredential.text.trim(),
-      },
-    if (choice == 'remote')
-      'model': {
-        'provider': preset,
-        'name': model.text.trim(),
-        if (endpoint.text.trim().isNotEmpty) 'endpoint': endpoint.text.trim(),
-        if (credential.text.trim().isNotEmpty)
-          'credential_env': credential.text.trim(),
-      },
-  };
+        'role': c.role,
+        if (c.spec['selection'] is Map &&
+            (c.spec['selection'] as Map)['voice'] is Map)
+          'voice': (c.spec['selection'] as Map)['voice'],
+        if (choice == 'local')
+          'model': {
+            'provider': localProvider,
+            'name': model.text.trim(),
+            'endpoint': endpoint.text.trim(),
+            if (localCredential.text.trim().isNotEmpty)
+              'credential_env': localCredential.text.trim(),
+          },
+        if (choice == 'remote')
+          'model': {
+            'provider': preset,
+            'name': model.text.trim(),
+            if (endpoint.text.trim().isNotEmpty)
+              'endpoint': endpoint.text.trim(),
+            if (credential.text.trim().isNotEmpty)
+              'credential_env': credential.text.trim(),
+          },
+      };
 
   bool get _valid => switch (choice) {
-    'local' =>
-      model.text.trim().isNotEmpty &&
-          endpoint.text.trim().isNotEmpty &&
-          _validCredential(localCredential.text),
-    'remote' =>
-      model.text.trim().isNotEmpty &&
-          (preset != 'custom' || endpoint.text.trim().isNotEmpty) &&
-          _validCredential(credential.text),
-    _ => true,
-  };
+        'local' => model.text.trim().isNotEmpty &&
+            endpoint.text.trim().isNotEmpty &&
+            _validCredential(localCredential.text),
+        'remote' => model.text.trim().isNotEmpty &&
+            (preset != 'custom' || endpoint.text.trim().isNotEmpty) &&
+            _validCredential(credential.text),
+        _ => true,
+      };
 
   bool _validCredential(String value) =>
       value.trim().isEmpty ||
@@ -248,23 +245,23 @@ class _GetStartedPageState extends State<GetStartedPage> {
         primaryLabel: choice == 'later'
             ? 'Configure a model'
             : readyToStart
-            ? 'Start chatting'
-            : 'Save and continue',
+                ? 'Start chatting'
+                : 'Save and continue',
         onPrimary: c.busy
             ? null
             : choice == 'later'
-            ? _chooseModel
-            : readyToStart
-            ? widget.onStart
-            : (_valid ? _save : null),
+                ? _chooseModel
+                : readyToStart
+                    ? widget.onStart
+                    : (_valid ? _save : null),
         secondaryLabel: 'Configure later',
         onSecondary: c.busy ? null : () => _selectChoice('later'),
         busy: c.busy,
         note: readyToStart
             ? 'Start chatting is available because a model is configured and the local coordinator is ready.'
             : configured
-            ? 'Changes apply on the next launch; the current session keeps its configuration.'
-            : 'No model is downloaded and no provider is contacted until you ask.',
+                ? 'Changes apply on the next launch; the current session keeps its configuration.'
+                : 'No model is downloaded and no provider is contacted until you ask.',
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -282,7 +279,8 @@ class _GetStartedPageState extends State<GetStartedPage> {
           else ...[
             SetupSection(
               title: 'Where should the model run?',
-              description: 'Choose an existing local model, a compatible remote endpoint, or finish later. Nothing is pulled automatically.',
+              description:
+                  'Choose an existing local model, a compatible remote endpoint, or finish later. Nothing is pulled automatically.',
               child: SegmentedButton<String>(
                 key: _modelChoiceKey,
                 segments: const [
@@ -303,20 +301,21 @@ class _GetStartedPageState extends State<GetStartedPage> {
                   ),
                 ],
                 selected: {choice},
-                onSelectionChanged: c.busy
-                    ? null
-                    : (value) => _selectChoice(value.first),
+                onSelectionChanged:
+                    c.busy ? null : (value) => _selectChoice(value.first),
               ),
             ),
             if (choice == 'local') _local(context),
             if (choice == 'remote') _remote(context),
             if (choice == 'later')
               const SetupMessage(
-                text: 'Model setup is deferred. Odessy stays open, and no model or service is started. Choose Configure a model whenever you are ready, use Maintenance and repair, or use Close to exit.',
+                text:
+                    'Model setup is deferred. Odessy stays open, and no model or service is started. Choose Configure a model whenever you are ready, use Maintenance and repair, or use Close to exit.',
               ),
             SetupSection(
               title: 'Workspace',
-              description: 'Default: Documents/Odessy on Windows, or ~/Odessy on Linux/macOS. Use Browse to choose another project folder. It stays separate from installed application files.',
+              description:
+                  'Default: Documents/Odessy on Windows, or ~/Odessy on Linux/macOS. Use Browse to choose another project folder. It stays separate from installed application files.',
               child: PathField(
                 fieldKey: const Key('get-started-workspace'),
                 controller: workspace,
@@ -335,61 +334,64 @@ class _GetStartedPageState extends State<GetStartedPage> {
   }
 
   Widget _local(BuildContext context) => SetupSection(
-    title: 'On this computer',
-    description: 'Odessy reads the model list from the endpoint you name. It does not install or download anything.',
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        DropdownButtonFormField<String>(
-          initialValue: localProvider,
-          decoration: const InputDecoration(labelText: 'Local backend'),
-          items: const [
-            DropdownMenuItem(value: 'ollama', child: Text('Ollama')),
-            DropdownMenuItem(value: 'lfm', child: Text('LFM')),
-          ],
-          onChanged: c.busy
-              ? null
-              : (value) => setState(() => localProvider = value!),
-        ),
-        Row(
+        title: 'On this computer',
+        description:
+            'Odessy reads the model list from the endpoint you name. It does not install or download anything.',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: PathField(
-                fieldKey: const Key('get-started-endpoint'),
-                controller: endpoint,
-                label: 'Ollama endpoint',
-                hint: 'http://127.0.0.1:11434',
-                enabled: !c.busy,
-                onChanged: (_) => setState(() {}),
+            DropdownButtonFormField<String>(
+              initialValue: localProvider,
+              decoration: const InputDecoration(labelText: 'Local backend'),
+              items: const [
+                DropdownMenuItem(value: 'ollama', child: Text('Ollama')),
+                DropdownMenuItem(value: 'lfm', child: Text('LFM')),
+              ],
+              onChanged: c.busy
+                  ? null
+                  : (value) => setState(() => localProvider = value!),
+            ),
+            Row(
+              children: [
+                Expanded(
+                  child: PathField(
+                    fieldKey: const Key('get-started-endpoint'),
+                    controller: endpoint,
+                    label: 'Ollama endpoint',
+                    hint: 'http://127.0.0.1:11434',
+                    enabled: !c.busy,
+                    onChanged: (_) => setState(() {}),
+                  ),
+                ),
+              ],
+            ),
+            OutlinedButton.icon(
+              key: const Key('get-started-discover'),
+              onPressed: c.busy || c.discovering
+                  ? null
+                  : () => c.discover(endpoint: endpoint.text.trim()),
+              icon: const Icon(Icons.search, size: 18),
+              label: Text(
+                c.discovering
+                    ? 'Reading the endpoint…'
+                    : 'Find installed models',
+              ),
+            ),
+            const SizedBox(height: OdessyTokens.spaceMedium),
+            _models(context),
+            const SizedBox(height: OdessyTokens.spaceMedium),
+            TextField(
+              controller: localCredential,
+              enabled: !c.busy,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Local credential environment variable (optional)',
+                helperText: 'Variable name only; no token is stored here.',
               ),
             ),
           ],
         ),
-        OutlinedButton.icon(
-          key: const Key('get-started-discover'),
-          onPressed: c.busy || c.discovering
-              ? null
-              : () => c.discover(endpoint: endpoint.text.trim()),
-          icon: const Icon(Icons.search, size: 18),
-          label: Text(
-            c.discovering ? 'Reading the endpoint…' : 'Find installed models',
-          ),
-        ),
-        const SizedBox(height: OdessyTokens.spaceMedium),
-        _models(context),
-        const SizedBox(height: OdessyTokens.spaceMedium),
-        TextField(
-          controller: localCredential,
-          enabled: !c.busy,
-          onChanged: (_) => setState(() {}),
-          decoration: const InputDecoration(
-            labelText: 'Local credential environment variable (optional)',
-            helperText: 'Variable name only; no token is stored here.',
-          ),
-        ),
-      ],
-    ),
-  );
+      );
 
   Widget _models(BuildContext context) {
     final list = c.discovery['models'];
@@ -401,17 +403,15 @@ class _GetStartedPageState extends State<GetStartedPage> {
     if (names.isNotEmpty) {
       return DropdownButtonFormField<String>(
         key: const Key('get-started-model-list'),
-        initialValue: names.contains(model.text.trim())
-            ? model.text.trim()
-            : null,
+        initialValue:
+            names.contains(model.text.trim()) ? model.text.trim() : null,
         decoration: const InputDecoration(labelText: 'Installed model'),
         items: [
           for (final name in names)
             DropdownMenuItem(value: name, child: Text(name)),
         ],
-        onChanged: c.busy
-            ? null
-            : (value) => setState(() => model.text = value ?? ''),
+        onChanged:
+            c.busy ? null : (value) => setState(() => model.text = value ?? ''),
       );
     }
     return TextField(
@@ -425,73 +425,77 @@ class _GetStartedPageState extends State<GetStartedPage> {
         helperText: c.discovery['status'] == 'empty'
             ? 'The endpoint answered but has no models. Odessy will not download one.'
             : c.discovery['status'] == 'unreachable'
-            ? 'Ollama is not answering at this address. Start it, or choose a remote endpoint.'
-            : 'Type the exact name of a model you already have.',
+                ? 'Ollama is not answering at this address. Start it, or choose a remote endpoint.'
+                : 'Type the exact name of a model you already have.',
       ),
     );
   }
 
   Widget _remote(BuildContext context) => SetupSection(
-    title: 'Remote or cloud',
-    description: 'Choose a supported provider preset or a compatible endpoint, then name the model. Authentication is referenced by environment-variable name only; no key is entered here.',
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        DropdownButtonFormField<String>(
-          initialValue: preset,
-          decoration: const InputDecoration(labelText: 'Provider'),
-          items: const [
-            DropdownMenuItem(value: 'openai', child: Text('OpenAI-compatible')),
-            DropdownMenuItem(value: 'claude', child: Text('Claude')),
-            DropdownMenuItem(value: 'deepseek', child: Text('DeepSeek')),
-            DropdownMenuItem(value: 'qwen', child: Text('Qwen')),
-            DropdownMenuItem(value: 'kimi', child: Text('Kimi')),
-            DropdownMenuItem(value: 'custom', child: Text('Custom endpoint')),
+        title: 'Remote or cloud',
+        description:
+            'Choose a supported provider preset or a compatible endpoint, then name the model. Authentication is referenced by environment-variable name only; no key is entered here.',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: preset,
+              decoration: const InputDecoration(labelText: 'Provider'),
+              items: const [
+                DropdownMenuItem(
+                    value: 'openai', child: Text('OpenAI-compatible')),
+                DropdownMenuItem(value: 'claude', child: Text('Claude')),
+                DropdownMenuItem(value: 'deepseek', child: Text('DeepSeek')),
+                DropdownMenuItem(value: 'qwen', child: Text('Qwen')),
+                DropdownMenuItem(value: 'kimi', child: Text('Kimi')),
+                DropdownMenuItem(
+                    value: 'custom', child: Text('Custom endpoint')),
+              ],
+              onChanged: c.busy
+                  ? null
+                  : (value) => setState(() {
+                        preset = value ?? 'openai';
+                        model.clear();
+                      }),
+            ),
+            const SizedBox(height: OdessyTokens.spaceMedium),
+            ModelPicker(
+              catalog: catalog,
+              provider: preset,
+              value: model,
+              endpoint: endpoint.text.trim(),
+              credential: credential.text.trim(),
+              enabled: !c.busy,
+              fieldKey: const Key('get-started-remote-model'),
+              onChanged: () => setState(() {}),
+            ),
+            const SizedBox(height: OdessyTokens.spaceMedium),
+            TextField(
+              key: const Key('get-started-remote-endpoint'),
+              controller: endpoint,
+              onChanged: (_) => setState(() {}),
+              enabled: !c.busy,
+              decoration: const InputDecoration(
+                labelText: 'Endpoint (optional for presets)',
+                hintText: 'https://…',
+              ),
+            ),
+            const SizedBox(height: OdessyTokens.spaceMedium),
+            TextField(
+              key: const Key('get-started-credential'),
+              controller: credential,
+              onChanged: (_) => setState(() {}),
+              enabled: !c.busy,
+              decoration: const InputDecoration(
+                labelText: 'Credential environment variable (optional)',
+                hintText: 'ODESSY_CLOUD_API_KEY',
+                helperText:
+                    'The variable name only. Keys stay in the environment; they are never stored in settings.',
+              ),
+            ),
           ],
-          onChanged: c.busy
-              ? null
-              : (value) => setState(() {
-                  preset = value ?? 'openai';
-                  model.clear();
-                }),
         ),
-        const SizedBox(height: OdessyTokens.spaceMedium),
-        ModelPicker(
-          catalog: catalog,
-          provider: preset,
-          value: model,
-          endpoint: endpoint.text.trim(),
-          credential: credential.text.trim(),
-          enabled: !c.busy,
-          fieldKey: const Key('get-started-remote-model'),
-          onChanged: () => setState(() {}),
-        ),
-        const SizedBox(height: OdessyTokens.spaceMedium),
-        TextField(
-          key: const Key('get-started-remote-endpoint'),
-          controller: endpoint,
-          onChanged: (_) => setState(() {}),
-          enabled: !c.busy,
-          decoration: const InputDecoration(
-            labelText: 'Endpoint (optional for presets)',
-            hintText: 'https://…',
-          ),
-        ),
-        const SizedBox(height: OdessyTokens.spaceMedium),
-        TextField(
-          key: const Key('get-started-credential'),
-          controller: credential,
-          onChanged: (_) => setState(() {}),
-          enabled: !c.busy,
-          decoration: const InputDecoration(
-            labelText: 'Credential environment variable (optional)',
-            hintText: 'ODESSY_CLOUD_API_KEY',
-            helperText: 'The variable name only. Keys stay in the environment; they are never stored in settings.',
-          ),
-        ),
-      ],
-    ),
-  );
+      );
 
   Widget _configured(BuildContext context, InstalledManageController c) =>
       SetupSection(
@@ -556,7 +560,8 @@ class _GetStartedPageState extends State<GetStartedPage> {
     ];
     return SetupSection(
       title: 'Setup checklist',
-      description: 'This is configuration state, not a promise that a model reply will succeed.',
+      description:
+          'This is configuration state, not a promise that a model reply will succeed.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -587,56 +592,57 @@ class _GetStartedPageState extends State<GetStartedPage> {
   }
 
   Widget _voiceConfiguration() => Container(
-    key: _voiceKey,
-    child: SetupSection(
-      title: 'Voice configuration',
-      description: 'Select existing Whisper and Kokoro files. Saving validates configuration; it does not download assets or start microphone capture.',
-      child: Column(
-        children: [
-          SwitchListTile(
-            title: const Text('Enable existing voice assets'),
-            value: voiceEnabled,
-            onChanged: c.busy
-                ? null
-                : (value) => setState(() => voiceEnabled = value),
-          ),
-          for (final entry in voicePaths.entries)
-            PathField(
-              controller: entry.value,
-              label: entry.key.replaceAll('_', ' '),
-              enabled: !c.busy,
-              onBrowse: () async {
-                final selected = await widget.picker.pickFile(
-                  initial: entry.value.text,
-                );
-                if (mounted && selected != null) {
-                  setState(() => entry.value.text = selected);
-                }
-              },
-            ),
-          FilledButton(
-            onPressed: c.busy
-                ? null
-                : () async {
-                    final existing = c.spec['selection'];
-                    await c.reviewConfiguration({
-                      ...?existing is Json ? existing : null,
-                      'role': c.role,
-                      'voice': {
-                        'enabled': voiceEnabled,
-                        for (final entry in voicePaths.entries)
-                          entry.key: entry.value.text.trim(),
-                      },
-                    }, workspace.text.trim());
-                    if (c.canConfirm &&
-                        c.reviewedAction == 'package-configure-review') {
-                      await c.confirm();
+        key: _voiceKey,
+        child: SetupSection(
+          title: 'Voice configuration',
+          description:
+              'Select existing Whisper and Kokoro files. Saving validates configuration; it does not download assets or start microphone capture.',
+          child: Column(
+            children: [
+              SwitchListTile(
+                title: const Text('Enable existing voice assets'),
+                value: voiceEnabled,
+                onChanged: c.busy
+                    ? null
+                    : (value) => setState(() => voiceEnabled = value),
+              ),
+              for (final entry in voicePaths.entries)
+                PathField(
+                  controller: entry.value,
+                  label: entry.key.replaceAll('_', ' '),
+                  enabled: !c.busy,
+                  onBrowse: () async {
+                    final selected = await widget.picker.pickFile(
+                      initial: entry.value.text,
+                    );
+                    if (mounted && selected != null) {
+                      setState(() => entry.value.text = selected);
                     }
                   },
-            child: const Text('Save voice configuration'),
+                ),
+              FilledButton(
+                onPressed: c.busy
+                    ? null
+                    : () async {
+                        final existing = c.spec['selection'];
+                        await c.reviewConfiguration({
+                          ...?existing is Json ? existing : null,
+                          'role': c.role,
+                          'voice': {
+                            'enabled': voiceEnabled,
+                            for (final entry in voicePaths.entries)
+                              entry.key: entry.value.text.trim(),
+                          },
+                        }, workspace.text.trim());
+                        if (c.canConfirm &&
+                            c.reviewedAction == 'package-configure-review') {
+                          await c.confirm();
+                        }
+                      },
+                child: const Text('Save voice configuration'),
+              ),
+            ],
           ),
-        ],
-      ),
-    ),
-  );
+        ),
+      );
 }

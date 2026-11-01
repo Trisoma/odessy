@@ -36,8 +36,10 @@ void main() {
       frame.dispose();
     }
 
-    await tester.pumpWidget(
-        RepaintBoundary(key: key, child: OdessyApp(api: SettingsFixtureApi(), setupBackend: SavedComponents())));
+    await tester.pumpWidget(RepaintBoundary(
+        key: key,
+        child: OdessyApp(
+            api: SettingsFixtureApi(), setupBackend: SavedComponents())));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(ListTile, 'Settings'));
     await tester.pumpAndSettle();

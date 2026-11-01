@@ -122,8 +122,12 @@ class _PairingPageState extends State<PairingPage> {
                                 ? null
                                 : () {
                                     final matches = c.peers?.where(
-                                        (candidate) => candidate.alias == peer['alias']);
-                                    if (matches == null || matches.length != 1) return;
+                                        (candidate) =>
+                                            candidate.alias == peer['alias']);
+                                    if (matches == null ||
+                                        matches.length != 1) {
+                                      return;
+                                    }
                                     final e = editors.putIfAbsent(
                                         'alias', () => TextEditingController());
                                     e.text = '${peer['alias']}';

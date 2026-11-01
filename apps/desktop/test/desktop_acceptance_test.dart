@@ -16,14 +16,45 @@ class AcceptanceBackend implements SetupBackend {
   @override
   Future<SetupReply> execute(SetupRequest request) async {
     requests.add(request);
-    final p=request.parameters;
-    final result=request.operation=='component-probe'?{'status':'configured_unverified','message':'Missing microphone permission. Text remains available.'}:
-      p['review']==true?{'plan_id':'exact-review','operation':p['action'],'arguments':['peers','revoke',p['alias']]}:
-      {'operation':'list','link':'fixture-link','peers':{'grant_revision':4,'peers':[
-        {'alias':'laptop','installation_id':'id-one','fingerprint_sha256':'a'*64,'revoked':true,'capability_mcp':false,'capability_telemetry':false},
-        {'alias':'edge','installation_id':'id-two','fingerprint_sha256':'b'*64,'revoked':false,'capability_mcp':false,'capability_telemetry':true},
-      ]}};
-    return SetupReply.fromJson({'id':request.id,'status':'ok','result':result},request.id);
+    final p = request.parameters;
+    final result = request.operation == 'component-probe'
+        ? {
+            'status': 'configured_unverified',
+            'message': 'Missing microphone permission. Text remains available.'
+          }
+        : p['review'] == true
+            ? {
+                'plan_id': 'exact-review',
+                'operation': p['action'],
+                'arguments': ['peers', 'revoke', p['alias']]
+              }
+            : {
+                'operation': 'list',
+                'link': 'fixture-link',
+                'peers': {
+                  'grant_revision': 4,
+                  'peers': [
+                    {
+                      'alias': 'laptop',
+                      'installation_id': 'id-one',
+                      'fingerprint_sha256': 'a' * 64,
+                      'revoked': true,
+                      'capability_mcp': false,
+                      'capability_telemetry': false
+                    },
+                    {
+                      'alias': 'edge',
+                      'installation_id': 'id-two',
+                      'fingerprint_sha256': 'b' * 64,
+                      'revoked': false,
+                      'capability_mcp': false,
+                      'capability_telemetry': true
+                    },
+                  ]
+                }
+              };
+    return SetupReply.fromJson(
+        {'id': request.id, 'status': 'ok', 'result': result}, request.id);
   }
 
   @override

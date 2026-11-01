@@ -315,7 +315,8 @@ class _OdessyAppState extends State<OdessyApp> {
       }
       if (!mounted || !context.mounted) return false;
       if (!await confirmFormNavigation(
-          context, collaborationForms[controller.api], deferDiscard: true)) {
+          context, collaborationForms[controller.api],
+          deferDiscard: true)) {
         return false;
       }
       return deferDiscard || await _discardApprovedSettings();

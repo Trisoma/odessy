@@ -16,7 +16,11 @@ abstract final class DesktopNavigation {
   static const settings =
       DesktopDestination('Settings', 'Settings', Icons.tune);
   static String parent(String route) => switch (route) {
-        'Monitor' || 'Pairing' || 'Local pairing' || 'Device details' => 'Devices',
+        'Monitor' ||
+        'Pairing' ||
+        'Local pairing' ||
+        'Device details' =>
+          'Devices',
         'Installer' ||
         'Maintenance' ||
         'Manage installation' ||
