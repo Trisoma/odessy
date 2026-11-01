@@ -34,6 +34,16 @@ import { laptopTerminalRunInputSchema } from "../src/tools/index.js";
 
 const schema = z.object(laptopTerminalRunInputSchema);
 
+test("oversized path collections stop before accumulating element errors", () => {
+  for (const field of ["hidden_paths", "extra_writable"]) {
+    const parsed = schema.safeParse({ command: "pwd", [field]: Array(1024).fill(0) });
+    assert.ok(!parsed.success);
+    assert.equal(parsed.error.issues.length, 1);
+    assert.equal(parsed.error.issues[0]?.code, "too_big");
+    assert.deepEqual(parsed.error.issues[0]?.path, [field]);
+  }
+});
+
 /** A backend that confines every mode except the one that provides no confinement. */
 class FakeConfiningProvider implements ExecutionProvider {
   readonly providerId = "fake-confining";

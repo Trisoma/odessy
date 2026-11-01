@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import hashlib
+import ipaddress
 import json
 import os
 import platform
@@ -168,6 +169,17 @@ def check_directories(runtime: Path, models: Path, state: Path):
                 raise ValueError('Runtime, model and state directories must be separate, without nesting.')
 
 
+def _loopback_bind_address(host, port):
+    """Construct a numeric socket address from a verified loopback IP only."""
+    address = ipaddress.ip_address(host)
+    if not address.is_loopback:
+        raise ValueError('The endpoint probe requires a literal loopback IP.')
+    family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+    # Reconstruct from packed IP bytes: the bind target cannot be an empty
+    # hostname or a wildcard, and alternative 127/8 endpoints stay unchanged.
+    return family, (socket.inet_ntop(family, address.packed), port)
+
+
 @contextlib.contextmanager
 def managed_service(runtime: Path, models: Path, state: Path, endpoint: str, model: str, *,
                     resources_path=DEFAULT_RESOURCES, popen=subprocess.Popen,
@@ -182,15 +194,12 @@ def managed_service(runtime: Path, models: Path, state: Path, endpoint: str, mod
         return
     # An occupied non-Ollama port must never be taken over or stopped.
     url = urlsplit(endpoint)
-    family = socket.AF_INET6 if ':' in url.hostname else socket.AF_INET
+    family, bind_address = _loopback_bind_address(url.hostname, url.port)
     with socket.socket(family, socket.SOCK_STREAM) as probe:
         if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
             probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         try:
-            # local_endpoint already rejects non-loopback endpoints. Keep the
-            # bind target explicit as well, never allowing None or an empty host.
-            bind_host = url.hostname or ('::1' if family == socket.AF_INET6 else '127.0.0.1')
-            probe.bind((bind_host, url.port))
+            probe.bind(bind_address)
         except OSError as error:
             raise ValueError('The endpoint port is occupied; preserve it and choose another --endpoint.') from error
     manifest, resources = load_release(resources_path)
