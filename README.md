@@ -140,7 +140,7 @@ CI-tested, with no GUI acceptance.
 
 **Then, for either route:**
 
-1. Start the backend and leave the window open:
+1. Set a private token, then start the backend and leave the window open:
 
    ```powershell
    $env:ODESSY_API_TOKEN = python -c "import secrets; print(secrets.token_urlsafe(32))"

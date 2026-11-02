@@ -16,7 +16,11 @@ abstract final class DesktopNavigation {
   static const settings =
       DesktopDestination('Settings', 'Settings', Icons.tune);
   static String parent(String route) => switch (route) {
-        'Monitor' || 'Pairing' => 'Devices',
+        'Monitor' ||
+        'Pairing' ||
+        'Local pairing' ||
+        'Device details' =>
+          'Devices',
         'Installer' ||
         'Maintenance' ||
         'Manage installation' ||
@@ -32,6 +36,7 @@ abstract final class DesktopNavigation {
         'Installer' => 'Install Odessy',
         'Maintenance' => 'Installation & recovery',
         'Pairing' => 'Connect a device',
+        'Local pairing' => 'Local pairing tools',
         'Setup' => 'Computer configuration',
         _ => route,
       };
