@@ -106,6 +106,7 @@ class NodeToolServerHttp(AbstractAsyncContextManager):
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=self._stderr,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         self.url = f"http://{self._host}:{port}/mcp"
         try:

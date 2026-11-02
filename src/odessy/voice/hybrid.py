@@ -10,7 +10,7 @@ The rule that shapes it: **audio failures degrade audio, not the session**.
 * A capture, wake or speech-recognition failure disables voice *input* and reports the
   stage. Typed turns keep working.
 * A synthesis or playback failure disables speech *output*, once. The answer that was
-  already computed is Codex's to display; nothing here replays a turn.
+  already computed remains available to display; nothing here replays a turn.
 * Nothing is retried in a loop. Reopening hardware happens on an explicit
   ``set_input_enabled(True)`` (``/voice``) or ``set_output_enabled(True)``.
 
@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import shutil
+import sys
 import uuid
 from dataclasses import dataclass, field
 from importlib.util import find_spec
@@ -34,6 +35,7 @@ from typing import Any, Awaitable, Callable, cast
 from odessy.voice.capture import (
     CommandAudioStream,
     CommandPlayer,
+    WindowsNativePlayer,
     player_available,
     recorder_available,
 )
@@ -621,6 +623,11 @@ class HybridAudioAdapter:
             elif self._native_audio():
                 from .native_audio import player
                 self._player = player(self.config)
+            elif self.config.audio_player == 'windows-native':
+                if sys.platform != 'win32' or self.config.audio_output_device:
+                    self._fail_output(PLAYBACK, 'Native Windows playback supports the default output device only')
+                    return False
+                self._player = WindowsNativePlayer()
             elif not player_available(self.config.audio_player):
                 self._fail_output(
                     PLAYBACK,

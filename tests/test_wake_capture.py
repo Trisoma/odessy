@@ -1,7 +1,8 @@
 from pathlib import Path
 from threading import Event, Thread
+import pytest
 
-from odessy.voice.capture import CommandPlayer
+from odessy.voice.capture import AudioStreamError, CommandPlayer, WindowsNativePlayer
 
 
 class PlaybackProcess:
@@ -84,3 +85,48 @@ def test_newer_playback_owns_process_when_old_start_finishes(monkeypatch):
     assert not worker.is_alive()
     assert old.terminated
     assert not cue.terminated
+
+
+def test_native_player_uses_owned_python_process_and_reports_failure(monkeypatch):
+    import sys
+    calls = []
+    class FailedProcess(PlaybackProcess):
+        def wait(self, timeout=None):
+            return 1
+    def popen(argv, **kwargs):
+        calls.append(argv)
+        return FailedProcess()
+    monkeypatch.setattr('odessy.voice.capture.subprocess.Popen', popen)
+    with pytest.raises(AudioStreamError, match='playback failed'):
+        WindowsNativePlayer().play(Path('reply.wav'))
+    assert calls == [[sys.executable, '-m', 'odessy.voice.windows_playback', 'reply.wav']]
+
+
+def test_native_playback_uses_default_device_and_propagates_errors(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from odessy.voice import windows_playback
+    calls = []
+    def play(path, flags):
+        calls.append((path, flags))
+    monkeypatch.setattr(sys, 'argv', ['windows_playback', 'reply.wav'])
+    monkeypatch.setitem(sys.modules, 'winsound', SimpleNamespace(
+        PlaySound=play, SND_FILENAME=1, SND_NODEFAULT=2))
+    monkeypatch.setattr(sys, 'platform', 'win32')
+    assert windows_playback.main() == 0
+    assert calls == [('reply.wav', 3)]
+    def fail(*args):
+        raise RuntimeError('device unavailable')
+    monkeypatch.setitem(sys.modules, 'winsound', SimpleNamespace(
+        PlaySound=fail, SND_FILENAME=1, SND_NODEFAULT=2))
+    assert windows_playback.main() == 1
+
+
+def test_windows_doctor_does_not_claim_native_output_was_tested(monkeypatch):
+    from types import SimpleNamespace
+    from odessy.config import doctor
+    monkeypatch.setattr(doctor.sys, 'platform', 'win32')
+    probes = SimpleNamespace(which=lambda _: None, path_exists=lambda _: True)
+    checks = doctor._voice_checks({}, probes)
+    assert any('native Windows default audio output has not been tested' in c.summary for c in checks)
+    assert not any('audio program not found: aplay' in c.summary for c in checks)

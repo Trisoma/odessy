@@ -7,7 +7,11 @@ import contextlib
 import hmac
 import inspect
 import json
+import math
+import os
+import re
 import secrets
+from dataclasses import asdict
 import time
 from contextlib import asynccontextmanager
 
@@ -19,7 +23,7 @@ _DIAGNOSTIC = r'''<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Odessy diagnostics</title>
 <style>body{font:16px system-ui;max-width:960px;margin:2rem auto;padding:0 1rem;background:#10151d;color:#e2e8f0}input,select,textarea,button{font:inherit;margin:.3rem;padding:.5rem;background:#1f2937;color:inherit;border:1px solid #64748b;border-radius:4px}textarea{display:block;width:90%;min-height:5rem}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#18212e;padding:1rem;max-height:30rem;overflow:auto}button{cursor:pointer}label{display:inline-block}#approvals>div,#questions>div{padding:1rem;border:1px solid #eab308;margin:1rem 0}</style>
 <h1>Odessy diagnostics</h1>
-<p>Enter the bearer token printed by the local server. It stays in this page's memory.</p>
+<p>Enter the bearer token configured for the local server. It stays in this page's memory.</p>
 <label>Bearer token <input id="token" type="password" autocomplete="off"></label>
 <button id="connect">Connect / new session</button><p id="status" role="status">Disconnected</p>
 <section id="controls" hidden><label>Coordinator <select id="model"></select></label>
@@ -96,6 +100,7 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.auth_token = token if token is not None else secrets.token_urlsafe(32)
+    app.state.runtime_instance_id = secrets.token_urlsafe(24)
     if not isinstance(app.state.auth_token, str) or not app.state.auth_token:
         raise ValueError('Bearer token must be a nonempty string')
     from odessy.monitoring.api import register as register_monitoring
@@ -107,6 +112,8 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     app.state.config = config
     app.state.settings = settings
     app.state.profiles = profiles
+    settings_lock = asyncio.Lock()
+    settings_revision = 0
     app.state.runtime_configuration = json.loads(json.dumps(runtime_configuration))
     app.state.service_instance_id = secrets.token_hex(16)
     restart_reservation = None
@@ -180,6 +187,7 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
 
     def snapshot(controller):
         return {'id': controller.id, 'selected_profile': controller.selected_profile,
+                'available_profiles': list(controller.profiles),
                 'active_profile': controller.active_profile, 'running': controller.running,
                 'history': public(controller.memory.turns),
                 'pending_approvals': controller.pending_approvals,
@@ -234,19 +242,460 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         current = app.state.config
         return current.public_dict() if current is not None else public(app.state.settings or {})
 
+    @app.get('/v1/runtime-settings')
+    async def get_runtime_settings():
+        from odessy.config.schema import SETTINGS
+        # Never expose values: even non-secret fields can contain credentials,
+        # private paths or command-line arguments. This is process state, not a
+        # claim about which file or inherited environment supplied the value.
+        return {'schema_version': 1, 'instance_id': app.state.runtime_instance_id,
+                'settings': [
+                    {'name': item.name, 'kind': item.kind, 'summary': item.summary,
+                     'configured': bool(os.environ.get(item.name)),
+                     'sensitive': item.kind == 'secret', 'internal': item.internal,
+                     'editable': False}
+                    for item in sorted(SETTINGS, key=lambda item: item.name)]}
+
+    async def save_coordinated(data):
+        # The caller holds settings_lock. A disconnected client must not release
+        # that lock while the worker can still replace the file behind our back.
+        nonlocal settings_revision
+        from odessy.collaboration.config import save_config
+        task = asyncio.create_task(asyncio.to_thread(save_config, data, path=config_path))
+        cancelled = False
+        while True:
+            try:
+                saved = await asyncio.shield(task)
+                break
+            except asyncio.CancelledError:
+                cancelled = True
+        app.state.config = saved
+        settings_revision += 1
+        if cancelled:
+            raise asyncio.CancelledError
+        return saved
+
     @app.put('/v1/settings')
     async def put_settings(request: Request):
-        from odessy.collaboration.config import save_config
         data = await body(request)
-        current = app.state.config
-        if 'settings' not in data and 'participants' not in data:
-            data = {'settings': data, 'participants': current.public_dict()['participants'] if current else {}}
-        try:
-            saved = await asyncio.to_thread(save_config, data, path=config_path)
-        except (ValueError, TypeError) as exc:
-            raise HTTPException(400, str(exc))
-        app.state.config = saved
-        return saved.public_dict()
+        async with settings_lock:
+            current = app.state.config
+            if 'settings' not in data and 'participants' not in data:
+                data = {'settings': data, 'participants': current.public_dict()['participants'] if current else {}}
+            try:
+                saved = await save_coordinated(data)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(400, str(exc))
+            return saved.public_dict()
+
+    @app.get('/v1/settings/consultation-limit')
+    async def get_consultation_limit():
+        async with settings_lock:
+            if app.state.config is None:
+                raise HTTPException(503, 'Collaboration settings unavailable')
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'max_consultations': app.state.config.settings.max_consultations}
+
+    @app.put('/v1/settings/consultation-limit')
+    async def put_consultation_limit(request: Request):
+        data = await body(request)
+        if (set(data) != {'instance_id', 'revision', 'max_consultations'}
+                or not isinstance(data['instance_id'], str)
+                or type(data['revision']) is not int or data['revision'] < 0
+                or type(data['max_consultations']) is not int
+                or not 0 <= data['max_consultations'] <= 32):
+            raise HTTPException(400, 'Invalid settings update')
+        async with settings_lock:
+            if app.state.config is None:
+                raise HTTPException(503, 'Collaboration settings unavailable')
+            if (data['instance_id'] != app.state.runtime_instance_id
+                    or data['revision'] != settings_revision):
+                raise HTTPException(409, 'Settings changed; reload before saving')
+            document = app.state.config.public_dict()
+            document['settings']['max_consultations'] = data['max_consultations']
+            try:
+                saved = await save_coordinated(document)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(400, str(exc))
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'max_consultations': saved.settings.max_consultations}
+
+    @app.get('/v1/settings/context-limit')
+    async def get_context_limit():
+        async with settings_lock:
+            if app.state.config is None:
+                raise HTTPException(503, 'Collaboration settings unavailable')
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'max_context_chars': app.state.config.settings.max_context_chars}
+
+    @app.put('/v1/settings/context-limit')
+    async def put_context_limit(request: Request):
+        data = await body(request)
+        if (set(data) != {'instance_id', 'revision', 'max_context_chars'}
+                or not isinstance(data['instance_id'], str)
+                or type(data['revision']) is not int or data['revision'] < 0
+                or type(data['max_context_chars']) is not int
+                or not 1 <= data['max_context_chars'] <= 100_000):
+            raise HTTPException(400, 'Invalid context limit')
+        async with settings_lock:
+            if app.state.config is None:
+                raise HTTPException(503, 'Collaboration settings unavailable')
+            if data['instance_id'] != app.state.runtime_instance_id or data['revision'] != settings_revision:
+                raise HTTPException(409, 'Settings changed; reload before saving')
+            document = app.state.config.public_dict()
+            document['settings']['max_context_chars'] = data['max_context_chars']
+            try:
+                saved = await save_coordinated(document)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(400, str(exc))
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'max_context_chars': saved.settings.max_context_chars}
+
+    @app.get('/v1/settings/round-limit')
+    async def get_round_limit():
+        async with settings_lock:
+            if app.state.config is None:
+                raise HTTPException(503, 'Collaboration settings unavailable')
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'max_rounds': app.state.config.settings.max_rounds}
+
+    @app.put('/v1/settings/round-limit')
+    async def put_round_limit(request: Request):
+        data = await body(request)
+        if (set(data) != {'instance_id', 'revision', 'max_rounds'}
+                or not isinstance(data['instance_id'], str)
+                or type(data['revision']) is not int or data['revision'] < 0
+                or type(data['max_rounds']) is not int or not 0 <= data['max_rounds'] <= 32):
+            raise HTTPException(400, 'Invalid round limit')
+        async with settings_lock:
+            if app.state.config is None:
+                raise HTTPException(503, 'Collaboration settings unavailable')
+            if data['instance_id'] != app.state.runtime_instance_id or data['revision'] != settings_revision:
+                raise HTTPException(409, 'Settings changed; reload before saving')
+            document = app.state.config.public_dict()
+            document['settings']['max_rounds'] = data['max_rounds']
+            try:
+                saved = await save_coordinated(document)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(400, str(exc))
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'max_rounds': saved.settings.max_rounds}
+
+    @app.get('/v1/settings/collaboration-enabled')
+    async def get_collaboration_enabled():
+        async with settings_lock:
+            if app.state.config is None:
+                raise HTTPException(503, 'Collaboration settings unavailable')
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'enabled': app.state.config.settings.enabled}
+
+    @app.put('/v1/settings/collaboration-enabled')
+    async def put_collaboration_enabled(request: Request):
+        data = await body(request)
+        if (set(data) != {'instance_id', 'revision', 'enabled'}
+                or not isinstance(data['instance_id'], str)
+                or type(data['revision']) is not int or data['revision'] < 0
+                or type(data['enabled']) is not bool):
+            raise HTTPException(400, 'Invalid collaboration setting')
+        async with settings_lock:
+            if app.state.config is None:
+                raise HTTPException(503, 'Collaboration settings unavailable')
+            if data['instance_id'] != app.state.runtime_instance_id or data['revision'] != settings_revision:
+                raise HTTPException(409, 'Settings changed; reload before saving')
+            document = app.state.config.public_dict()
+            document['settings']['enabled'] = data['enabled']
+            try:
+                saved = await save_coordinated(document)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(400, str(exc))
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'enabled': saved.settings.enabled}
+
+    def editable_profiles():
+        return [{'name': name, 'adapter': profile.adapter, 'provider': profile.provider,
+                 'model': profile.model, 'endpoint': profile.endpoint}
+                for name, profile in sorted(app.state.config.participants.items())
+                if profile.adapter in {'cloud', 'ollama'}]
+
+    @app.get('/v1/settings/model-profiles')
+    async def get_model_profiles():
+        async with settings_lock:
+            if app.state.config is None:
+                raise HTTPException(503, 'Model configuration unavailable')
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'profiles': editable_profiles()}
+
+    @app.get('/v1/settings/model-profile-providers')
+    async def get_model_profile_providers():
+        from odessy.models.cloud_model import CLOUD_PROVIDERS
+        return {'providers': [{'name': name, 'credential_env': provider.api_key_env}
+                              for name, provider in sorted(CLOUD_PROVIDERS.items())]}
+
+    @app.post('/v1/settings/model-profiles', status_code=201)
+    async def create_model_profile(request: Request):
+        from odessy.models.cloud_model import CLOUD_PROVIDERS
+        data = await body(request)
+        if (set(data) != {'instance_id', 'revision', 'name', 'adapter', 'provider', 'model', 'endpoint'}
+                or not isinstance(data['instance_id'], str)
+                or type(data['revision']) is not int or data['revision'] < 0
+                or any(not isinstance(data[key], str) for key in ('name', 'adapter', 'provider', 'model', 'endpoint'))
+                or data['name'] in {'current', 'auto', 'local'}
+                or data['adapter'] not in {'cloud', 'ollama'}
+                or (data['adapter'] == 'cloud' and data['provider'] not in CLOUD_PROVIDERS)
+                or (data['adapter'] == 'cloud' and data['provider'] == 'custom'
+                    and (not data['model'].strip() or not data['endpoint'].strip()))
+                or (data['adapter'] == 'ollama' and data['provider'] != '')):
+            raise HTTPException(400, 'Invalid profile')
+        async with settings_lock:
+            if app.state.config is None:
+                raise HTTPException(503, 'Model configuration unavailable')
+            if data['instance_id'] != app.state.runtime_instance_id or data['revision'] != settings_revision:
+                raise HTTPException(409, 'Settings changed; reload before saving')
+            if data['name'] in app.state.config.participants:
+                raise HTTPException(409, 'Profile name already exists')
+            document = app.state.config.public_dict()
+            document['participants'][data['name']] = {key: data[key] for key in ('adapter', 'provider', 'model', 'endpoint')}
+            try:
+                await save_coordinated(document)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(400, str(exc))
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'profiles': editable_profiles()}
+
+    @app.delete('/v1/settings/model-profiles/{name}')
+    async def delete_model_profile(name: str, request: Request):
+        data = await body(request)
+        if (set(data) != {'instance_id', 'revision'} or not isinstance(data['instance_id'], str)
+                or type(data['revision']) is not int or data['revision'] < 0):
+            raise HTTPException(400, 'Invalid profile deletion')
+        async with settings_lock:
+            current = app.state.config
+            if current is None:
+                raise HTTPException(503, 'Model configuration unavailable')
+            if data['instance_id'] != app.state.runtime_instance_id or data['revision'] != settings_revision:
+                raise HTTPException(409, 'Settings changed; reload before deleting')
+            profile = current.participants.get(name)
+            if profile is None or profile.adapter not in {'cloud', 'ollama'}:
+                raise HTTPException(404, 'Editable profile not found')
+            if (current.settings.default_participant == name or
+                    any(rule.get('participant') == name for rule in current.settings.rules)):
+                raise HTTPException(409, 'Profile is referenced by collaboration settings')
+            document = current.public_dict()
+            del document['participants'][name]
+            try:
+                await save_coordinated(document)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(400, str(exc))
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'profiles': editable_profiles()}
+
+    @app.put('/v1/settings/model-profiles/{name}')
+    async def put_model_profile(name: str, request: Request):
+        data = await body(request)
+        if (set(data) != {'instance_id', 'revision', 'model', 'endpoint'}
+                or not isinstance(data['instance_id'], str)
+                or type(data['revision']) is not int or data['revision'] < 0
+                or not isinstance(data['model'], str) or not isinstance(data['endpoint'], str)
+                or len(data['model']) > 4096 or len(data['endpoint']) > 4096):
+            raise HTTPException(400, 'Invalid profile update')
+        async with settings_lock:
+            if app.state.config is None:
+                raise HTTPException(503, 'Model configuration unavailable')
+            if (data['instance_id'] != app.state.runtime_instance_id
+                    or data['revision'] != settings_revision):
+                raise HTTPException(409, 'Settings changed; reload before saving')
+            profile = app.state.config.participants.get(name)
+            if profile is None or profile.adapter not in {'cloud', 'ollama'}:
+                raise HTTPException(404, 'Editable profile not found')
+            document = app.state.config.public_dict()
+            document['participants'][name].update(model=data['model'], endpoint=data['endpoint'])
+            try:
+                await save_coordinated(document)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(400, str(exc))
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'profiles': editable_profiles()}
+
+    @app.get('/v1/settings/model-profiles/{name}/limits')
+    async def get_model_limits(name: str):
+        async with settings_lock:
+            if app.state.config is None:
+                raise HTTPException(503, 'Model configuration unavailable')
+            profile = app.state.config.participants.get(name)
+            if profile is None or profile.adapter not in {'cloud', 'ollama'}:
+                raise HTTPException(404, 'Editable profile not found')
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'timeout': profile.timeout, 'max_tokens': profile.max_tokens}
+
+    @app.put('/v1/settings/model-profiles/{name}/limits')
+    async def put_model_limits(name: str, request: Request):
+        data = await body(request)
+        if (set(data) != {'instance_id', 'revision', 'timeout', 'max_tokens'}
+                or not isinstance(data['instance_id'], str)
+                or type(data['revision']) is not int or data['revision'] < 0
+                or type(data['timeout']) is not int or not 1 <= data['timeout'] <= 3600
+                or type(data['max_tokens']) is not int or not 1 <= data['max_tokens'] <= 1_000_000):
+            raise HTTPException(400, 'Invalid profile limits')
+        async with settings_lock:
+            if app.state.config is None:
+                raise HTTPException(503, 'Model configuration unavailable')
+            if data['instance_id'] != app.state.runtime_instance_id or data['revision'] != settings_revision:
+                raise HTTPException(409, 'Settings changed; reload before saving')
+            profile = app.state.config.participants.get(name)
+            if profile is None or profile.adapter not in {'cloud', 'ollama'}:
+                raise HTTPException(404, 'Editable profile not found')
+            document = app.state.config.public_dict()
+            document['participants'][name].update(timeout=data['timeout'], max_tokens=data['max_tokens'])
+            try:
+                await save_coordinated(document)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(400, str(exc))
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'profiles': editable_profiles()}
+
+    @app.put('/v1/settings/model-profiles/{name}/provider')
+    async def switch_model_provider(name: str, request: Request):
+        from odessy.models.cloud_model import CLOUD_PROVIDERS
+        data = await body(request)
+        if (set(data) != {'instance_id', 'revision', 'provider', 'model', 'endpoint'}
+                or not isinstance(data['instance_id'], str)
+                or type(data['revision']) is not int or data['revision'] < 0
+                or any(not isinstance(data[key], str) for key in ('provider', 'model', 'endpoint'))
+                or data['provider'] not in CLOUD_PROVIDERS
+                or len(data['model']) > 4096 or len(data['endpoint']) > 4096
+                or (data['provider'] == 'custom' and
+                    (not data['model'].strip() or not data['endpoint'].strip()))):
+            raise HTTPException(400, 'Invalid provider change')
+        async with settings_lock:
+            current = app.state.config
+            if current is None:
+                raise HTTPException(503, 'Model configuration unavailable')
+            if data['instance_id'] != app.state.runtime_instance_id or data['revision'] != settings_revision:
+                raise HTTPException(409, 'Settings changed; reload before saving')
+            profile = current.participants.get(name)
+            if profile is None or profile.adapter != 'cloud':
+                raise HTTPException(404, 'Cloud profile not found')
+            if profile.credential_env:
+                raise HTTPException(409, 'Profile has a custom credential reference')
+            if (profile.provider or 'openai') == data['provider']:
+                raise HTTPException(400, 'Choose a different provider')
+            document = current.public_dict()
+            target = document['participants'][name]
+            target.update(provider=data['provider'], model=data['model'], endpoint=data['endpoint'])
+            target.pop('pricing', None)
+            try:
+                await save_coordinated(document)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(400, str(exc))
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'profiles': editable_profiles()}
+
+    @app.get('/v1/settings/model-profiles/{name}/pricing')
+    async def get_model_pricing(name: str):
+        async with settings_lock:
+            current = app.state.config
+            if current is None:
+                raise HTTPException(503, 'Model configuration unavailable')
+            profile = current.participants.get(name)
+            if profile is None or profile.adapter != 'cloud':
+                raise HTTPException(404, 'Cloud profile not found')
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'pricing': asdict(profile.pricing) if profile.pricing is not None else None}
+
+    @app.put('/v1/settings/model-profiles/{name}/pricing')
+    async def put_model_pricing(name: str, request: Request):
+        from odessy.models.usage import pricing_from_env, CloudUsageConfigError
+        data = await body(request)
+        if (set(data) != {'instance_id', 'revision', 'pricing'}
+                or not isinstance(data['instance_id'], str)
+                or type(data['revision']) is not int or data['revision'] < 0):
+            raise HTTPException(400, 'Invalid pricing update')
+        pricing = data['pricing']
+        if pricing is not None:
+            if (not isinstance(pricing, dict) or set(pricing) != {'input', 'cached_input', 'output', 'currency'}
+                    or not isinstance(pricing['currency'], str)
+                    or not re.fullmatch(r'[A-Z]{3,8}', pricing['currency'])
+                    or any(isinstance(pricing[k], bool) or not isinstance(pricing[k], (int, float))
+                           or not 0 <= pricing[k] <= 1e12 or not math.isfinite(pricing[k])
+                           for k in ('input', 'cached_input', 'output'))):
+                raise HTTPException(400, 'Invalid pricing update')
+        async with settings_lock:
+            current = app.state.config
+            if current is None:
+                raise HTTPException(503, 'Model configuration unavailable')
+            if data['instance_id'] != app.state.runtime_instance_id or data['revision'] != settings_revision:
+                raise HTTPException(409, 'Settings changed; reload before saving')
+            profile = current.participants.get(name)
+            if profile is None or profile.adapter != 'cloud':
+                raise HTTPException(404, 'Cloud profile not found')
+            if pricing is not None:
+                currencies = {p.pricing.currency for other, p in current.participants.items()
+                              if other != name and p.pricing is not None}
+                try:
+                    global_price = pricing_from_env()
+                except CloudUsageConfigError:
+                    raise HTTPException(503, 'Global pricing configuration is invalid') from None
+                if global_price is not None:
+                    currencies.add(global_price.currency)
+                if any(currency != pricing['currency'] for currency in currencies):
+                    raise HTTPException(409, 'Pricing currencies must match')
+            document = current.public_dict()
+            target = document['participants'][name]
+            if pricing is None:
+                target.pop('pricing', None)
+            else:
+                target['pricing'] = pricing
+            try:
+                await save_coordinated(document)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(400, str(exc))
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'profiles': editable_profiles()}
+
+    @app.get('/v1/settings/model-profiles/{name}/credential-reference')
+    async def get_credential_reference(name: str):
+        from odessy.models.cloud_model import CLOUD_PROVIDERS
+        async with settings_lock:
+            current = app.state.config
+            if current is None:
+                raise HTTPException(503, 'Model configuration unavailable')
+            profile = current.participants.get(name)
+            if profile is None or profile.adapter != 'cloud':
+                raise HTTPException(404, 'Cloud profile not found')
+            provider = CLOUD_PROVIDERS.get(profile.provider or 'openai')
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'credential_env': profile.credential_env,
+                    'default_credential_env': provider.api_key_env if provider is not None else ''}
+
+    @app.put('/v1/settings/model-profiles/{name}/credential-reference')
+    async def put_credential_reference(name: str, request: Request):
+        data = await body(request)
+        if (set(data) != {'instance_id', 'revision', 'credential_env'}
+                or not isinstance(data['instance_id'], str)
+                or type(data['revision']) is not int or data['revision'] < 0
+                or not isinstance(data['credential_env'], str)
+                or (data['credential_env'] and not re.fullmatch(
+                    r'[A-Z][A-Z0-9_]{0,110}_(?:API_KEY|ACCESS_TOKEN)', data['credential_env']))
+                or (data['credential_env'].startswith('ODESSY_')
+                    and data['credential_env'] != 'ODESSY_CLOUD_API_KEY')):
+            raise HTTPException(400, 'Invalid credential reference')
+        async with settings_lock:
+            current = app.state.config
+            if current is None:
+                raise HTTPException(503, 'Model configuration unavailable')
+            if data['instance_id'] != app.state.runtime_instance_id or data['revision'] != settings_revision:
+                raise HTTPException(409, 'Settings changed; reload before saving')
+            profile = current.participants.get(name)
+            if profile is None or profile.adapter != 'cloud':
+                raise HTTPException(404, 'Cloud profile not found')
+            document = current.public_dict()
+            document['participants'][name]['credential_env'] = data['credential_env']
+            try:
+                await save_coordinated(document)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(400, str(exc))
+            return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
+                    'profiles': editable_profiles()}
 
     @app.post('/v1/sessions', status_code=201)
     async def new_session():
@@ -507,6 +956,23 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     @app.post('/v1/sessions/{sid}/jobs', status_code=202)
     async def submit_session_job(sid: str, request: Request):
         return await submit(await body(request), sid)
+
+    @app.get('/v1/sessions/{sid}/jobs')
+    async def list_session_jobs(sid: str, request: Request):
+        params = request.query_params
+        if any(key not in {'after', 'limit'} for key in params) or any(
+                len(params.getlist(key)) != 1 for key in params):
+            raise HTTPException(400, 'Invalid job list parameters')
+        raw_limit = params.get('limit', '50')
+        if not raw_limit.isascii() or not raw_limit.isdecimal() or len(raw_limit) > 2:
+            raise HTTPException(400, 'Invalid job page size')
+        selected = manager(sid)
+        if not callable(getattr(selected, 'list_summaries', None)):
+            raise HTTPException(503, 'Job listing is not configured for this session')
+        try:
+            return public(selected.list_summaries(after=params.get('after'), limit=int(raw_limit)))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
 
     async def read_job(job_id, sid=None):
         try:

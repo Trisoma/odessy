@@ -35,7 +35,12 @@ def register(app, monitor):
                     except MonitorUnavailable:
                         yield b'event: resync_required\ndata: {"schema_version":1}\n\n'
                 return StreamingResponse(events(), media_type='text/event-stream', headers={'Cache-Control': 'no-store'})
-            result = await monitor.request('GET', internal, dict(request.query_params))
+            query = dict(request.query_params)
+            if suffix.endswith('/history') and 'series' in query:
+                # HTTPX encodes list values as repeated query parameters, as
+                # required by the monitoring service's multi-series contract.
+                query['series'] = request.query_params.getlist('series')
+            result = await monitor.request('GET', internal, query)
             def host_shape(host):
                 if not isinstance(host, dict):
                     return host

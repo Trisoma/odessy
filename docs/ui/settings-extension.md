@@ -1,6 +1,6 @@
 # Settings extension contract
 
-`settings-inventory.json` enumerates every entry in the executable Python `SETTINGS` registry. Run `python tool/check_desktop_contracts.py --check` in CI; use `--write` after reviewing registry changes. Equality checks names, count, validation metadata and availability. All environment settings are explicitly unavailable in the desktop; planned screen placement does not imply backend support.
+`settings-inventory.json` enumerates every entry in the executable Python `SETTINGS` registry. Run `python tool/check_desktop_contracts.py --check` in CI; use `--write` after reviewing registry changes. Equality checks names, count, validation metadata and availability. Environment settings remain unavailable for editing. A separate authenticated read-only inventory reports names and process-environment presence, without values; planned screen placement does not imply write support.
 
 The implemented sample edits only collaboration `max_consultations` through `/v1/settings`. This JSON setting is separate from the environment registry. `SettingsPage` loads the service value, maintains a typed draft, disables invalid or unchanged saves, and calls `DesktopSession.updateConsultationLimit`. That operation rereads the latest document and preserves unrelated settings and profiles. Connection identity is checked before writing. Backend revision/CAS is unavailable, so simultaneous writers can still race. Apply timing is new sessions.
 
