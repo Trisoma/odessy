@@ -83,7 +83,8 @@ def test_serve_rejects_network_binding_before_startup():
 
 
 @pytest.mark.parametrize('source', ['explicit', 'environment'])
-def test_serve_does_not_log_authentication_token(monkeypatch, capsys, source):
+@pytest.mark.parametrize('print_token', [True, False])
+def test_serve_does_not_log_authentication_token(monkeypatch, capsys, source, print_token):
     from odessy.application import api, serve
     from odessy.collaboration import config
     import uvicorn
@@ -102,7 +103,8 @@ def test_serve_does_not_log_authentication_token(monkeypatch, capsys, source):
         async def serve(self):
             pass
     monkeypatch.setattr(uvicorn, 'Server', Server)
-    asyncio.run(serve.run_server(token=token if source == 'explicit' else None))
+    asyncio.run(serve.run_server(token=token if source == 'explicit' else None,
+                                 print_token=print_token))
     assert captured == [token]
     output = capsys.readouterr()
     assert token not in output.out + output.err
@@ -114,6 +116,33 @@ def test_serve_requires_a_token_before_starting(monkeypatch, capsys):
     with pytest.raises(ValueError, match='ODESSY_API_TOKEN'):
         asyncio.run(run_server())
     assert not capsys.readouterr().err
+
+
+def test_serve_supports_legacy_silent_start_with_generated_token(monkeypatch, capsys):
+    from odessy.application import api, serve
+    from odessy.collaboration import config
+    import uvicorn
+
+    monkeypatch.delenv('ODESSY_API_TOKEN', raising=False)
+    monkeypatch.setattr(config, 'load_config', lambda: None)
+    captured = []
+    create_app = api.create_app
+    def capture_app(*args, **kwargs):
+        app = create_app(*args, **kwargs)
+        captured.append(app.state.auth_token)
+        return app
+    monkeypatch.setattr(api, 'create_app', capture_app)
+    monkeypatch.setattr(uvicorn, 'Config', lambda *args, **kwargs: object())
+    class Server:
+        def __init__(self, config):
+            pass
+        async def serve(self):
+            pass
+    monkeypatch.setattr(uvicorn, 'Server', Server)
+    asyncio.run(serve.run_server(print_token=False))
+    assert len(captured) == 1 and captured[0]
+    output = capsys.readouterr()
+    assert captured[0] not in output.out + output.err
 
 
 def test_serve_cli_routes_explicit_options_without_loading_model(monkeypatch):
