@@ -1,10 +1,14 @@
 import 'package:flutter/foundation.dart';
+
 import 'setting_field.dart';
 
 /// Single-field async form seam. Transport closures retain backend authority.
 class SettingsFormController<T> extends ChangeNotifier {
-  SettingsFormController(
-      {required this.field, required this.read, required this.write});
+  SettingsFormController({
+    required this.field,
+    required this.read,
+    required this.write,
+  });
   final SettingField<T> field;
   final Future<T> Function() read;
   final Future<void> Function(T) write;
@@ -42,7 +46,8 @@ class SettingsFormController<T> extends ChangeNotifier {
       loaded = true;
     } catch (_) {
       if (!_disposed) {
-        error = 'Could not load settings. Connect the service and retry.';
+        error =
+            'Could not load settings. Connect the service and retry; safe updates require a compatible service.';
       }
     } finally {
       if (!_disposed) {
@@ -52,9 +57,10 @@ class SettingsFormController<T> extends ChangeNotifier {
     }
   }
 
-  Future<void> save(
-      {String successMessage =
-          'Saved by the service. Applies to newly created sessions.'}) async {
+  Future<void> save({
+    String successMessage =
+        'Saved by the service. Applies to newly created sessions.',
+  }) async {
     if (!canSave || _disposed) return;
     final operation = _save(successMessage);
     _write = operation;
@@ -79,7 +85,7 @@ class SettingsFormController<T> extends ChangeNotifier {
       if (!_disposed) {
         inspectionRequired = true;
         error =
-            'Save or reload failed. No success assumed; draft retained. Reload before retrying.';
+            'Save or reload failed, or settings changed. No success assumed; draft retained. Reload before retrying.';
       }
     } finally {
       if (!_disposed) {

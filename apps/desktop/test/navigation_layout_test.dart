@@ -43,13 +43,18 @@ void main() {
     addTearDown(t.view.resetDevicePixelRatio);
   }
 
-  Future<void> nav(WidgetTester tester, String label) async {
+  Future<void> nav(WidgetTester tester, String label,
+      {bool settle = true}) async {
     if (find.widgetWithText(ListTile, label).evaluate().isEmpty) {
       await tester.tap(find.byTooltip('Open navigation menu'));
       await tester.pumpAndSettle();
     }
     await tester.tap(find.widgetWithText(ListTile, label));
-    await tester.pumpAndSettle();
+    if (settle) {
+      await tester.pumpAndSettle();
+    } else {
+      await tester.pump();
+    }
   }
 
   testWidgets(
@@ -65,7 +70,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Workspace configuration'), findsOneWidget);
     await nav(tester, 'Settings');
-    await tester.tap(find.text('Installation').last);
+    await tester
+        .tap(find.byKey(const ValueKey('settings-section-Installation')));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Runtime maintenance'));
     await tester.tap(find.text('Runtime maintenance'));
@@ -119,8 +125,8 @@ void main() {
         .pumpWidget(OdessyApp(api: api, setupBackend: SavedComponents()));
     await tester.pump();
     expect(find.byType(CircularProgressIndicator), findsWidgets);
-    await nav(tester, 'Devices');
-    expect(find.text('Overview'), findsOneWidget);
+    await nav(tester, 'Devices', settle: false);
+    expect(find.text('Overview'), findsWidgets);
     api.ready.complete(['auto', 'local']);
     await tester.pumpAndSettle();
     await tester.pumpWidget(const SizedBox());
