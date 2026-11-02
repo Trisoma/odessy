@@ -36,7 +36,7 @@ class LocalDesktopEntryTest(unittest.TestCase):
                 self.assertEqual(os.environ['ODESSY_MONITORING'], 'on')
                 self.assertEqual(os.environ['ODESSY_MODEL_NAME'], 'not-configured')
                 self.assertEqual(os.environ['ODESSY_COLLABORATION_FILE'],
-                                 str(root / 'build/local-desktop/state/collaboration.toml'))
+                                 str(root.resolve() / 'build/local-desktop/state/collaboration.toml'))
                 self.assertEqual(server.await_args.kwargs['backend'], 'lfm')
                 self.assertTrue(server.await_args.kwargs['watch_stdin'])
                 self.assertEqual(server.await_args.kwargs['token'], 'fixture')

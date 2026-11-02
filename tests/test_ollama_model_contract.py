@@ -102,8 +102,8 @@ def test_ollama_debug_output_shows_valid_first_action(monkeypatch, capsys) -> No
     assert isinstance(action, ToolRequest)
     captured = capsys.readouterr()
     assert "parsed tool request" in captured.out
-    assert "terminal.run" in captured.out
-    assert '"command": "pwd"' in captured.out
+    assert "payload omitted" in captured.out
+    assert '"command": "pwd"' not in captured.out
 
 
 def test_ollama_repairs_malformed_json_once() -> None:

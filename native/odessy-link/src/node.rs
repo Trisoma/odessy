@@ -97,7 +97,7 @@ fn kill_tree(pid: u32) -> Result<(), String> {
         if error.raw_os_error() == Some(libc::ESRCH) {
             return Ok(());
         }
-        return Err(format!("cannot signal process group {pid}: {error}"));
+        Err(format!("cannot signal process group {pid}: {error}"))
     }
 }
 
@@ -138,7 +138,8 @@ pub fn spawn(node_script: &Path, workspace: &Path) -> Result<NodeSession, String
     #[cfg(unix)]
     {
         // A new process group, so termination can reach grandchildren too.
-        use std::os::unix::process::CommandExt;
+        // `process_group` is inherent on `Command` in current stable, so no
+        // `unix::process::CommandExt` import is needed here.
         command.process_group(0);
     }
     let mut child = command

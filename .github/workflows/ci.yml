@@ -149,7 +149,9 @@ jobs:
         run: node --test dist/tests/sandbox-live.test.js
 
       - name: Doctor reports the sandbox
-        run: python -m odessy doctor | tee doctor.txt; grep -q "read-only: bwrap (full; network cut, credentials hidden)" doctor.txt
+        run: |
+          python -m odessy doctor | tee doctor.txt
+          grep -q "read-only: bwrap (full; network cut, credentials hidden)" doctor.txt
 
   rust:
     name: odessy-link (${{ matrix.os }})

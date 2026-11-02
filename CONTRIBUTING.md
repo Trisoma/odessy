@@ -1,5 +1,7 @@
 # Contributing to Odessy
 
+> A short story of this project in [Story](Story.md)
+
 Welcome aboard! ⛵ Thank you for helping improve Odessy. Bug reports, focused fixes,
 and clearer documentation all help make this developer preview easier to use.
 This guide explains where to start, how to set up your environment, and what to

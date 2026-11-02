@@ -307,12 +307,11 @@ async function runHttpServer(): Promise<void> {
       }
 
       await transport.handleRequest(request, response, body);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+    } catch {
       if (!response.headersSent) {
-        response.writeHead(500);
+        response.writeHead(500, { "Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff" });
       }
-      response.end(message);
+      response.end("Internal server error");
     }
   });
 

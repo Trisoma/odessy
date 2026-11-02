@@ -54,7 +54,7 @@ This page records the limits future agents must keep visible when changing the r
 | Model | LFM2.5-Thinking is the default Ollama backend; Gemma remains an explicit fallback; an optional cloud backend (Claude, or any OpenAI-compatible API) can replace both | The October 18 agent-eval runs provide fixture-based measurements for LFM and DeepSeek, not full quality, latency, memory, or long-run reliability validation. The cloud backend is opt-in and off by default — see **Data egress** below. |
 | Voice | Staged voice loop is integrated and has completed live Jetson turns | Automated tests still use fakes for hardware components, and physical audio quality depends on the configured device. |
 | GUI automation | Out of scope | No mouse, keyboard injection, screen capture, browser automation, desktop automation, or robotics. |
-| Multi-agent behavior | Out of scope | No delegation, background autonomy, scheduler, or multi-session agent orchestration. |
+| Multi-agent behavior | Confirmed delegation and two-step handoff runs | No background autonomy, scheduler, parallel writers, or multi-session agent orchestration. Handoff runs are local and process-local; see [agent handoff](../agent-handoff.md). |
 | Writes | Node provides `filesystem.write` and `log.append` | Writes remain subject to tool validation and authority checks; availability depends on the mounted server. This is not arbitrary filesystem access. |
 
 ## Security Boundary Limits

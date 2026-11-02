@@ -39,7 +39,7 @@ def local_endpoint(value: str) -> str:
     if not 1 <= port <= 65535:
         raise ValueError('Endpoint port must be between 1 and 65535.')
     authority = f'[{address}]' if address.version == 6 else str(address)
-    return f'http://{authority}:{port}'
+    return 'http://' + authority + ':' + str(port)
 
 
 def validate_model(model: str) -> str:

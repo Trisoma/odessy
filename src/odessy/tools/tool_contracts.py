@@ -42,6 +42,24 @@ COLLABORATION_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "agent.job_status": {"properties": {"job_id": {"type": "string"}}, "required": ["job_id"]},
     "agent.cancel": {"properties": {"job_id": {"type": "string"}}, "required": ["job_id"]},
+    "agent.run": {
+        "properties": {
+            "flow": {"type": "string", "enum": ["document_to_code", "code_to_review"]},
+            "from_participant": {"type": "string"}, "from_task": {"type": "string"},
+            "to_participant": {"type": "string"}, "to_task": {"type": "string"},
+            "workspace": {"type": "string", "optional": True},
+        },
+        "required": ["flow", "from_participant", "from_task", "to_participant", "to_task"],
+    },
+    "agent.run_continue": {
+        "properties": {
+            "run_id": {"type": "string", "optional": True},
+            "artifact_sha256": {"type": "string", "optional": True},
+        },
+        "required": [],
+    },
+    "agent.run_status": {"properties": {"run_id": {"type": "string", "optional": True}}, "required": []},
+    "agent.run_cancel": {"properties": {"run_id": {"type": "string", "optional": True}}, "required": []},
 }
 
 TOOL_REQUEST_SCHEMAS: dict[str, dict[str, Any]] = {
@@ -242,6 +260,17 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
     "agent.delegate": "Submit a task to a configured coding agent on its authorized host. Requires confirmation.",
     "agent.job_status": "Inspect progress and results of a delegated job.",
     "agent.cancel": "Request cancellation of a delegated job; completed changes are not undone.",
+    "agent.run": (
+        "Have one coding agent pass its work to another. document_to_code: from_participant writes a "
+        "document, to_participant implements it. code_to_review: from_participant changes code, "
+        "to_participant reviews it. Starts the first step and returns; requires confirmation."
+    ),
+    "agent.run_continue": (
+        "Hand the finished first step's output to the second agent. Only when the user asks for it; "
+        "requires confirmation. run_id defaults to the latest run."
+    ),
+    "agent.run_status": "Inspect a handoff run's steps and handoff. run_id defaults to the latest run.",
+    "agent.run_cancel": "Stop a handoff run; its worktree is kept. run_id defaults to the latest run.",
     "time.now": "Return the current local time.",
     "terminal.run": "Run a shell command in the local workspace and return structured output." + _SHELL_USES,
     "laptop.terminal.run": "Run a shell command on the user's laptop (not the local machine)." + _SHELL_USES,
@@ -269,7 +298,7 @@ _SINGLE_MACHINE_DESCRIPTIONS: dict[str, str] = {
 
 
 def tool_description(name: str) -> str:
-    if name in {"model.consult", "agent.delegate"}:
+    if name in {"model.consult", "agent.delegate", "agent.run"}:
         from odessy.collaboration.context import current_service
         service = current_service()
         if service is not None:

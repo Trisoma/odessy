@@ -2,7 +2,8 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-COLLABORATION_TOOLS = frozenset({"model.consult", "agent.delegate", "agent.job_status", "agent.cancel"})
+COLLABORATION_TOOLS = frozenset({"model.consult", "agent.delegate", "agent.job_status", "agent.cancel",
+                                 "agent.run", "agent.run_continue", "agent.run_status", "agent.run_cancel"})
 _service = ContextVar("odessy_collaboration", default=None)
 _disabled = ContextVar("odessy_consultation_disabled", default=False)
 
@@ -27,7 +28,9 @@ def coordinator_instructions():
         f'This turn permits at most {min(settings.max_consultations, settings.max_rounds)} participant calls. '
         'Synthesize the answer yourself and identify whose advice you used. If consultation failed, '
         'tell the user it failed; identify any continued answer as your local answer and never imply agreement. '
-        'Delegation is separate and subject to runtime confirmation and child-agent permissions.\n'
+        'Delegation is separate and subject to runtime confirmation and child-agent permissions. '
+        'When the user wants one agent to pass work to another, use agent.run, not two delegations; '
+        'after its first step finishes, the user decides on the handoff through agent.run_continue.\n'
     )
 
 

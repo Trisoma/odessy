@@ -60,6 +60,13 @@ The Python public route preserves all repeated `series` values when forwarding
 to the Go service; other query fields retain their existing handling.
 These routes add no pairing, trust or configuration mutations. HTTP 503 stays
 unavailable while conversation APIs remain usable; it never activates demo data.
+| Handoff run | POST `/v1/sessions/{sid}/runs`, GET `/v1/sessions/{sid}/runs/{id}` |
+| Handoff output | GET `/v1/sessions/{sid}/runs/{id}/artifact` |
+| Continue a handoff | POST `/v1/sessions/{sid}/runs/{id}/continue`, `{artifact_sha256}` |
+| Cancel a handoff | POST `/v1/sessions/{sid}/runs/{id}/cancel` |
+
+A `run` session event carries the same snapshot as GET: `steps` are the agents and
+`transfers` the data moving between them. Runs do not survive a service restart.
 
 The backend assigns response-channel identity. The client never sends a channel,
 risk, permission, action modification or model-written authorization. Interaction

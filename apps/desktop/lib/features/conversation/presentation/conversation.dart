@@ -229,7 +229,8 @@ class _ConversationPageState extends State<ConversationPage> {
                     semanticsLabel: 'Connecting to session service')))
       else if (!c.connected || c.error.isNotEmpty)
         _connectionNotice(context),
-      if ((s?.messages.isEmpty ?? true) &&
+      if (c.connected &&
+          (s?.messages.isEmpty ?? true) &&
           (s?.pending.isEmpty ?? true) &&
           s?.running != true &&
           !(c.busy && s == null))

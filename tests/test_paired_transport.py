@@ -277,9 +277,17 @@ class ClientSession:
         raise AssertionError("the peer never closed the connection")
 
     def close(self, timeout: float | None = None) -> tuple[int, str]:
-        if self.process.stdin and not self.process.stdin.closed:
-            self.process.stdin.close()
-        _, error = self.process.communicate(timeout=timeout or self.timeout)
+        # communicate() owns the pipes. Closing stdin by hand first makes it write to
+        # a closed file (ValueError: I/O operation on closed file) and leaves CPython's
+        # own bookkeeping half-initialised, which then surfaces in cleanup as
+        # "Popen has no attribute _fileobj2output". Handing stdin to communicate with
+        # input="" makes communicate close it after writing, so the peer still sees
+        # EOF and stdout/stderr are still drained.
+        stdin_open = self.process.stdin is not None and not self.process.stdin.closed
+        _, error = self.process.communicate(
+            input="" if stdin_open else None,
+            timeout=timeout or self.timeout,
+        )
         return self.process.returncode or 0, error or ""
 
 

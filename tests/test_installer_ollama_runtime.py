@@ -158,6 +158,16 @@ class OllamaRuntimeTests(unittest.TestCase):
             self.assertGreaterEqual(listener.fileno(), 0)
         self.assertFalse(self.state.exists())
 
+    def test_probe_bind_address_is_a_literal_loopback_without_fallbacks(self):
+        for host, family in (('127.0.0.1', socket.AF_INET), ('127.0.0.2', socket.AF_INET),
+                             ('::1', socket.AF_INET6)):
+            with self.subTest(host=host):
+                self.assertEqual(runtime._loopback_bind_address(host, 11434),
+                                 (family, (host, 11434)))
+        for host in ('', None, '0.0.0.0', '::', '192.0.2.1', 'localhost'):
+            with self.subTest(host=host), self.assertRaises(ValueError):
+                runtime._loopback_bind_address(host, 11434)
+
     def test_nested_paths_and_relative_paths_rejected(self):
         for models, state in ((self.runtime / 'models', self.state), (self.models, self.models),
                               (Path('relative'), self.state)):

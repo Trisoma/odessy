@@ -66,6 +66,7 @@ class SessionController:
         self.id = uuid.uuid4().hex
         self.model_factory, self.agent_factory = model_factory, agent_factory
         self.profiles, self.collaboration, self.jobs, self.config = profiles, collaboration, jobs, config
+        self.runs = None
         self.memory = memory if memory is not None else ConversationMemory()
         self.selected_profile = selected_profile or next(iter(profiles))
         self.active_profile = None
@@ -229,7 +230,11 @@ class SessionController:
     async def confirm_action(self, details):
         if self._stop.is_set() or self._closed:
             return False
-        return await self.interactions.request_approval(details)
+        approved = await self.interactions.request_approval(details)
+        if not approved and self.runs is not None and details.get('operation') == 'agent.run_continue':
+            # A refused handoff ends the run, which would otherwise keep its repository.
+            self.runs.decline(details['target_identity']['run_id'])
+        return approved
 
     async def _screen_direct(self, name, arguments, risk):
         """Screen a request that does not pass through the agent loop (a desktop job).
@@ -262,15 +267,22 @@ class SessionController:
         risk = decision_value.get('risk', 'high')
         if name == 'agent.delegate':
             await self._screen_direct(name, arguments, risk)
-        if name == 'agent.delegate' and hasattr(self.jobs, 'preflight_submission'):
+        handoff = name in {'agent.run', 'agent.run_continue'} and self.runs is not None
+        if handoff or (name == 'agent.delegate' and hasattr(self.jobs, 'preflight_submission')):
             from pathlib import Path
             from odessy.authority.action_approval import build_action_approval
             from odessy.authority.policy import OdessyPolicy
             from odessy.runtime.types import PolicyDecision
             def target():
+                if name == 'agent.run':
+                    return self.runs.preflight_start(**arguments)
+                if name == 'agent.run_continue':
+                    return self.runs.preflight_continue(**arguments)
                 return self.jobs.preflight_submission(arguments.get('participant'), arguments.get('task'),
                     mode=arguments.get('mode', 'advice'), workspace=arguments.get('workspace'))
             identity = target()
+            if handoff:
+                await self._screen_direct(name, {**arguments, 'workspace': identity['workspace']}, risk)
             policy = OdessyPolicy(Path.cwd())
             bound_decision = PolicyDecision('confirm', 'Delegate using configured child-agent permissions', risk)
             bound_request = ToolRequest(name, arguments)

@@ -819,19 +819,18 @@ def _debug_model_repair(entries: list[tuple[str, str]]) -> None:
     if os.environ.get("ODESSY_DEBUG_MODEL_REPAIR") != "1":
         return
     for label, value in entries:
-        print(f"[odessy:model-repair] {label}:\n{redact_for_log(value)}")
+        print(f"[odessy:model-repair] {label}: payload omitted ({len(value)} characters)")
 
 
 def _debug_parsed_action(action: ModelAction) -> None:
     if os.environ.get("ODESSY_DEBUG_MODEL_REPAIR") != "1":
         return
     if isinstance(action, ToolRequest):
-        payload = json.dumps({"name": action.name, "arguments": action.arguments}, ensure_ascii=True)
-        print(f"[odessy:model-repair] parsed tool request:\n{redact_for_log(payload)}")
+        print("[odessy:model-repair] parsed tool request: payload omitted")
     elif isinstance(action, ToolBatch):
         print(f"[odessy:model-repair] parsed tool batch: {len(action.calls)} calls")
     else:
-        print(f"[odessy:model-repair] parsed final response:\n{redact_for_log(action.text)}")
+        print("[odessy:model-repair] parsed final response: payload omitted")
 
 
 def _elapsed_ms(started: float) -> float:

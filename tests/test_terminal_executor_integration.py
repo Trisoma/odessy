@@ -1,12 +1,16 @@
 """Real separate executor process, keyboard input, authenticated Node and agent policy."""
 import asyncio
+import csv
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.request
+
+import pytest
 
 from odessy.application.lan_connections import Connections
 from odessy.tools.lan_executor import clear, current
@@ -32,7 +36,47 @@ asyncio.run(main())
 '''
 
 
-def test_real_terminal_approval_connects_tools_and_policy(tmp_path):
+@pytest.mark.parametrize('private_ancestor', [False, True] if os.name == 'nt' else [False])
+def test_real_terminal_approval_connects_tools_and_policy(tmp_path, tmp_path_factory, private_ancestor):
+    base = tmp_path_factory.getbasetemp()
+    if private_ancestor:
+        # Fresh CI creates private pytest parents above xdist's worker base.
+        # An existing developer temp root does not reproduce that hierarchy.
+        parent = tmp_path / 'private-pytest-root'
+        parent.mkdir(mode=0o700)
+        base = parent / 'popen-gw0'
+        base.mkdir(mode=0o700)
+        tmp_path = base / 'case'
+        tmp_path.mkdir(mode=0o700)
+    if os.name == 'nt':
+        # Python 3.12.4+ creates pytest's private temp root with OWNER RIGHTS
+        # instead of an explicit user ACE. The LUA restricted token cannot
+        # read that fixture tree, so PowerShell silently starts elsewhere.
+        # Give only the current user Modify access to the fixture tree so the
+        # normal token access check succeeds. Writes still require the sandbox
+        # capability in the second access check;
+        # do not grant Everyone access or change the restricted token.
+        identity = subprocess.check_output(
+            ['whoami', '/user', '/fo', 'csv', '/nh'], text=True,
+        )
+        user_sid = next(csv.reader(identity.strip().splitlines()))[-1]
+        # xdist's base is pytest-N/popen-gwN. Fresh runners also have private
+        # pytest-N and pytest-of-user ancestors above it. Those need explicit
+        # read/traverse access too; stop before the system temp directory.
+        # A custom --basetemp outside it is bounded to that fixture tree.
+        base = base.resolve()
+        tmp_path = tmp_path.resolve()
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        boundary = temp_root if base.is_relative_to(temp_root) else base.parent
+        assert tmp_path.is_relative_to(base)
+        for directory in (tmp_path, *tmp_path.parents):
+            if directory == boundary:
+                break
+            rights = '(OI)(CI)(M)' if directory.is_relative_to(base) else '(RX)'
+            subprocess.run(
+                ['icacls', str(directory), '/grant', f'*{user_sid}:{rights}', '/Q'],
+                check=True, capture_output=True,
+            )
     async def run():
         clear()
         process = subprocess.Popen([sys.executable, '-u', '-c', HOST_CODE, str(tmp_path)],
@@ -41,7 +85,7 @@ def test_real_terminal_approval_connects_tools_and_policy(tmp_path):
         controller = None
         try:
             line = await asyncio.wait_for(asyncio.to_thread(process.stdout.readline), timeout=40)
-            assert line, 'Executor failed before readiness'
+            assert line, 'Executor failed before readiness: ' + process.stderr.read()
             host = json.loads(line)
             workspace = tmp_path / 'workspace'
             (workspace / 'hello.txt').write_text('executor-workspace-fixture', encoding='utf-8')
@@ -73,6 +117,26 @@ def test_real_terminal_approval_connects_tools_and_policy(tmp_path):
                 assert 'executor-workspace-fixture' in str(read)
                 outside = await client.call_tool('filesystem.read', {'path':'../settings.json'})
                 assert outside.is_error or outside.structured_content.get('status') in ('error', 'denied'), str(outside)
+                if os.name == 'nt':
+                    # The user ACE above must not bypass the restricting-SID
+                    # write check: neither an outside write nor a read-only
+                    # workspace write may succeed.
+                    blocked = await client.call_tool('laptop.terminal.run', {
+                        'command': 'echo forbidden > ../sandbox-outside.txt',
+                        'mode': 'workspace-write', 'isolation': 'preferred',
+                    })
+                    assert not blocked.is_error, str(blocked)
+                    assert blocked.structured_content['sandbox']['provider_id'] == 'windows-acl'
+                    assert blocked.structured_content['exit_code'] != 0
+                    assert not (tmp_path / 'sandbox-outside.txt').exists()
+                    readonly = await client.call_tool('laptop.terminal.run', {
+                        'command': 'echo forbidden > sandbox-readonly.txt',
+                        'mode': 'read-only', 'isolation': 'preferred',
+                    })
+                    assert not readonly.is_error, str(readonly)
+                    assert readonly.structured_content['sandbox']['provider_id'] == 'windows-acl'
+                    assert readonly.structured_content['exit_code'] != 0
+                    assert not (workspace / 'sandbox-readonly.txt').exists()
 
             from odessy.application.bootstrap import create_controller
             from odessy.runtime.types import ToolRequest, FinalResponse
@@ -99,6 +163,7 @@ def test_real_terminal_approval_connects_tools_and_policy(tmp_path):
             controller.interactions.handler = handle
             turn = await controller.run_turn('Run the reviewed echo command on the execution host')
             assert approvals, 'The real agent must request command approval'
+            assert (workspace / 'approved.txt').exists(), turn.final_text
             # PowerShell's redirection writes UTF-16LE with a BOM on Windows, so the
             # assertion decodes by BOM rather than assuming the platform default.
             raw = (workspace / 'approved.txt').read_bytes()

@@ -138,6 +138,8 @@ def build_action_approval(request, decision, policy, *, call_id: str, execution_
     prompt = f'Approve {request.name} on {host} for this action only. Risk: {decision.risk}.'
     if request.name in {'terminal.run', 'laptop.terminal.run'} and isinstance(args.get('command'), str):
         prompt += f' Exact command: {_display(args["command"])}.'
+    if request.name == 'agent.run_continue' and isinstance(target, dict):
+        prompt += f' Hands {_display(target.get("artifact_kind"))} {_display(target.get("artifact_sha256"))} to {_display(target.get("to_participant"))}.'
     display_paths = paths or {key: value for key, value in args.items() if key in {'cwd', 'path', 'file'} and isinstance(value, str)}
     for key, value in sorted(display_paths.items()):
         prompt += f' {key}: {_display(value)}.'

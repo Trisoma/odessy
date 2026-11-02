@@ -8,6 +8,8 @@ import 'dart:io';
 class InstanceGuard {
   InstanceGuard._(this._key, this._handle);
 
+  // POSIX locks belong to the process, so the OS alone does not reject a
+  // second acquisition in this isolate. Reserve before awaiting file open.
   static final Set<String> _held = {};
   final String _key;
   final RandomAccessFile _handle;
@@ -24,34 +26,34 @@ class InstanceGuard {
             '${Platform.pathSeparator}Odessy${Platform.pathSeparator}instances');
     await dir.create(recursive: true);
     final safe = key.replaceAll(RegExp('[^A-Za-z0-9_-]'), '_');
-    final canonicalDir = await dir.resolveSymbolicLinks();
-    final file = File('$canonicalDir${Platform.pathSeparator}$mode-$safe.lock');
-    final lockKey = Platform.isWindows ? file.path.toLowerCase() : file.path;
-    // POSIX advisory locks are process-wide. Do not open the same file twice:
-    // closing a second descriptor would release the first descriptor's lock.
-    if (!_held.add(lockKey)) return null;
+    final root = await dir.resolveSymbolicLinks();
+    final file = File('$root${Platform.pathSeparator}$mode-$safe.lock');
+    final identity = Platform.isWindows ? file.path.toLowerCase() : file.path;
+    if (!_held.add(identity)) return null;
     RandomAccessFile? handle;
+    var acquired = false;
     try {
+      // Append opens without truncating another process's owner record.
       handle = await file.open(mode: FileMode.append);
       try {
-        // Non-blocking: throws when another process holds the lock.
         await handle.lock(FileLock.exclusive);
       } on FileSystemException {
-        await handle.close();
-        _held.remove(lockKey);
         return null;
       }
       await handle.truncate(0);
+      await handle.setPosition(0);
       await handle.writeString('$pid');
       await handle.flush();
-      return InstanceGuard._(lockKey, handle);
-    } catch (_) {
-      try {
-        await handle?.close();
-      } finally {
-        _held.remove(lockKey);
+      acquired = true;
+      return InstanceGuard._(identity, handle);
+    } finally {
+      if (!acquired) {
+        try {
+          await handle?.close();
+        } finally {
+          _held.remove(identity);
+        }
       }
-      rethrow;
     }
   }
 
@@ -69,7 +71,7 @@ class InstanceGuard {
         _held.remove(_key);
       }
     }
-    // Keep the file: deleting it after unlock can race with a new owner and
-    // let a third process lock a different inode at the same path.
+    // Keep the inode: unlinking after unlock can let concurrent owners lock
+    // different files with the same name. A stale PID is not a held OS lock.
   }
 }

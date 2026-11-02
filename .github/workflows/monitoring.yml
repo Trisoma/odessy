@@ -9,6 +9,8 @@ on:
       - 'tests/test_monitoring*'
       - '.github/workflows/monitoring.yml'
   workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   contracts:
     runs-on: windows-latest

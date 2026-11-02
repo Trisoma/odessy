@@ -66,8 +66,8 @@ def tool_is_available(name: str) -> bool:
         from odessy.interaction.context import current_interactions
         if current_interactions() is None:
             return False
-    if name in {"model.consult", "agent.delegate", "agent.job_status", "agent.cancel"}:
-        from odessy.collaboration.context import collaboration_available
+    from odessy.collaboration.context import COLLABORATION_TOOLS, collaboration_available
+    if name in COLLABORATION_TOOLS:
         if not collaboration_available():
             return False
     available = _available_tools.get()
