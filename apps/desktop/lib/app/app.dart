@@ -557,9 +557,11 @@ class _OdessyAppState extends State<OdessyApp> {
                                     child: const Text(
                                         'Connect saved configuration')),
                               ]),
-                        if (controller.error.isNotEmpty)
+                        if (controller.error.isNotEmpty &&
+                            page != 'Conversation')
                           ComponentStateBanner(
-                              message: controller.error,
+                              message: modelErrorGuidance(controller.error) ??
+                                  controller.error,
                               tone: BannerTone.error,
                               actions: [
                                 TextButton(
@@ -656,6 +658,7 @@ class _OdessyAppState extends State<OdessyApp> {
                               themeMode: mode,
                               onToggleTheme: () => setState(() => mode = mode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark),
                               onOpenDevices: () => _navigate('Devices'),
+                              onOpenConversation: () => _navigate('Conversation'),
                               onConnectSaved: setup.busy || setup.completing || controller.session?.running == true || (widget.installed != null && widget.onConfigured == null) ? null : _activateSaved,
                               onOpenInstaller: () => _navigate('Installer'),
                               onOpenMaintenance: () => _navigate('Maintenance'),
@@ -670,7 +673,9 @@ class _OdessyAppState extends State<OdessyApp> {
                           _ => ConversationPage(
                               voice: voice,
                               controller: controller,
-                              readiness: readiness),
+                              readiness: readiness,
+                              onOpenModels: () =>
+                                  _openSettings(SettingsSections.models)),
                         }),
                       ])),
                     ]));

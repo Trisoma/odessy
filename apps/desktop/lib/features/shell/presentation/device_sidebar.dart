@@ -53,14 +53,14 @@ class DeviceSidebar extends StatelessWidget {
   Widget build(BuildContext context) => SafeArea(
           child: Column(children: [
         Padding(
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
+            padding: const EdgeInsets.fromLTRB(20, 20, 16, 20),
             child: Row(children: [
               Icon(Icons.bubble_chart_outlined,
-                  size: 28, color: Theme.of(context).colorScheme.primary),
-              const SizedBox(width: 10),
+                  size: 23, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 9),
               Expanded(
                   child: Text('Odessy',
-                      style: Theme.of(context).textTheme.titleLarge)),
+                      style: Theme.of(context).textTheme.titleMedium)),
             ])),
         Expanded(
             child: ListView(
@@ -80,8 +80,13 @@ class DeviceSidebar extends StatelessWidget {
                         child: Semantics(
                             header: true,
                             child: Text('DEVICES',
-                                style:
-                                    Theme.of(context).textTheme.labelMedium))),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .labelMedium
+                                    ?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant)))),
                     IconButton(
                         tooltip: 'Refresh devices',
                         icon: const Icon(Icons.refresh, size: 18),
@@ -119,8 +124,9 @@ class DeviceSidebar extends StatelessWidget {
                       shape: RoundedRectangleBorder(
                           borderRadius:
                               BorderRadius.circular(OdessyTokens.radiusSmall)),
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 4),
+                      dense: true,
+                      contentPadding:
+                          const EdgeInsets.symmetric(horizontal: 12),
                       leading: Icon(
                           host.trust == 'local'
                               ? Icons.computer_outlined
@@ -129,9 +135,18 @@ class DeviceSidebar extends StatelessWidget {
                                   : Icons.devices_other_outlined,
                           size: 20),
                       title: Text(host.name,
-                          maxLines: 3, overflow: TextOverflow.ellipsis),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyMedium),
                       subtitle: Text(
-                          '${_label(host.connectivity)} · ${_label(host.trust)}${_lastKnown ? ' · last report' : ''}'),
+                          '${_label(host.connectivity)} · ${_label(host.trust)}${_lastKnown ? ' · last report' : ''}',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant)),
                       onTap: () => onInspect(host.id),
                     )),
               Align(
@@ -143,7 +158,8 @@ class DeviceSidebar extends StatelessWidget {
               if (destinations.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 ExpansionTile(
-                  title: const Text('Tools & installation'),
+                  title: Text('Tools & installation',
+                      style: Theme.of(context).textTheme.bodyMedium),
                   tilePadding: const EdgeInsets.symmetric(horizontal: 12),
                   children: [
                     for (final destination in destinations)

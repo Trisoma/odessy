@@ -6,6 +6,7 @@ import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/app/session_controller.dart';
 import 'package:odessy_desktop/app/theme.dart';
 import 'package:odessy_desktop/features/settings/presentation/settings.dart';
+import 'component_settings_test.dart' show SavedComponents;
 
 /// Explicit test and screenshot fixture; never used as a live fallback.
 class SettingsFixtureApi extends DemoApi implements ConsultationLimitApi {
@@ -160,6 +161,41 @@ Future<void> editLimit(WidgetTester tester, String value) async {
 }
 
 void main() {
+  testWidgets('model setup shortcuts only navigate and expose checks',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 1100);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = SettingsFixtureApi();
+    final backend = SavedComponents();
+    final c = DesktopSession(api);
+    addTearDown(c.dispose);
+    await c.start();
+    await tester.pumpWidget(MaterialApp(
+        theme: odessyTheme(Brightness.dark),
+        home: Scaffold(
+            body: SettingsPage(
+                controller: c,
+                configurationBackend: backend,
+                initialSection: SettingsSections.models))));
+    await tester.pumpAndSettle();
+    expect(find.text('Set up a model'), findsOneWidget);
+    expect(
+        find.text(
+            'A connected coordinator does not confirm that the selected model is available.'),
+        findsOneWidget);
+    expect(backend.requests.where((r) => r.operation == 'component-probe'),
+        isEmpty);
+    await tester.tap(find.text('Model checks'));
+    await tester.pumpAndSettle();
+    expect(find.text('Test model').hitTestable(), findsOneWidget);
+    expect(backend.requests.where((r) => r.operation == 'component-probe'),
+        isEmpty);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('models shows the current session profile and updates selection',
       (tester) async {
     final api = SettingsFixtureApi();
@@ -187,6 +223,8 @@ void main() {
     await c.start();
     await mountSettings(tester, c);
     await selectSettingsSection(tester, SettingsSections.models);
+    expect(find.text('2. Model checks are unavailable for this connection.'),
+        findsOneWidget);
     expect(find.text('stale-profile'), findsNothing);
     expect(find.text('Unavailable'), findsNWidgets(2));
   });
@@ -384,6 +422,8 @@ void main() {
         toggleTheme: () => themes++);
     await tester.tap(find.text('Use light theme'));
     await selectSettingsSection(tester, SettingsSections.models);
+    await tester.ensureVisible(find.text('Configure a model'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Configure a model'));
     await selectSettingsSection(tester, SettingsSections.voice);
     await tester.tap(find.text('Open configuration'));

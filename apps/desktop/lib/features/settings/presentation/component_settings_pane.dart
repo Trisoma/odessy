@@ -15,9 +15,11 @@ class ComponentSettingsPane extends StatefulWidget {
       {super.key,
       required this.controller,
       required this.section,
+      this.checksKey,
       this.picker = const UnavailablePicker()});
   final ComponentSettingsController controller;
   final String section;
+  final GlobalKey? checksKey;
   final NativePicker picker;
   @override
   State<ComponentSettingsPane> createState() => _ComponentSettingsPaneState();
@@ -633,16 +635,18 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
                 'Saving paths does not enable voice or configure the other speech component. Detected files are existing files, not tested or supported versions.'),
           ],
           const SizedBox(height: 18),
-          ProviderProbePanel(
-              key: ValueKey('probe-${widget.section}'),
-              backend: c.backend,
-              selection: _probeSelection(),
-              section: widget.section,
-              picker: widget.picker,
-              onDevice: (key, value) {
-                fields[key]?.text = value;
-                _remember();
-              }),
+          KeyedSubtree(
+              key: widget.checksKey,
+              child: ProviderProbePanel(
+                  key: ValueKey('probe-${widget.section}'),
+                  backend: c.backend,
+                  selection: _probeSelection(),
+                  section: widget.section,
+                  picker: widget.picker,
+                  onDevice: (key, value) {
+                    fields[key]?.text = value;
+                    _remember();
+                  })),
           if (!c.dirty && !c.busy && !c.inspectionRequired)
             const Text('No unsaved changes in this section.'),
           Wrap(spacing: 12, children: [

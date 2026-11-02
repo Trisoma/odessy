@@ -129,6 +129,28 @@ Future<AppExitResponse> _finishExit(
 }
 
 void main() {
+  testWidgets('return to Assistant keeps the existing unsaved-draft guard',
+      (tester) async {
+    final api = _TrackedApi();
+    await _mount(tester, api);
+    await _settings(tester);
+    await editLimit(tester, '4');
+    final back = find.text('Return to Assistant');
+    await tester.ensureVisible(back);
+    await tester.tap(back);
+    await tester.pumpAndSettle();
+    expect(find.text('Unsaved collaboration setting'), findsOneWidget);
+    await _answer(tester, 'Cancel');
+    expect(find.text('Preferences'), findsOneWidget);
+    expect(tester.widget<TextField>(limitField).controller!.text, '4');
+    await tester.ensureVisible(back);
+    await tester.tap(back);
+    await tester.pumpAndSettle();
+    await _answer(tester, 'Discard changes');
+    expect(find.text('Preferences'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('pending initial read blocks departure until the form settles',
       (tester) async {
     final api = _TrackedApi();

@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -9,17 +10,24 @@ import 'package:odessy_desktop/app/app.dart';
 import 'package:odessy_desktop/app/session_controller.dart';
 import 'package:odessy_desktop/app/theme.dart';
 import 'package:odessy_desktop/features/conversation/presentation/conversation.dart';
+
 import 'conversation_presentation_test.dart';
 
 void main() {
-  testWidgets('render conversation and interaction screenshots',
-      (tester) async {
+  testWidgets('render conversation and interaction screenshots', (
+    tester,
+  ) async {
     await (FontLoader('OdessySans')
           ..addFont(rootBundle.load('assets/fonts/roboto-regular.ttf'))
           ..addFont(rootBundle.load('assets/fonts/roboto-bold.ttf')))
         .load();
-    await (FontLoader('MaterialIcons')
-          ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf')))
+    await (FontLoader(
+      'MaterialIcons',
+    )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf')))
+        .load();
+    await (FontLoader(
+      'OdessyMono',
+    )..addFont(rootBundle.load('assets/fonts/roboto-mono.ttf')))
         .load();
     tester.view.physicalSize = const Size(1440, 1100);
     tester.view.devicePixelRatio = 1;
@@ -29,8 +37,11 @@ void main() {
     final api = ConversationFixtureApi()
       ..messages = [
         const ChatMessage('user', 'Check the repository status.'),
-        const ChatMessage('assistant',
-            'I will inspect the changes after you review the requested action.'),
+        const ChatMessage(
+          'assistant',
+          'I will inspect the changes after you review the requested action.\n'
+              '\x60\x60\x60sh\ngit status --short\n\x60\x60\x60',
+        ),
       ];
     Future<void> capture(String name) async {
       final boundary =
@@ -43,8 +54,12 @@ void main() {
       frame.dispose();
     }
 
-    await tester
-        .pumpWidget(RepaintBoundary(key: key, child: OdessyApp(api: api)));
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: key,
+        child: OdessyApp(api: api),
+      ),
+    );
     await tester.pumpAndSettle();
     await tester.runAsync(() => capture('conversation-dark'));
     api.pending = [interactionFixture()];
@@ -57,17 +72,19 @@ void main() {
     api.pending = [];
     api.messages = [
       const ChatMessage('user', 'Show an example of a tool activity report.'),
-      const ChatMessage('assistant',
-          'This is an illustrative report. No command was executed.'),
+      const ChatMessage(
+        'assistant',
+        'This is an illustrative report. No command was executed.',
+      ),
     ];
     api.activity = [
       SessionEvent(1, 'result', {
         'tool_request': {
           'name': 'git.diff',
-          'arguments': {'path': 'README.md'}
+          'arguments': {'path': 'README.md'},
         },
         'tool_result': {'demo': true, 'output': 'Example diff summary'},
-      })
+      }),
     ];
     await page.controller.refresh();
     await tester.pumpAndSettle();
@@ -84,7 +101,7 @@ void main() {
       SessionEvent(2, 'cost', {
         'total': {'calls': 2, 'prompt': 1200, 'cached': 300, 'completion': 200},
         'total_cost': null,
-      })
+      }),
     ];
     await page.controller.refresh();
     await tester.pumpAndSettle();
@@ -120,13 +137,16 @@ void main() {
     addTearDown(controller.dispose);
     await controller.start();
     tester.view.physicalSize = const Size(390, 1000);
-    await tester.pumpWidget(RepaintBoundary(
+    await tester.pumpWidget(
+      RepaintBoundary(
         key: key,
         child: MaterialApp(
           debugShowCheckedModeBanner: false,
           theme: odessyTheme(Brightness.dark),
           home: Scaffold(body: ConversationPage(controller: controller)),
-        )));
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Approve once'));
     await tester.pumpAndSettle();
