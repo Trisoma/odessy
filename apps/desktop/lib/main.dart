@@ -7,17 +7,12 @@ import 'package:odessy_client/odessy_client.dart';
 import 'app/setup/installed_startup.dart';
 import 'app/setup/instance_guard.dart';
 import 'app/setup/native_picker.dart';
-import 'app/setup/local_desktop_application.dart';
 import 'app/setup/setup_application.dart';
 import 'app/theme.dart';
 
 Future<void> main(List<String> arguments) async {
   WidgetsFlutterBinding.ensureInitialized();
   final mode = installationMode(arguments);
-  if (mode == null && const bool.fromEnvironment('ODESSY_LOCAL_DESKTOP')) {
-    runApp(const LocalDesktopApplication());
-    return;
-  }
   if (mode == null) {
     runApp(applicationFor(arguments));
     return;

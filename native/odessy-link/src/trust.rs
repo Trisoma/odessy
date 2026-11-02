@@ -140,16 +140,6 @@ impl Registry {
         expected_sha256: &str,
         address: Option<&str>,
     ) -> Result<Peer, String> {
-        self.add_peer_impl(alias, bundle_text, expected_sha256, address, None)
-    }
-
-    pub fn add_peer_reviewed(&self, alias: &str, bundle_text: &str, expected_sha256: &str,
-        address: Option<&str>, expected_previous: Option<&str>, revision: i64) -> Result<Peer, String> {
-        self.add_peer_impl(alias, bundle_text, expected_sha256, address, Some((expected_previous, revision)))
-    }
-
-    fn add_peer_impl(&self, alias: &str, bundle_text: &str, expected_sha256: &str,
-        address: Option<&str>, reviewed: Option<(Option<&str>, i64)>) -> Result<Peer, String> {
         validate_alias(alias)?;
         let bundle = EnrollmentBundle::from_json(bundle_text)?;
         let expected = normalize_fingerprint(expected_sha256)?;
@@ -171,9 +161,6 @@ impl Registry {
             .connection
             .unchecked_transaction()
             .map_err(|error| format!("cannot start trust transaction: {error}"))?;
-        if let Some((previous, revision)) = reviewed {
-            verify_reviewed_slot(&transaction, alias, previous, revision)?;
-        }
         transaction
             .execute(
                 "INSERT INTO peers(alias, installation_id, fingerprint_sha256, certificate_pem, ca_pem, address)
@@ -270,16 +257,6 @@ impl Registry {
 
     /// Grant a capability. Enrollment alone never implies execution access.
     pub fn grant(&self, alias: &str, capability: &str, workspace: &str) -> Result<Peer, String> {
-        self.grant_impl(alias, capability, workspace, None)
-    }
-
-    pub fn grant_reviewed(&self, alias: &str, capability: &str, workspace: &str,
-                          fingerprint: &str, revision: i64) -> Result<Peer, String> {
-        self.grant_impl(alias, capability, workspace, Some((fingerprint, revision)))
-    }
-
-    fn grant_impl(&self, alias: &str, capability: &str, workspace: &str,
-                  reviewed: Option<(&str, i64)>) -> Result<Peer, String> {
         if capability != CAPABILITY_MCP && capability != "telemetry.read" {
             return Err(format!("unsupported capability: {capability}"));
         }
@@ -290,9 +267,6 @@ impl Registry {
             .connection
             .unchecked_transaction()
             .map_err(|error| format!("cannot start trust transaction: {error}"))?;
-        if let Some((fingerprint, revision)) = reviewed {
-            verify_reviewed_peer(&transaction, alias, fingerprint, revision)?;
-        }
         let changed = transaction
             .execute(
                 if capability == CAPABILITY_MCP {
@@ -317,21 +291,10 @@ impl Registry {
     /// Revoke every capability for a peer. Returns whether the peer existed, so a
     /// caller can distinguish "already gone" from "revoked now".
     pub fn revoke(&self, alias: &str) -> Result<bool, String> {
-        self.revoke_impl(alias, None)
-    }
-
-    pub fn revoke_reviewed(&self, alias: &str, fingerprint: &str, revision: i64) -> Result<bool, String> {
-        self.revoke_impl(alias, Some((fingerprint, revision)))
-    }
-
-    fn revoke_impl(&self, alias: &str, reviewed: Option<(&str, i64)>) -> Result<bool, String> {
         let transaction = self
             .connection
             .unchecked_transaction()
             .map_err(|error| format!("cannot start trust transaction: {error}"))?;
-        if let Some((fingerprint, revision)) = reviewed {
-            verify_reviewed_peer(&transaction, alias, fingerprint, revision)?;
-        }
         let changed = transaction
             .execute(
                 "UPDATE peers SET capability_mcp=0, capability_telemetry=0, revoked=1, workspace=NULL WHERE alias=?1",
@@ -346,45 +309,6 @@ impl Registry {
             .map_err(|error| format!("cannot commit trust transaction: {error}"))?;
         Ok(changed > 0)
     }
-
-    /// Remove one grant only when the reviewed identity and revision still match.
-    pub fn revoke_capability(&self, alias: &str, capability: &str,
-                             expected_fingerprint: &str, expected_revision: i64) -> Result<bool, String> {
-        let sql = match capability {
-            CAPABILITY_MCP => "UPDATE peers SET capability_mcp=0, workspace=NULL WHERE alias=?1 AND capability_mcp=1",
-            "telemetry.read" => "UPDATE peers SET capability_telemetry=0 WHERE alias=?1 AND capability_telemetry=1",
-            _ => return Err(format!("unsupported capability: {capability}")),
-        };
-        let transaction = self.connection.unchecked_transaction()
-            .map_err(|error| format!("cannot start trust transaction: {error}"))?;
-        verify_reviewed_peer(&transaction, alias, expected_fingerprint, expected_revision)?;
-        let changed = transaction.execute(sql, params![alias])
-            .map_err(|error| format!("cannot revoke capability: {error}"))?;
-        if changed > 0 { self.bump_revision(&transaction)?; }
-        transaction.commit().map_err(|error| format!("cannot commit trust transaction: {error}"))?;
-        Ok(changed > 0)
-    }
-}
-
-fn verify_reviewed_peer(transaction: &rusqlite::Transaction<'_>, alias: &str,
-                        expected_fingerprint: &str, expected_revision: i64) -> Result<(), String> {
-    verify_reviewed_slot(transaction, alias, Some(expected_fingerprint), expected_revision)
-}
-
-fn verify_reviewed_slot(transaction: &rusqlite::Transaction<'_>, alias: &str,
-                        previous_fingerprint: Option<&str>, expected_revision: i64) -> Result<(), String> {
-    let expected = previous_fingerprint.map(normalize_fingerprint).transpose()?;
-    let revision: String = transaction.query_row(
-        "SELECT value FROM meta WHERE key='grant_revision'", [], |row| row.get(0))
-        .map_err(|error| format!("cannot read revision: {error}"))?;
-    let revision = revision.parse::<i64>().map_err(|_| "invalid revision".to_string())?;
-    let fingerprint: Option<String> = transaction.query_row(
-        "SELECT fingerprint_sha256 FROM peers WHERE alias=?1", params![alias], |row| row.get(0))
-        .optional().map_err(|error| format!("cannot read peer: {error}"))?;
-    if revision != expected_revision || fingerprint != expected {
-        return Err("peer identity or permissions changed; review again".into());
-    }
-    Ok(())
 }
 
 fn row_to_peer(row: &rusqlite::Row<'_>) -> rusqlite::Result<Peer> {
@@ -555,25 +479,6 @@ mod tests {
     }
 
     #[test]
-    fn reviewed_enrollment_guards_previous_identity_and_revision() {
-        let fixture = TempRegistry::new("reviewed-enrollment");
-        let first = Identity::generate("peerreviewed3").unwrap();
-        let second = Identity::generate("peerreviewed4").unwrap();
-        let initial = fixture.registry.revision().unwrap();
-        fixture.registry.add_peer_reviewed("peer", &bundle_json(&first), &first.fingerprint(), None, None, initial).unwrap();
-        fixture.registry.grant("peer", CAPABILITY_MCP, "workspace").unwrap();
-        let revision = fixture.registry.revision().unwrap();
-        assert!(fixture.registry.add_peer_reviewed("peer", &bundle_json(&second), &second.fingerprint(), None, None, revision).is_err());
-        assert!(fixture.registry.add_peer_reviewed("peer", &bundle_json(&second), &second.fingerprint(), None, Some(&first.fingerprint()), revision - 1).is_err());
-        assert!(fixture.registry.peer("peer").unwrap().unwrap().has_execution_grant());
-        fixture.registry.add_peer_reviewed("peer", &bundle_json(&second), &second.fingerprint(), None, Some(&first.fingerprint()), revision).unwrap();
-        let peer = fixture.registry.peer("peer").unwrap().unwrap();
-        assert_eq!(peer.fingerprint_sha256, second.fingerprint());
-        assert!(!peer.has_execution_grant());
-        assert!(fixture.registry.add_peer_reviewed("peer", &bundle_json(&first), &first.fingerprint(), None, Some(&first.fingerprint()), revision).is_err());
-    }
-
-    #[test]
     fn telemetry_grant_is_independent_and_reenrollment_drops_it() {
         let fixture = TempRegistry::new("telemetry");
         let identity = Identity::generate("peertelemetry").unwrap();
@@ -591,62 +496,6 @@ mod tests {
         fixture.registry.grant("peer", "telemetry.read", "").unwrap();
         fixture.registry.add_peer("peer", &bundle_json(&identity), &identity.fingerprint(), None).unwrap();
         assert!(!fixture.registry.peer("peer").unwrap().unwrap().capability_telemetry);
-    }
-
-    #[test]
-    fn selective_revocation_keeps_other_grants_and_binds_identity_and_revision() {
-        let fixture = TempRegistry::new("selective");
-        let identity = Identity::generate("peerselective").unwrap();
-        fixture.registry.add_peer("peer", &bundle_json(&identity), &identity.fingerprint(), None).unwrap();
-        fixture.registry.grant("peer", CAPABILITY_MCP, "workspace").unwrap();
-        fixture.registry.grant("peer", "telemetry.read", "").unwrap();
-        let revision = fixture.registry.revision().unwrap();
-        assert!(fixture.registry.revoke_capability("peer", "telemetry.read", &"0".repeat(64), revision).is_err());
-        assert!(fixture.registry.revoke_capability("peer", "telemetry.read", &identity.fingerprint(), revision - 1).is_err());
-        assert!(fixture.registry.revoke_capability("peer", "other", &identity.fingerprint(), revision).is_err());
-        assert_eq!(fixture.registry.revision().unwrap(), revision);
-        assert!(fixture.registry.revoke_capability("peer", "telemetry.read", &identity.fingerprint(), revision).unwrap());
-        let peer = fixture.registry.peer("peer").unwrap().unwrap();
-        assert!(!peer.capability_telemetry && peer.has_execution_grant() && !peer.revoked);
-        let next = fixture.registry.revision().unwrap();
-        assert_eq!(next, revision + 1);
-        assert!(!fixture.registry.revoke_capability("peer", "telemetry.read", &identity.fingerprint(), next).unwrap());
-        assert_eq!(fixture.registry.revision().unwrap(), next);
-        fixture.registry.grant("peer", "telemetry.read", "").unwrap();
-        let last = fixture.registry.revision().unwrap();
-        assert!(fixture.registry.revoke_capability("peer", CAPABILITY_MCP, &identity.fingerprint(), last).unwrap());
-        let peer = fixture.registry.peer("peer").unwrap().unwrap();
-        assert!(peer.capability_telemetry && !peer.has_execution_grant() && peer.workspace.is_none() && !peer.revoked);
-        let replacement = Identity::generate("peerreplaced").unwrap();
-        let before_replace = fixture.registry.revision().unwrap();
-        fixture.registry.add_peer("peer", &bundle_json(&replacement), &replacement.fingerprint(), None).unwrap();
-        assert!(fixture.registry.revoke_capability("peer", "telemetry.read", &identity.fingerprint(), before_replace).is_err());
-    }
-
-    #[test]
-    fn reviewed_grants_and_full_revoke_reject_changed_identity_and_revision() {
-        let fixture = TempRegistry::new("reviewed-grants");
-        let first = Identity::generate("peerreviewed1").unwrap();
-        fixture.registry.add_peer("peer", &bundle_json(&first), &first.fingerprint(), None).unwrap();
-        let revision = fixture.registry.revision().unwrap();
-        assert!(fixture.registry.grant_reviewed("peer", CAPABILITY_MCP, "workspace", &"0".repeat(64), revision).is_err());
-        assert!(fixture.registry.grant_reviewed("peer", "telemetry.read", "", &first.fingerprint(), revision - 1).is_err());
-        assert_eq!(fixture.registry.revision().unwrap(), revision);
-        fixture.registry.grant_reviewed("peer", CAPABILITY_MCP, "workspace", &first.fingerprint(), revision).unwrap();
-        let granted_revision = fixture.registry.revision().unwrap();
-        assert!(fixture.registry.revoke_reviewed("peer", &first.fingerprint(), revision).is_err());
-        assert!(fixture.registry.peer("peer").unwrap().unwrap().has_execution_grant());
-        let second = Identity::generate("peerreviewed2").unwrap();
-        fixture.registry.add_peer("peer", &bundle_json(&second), &second.fingerprint(), None).unwrap();
-        assert!(fixture.registry.grant_reviewed("peer", "telemetry.read", "", &first.fingerprint(), granted_revision).is_err());
-        let current = fixture.registry.revision().unwrap();
-        assert!(fixture.registry.revoke_reviewed("peer", &first.fingerprint(), current).is_err());
-        assert!(!fixture.registry.peer("peer").unwrap().unwrap().capability_telemetry);
-        fixture.registry.grant_reviewed("peer", "telemetry.read", "", &second.fingerprint(), current).unwrap();
-        let current = fixture.registry.revision().unwrap();
-        assert!(fixture.registry.revoke_reviewed("peer", &second.fingerprint(), current).unwrap());
-        let peer = fixture.registry.peer("peer").unwrap().unwrap();
-        assert!(peer.revoked && !peer.capability_telemetry && !peer.has_execution_grant());
     }
 
     #[test]

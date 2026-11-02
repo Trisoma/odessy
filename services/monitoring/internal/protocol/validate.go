@@ -561,9 +561,7 @@ func ValidateLinkBinary(p string) error {
 	if p == "" {
 		return invalid("link_binary is required")
 	}
-	// A tilde is valid in Windows short paths (for example RUNNER~1).
-	// The worker is started directly, so a tilde is never shell-expanded.
-	if strings.ContainsAny(p, "|&;<>()$`\"'*?[]{}\n\r\t") {
+	if strings.ContainsAny(p, "|&;<>()$`\"'*?[]{}~\n\r\t") {
 		return invalid("link_binary must be a plain path without shell metacharacters")
 	}
 	if !strings.ContainsAny(p, "/\\") {

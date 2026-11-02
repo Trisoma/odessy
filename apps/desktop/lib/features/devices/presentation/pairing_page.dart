@@ -40,8 +40,6 @@ class _PairingPageState extends State<PairingPage> {
   void update() {
     compared = false;
     c.update({
-      if (!editors.containsKey('link') && c.fields['link'] != null)
-        'link': c.fields['link'],
       for (final e in editors.entries) e.key: e.value.text.trim(),
       'capability': capability
     });
@@ -121,17 +119,9 @@ class _PairingPageState extends State<PairingPage> {
                             onPressed: c.busy
                                 ? null
                                 : () {
-                                    final matches = c.peers?.where(
-                                        (candidate) =>
-                                            candidate.alias == peer['alias']);
-                                    if (matches == null ||
-                                        matches.length != 1) {
-                                      return;
-                                    }
                                     final e = editors.putIfAbsent(
                                         'alias', () => TextEditingController());
                                     e.text = '${peer['alias']}';
-                                    c.selectPeer(matches.single);
                                     setState(() {
                                       action = 'revoke';
                                       update();

@@ -139,7 +139,6 @@ ends in `needs_attention`. See [agent handoff](../agent-handoff.md).
 ```sh
 python -m pip install -e '.[ui]'
 export ODESSY_API_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-export ODESSY_API_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 python -m odessy serve --fake-model --host 127.0.0.1 --port 8765
 ```
 
@@ -151,7 +150,7 @@ The client provides session creation, model selection, explicit consultation,
 events/peer answers, approvals, clarification questions, and Stop. It is a UI integration diagnostic.
 
 ```sh
-export TOKEN="$ODESSY_API_TOKEN"
+export TOKEN='the-token-printed-by-serve'
 curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/v1/profiles
 curl -X POST -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/v1/sessions
 export SID='the-returned-session-id'

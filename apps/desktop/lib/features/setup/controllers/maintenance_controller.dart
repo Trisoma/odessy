@@ -2,14 +2,6 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:odessy_client/odessy_client.dart';
 
-class InspectedPeer {
-  const InspectedPeer(this.alias, this.installationId, this.fingerprint,
-      this.telemetry, this.execution, this.address, this.workspace);
-  final String alias, installationId, fingerprint;
-  final bool telemetry, execution;
-  final String? address, workspace;
-}
-
 /// Explicit native changes, bound to the reviewed local field snapshot.
 class MaintenanceController extends ChangeNotifier {
   MaintenanceController(this.backend);
@@ -22,10 +14,6 @@ class MaintenanceController extends ChangeNotifier {
       _disposed = false,
       _mutating = false;
   int _epoch = 0;
-  List<InspectedPeer>? peers;
-  int? peerRevision;
-  String? _peerLink;
-  InspectedPeer? selectedPeer;
   bool get canApply =>
       !busy &&
       !needsInspection &&
@@ -37,89 +25,12 @@ class MaintenanceController extends ChangeNotifier {
           fields['allow_model_downloads'] == true);
   void update(Json value) {
     if (busy || needsInspection) return;
-    if (value['link'] != _peerLink) {
-      peers = null;
-      peerRevision = null;
-      _peerLink = null;
-      selectedPeer = null;
-    } else if (selectedPeer != null && value['alias'] != selectedPeer!.alias) {
-      selectedPeer = null;
-    }
     fields = Map.unmodifiable(value);
     reviewedAction = null;
     _confirmation = null;
     result = {};
     error = '';
     notifyListeners();
-  }
-
-  void selectPeer(InspectedPeer peer) {
-    if (_disposed ||
-        busy ||
-        needsInspection ||
-        peers == null ||
-        !peers!.contains(peer) ||
-        peerRevision == null ||
-        fields['link'] != _peerLink) {
-      return;
-    }
-    fields = Map.unmodifiable({...fields, 'alias': peer.alias});
-    selectedPeer = peer;
-    reviewedAction = null;
-    _confirmation = null;
-    result = {};
-    error = '';
-    notifyListeners();
-  }
-
-  void _setPeers(Json reply, Object? source) {
-    final data = reply['peers'];
-    if (reply['operation'] != 'list' ||
-        data is! Map ||
-        data['peers'] is! List ||
-        data['grant_revision'] is! int ||
-        (data['grant_revision'] as int) < 0 ||
-        (data['peers'] as List).length > 512 ||
-        source is! String ||
-        source.isEmpty) {
-      throw const FormatException('Invalid peer inventory');
-    }
-    final entries = <InspectedPeer>[], aliases = <String>{};
-    for (final item in data['peers'] as List) {
-      if (item is! Map ||
-          item['alias'] is! String ||
-          !RegExp(r'^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$')
-              .hasMatch(item['alias'] as String) ||
-          !aliases.add(item['alias'] as String) ||
-          item['installation_id'] is! String ||
-          (item['installation_id'] as String).isEmpty ||
-          (item['installation_id'] as String).length > 128 ||
-          item['fingerprint_sha256'] is! String ||
-          !RegExp(r'^[a-f0-9]{64}$')
-              .hasMatch(item['fingerprint_sha256'] as String) ||
-          item['capability_telemetry'] is! bool ||
-          item['capability_mcp'] is! bool ||
-          (item['address'] != null &&
-              (item['address'] is! String ||
-                  (item['address'] as String).length > 512)) ||
-          (item['workspace'] != null &&
-              (item['workspace'] is! String ||
-                  (item['workspace'] as String).length > 4096))) {
-        throw const FormatException('Invalid peer inventory');
-      }
-      entries.add(InspectedPeer(
-          item['alias'] as String,
-          item['installation_id'] as String,
-          item['fingerprint_sha256'] as String,
-          item['capability_telemetry'] as bool,
-          item['capability_mcp'] as bool,
-          item['address'] as String?,
-          item['workspace'] as String?));
-    }
-    peers = List.unmodifiable(entries);
-    peerRevision = data['grant_revision'] as int;
-    _peerLink = source;
-    selectedPeer = null;
   }
 
   Json _parameters(String action) {
@@ -163,29 +74,6 @@ class MaintenanceController extends ChangeNotifier {
             entry.value != false)
           entry.key: entry.value
     };
-    if (const {
-      'pair:grant-telemetry',
-      'pair:revoke-telemetry',
-      'pair:revoke-execution'
-    }.contains(action)) {
-      values.remove('workspace');
-    }
-    if (pair &&
-        selectedPeer != null &&
-        peerRevision != null &&
-        fields['alias'] == selectedPeer!.alias &&
-        fields['link'] == _peerLink &&
-        const {
-          'pair:enroll',
-          'pair:grant',
-          'pair:grant-telemetry',
-          'pair:revoke',
-          'pair:revoke-telemetry',
-          'pair:revoke-execution'
-        }.contains(action)) {
-      values['expected_peer_fingerprint'] = selectedPeer!.fingerprint;
-      values['expected_peer_revision'] = peerRevision;
-    }
     if (engine && action == 'engine:resume') {
       values.remove('config');
       values.remove('role');
@@ -236,14 +124,6 @@ class MaintenanceController extends ChangeNotifier {
       return;
     }
     final epoch = ++_epoch;
-    final peerSource = fields['link'];
-    if (!reviewing && action == 'pair:list') {
-      peers = null;
-      peerRevision = null;
-      selectedPeer = null;
-      _peerLink = null;
-      result = {};
-    }
     busy = true;
     error = '';
     reviewedAction = null;
@@ -274,15 +154,6 @@ class MaintenanceController extends ChangeNotifier {
           : action;
       final value = await _call(readAction, review: reviewing);
       if (_disposed || epoch != _epoch) return;
-      if (!reviewing && action == 'pair:list') {
-        final source = peerSource is String && peerSource.isNotEmpty
-            ? peerSource
-            : value['link'];
-        _setPeers(value, source);
-        if (peerSource == null || peerSource == '') {
-          fields = Map.unmodifiable({...fields, 'link': source});
-        }
-      }
       result = value;
       if (reviewing) {
         final token = value['plan_id'] ??
@@ -338,12 +209,6 @@ class MaintenanceController extends ChangeNotifier {
       }
     } finally {
       if (!_disposed && epoch == _epoch) {
-        if (action.startsWith('pair:')) {
-          peers = null;
-          peerRevision = null;
-          selectedPeer = null;
-          _peerLink = null;
-        }
         busy = false;
         _mutating = false;
         notifyListeners();
@@ -354,12 +219,6 @@ class MaintenanceController extends ChangeNotifier {
   Future<void> cancel() async {
     if (!busy || _disposed) return;
     ++_epoch;
-    if (_mutating) {
-      peers = null;
-      peerRevision = null;
-      selectedPeer = null;
-      _peerLink = null;
-    }
     needsInspection = needsInspection || _mutating;
     reviewedAction = null;
     _confirmation = null;

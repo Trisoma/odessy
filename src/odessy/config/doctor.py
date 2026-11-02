@@ -699,14 +699,8 @@ def _voice_checks(env: Mapping[str, str], probes: Probes) -> list[Check]:
         path = env.get(env_name) or default
         if not probes.path_exists(path):
             checks.append(Check("Voice (optional)", "warn", f"{label} not found: {path}", f"Download it and set {env_name}."))
-    for env_name, default in (("ODESSY_AUDIO_RECORDER", "arecord"), ("ODESSY_AUDIO_PLAYER", "windows-native" if sys.platform == 'win32' else "aplay")):
+    for env_name, default in (("ODESSY_AUDIO_RECORDER", "arecord"), ("ODESSY_AUDIO_PLAYER", "aplay")):
         command = env.get(env_name) or default
-        if env_name == 'ODESSY_AUDIO_PLAYER' and command == 'windows-native':
-            if sys.platform != 'win32' or env.get('ODESSY_AUDIO_OUTPUT_DEVICE'):
-                checks.append(Check('Voice (optional)', 'warn', 'native Windows playback requires Windows and the default output device'))
-            else:
-                checks.append(Check('Voice (optional)', 'warn', 'native Windows default audio output has not been tested'))
-            continue
         if probes.which(command) is None:
             checks.append(Check("Voice (optional)", "warn", f"audio program not found: {command}", f"Set {env_name} (arecord/aplay are Linux-only)."))
     for key, default in (('ODESSY_STT_PROVIDER', 'whisper.cpp'), ('ODESSY_TTS_PROVIDER', 'kokoro')):
@@ -770,7 +764,7 @@ def _wake_checks(env: Mapping[str, str], probes: Probes) -> list[Check]:
             )
 
     recorder = env.get("ODESSY_AUDIO_RECORDER") or "arecord"
-    player = env.get("ODESSY_AUDIO_PLAYER") or ("windows-native" if sys.platform == 'win32' else "aplay")
+    player = env.get("ODESSY_AUDIO_PLAYER") or "aplay"
     capture = probes.command_output([recorder, "-l"], 5) if probes.which(recorder) else None
     if probes.which(recorder) and (capture is None or "card" not in capture.lower()):
         checks.append(

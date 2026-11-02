@@ -31,7 +31,7 @@ def run(selection,*,workspace,host='127.0.0.1',port=8765,token=None,watch_stdin=
         voice_config=VoiceConfig.from_env()
         desktop_voice=DesktopVoice(lambda:DesktopAudio(voice_config),host=socket.gethostname())
     asyncio.run(run_server(host=host,port=port,workspace=Path(workspace),backend=selection.model.provider,
-                           token=token,watch_stdin=watch_stdin,
+                           token=token,watch_stdin=watch_stdin,print_token=token is None,
                            runtime_configuration=descriptor,desktop_voice=desktop_voice))
 
 

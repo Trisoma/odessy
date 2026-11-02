@@ -11,9 +11,6 @@ import 'setup_usability_test.dart' show FakePicker;
 class ConfigureBackend implements SetupBackend {
   final requests = <SetupRequest>[];
   bool configured = false;
-  Json? initialSelection;
-  String? failAction;
-  bool failSpecAfterSave = false;
 
   @override
   Future<SetupReply> execute(SetupRequest request) async {
@@ -34,12 +31,6 @@ class ConfigureBackend implements SetupBackend {
       }, request.id);
     }
     final action = request.parameters['action'] as String? ?? '';
-    if (action == failAction ||
-        (action == 'installed-spec' && failSpecAfterSave && configured)) {
-      return SetupReply.fromJson(
-          {'id': request.id, 'status': 'error', 'reason': 'Fixture failure'},
-          request.id);
-    }
     final result = switch (action) {
       'installed-spec' => {
           'root': 'C:/App',
@@ -47,7 +38,6 @@ class ConfigureBackend implements SetupBackend {
           'role': 'combined',
           'model_configured': configured,
           'workspace': '',
-          if (initialSelection != null) 'selection': initialSelection,
         },
       'package-status' => {
           'installation_format': 'versioned',
@@ -62,8 +52,6 @@ class ConfigureBackend implements SetupBackend {
       'package-configure-review' => {'plan_id': 'configure-1'},
       'package-configure' => () {
           configured = true;
-          initialSelection =
-              Map<String, dynamic>.from(request.parameters['selection'] as Map);
           return {'configured': true, 'model_configured': true};
         }(),
       _ => {'ok': true},
@@ -79,192 +67,6 @@ class ConfigureBackend implements SetupBackend {
 }
 
 void main() {
-  for (final failing in [
-    'package-configure-review',
-    'package-configure',
-    'reload'
-  ]) {
-    testWidgets('configuration $failing failure does not start chat',
-        (tester) async {
-      final backend = ConfigureBackend();
-      final c = InstalledManageController(backend, spec: {'root': 'C:/App'});
-      addTearDown(c.dispose);
-      await c.load();
-      if (failing == 'reload') {
-        backend.failSpecAfterSave = true;
-      } else {
-        backend.failAction = failing;
-      }
-      var started = 0;
-      await tester.pumpWidget(MaterialApp(
-          home: Scaffold(
-              body: GetStartedPage(controller: c, onStart: () => started++))));
-      await tester.enterText(
-          find.byKey(const Key('get-started-model')), 'local-model');
-      await tester.pump();
-      await tester.tap(find.text('Save and continue'));
-      await tester.pumpAndSettle();
-      expect(started, 0);
-      expect(c.error, isNotEmpty);
-    });
-  }
-
-  testWidgets('configured LFM backend and credential reference are preserved',
-      (tester) async {
-    final backend = ConfigureBackend()
-      ..configured = true
-      ..initialSelection = {
-        'model': {
-          'provider': 'lfm',
-          'name': 'local-model',
-          'endpoint': 'http://127.0.0.1:11435',
-          'credential_env': 'LOCAL_API_KEY'
-        }
-      };
-    final c = InstalledManageController(backend, spec: {'root': 'C:/App'});
-    addTearDown(c.dispose);
-    await c.load();
-    await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: GetStartedPage(controller: c, onStart: () {}))));
-    await tester.tap(find.text('Change model'));
-    await tester.pumpAndSettle();
-    expect(find.text('LFM'), findsOneWidget);
-    expect(
-        tester
-            .widget<TextField>(find.byKey(const Key('get-started-model')))
-            .controller!
-            .text,
-        'local-model');
-    final localKey = find.widgetWithText(
-        TextField, 'Local credential environment variable (optional)');
-    expect(
-        tester.widget<TextField>(localKey).controller!.text, 'LOCAL_API_KEY');
-    await tester.tap(find.text('Save and continue'));
-    await tester.pumpAndSettle();
-    final review = backend.requests.firstWhere(
-        (r) => r.parameters['action'] == 'package-configure-review');
-    expect((review.parameters['selection'] as Json)['model'], {
-      'provider': 'lfm',
-      'name': 'local-model',
-      'endpoint': 'http://127.0.0.1:11435',
-      'credential_env': 'LOCAL_API_KEY'
-    });
-  });
-
-  testWidgets('switching from local to cloud does not reuse the local endpoint',
-      (tester) async {
-    final c =
-        InstalledManageController(ConfigureBackend(), spec: {'root': 'C:/App'});
-    addTearDown(c.dispose);
-    await c.load();
-    await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: GetStartedPage(controller: c, onStart: () {}))));
-    await tester.tap(find.text('Remote or cloud').first);
-    await tester.pumpAndSettle();
-    expect(
-        tester
-            .widget<TextField>(
-                find.byKey(const Key('get-started-remote-endpoint')))
-            .controller!
-            .text,
-        isEmpty);
-  });
-
-  testWidgets('deferring and returning retains the chosen cloud endpoint',
-      (tester) async {
-    final c =
-        InstalledManageController(ConfigureBackend(), spec: {'root': 'C:/App'});
-    addTearDown(c.dispose);
-    await c.load();
-    await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: GetStartedPage(controller: c, onStart: () {}))));
-    await tester.tap(find.text('Remote or cloud').first);
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const Key('get-started-remote-endpoint')),
-        'https://provider.example');
-    await tester.tap(find.widgetWithText(TextButton, 'Configure later').last);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Configure a model'));
-    await tester.pumpAndSettle();
-    expect(
-        tester
-            .widget<TextField>(
-                find.byKey(const Key('get-started-remote-endpoint')))
-            .controller!
-            .text,
-        'https://provider.example');
-  });
-
-  testWidgets('configured remote model can be edited without losing its fields',
-      (tester) async {
-    final backend = ConfigureBackend()
-      ..configured = true
-      ..initialSelection = {
-        'model': {
-          'provider': 'claude',
-          'name': 'example-model',
-          'endpoint': 'https://provider.example',
-          'credential_env': 'TEST_PROVIDER_KEY'
-        }
-      };
-    final c = InstalledManageController(backend, spec: {'root': 'C:/App'});
-    addTearDown(c.dispose);
-    await c.load();
-    var started = 0;
-    await tester.pumpWidget(MaterialApp(
-        home: Scaffold(
-            body: GetStartedPage(controller: c, onStart: () => started++))));
-    await tester.tap(find.text('Change model'));
-    await tester.pumpAndSettle();
-    expect(
-        tester
-            .widget<TextField>(
-                find.byKey(const Key('get-started-remote-model')))
-            .controller!
-            .text,
-        'example-model');
-    expect(
-        tester
-            .widget<TextField>(
-                find.byKey(const Key('get-started-remote-endpoint')))
-            .controller!
-            .text,
-        'https://provider.example');
-    expect(
-        tester
-            .widget<TextField>(find.byKey(const Key('get-started-credential')))
-            .controller!
-            .text,
-        'TEST_PROVIDER_KEY');
-    expect(find.text('Claude'), findsOneWidget);
-    expect(find.text('Save and continue'), findsOneWidget);
-    await tester.enterText(
-        find.byKey(const Key('get-started-remote-model')), 'updated-model');
-    await tester.tap(find.text('Save and continue'));
-    await tester.pumpAndSettle();
-    final request = backend.requests.firstWhere(
-        (r) => r.parameters['action'] == 'package-configure-review');
-    expect((request.parameters['selection'] as Json)['model'], {
-      'provider': 'claude',
-      'name': 'updated-model',
-      'endpoint': 'https://provider.example',
-      'credential_env': 'TEST_PROVIDER_KEY'
-    });
-    expect(started, 1);
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: GetStartedPage(controller: c, onStart: () {}))));
-    await tester.tap(find.text('Change model'));
-    await tester.pumpAndSettle();
-    expect(
-        tester
-            .widget<TextField>(
-                find.byKey(const Key('get-started-remote-model')))
-            .controller!
-            .text,
-        'updated-model');
-  });
-
   testWidgets(
       'voice row opens editable assets and endpoint row probes explicitly',
       (tester) async {
@@ -342,8 +144,6 @@ void main() {
     await tester.pumpAndSettle();
     expect(backend.requests.where((r) => r.operation == 'discover').length, 1);
     expect(find.byKey(const Key('get-started-model-list')), findsOneWidget);
-    await tester.ensureVisible(find.byKey(const Key('get-started-model-list')));
-    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('get-started-model-list')));
     await tester.pumpAndSettle();
     expect(find.text('llama3.1:8b'), findsWidgets);
@@ -424,15 +224,12 @@ void main() {
     for (final name in SettingsSections.all) {
       expect(find.text(name), findsWidgets, reason: 'missing section $name');
     }
-    await tester.tap(find.byKey(
-        const ValueKey('settings-section-${SettingsSections.installation}')));
+    await tester.tap(find.text(SettingsSections.installation).last);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Manage installation'));
     expect(openedManagement, 1);
-    await tester.tap(find
-        .byKey(const ValueKey('settings-section-${SettingsSections.models}')));
+    await tester.tap(find.text(SettingsSections.models).last);
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Configure a model'));
     await tester.tap(find.text('Configure a model'));
     expect(openedConfiguration, 1);
     expect(find.byKey(const Key('consultation-limit')), findsWidgets);
