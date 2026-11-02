@@ -240,7 +240,10 @@ class _SettingsPageState extends State<SettingsPage> {
               key: ValueKey('settings-section-$name'),
               contentPadding: const EdgeInsets.symmetric(horizontal: 16),
               selected: section == name,
-              title: Text(name, style: const TextStyle(fontSize: 13)),
+              selectedTileColor: Theme.of(context).colorScheme.secondaryContainer,
+              selectedColor: Theme.of(context).colorScheme.onSecondaryContainer,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              title: Text(name, style: Theme.of(context).textTheme.labelLarge),
               onTap: () => _selectSection(name)),
       ]));
 

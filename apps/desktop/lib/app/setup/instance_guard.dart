@@ -14,7 +14,6 @@ class InstanceGuard {
   final String _key;
   final RandomAccessFile _handle;
   bool _released = false;
-  bool _released = false;
 
   static Future<InstanceGuard?> acquire(
     String key, {

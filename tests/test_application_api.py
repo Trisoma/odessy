@@ -18,6 +18,16 @@ class Agent:
 def test_missing_cloud_key_is_recoverable_service_unavailability(monkeypatch, path, method, wrapped, asynchronous):
     from odessy.models.cloud_model import build_cloud_model
     from odessy import cli
+    from odessy import credentials
+
+    # The test must not consult the developer's session or OS credential store.
+    class EmptyCredentialStore:
+        def get_password(self, service, identity):
+            return None
+
+    monkeypatch.setattr(credentials, '_backend', lambda: EmptyCredentialStore())
+    monkeypatch.setattr(credentials, '_sessions', {})
+    monkeypatch.setattr(credentials, '_references', {})
 
     for name in ('DEEPSEEK_API_KEY', 'ODESSY_CLOUD_API_KEY'):
         monkeypatch.delenv(name, raising=False)

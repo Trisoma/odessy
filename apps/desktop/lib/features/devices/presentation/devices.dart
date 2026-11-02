@@ -121,7 +121,10 @@ class _DevicePageState extends State<DevicePage> {
   Widget _header(BuildContext context) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('DEVICES', style: Theme.of(context).textTheme.labelMedium),
+          Text('DEVICES',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: Theme.of(context).colorScheme.primary,
+                  letterSpacing: 1.1)),
           const SizedBox(height: OdessyTokens.spaceRegular),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,

@@ -96,6 +96,17 @@ Future<void> mountConversation(WidgetTester tester, DesktopSession c,
 }
 
 void main() {
+  testWidgets('offline empty session shows recovery instead of example prompts',
+      (tester) async {
+    final c = DesktopSession(ConversationFixtureApi());
+    addTearDown(c.dispose);
+    await mountConversation(tester, c);
+    expect(find.text('Service offline'), findsOneWidget);
+    expect(find.text('Refresh session'), findsOneWidget);
+    expect(find.text('What would you like to work on?'), findsNothing);
+    expect(find.text('Plan my next task'), findsNothing);
+  });
+
   testWidgets('examples fill the draft and blank drafts cannot submit',
       (tester) async {
     final api = ConversationFixtureApi();
