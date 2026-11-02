@@ -3,8 +3,7 @@ import '../controllers/component_settings_controller.dart';
 import '../controllers/settings_form_controller.dart';
 
 Future<bool> confirmFormNavigation(
-    BuildContext context, SettingsFormController<int>? form,
-    {bool deferDiscard = false}) async {
+    BuildContext context, SettingsFormController<int>? form) async {
   if (form == null || form.loading || !form.dirty) return true;
   final origin = FocusManager.instance.primaryFocus;
   final action = await showDialog<String>(
@@ -31,7 +30,6 @@ Future<bool> confirmFormNavigation(
               ]));
   if (context.mounted && origin?.context != null) origin!.requestFocus();
   if (action == 'discard') {
-    if (deferDiscard) return true;
     await form.load();
     return form.error == null;
   }
@@ -44,8 +42,7 @@ Future<bool> confirmFormNavigation(
 
 /// Only explicit Save admits a mutation; leaving an admitted save never cancels it.
 Future<bool> confirmSettingsNavigation(
-    BuildContext context, ComponentSettingsController? controller,
-    {bool deferDiscard = false}) async {
+    BuildContext context, ComponentSettingsController? controller) async {
   final c = controller;
   if (c == null || c.busy || !c.dirty) return true;
   final section = c.activeSection!;
@@ -74,7 +71,7 @@ Future<bool> confirmSettingsNavigation(
               ]));
   if (context.mounted && origin?.context != null) origin!.requestFocus();
   if (answer == 'discard') {
-    if (!deferDiscard) c.discard(section);
+    c.discard(section);
     return true;
   }
   if (answer == 'save') return c.save(section, c.drafts[section]!.values);

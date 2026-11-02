@@ -33,10 +33,8 @@ class SettingsScaffold extends StatelessWidget {
                   child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Semantics(
-                            header: true,
-                            child: Text(title,
-                                style: Theme.of(context).textTheme.titleLarge)),
+                        Text(title,
+                            style: Theme.of(context).textTheme.titleLarge),
                         const SizedBox(height: 8),
                         Text(description,
                             style: Theme.of(context).textTheme.bodySmall)
