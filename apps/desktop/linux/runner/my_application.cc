@@ -3,12 +3,14 @@
 #include <flutter_linux/flutter_linux.h>
 
 #include <algorithm>
+#include <memory>
 
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
 #endif
 
 #ifdef ODESSY_HAVE_EPOXY
+#include <dlfcn.h>
 #include <epoxy/egl.h>
 #include <epoxy/gl.h>
 #endif
@@ -138,6 +140,14 @@ bool EnvironmentFlagEnabled(const char* name) {
 // picked, through a 1x1 pbuffer, so no window has to exist yet.
 bool SoftwareRendering() {
   static const bool software = [] {
+    std::unique_ptr<void, decltype(&dlclose)> egl_library(
+        dlopen("libEGL.so.1", RTLD_LAZY | RTLD_LOCAL), &dlclose);
+    std::unique_ptr<void, decltype(&dlclose)> gles_library(
+        dlopen("libGLESv2.so.2", RTLD_LAZY | RTLD_LOCAL), &dlclose);
+    if (!egl_library || !gles_library) {
+      g_printerr("odessy: renderer probe skipped: EGL or GLES runtime unavailable\n");
+      return false;
+    }
     EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (display == EGL_NO_DISPLAY) {
       g_printerr("odessy: renderer probe: no EGL display\n");

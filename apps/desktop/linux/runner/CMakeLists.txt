@@ -29,7 +29,7 @@ target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::GTK)
 # Without epoxy the probe is skipped and Impeller stays on, as before.
 pkg_check_modules(ODESSY_EPOXY IMPORTED_TARGET epoxy)
 if(ODESSY_EPOXY_FOUND)
-  target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::ODESSY_EPOXY)
+  target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::ODESSY_EPOXY ${CMAKE_DL_LIBS})
   target_compile_definitions(${BINARY_NAME} PRIVATE ODESSY_HAVE_EPOXY=1)
 else()
   message(WARNING "epoxy not found: software-renderer detection is disabled")

@@ -31,6 +31,10 @@ done
 [[ $(uname -s) == Linux ]] || { echo 'Build the Linux payload on Linux.' >&2; exit 2; }
 [[ -n $python_root && -n $desktop && -n $output ]] || usage
 [[ -x $python_root/bin/python3 ]] || { echo '--python-runtime must contain an executable bin/python3' >&2; exit 2; }
+if ! "$python_root/bin/python3" -c 'import platform,sys; sys.exit(0 if platform.python_implementation()=="CPython" and sys.version_info[:2]==(3,10) and sys.platform=="linux" and platform.machine().lower() in ("x86_64","amd64") else 1)' ; then
+  echo '--python-runtime must be CPython 3.10 for Linux x86-64 (cp310 manylinux2014).' >&2
+  exit 2
+fi
 [[ -f $desktop/odessy_desktop ]] || { echo '--desktop-bundle must contain the release desktop binary' >&2; exit 2; }
 [[ ! -e $output ]] || { echo 'Output already exists; choose a new artifact.' >&2; exit 2; }
 
@@ -41,8 +45,8 @@ mkdir -p "$work/wheelhouse"
 echo '== 1/4 build the Odessy wheel =='
 # Building without isolation keeps a slow PyPI mirror out of the critical path, but
 # the local setuptools then has to understand the PEP 621 [project] table.
-if ! python3 -c 'import sys,setuptools; sys.exit(0 if tuple(int(p) for p in setuptools.__version__.split(".")[:2])>=(61,0) else 1)' 2>/dev/null; then
-  echo 'setuptools>=61 is required. Install it once, then retry:' >&2
+if ! python3 -c 'import sys,setuptools; from pip._vendor.packaging.version import Version; sys.exit(0 if Version(setuptools.__version__)>=Version("68") else 1)' 2>/dev/null; then
+  echo 'setuptools>=68 is required. Install it once, then retry:' >&2
   echo '  python3 -m pip install --user -U setuptools wheel' >&2
   exit 2
 fi

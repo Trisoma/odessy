@@ -1,6 +1,6 @@
 """Verified, packaged setup defaults. Never discover payloads from the cwd."""
 from __future__ import annotations
-import os,re,sys
+import hashlib,json,os,re,sys
 from pathlib import Path
 from .maintenance import guard,read_json,digest
 
@@ -91,11 +91,27 @@ def _dormant(root):
     must not read as "Odessy is already installed here" on the next install: the
     folder is empty and reusable, and the record is reused for the new version.
     """
-    record=read_json(root/'installation.json')
+    from .maintenance import ManagedInstallation
+    record=ManagedInstallation(root).record()
     if record.get('active'): return False
-    versions=root/'versions'
-    if not versions.is_dir(): return True
-    return not any(path.is_file() for path in versions.rglob('*'))
+    return not any(guard(root/'versions'/version/name).exists()
+                   for version,files in record['versions'].items() for name in files)
+
+
+def _check_retained_runtime(root,payload):
+    """Stop before offering reinstall if retained runtime files would collide."""
+    source=payload/'runtime'
+    if not source.is_dir(): return
+    from .runtime import inventory
+    expected=inventory(source)
+    key=hashlib.sha256(json.dumps(expected,sort_keys=True).encode()).hexdigest()[:32]
+    destination=guard(root/'runtimes'/key)
+    if not destination.exists(): return
+    for path in destination.rglob('*'):
+        if not path.is_file(): continue
+        relative=path.relative_to(destination).as_posix()
+        if relative not in expected['files'] or digest(guard(path))!=expected['files'][relative]:
+            raise ValueError('Retained runtime files conflict with this installer. Back up and move the modified runtime directory before reinstalling: '+str(destination))
 
 
 def context(*,payload=None,local_app_data=None,root=None):
@@ -114,7 +130,9 @@ def context(*,payload=None,local_app_data=None,root=None):
     target=guard(root or base/'Odessy'/'App')
     from .lifecycle import format_of
     format_=format_of(target)
-    if format_=='versioned' and _dormant(target): format_=None
+    if format_=='versioned' and _dormant(target):
+        _check_retained_runtime(target,payload)
+        format_=None
     selection=None
     workspace=None
     installation_id=None

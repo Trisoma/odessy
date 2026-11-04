@@ -5,6 +5,8 @@ import 'package:odessy_desktop/features/setup/controllers/installed_manage_contr
 class Backend implements SetupBackend {
   final requests = <SetupRequest>[];
   String failure = '';
+  String? installedPayload =
+      'C:/Users/me/AppData/Local/OdessyMaintenance/id/hash';
   Json status = {
     'installation_format': 'versioned',
     'active': 'a' * 32,
@@ -35,10 +37,11 @@ class Backend implements SetupBackend {
           'role': 'combined',
           'model_configured': false,
           'workspace': 'C:/Users/me/Documents/Odessy',
-          'payload': 'C:/Users/me/AppData/Local/OdessyMaintenance/id/hash',
+          'payload': installedPayload,
         },
       'package-status' => status,
       'package-repair-review' => {'plan_id': 'repair-1', 'operation': 'repair'},
+      'package-configure-review' => {'plan_id': 'configure-1'},
       'package-rollback-review' => {
           'plan_id': 'rollback-1',
           'operation': 'rollback',
@@ -72,6 +75,28 @@ InstalledManageController controller(Backend backend) =>
     InstalledManageController(backend, spec: {'root': 'C:/Odessy/App'});
 
 void main() {
+  for (final cached in [null, 'C:/old-payload']) {
+    test('explicit payload survives reload with cached payload $cached',
+        () async {
+      final backend = Backend()..installedPayload = cached;
+      final c = InstalledManageController(backend,
+          spec: {'root': 'C:/Odessy/App', 'payload': 'C:/new-payload'});
+      await c.load();
+      expect(c.payload, 'C:/new-payload');
+      await c.reviewRepair();
+      expect(backend.requests.last.parameters['payload'], 'C:/new-payload');
+      await c.register();
+      expect(
+          backend.requests
+              .lastWhere((r) => r.parameters['action'] == 'package-register')
+              .parameters['payload'],
+          'C:/new-payload');
+      await c.reviewConfiguration({'role': 'combined'}, 'C:/work');
+      await c.confirm();
+      expect(c.payload, 'C:/new-payload');
+      c.dispose();
+    });
+  }
   test('load reads the installed spec and journal status', () async {
     final backend = Backend();
     final c = controller(backend);

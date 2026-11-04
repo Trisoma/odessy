@@ -98,6 +98,41 @@ def test_plan_is_invalidated_by_another_installation(tmp_path):
     with pytest.raises(ValueError): manager.install(source,selection,stale)
 
 
+def test_plan_is_invalidated_by_runtime_change(tmp_path):
+    source=bundle(tmp_path)
+    runtime=tmp_path/'runtime'
+    (runtime/'bin').mkdir(parents=True)
+    executable=runtime/'bin'/'python3'
+    executable.write_bytes(b'original')
+    (runtime/'LICENSE').write_text('license')
+    manager=ManagedInstallation(tmp_path/'installation',runner=fake_runner,runtime_source=runtime)
+    selection=SetupSelection(role='execution')
+    reviewed=manager.plan(source,selection)['plan_id']
+    executable.write_bytes(b'changed')
+    with pytest.raises(ValueError,match='review the exact'):
+        manager.install(source,selection,reviewed)
+    assert not (manager.root/'installation.json').exists()
+
+
+def test_install_rechecks_plan_inside_lock(tmp_path, monkeypatch):
+    source=bundle(tmp_path)
+    manager=ManagedInstallation(tmp_path/'installation',runner=fake_runner)
+    selection=SetupSelection(role='execution')
+    reviewed=manager.plan(source,selection)['plan_id']
+    original=manager.plan
+    calls=0
+    def changed_under_lock(*args):
+        nonlocal calls
+        calls+=1
+        result=original(*args)
+        if calls==2: result['plan_id']='changed-after-lock'
+        return result
+    monkeypatch.setattr(manager,'plan',changed_under_lock)
+    with pytest.raises(ValueError,match='installation changed after review'):
+        manager.install(source,selection,reviewed)
+    assert not (manager.root/'installation.json').exists()
+
+
 def test_uninstall_refuses_while_service_is_recorded(tmp_path):
     source=bundle(tmp_path);manager=ManagedInstallation(tmp_path/'installation',runner=fake_runner);selection=SetupSelection(role='execution')
     manager.install(source,selection,manager.plan(source,selection)['plan_id'])

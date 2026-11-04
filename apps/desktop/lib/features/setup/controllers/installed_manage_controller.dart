@@ -9,9 +9,11 @@ import '../../../app/setup/platform_copy.dart';
 /// itself; the user never supplies an internal Python, wheelhouse or payload path.
 class InstalledManageController extends ChangeNotifier {
   InstalledManageController(this.backend, {Json? spec})
-      : spec = spec ?? const {};
+      : _suppliedPayload = (spec?['payload'] as String?) ?? '',
+        spec = spec ?? const {};
 
   final SetupBackend backend;
+  final String _suppliedPayload;
   Json spec;
   Json status = {}, result = {}, review = const {};
   Json discovery = const {};
@@ -23,7 +25,9 @@ class InstalledManageController extends ChangeNotifier {
   bool _disposed = false;
 
   String get root => (spec['root'] as String?) ?? '';
-  String get payload => (spec['payload'] as String?) ?? '';
+  String get payload => _suppliedPayload.isNotEmpty
+      ? _suppliedPayload
+      : (spec['payload'] as String?) ?? '';
   String? get reviewedAction => _reviewedAction;
   bool get canConfirm =>
       !busy && !uninstalled && _reviewedAction != null && _confirmation != null;
