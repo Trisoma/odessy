@@ -1,6 +1,6 @@
 """Verified, packaged setup defaults. Never discover payloads from the cwd."""
 from __future__ import annotations
-import os,re,sys
+import hashlib,json,os,re,sys
 from pathlib import Path
 from .maintenance import guard,read_json,digest
 
@@ -84,6 +84,48 @@ def validate_components(manifest,role,*,runtime=False):
     return {'copy':selected,'absent':absent}
 
 
+def _dormant(root):
+    """A record whose owned files are gone is an uninstalled folder, not a live one.
+
+    Uninstalling keeps the record so management can report what happened, but it
+    must not read as "Odessy is already installed here" on the next install: the
+    folder is empty and reusable, and the record is reused for the new version.
+    """
+    from .maintenance import ManagedInstallation
+    record=ManagedInstallation(root).record()
+    if record.get('active'): return False
+    return not any(guard(root/'versions'/version/name).exists()
+                   for version,files in record['versions'].items() for name in files)
+
+
+def _check_retained_runtime(root,payload):
+    """Stop before offering reinstall if retained runtime files would collide."""
+    source=payload/'runtime'
+    if not source.is_dir(): return
+    from .runtime import included,inventory
+    expected=inventory(source)
+    key=hashlib.sha256(json.dumps(expected,sort_keys=True).encode()).hexdigest()[:32]
+    destination=guard(root/'runtimes'/key)
+    if not destination.exists(): return
+    message='Retained runtime files conflict with this installer. Back up and move the modified runtime directory before reinstalling: '+str(destination)
+    if not destination.is_dir(): raise ValueError(message)
+    for name in expected['files']:
+        path=guard(destination/name)
+        if path.exists() and not path.is_file(): raise ValueError(message)
+        for parent in path.parents:
+            if parent==destination: break
+            if parent.exists() and not parent.is_dir(): raise ValueError(message)
+    for path in destination.rglob('*'):
+        if not path.is_file(): continue
+        relative_path=path.relative_to(destination)
+        if 'site-packages' in relative_path.parts and '__pycache__' not in relative_path.parts:
+            raise ValueError(message)
+        if not included(relative_path): continue
+        relative=relative_path.as_posix()
+        if relative not in expected['files'] or digest(guard(path))!=expected['files'][relative]:
+            raise ValueError(message)
+
+
 def context(*,payload=None,local_app_data=None,root=None):
     payload=guard(payload or os.environ.get('ODESSY_SETUP_PAYLOAD') or Path(sys.executable).parent)
     manifest=read_json(payload/'setup-context.json')
@@ -100,6 +142,9 @@ def context(*,payload=None,local_app_data=None,root=None):
     target=guard(root or base/'Odessy'/'App')
     from .lifecycle import format_of
     format_=format_of(target)
+    if format_=='versioned' and _dormant(target):
+        _check_retained_runtime(target,payload)
+        format_=None
     selection=None
     workspace=None
     installation_id=None
@@ -111,7 +156,7 @@ def context(*,payload=None,local_app_data=None,root=None):
         record=ManagedInstallation(target).record()
         installation_id=record.get('id')
         active=record.get('active')
-        registration=record.get('windows_registration',{}).get('state','none')
+        registration=(record.get('windows_registration') or record.get('linux_registration') or {}).get('state','none')
         selection=record.get('selection')
         if (target/'configuration.json').is_file():
             configuration_recorded=True

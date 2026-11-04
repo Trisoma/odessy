@@ -10,6 +10,20 @@ from urllib.parse import urlsplit
 SCHEMA_VERSION = 1
 ROLES = ('coordinator', 'execution', 'combined')
 CLOUD_PROVIDERS = ('claude', 'openai', 'deepseek', 'qwen', 'kimi', 'custom')
+_SELECTOR = re.compile(r'[A-Za-z_][A-Za-z0-9_.-]*(?::[A-Za-z_]\w*)?')
+
+
+def validate_selector(value: object) -> str:
+    """Accept a registered speech provider name or ``package.module:factory``.
+
+    Deliberately local. The offline bootstrap ships only the setup modules, so
+    importing ``odessy.voice.providers`` while a review is being built would fail
+    on a packaged installer before anything is written. ``voice.providers``
+    applies the same pattern, and a test pins the two together.
+    """
+    if not isinstance(value, str) or not _SELECTOR.fullmatch(value):
+        raise ValueError('speech provider must be a registered name or package.module:factory')
+    return value
 
 
 def text(value: object, name: str, *, optional: bool = False) -> str:
@@ -94,7 +108,6 @@ class VoiceSelection:
             raise ValueError('voice.enabled must be a boolean')
         for name in ('whisper_bin', 'whisper_model', 'kokoro_model', 'kokoro_voices', 'stt_executable', 'stt_model', 'tts_executable', 'tts_model'):
             object.__setattr__(self, name, text(getattr(self, name), name, optional=True))
-        from odessy.voice.providers import validate_selector
         validate_selector(self.stt_provider)
         validate_selector(self.tts_provider)
         if self.audio_backend not in ('auto','command','native'):raise ValueError('unknown audio backend')

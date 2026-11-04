@@ -8,10 +8,12 @@ import '../../../app/setup/platform_copy.dart';
 /// The installation root and the maintenance payload come from the installation
 /// itself; the user never supplies an internal Python, wheelhouse or payload path.
 class InstalledManageController extends ChangeNotifier {
-  InstalledManageController(this.backend, {Json? spec})
-      : spec = spec ?? const {};
+  InstalledManageController(this.backend, {Json? spec, String? setupPayload})
+      : _suppliedPayload = setupPayload ?? '',
+        spec = spec ?? const {};
 
   final SetupBackend backend;
+  final String _suppliedPayload;
   Json spec;
   Json status = {}, result = {}, review = const {};
   Json discovery = const {};
@@ -23,7 +25,11 @@ class InstalledManageController extends ChangeNotifier {
   bool _disposed = false;
 
   String get root => (spec['root'] as String?) ?? '';
-  String get payload => (spec['payload'] as String?) ?? '';
+  String get payload => _suppliedPayload.isNotEmpty
+      ? _suppliedPayload
+      : status.containsKey('payload')
+          ? (status['payload'] as String?) ?? ''
+          : (spec['payload'] as String?) ?? '';
   String? get reviewedAction => _reviewedAction;
   bool get canConfirm =>
       !busy && !uninstalled && _reviewedAction != null && _confirmation != null;
@@ -88,14 +94,25 @@ class InstalledManageController extends ChangeNotifier {
   }
 
   Future<void> load() async {
-    if (busy || _disposed || root.isEmpty) return;
+    if (busy || _disposed) return;
+    // Returning silently left the page showing empty tiles and no explanation.
+    if (root.isEmpty) {
+      error = 'This window has no installation folder to manage.';
+      notifyListeners();
+      return;
+    }
     final epoch = ++_epoch;
     _begin();
     try {
-      spec = await _execute('installed-spec', const {});
+      try {
+        spec = await _execute('installed-spec', const {});
+        notice = '';
+      } catch (failure) {
+        spec = {'root': root, if (spec['portable'] == true) 'portable': true};
+        _failed(epoch, failure);
+      }
       status = await _execute('package-status', const {});
       if (_disposed || epoch != _epoch) return;
-      notice = '';
     } catch (failure) {
       _failed(epoch, failure);
     } finally {

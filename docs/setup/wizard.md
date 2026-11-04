@@ -60,7 +60,8 @@ repair the Start-menu entry and uninstall. Every mutation requires an exact revi
 - Management keeps working after the downloaded installer is deleted because the
   verified payload is cached outside the installation, under
   `%LOCALAPPDATA%\OdessyMaintenance\<id>\<hash>` on Windows and
-  `${XDG_DATA_HOME:-~/.local/share}/odessy/maintenance/<id>/<hash>` on Linux.
+  `${XDG_DATA_HOME:-~/.local/share}/odessy-maintenance/<id>/<hash>` on Linux. The
+  cache sits outside the installation so uninstall can run from it.
 - Uninstall runs from that external cache: a running installation cannot remove the
   files it executes. The installed app offers **Open maintenance to uninstall**
   instead of removing itself.
@@ -103,6 +104,70 @@ On Linux/macOS use the same defines with your Python and checkout paths and the
 corresponding desktop device. These are build-time defines, not shell variables.
 The default helper is `python -m odessy.setup.bridge`. The wizard works without a
 running coordinator API or token; its setup helper is local even in demo mode.
+
+## Run from a distributed folder
+
+`tool/linux/package_setup_app.sh` assembles a folder a normal user can install from:
+
+```
+OdessySetup-linux-x86_64/
+  OdessySetup     the desktop binary, renamed from odessy_desktop
+  lib/ data/      the Flutter bundle
+  payload/        the unpacked offline payload, including setup-context.json
+  install.sh      exec "$here/OdessySetup" "$@"
+  README.txt
+```
+
+Running `./install.sh`, or a bare double-click on `OdessySetup`, installs with no
+arguments, no path, and no system Python. The payload beside the executable decides
+the interpreter (`payload/runtime/bin/python3`), the modules (`payload/bootstrap`)
+and the window (`Odessy Setup`, 900x680). An explicit `--payload` or an explicit
+mode still wins, and a copy without a sibling payload is untouched.
+
+### Build order, and the cached copy
+
+The menu entry and the previous installation keep their own verified copy of the
+payload, under `~/.local/share/odessy-maintenance/<id>/<digest>/`, so management
+and uninstall never depend on the folder that was used to install. That copy holds
+the desktop binary too, which means the steps must run in order:
+
+1. `flutter build linux --release` for the bundle,
+2. `tool/linux/build_setup_payload.sh` to embed that bundle in the payload,
+3. `tool/linux/package_setup_app.sh` to assemble the distribution folder,
+4. install again from that folder.
+
+Rebuilding the desktop without reinstalling leaves the cached copy one build
+behind, so a Manage or Uninstall window started from the menu entry shows the old
+behaviour. `strings <cache>/desktop/odessy_desktop | grep 'renderer probe'` says
+which build a cached copy is.
+
+### Software rendering
+
+Impeller draws through OpenGL ES and produces incomplete frames on graphics
+stacks without working acceleration: the window opens, its header paints and the
+rest stays blank. The Linux runner reads `GL_RENDERER` through a 1x1 EGL pbuffer
+before it creates the view, and switches to Skia when the driver reports a
+software rasteriser (`llvmpipe`, `softpipe`, `swrast`, VMware `SVGA3D`). The
+decision is logged once on stderr:
+
+```
+odessy: renderer 'svga3d; build: release;  llvm;'; using Skia
+```
+
+`ODESSY_DISABLE_IMPELLER=1` still forces Skia for anything the probe cannot see.
+The probe is compiled only when `libepoxy-dev` is available; without it the
+runner behaves as before and Impeller stays on.
+
+### Reinstalling into the same folder
+
+Uninstall removes recorded files whose contents still match and retains modified
+files, then keeps the installation record with `active: null` for inspection.
+When no owned version files remain, the folder is reported as `new` and a new
+installation reuses its identity. Unowned files stay in place. If modified owned
+version files remain, inspect and back them up before moving them out of the
+installation folder and retrying. A conflicting retained runtime is reported with
+its location; back it up and move it out before retrying. Setup does not delete or
+overwrite these files automatically.
 
 ## Behavior
 

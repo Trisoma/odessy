@@ -193,8 +193,9 @@ class _SetupApplicationState extends State<SetupApplication> {
   void _edit() => c.edit(destination: location.text, value: _selection());
 
   void _openManagement({bool reviewUninstall = false}) {
-    final controller =
-        InstalledManageController(c.backend, spec: {'root': c.root});
+    final controller = InstalledManageController(c.backend,
+        spec: {'root': c.root},
+        setupPayload: widget.mode == 'setup' ? widget.payloadRoot : null);
     setState(() => management = controller);
     controller.load().then((_) {
       if (reviewUninstall && !controller.uninstalled) {
@@ -296,6 +297,14 @@ class _SetupApplicationState extends State<SetupApplication> {
                       onPressed: c.busy ? null : _checkLocation,
                       icon: const Icon(Icons.check_circle_outline, size: 18),
                       label: const Text('Check this folder'))),
+              // Checking a folder can fail too, and a search field with no
+              // answer looks like it did nothing.
+              if (c.error.isNotEmpty)
+                Padding(
+                    padding:
+                        const EdgeInsets.only(top: OdessyTokens.spaceMedium),
+                    child: SetupMessage(
+                        error: true, text: c.error, details: c.reason)),
             ])),
         if (c.existingInstallation)
           SetupMessage(
@@ -535,11 +544,23 @@ class _SetupApplicationState extends State<SetupApplication> {
             _row('Service',
                 'Not created here; available later under Installation.'),
           ])),
-      if (review.isEmpty)
+      if (review.isEmpty) ...[
         FilledButton(
             onPressed: c.busy ? null : () => c.run('package-review'),
-            child: const Text('Review this installation'))
-      else
+            child: Text(c.busy
+                ? 'Reviewing…'
+                : c.error.isEmpty
+                    ? 'Review this installation'
+                    : 'Review again')),
+        // A review that fails writes nothing, so the only honest next step is
+        // to say why. Without this the step looks stuck: the button still shows
+        // and Install stays disabled because no plan was produced.
+        if (c.error.isNotEmpty)
+          Padding(
+              padding: const EdgeInsets.only(top: OdessyTokens.spaceMedium),
+              child:
+                  SetupMessage(error: true, text: c.error, details: c.reason)),
+      ] else
         SetupSection(
             title: 'Components',
             description: 'Packaged components this installation will contain.',
@@ -563,9 +584,14 @@ class _SetupApplicationState extends State<SetupApplication> {
                   tilePadding: EdgeInsets.zero,
                   title: const Text('Technical details'),
                   children: [
-                    SelectableText(
-                        const JsonEncoder.withIndent('  ').convert(review),
-                        style: const TextStyle(fontSize: 11))
+                    SizedBox(
+                        height: 220,
+                        child: SingleChildScrollView(
+                            child: SelectionArea(
+                                child: Text(
+                                    const JsonEncoder.withIndent('  ')
+                                        .convert(review),
+                                    style: const TextStyle(fontSize: 11)))))
                   ]),
             ])),
     ]);
@@ -641,8 +667,7 @@ class _SetupApplicationState extends State<SetupApplication> {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       SetupSection(
           title: 'Odessy is installed',
-          description:
-              'Open it now, or finish and open it from the Start menu. Setup closes after Odessy reports that it is ready.',
+          description: openFromMenuCopy,
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             SummaryPath(path: c.root, label: 'Installed at'),
@@ -652,7 +677,7 @@ class _SetupApplicationState extends State<SetupApplication> {
                     ? 'Installed and configured — not yet verified'
                     : 'Installed — model not configured'),
             _row(
-                'Start menu',
+                registrationRowLabel,
                 registration == 'complete' || registration == 'skipped'
                     ? 'Created'
                     : 'Needs repair — use Manage installation'),
@@ -834,6 +859,19 @@ class _SetupApplicationState extends State<SetupApplication> {
                               Text(title, style: _theme.textTheme.titleLarge),
                             ])),
                         const Divider(height: 1),
+                        // The management page reports its own failures; without
+                        // this the setup step that produced its root stayed silent.
+                        if (c.error.isNotEmpty)
+                          Padding(
+                              padding: const EdgeInsets.fromLTRB(
+                                  OdessyTokens.spaceLarge,
+                                  OdessyTokens.spaceMedium,
+                                  OdessyTokens.spaceLarge,
+                                  0),
+                              child: SetupMessage(
+                                  error: true,
+                                  text: c.error,
+                                  details: c.reason)),
                         Expanded(
                             child: manage == null
                                 ? const Center(

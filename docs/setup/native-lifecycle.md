@@ -99,6 +99,12 @@ partial directories remain inspectable. No recursive cleanup or external service
 removal is performed. This is conservative maintenance, not automatic garbage
 collection or in-place repair of user changes.
 
+After uninstall, unrelated files in `versions` do not prevent a new install.
+Modified owned version files remain under management for inspection. If a
+retained, modified runtime conflicts with the selected installer, back it up
+and move the reported runtime directory out of the installation before retrying.
+Setup never removes or overwrites those retained files automatically.
+
 ## Acceptance
 
 `python tool/check_setup_installation.py --wheelhouse <verified-wheelhouse>` performs

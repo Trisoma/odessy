@@ -35,6 +35,13 @@ def test_review_consent_no_downloads_and_external_models_preserved(tmp_path):
     report=manager.uninstall(confirm=manager.identity())
     assert (external/'q8').read_bytes()==b'model' and (root/'user.txt').read_text()=='keep'
     assert report['removed']
+    # The record stays so management can report the uninstall, but the folder is
+    # reusable: the next install reuses that record instead of refusing it.
+    assert manager.record()['active'] is None
+    again=ManagedInstallation(root,runner=fake_runner)
+    plan=again.plan(source,SetupSelection(role='execution'))
+    again.install(source,SetupSelection(role='execution'),plan['plan_id'])
+    assert again.record()['active']
 
 
 def test_failed_upgrade_preserves_active_installation(tmp_path):
@@ -89,6 +96,79 @@ def test_plan_is_invalidated_by_another_installation(tmp_path):
     stale=manager.plan(source,selection)['plan_id']
     manager.install(source,selection,stale)
     with pytest.raises(ValueError): manager.install(source,selection,stale)
+
+
+def test_status_exposes_recorded_helper_even_when_executable_is_damaged(tmp_path):
+    from odessy.setup.maintenance import atomic
+    source=bundle(tmp_path)
+    manager=ManagedInstallation(tmp_path/'installation',runner=fake_runner)
+    selection=SetupSelection(role='execution')
+    manager.install(source,selection,manager.plan(source,selection)['plan_id'])
+    helper=tmp_path/'helper';helper.mkdir()
+    (helper/'setup-context.json').write_text('{}')
+    record=manager.record()
+    record['linux_registration']={'state':'complete','helper':str(helper)}
+    atomic(manager.root/'installation.json',record)
+    active=record['active']
+    (manager.root/'versions'/active/'selection.json').write_text('damaged')
+    assert manager.status()['payload']==str(helper)
+
+
+@pytest.mark.parametrize('problem',[ValueError('linked installation path'),OSError('helper is inaccessible')])
+def test_status_ignores_unsafe_helper_and_preserves_progress(tmp_path,monkeypatch,problem):
+    from odessy.setup import maintenance
+    source=bundle(tmp_path)
+    manager=ManagedInstallation(tmp_path/'installation',runner=fake_runner)
+    selection=SetupSelection(role='execution')
+    manager.install(source,selection,manager.plan(source,selection)['plan_id'])
+    helper=tmp_path/'unsafe-helper'
+    record=manager.record()
+    record['linux_registration']={'state':'complete','helper':str(helper)}
+    maintenance.atomic(manager.root/'installation.json',record)
+    original_guard=maintenance.guard
+    def check_guard(path):
+        if Path(path)==helper: raise problem
+        return original_guard(path)
+    monkeypatch.setattr(maintenance,'guard',check_guard)
+    status=manager.status()
+    assert status['payload'] is None
+    assert status['active']==record['active']
+    assert status['versions']==list(record['versions'])
+
+
+def test_plan_is_invalidated_by_runtime_change(tmp_path):
+    source=bundle(tmp_path)
+    runtime=tmp_path/'runtime'
+    (runtime/'bin').mkdir(parents=True)
+    executable=runtime/'bin'/'python3'
+    executable.write_bytes(b'original')
+    (runtime/'LICENSE').write_text('license')
+    manager=ManagedInstallation(tmp_path/'installation',runner=fake_runner,runtime_source=runtime)
+    selection=SetupSelection(role='execution')
+    reviewed=manager.plan(source,selection)['plan_id']
+    executable.write_bytes(b'changed')
+    with pytest.raises(ValueError,match='review the exact'):
+        manager.install(source,selection,reviewed)
+    assert not (manager.root/'installation.json').exists()
+
+
+def test_install_rechecks_plan_inside_lock(tmp_path, monkeypatch):
+    source=bundle(tmp_path)
+    manager=ManagedInstallation(tmp_path/'installation',runner=fake_runner)
+    selection=SetupSelection(role='execution')
+    reviewed=manager.plan(source,selection)['plan_id']
+    original=manager.plan
+    calls=0
+    def changed_under_lock(*args):
+        nonlocal calls
+        calls+=1
+        result=original(*args)
+        if calls==2: result['plan_id']='changed-after-lock'
+        return result
+    monkeypatch.setattr(manager,'plan',changed_under_lock)
+    with pytest.raises(ValueError,match='installation changed after review'):
+        manager.install(source,selection,reviewed)
+    assert not (manager.root/'installation.json').exists()
 
 
 def test_uninstall_refuses_while_service_is_recorded(tmp_path):

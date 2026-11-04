@@ -31,6 +31,18 @@ def _versioned_root(parameters,name):
     return data,root
 
 
+def _review_projection(plan):
+    """Expose the review summary, never the inventories used to hash the plan."""
+    keys=('schema_version','root','bundle','selection','downloads','service_changes',
+          'absent_components','components','payload_root','plan_id')
+    review={key:plan[key] for key in keys if key in plan}
+    selection=review.get('selection')
+    if selection is not None:
+        review['selection']={key:selection[key] for key in ('role','model','platform','architecture') if key in selection}
+        review['selection']['voice']={'enabled':selection.get('voice',{}).get('enabled',False)}
+    return review
+
+
 def _packaged(parameters,*,cancelled=lambda:False):
     """Installed lifecycle operations; internal paths never come from the user."""
     action=parameters.get('action')
@@ -93,10 +105,11 @@ def _packaged(parameters,*,cancelled=lambda:False):
         data,root=_versioned_root(parameters,'packaged registration')
         manager=ManagedInstallation(root)
         record=manager.record()
-        payload=data.get('payload') or (record.get('windows_registration') or {}).get('helper')
+        payload=data.get('payload') or (record.get('windows_registration') or record.get('linux_registration') or {}).get('helper')
         register(root,record,payload=payload or None)
         atomic(root/'installation.json',record)
-        return {'registered':True,'state':record.get('windows_registration',{}).get('state','none')}
+        state=(record.get('windows_registration') or record.get('linux_registration') or {}).get('state','none')
+        return {'registered':True,'state':state}
     if action in ('package-rollback-review','package-rollback'):
         from .lifecycle import dispatch
         data,root=_versioned_root(parameters,'packaged rollback')
@@ -113,11 +126,11 @@ def _packaged(parameters,*,cancelled=lambda:False):
     from .lifecycle import format_of
     if format_of(root)=='legacy':raise ValueError('use legacy maintenance for this installation')
     manager=ManagedInstallation(root,runtime_source=Path(package['payload_root'])/'runtime',payload=package['payload_root'])
-    if action=='package-review':return manager.plan(package['bundle'],SetupSelection.from_dict(data.get('selection')))
+    if action=='package-review':return _review_projection(manager.plan(package['bundle'],SetupSelection.from_dict(data.get('selection'))))
     if action in ('package-repair-review','package-repair'):
         if action.endswith('-review'):
             selection=SetupSelection.from_dict(manager.record()['selection'])
-            return manager.plan(package['bundle'],selection)
+            return _review_projection(manager.plan(package['bundle'],selection))
         result=manager.repair(package['bundle'],confirm=data.get('confirm'),cancelled=cancelled)
     else:
         result=manager.install(package['bundle'],SetupSelection.from_dict(data.get('selection')),data.get('confirm'),cancelled=cancelled)

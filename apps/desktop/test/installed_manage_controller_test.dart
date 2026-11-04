@@ -1,10 +1,15 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/features/setup/controllers/installed_manage_controller.dart';
+import 'package:odessy_desktop/features/setup/presentation/manage_page.dart';
 
 class Backend implements SetupBackend {
   final requests = <SetupRequest>[];
   String failure = '';
+  bool damaged = false;
+  String? installedPayload =
+      'C:/Users/me/AppData/Local/OdessyMaintenance/id/hash';
   Json status = {
     'installation_format': 'versioned',
     'active': 'a' * 32,
@@ -29,16 +34,24 @@ class Backend implements SetupBackend {
       }, request.id);
     }
     final action = request.parameters['action'] as String;
+    if (action == 'installed-spec' && damaged) {
+      return SetupReply.fromJson({
+        'id': request.id,
+        'status': 'error',
+        'reason': 'installed executable is damaged'
+      }, request.id);
+    }
     final result = switch (action) {
       'installed-spec' => {
           'root': 'C:/Odessy/App',
           'role': 'combined',
           'model_configured': false,
           'workspace': 'C:/Users/me/Documents/Odessy',
-          'payload': 'C:/Users/me/AppData/Local/OdessyMaintenance/id/hash',
+          'payload': installedPayload,
         },
       'package-status' => status,
       'package-repair-review' => {'plan_id': 'repair-1', 'operation': 'repair'},
+      'package-configure-review' => {'plan_id': 'configure-1'},
       'package-rollback-review' => {
           'plan_id': 'rollback-1',
           'operation': 'rollback',
@@ -72,6 +85,101 @@ InstalledManageController controller(Backend backend) =>
     InstalledManageController(backend, spec: {'root': 'C:/Odessy/App'});
 
 void main() {
+  test('failed installed spec preserves portable installation type', () async {
+    final backend = Backend()..damaged = true;
+    final c = InstalledManageController(backend,
+        spec: {'root': 'C:/Odessy/App', 'portable': true});
+    await c.load();
+    expect(c.spec['portable'], isTrue);
+    expect(c.error, contains('damaged'));
+    c.dispose();
+  });
+
+  testWidgets('portable recovery keeps unavailable controls disabled',
+      (tester) async {
+    final backend = Backend()..damaged = true;
+    final c = InstalledManageController(backend,
+        spec: {'root': 'C:/Odessy/App', 'portable': true});
+    await c.load();
+    await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: ManagePage(controller: c))));
+    final service = tester.widget<OutlinedButton>(find.ancestor(
+        of: find.text('Service controls'),
+        matching: find.byType(OutlinedButton)));
+    expect(service.onPressed, isNull);
+    expect(find.textContaining('Portable build: close Odessy'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+  });
+
+  test('damaged installation uses current recorded maintenance payload',
+      () async {
+    final backend = Backend()..damaged = true;
+    backend.status['payload'] = 'C:/current-payload';
+    final c =
+        InstalledManageController(backend, spec: {'root': 'C:/Odessy/App'});
+    await c.load();
+    expect(c.error, contains('damaged'));
+    expect(c.payload, 'C:/current-payload');
+    await c.reviewRepair();
+    expect(backend.requests.last.parameters['payload'], 'C:/current-payload');
+    c.dispose();
+  });
+
+  test('status refresh prefers the current registered payload', () async {
+    final backend = Backend()..installedPayload = 'C:/old-payload';
+    backend.status['payload'] = 'C:/old-payload';
+    final c = controller(backend);
+    await c.load();
+    backend.status = {...backend.status, 'payload': 'C:/updated-payload'};
+    await c.refreshStatus();
+    expect(c.payload, 'C:/updated-payload');
+    c.dispose();
+  });
+  test('installed payload follows the latest spec after configuration',
+      () async {
+    final backend = Backend()..installedPayload = 'C:/current-payload';
+    final c = InstalledManageController(backend,
+        spec: {'root': 'C:/Odessy/App', 'payload': 'C:/old-payload'});
+    await c.load();
+    expect(c.payload, 'C:/current-payload');
+    backend.installedPayload = 'C:/updated-payload';
+    await c.reviewConfiguration({'role': 'combined'}, 'C:/work');
+    await c.confirm();
+    expect(c.payload, 'C:/updated-payload');
+    await c.reviewRepair();
+    expect(backend.requests.last.parameters['payload'], 'C:/updated-payload');
+    await c.register();
+    expect(
+        backend.requests
+            .lastWhere((r) => r.parameters['action'] == 'package-register')
+            .parameters['payload'],
+        'C:/updated-payload');
+    c.dispose();
+  });
+
+  for (final cached in [null, 'C:/old-payload']) {
+    test('explicit payload survives reload with cached payload $cached',
+        () async {
+      final backend = Backend()..installedPayload = cached;
+      final c = InstalledManageController(backend,
+          spec: {'root': 'C:/Odessy/App'}, setupPayload: 'C:/new-payload');
+      await c.load();
+      expect(c.payload, 'C:/new-payload');
+      await c.reviewRepair();
+      expect(backend.requests.last.parameters['payload'], 'C:/new-payload');
+      await c.register();
+      expect(
+          backend.requests
+              .lastWhere((r) => r.parameters['action'] == 'package-register')
+              .parameters['payload'],
+          'C:/new-payload');
+      await c.reviewConfiguration({'role': 'combined'}, 'C:/work');
+      await c.confirm();
+      expect(c.payload, 'C:/new-payload');
+      c.dispose();
+    });
+  }
   test('load reads the installed spec and journal status', () async {
     final backend = Backend();
     final c = controller(backend);

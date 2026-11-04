@@ -6,6 +6,13 @@ from pathlib import Path
 import shutil
 
 
+def included(relative):
+    """Whether a runtime path participates in the portable runtime inventory."""
+    parts=relative.parts
+    if any(part in ('site-packages','__pycache__','test','tests','.git') for part in parts):return False
+    return len(parts)==1 or parts[0] in ('Lib','lib','DLLs','include','Include','libs','bin')
+
+
 def inventory(root):
     root=Path(root).resolve()
     executable='python.exe' if (root/'python.exe').is_file() else 'bin/python3'
@@ -14,8 +21,7 @@ def inventory(root):
     files={}
     for path in root.rglob('*'):
         relative=path.relative_to(root)
-        if any(part in ('site-packages','__pycache__','test','tests','.git') for part in relative.parts):continue
-        if relative.parts[0] not in ('Lib','lib','DLLs','include','Include','libs','bin') and len(relative.parts)>1:continue
+        if not included(relative):continue
         if not path.is_file():continue
         resolved=path.resolve()
         if not resolved.is_relative_to(root):raise ValueError('runtime link escapes its portable directory')

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -39,6 +40,14 @@ def data_home(tmp_path,monkeypatch):
     return home
 
 
+def test_window_class_matches_the_native_application_id():
+    """StartupWMClass is only useful while the runner reports the same id."""
+    cmake=(Path(__file__).resolve().parents[1]/'apps/desktop/linux/CMakeLists.txt').read_text(encoding='utf-8')
+    declared=re.search(r'set\(APPLICATION_ID\s+"([^"]+)"\)',cmake)
+    assert declared is not None
+    assert declared.group(1)==linux.WM_CLASS
+
+
 def test_register_writes_an_executable_launcher_and_a_menu_entry(tmp_path,data_home):
     root,record=_root(tmp_path)
     resources=linux.register(root,record)
@@ -51,6 +60,9 @@ def test_register_writes_an_executable_launcher_and_a_menu_entry(tmp_path,data_h
     text=entry.read_text(encoding='utf-8')
     assert 'Type=Application' in text
     assert 'Exec='+str(launcher) in text
+    # Without this the shell cannot match the running window to the entry and
+    # shows a second, generic icon in the dock.
+    assert 'StartupWMClass='+linux.WM_CLASS in text
     assert '[Desktop Action Manage]' in text
     assert '[Desktop Action Uninstall]' in text
     assert record['linux_registration']['menu_entry']==str(entry)
@@ -101,7 +113,7 @@ def test_unregister_removes_unchanged_files_and_retains_a_modified_one(tmp_path,
 
 def test_helper_cleanup_removes_only_the_recorded_cache(tmp_path,data_home):
     root,record=_root(tmp_path)
-    helper=(data_home/'.local/share/odessy/maintenance'/IDENTITY/('d'*32))
+    helper=(data_home/'.local/share/odessy-maintenance'/IDENTITY/('d'*32))
     (helper/'desktop').mkdir(parents=True)
     payload=helper/'desktop/odessy_desktop'
     payload.write_text('#!/bin/sh\nexit 0\n',encoding='utf-8')
@@ -115,3 +127,20 @@ def test_helper_cleanup_removes_only_the_recorded_cache(tmp_path,data_home):
     result=linux.helper_cleanup(record)
     assert result['state']=='removed'
     assert not helper.exists()
+
+
+def test_actions_run_from_the_cached_helper_so_uninstall_is_allowed(tmp_path,data_home):
+    root,record=_root(tmp_path)
+    helper=(tmp_path/'helper').absolute()
+    (helper/'desktop').mkdir(parents=True)
+    binary=helper/linux.DESKTOP_NAME
+    binary.write_text('#!/bin/sh\nexit 0\n',encoding='utf-8')
+    binary.chmod(0o755)
+    record['linux_registration']={'installation_id':IDENTITY,'helper':str(helper),'files':{}}
+    resources=linux.register(root,record)
+    text=Path(resources['menu_entry']).read_text(encoding='utf-8')
+    # A desktop binary inside the installation cannot remove itself, so both actions
+    # run from the cached payload instead.
+    assert 'Exec='+str(binary)+' --uninstall' in text
+    assert 'Exec='+str(binary)+' --manage' in text
+    assert '--payload '+str(helper) in text

@@ -46,7 +46,7 @@ def dispatch(parameters,*,cancelled=lambda:False):
         configuration=None
         if (root/'configuration.json').is_file():
             configuration=read_json(root/'configuration.json')
-        return {'installation_format':kind,'installation_id':record['id'],'active':record['active'],'versions':list(record['versions']),'selection':(configuration or {}).get('selection') or record.get('selection'),'workspace':(configuration or {}).get('workspace'),'service_recorded':(root/'service.json').exists(),'registration':record.get('windows_registration',{}).get('state','none'),'operation':read_json(root/'operation.json') if (root/'operation.json').exists() else None,'ready':False}
+        return {'installation_format':kind,'installation_id':record['id'],'active':record['active'],'versions':list(record['versions']),'selection':(configuration or {}).get('selection') or record.get('selection'),'workspace':(configuration or {}).get('workspace'),'service_recorded':(root/'service.json').exists(),'registration':(record.get('windows_registration') or record.get('linux_registration') or {}).get('state','none'),'operation':read_json(root/'operation.json') if (root/'operation.json').exists() else None,'ready':False}
     if action=='verify':return dict(manager.verify(),installation_format=kind)
     if action in ('rollback-plan','uninstall-plan','rollback','uninstall'):
         record=manager.record()

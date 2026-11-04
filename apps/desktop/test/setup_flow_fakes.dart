@@ -49,15 +49,15 @@ class FlowBackend implements SetupBackend {
           installed = true;
           return {
             'installed': true,
-            'active': 'v1',
+            'active': 'a' * 32,
             'registration': 'complete',
             'role': 'combined',
           };
         }(),
       'package-status' => {
           'installation_format': 'versioned',
-          'active': 'v1',
-          'versions': ['v1'],
+          'active': 'a' * 32,
+          'versions': ['a' * 32],
           'stage': 'dependencies',
           'status': 'running',
           'steps_done': 3,
