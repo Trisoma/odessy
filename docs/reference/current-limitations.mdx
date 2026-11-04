@@ -8,6 +8,14 @@ content:
   type: "reference"
 ---
 
+**Potential risk — Linux installer payload builds:** The builder proposed in
+[PR #44](https://github.com/Trisoma/odessy/pull/44) tries the system `packaging`
+module and then pip's bundled copy to check setuptools. A debundled pip host
+without either importable parser may fail the build check; this environment has
+not been qualified. This is a build-host risk, not a confirmed failure of an
+installed application. As of November 4, 2026, PR #44 had not been merged into
+`develop`.
+
 Configurable collaboration adds an authenticated loopback session API and coding jobs. It does not provide durable jobs, verified child-CLI confinement, mid-task model takeover, or hardware qualification. Coding-agent bills are outside the API budget. See [model collaboration](model-collaboration.mdx).
 
 Keyboard input is available throughout an interactive voice session. The following

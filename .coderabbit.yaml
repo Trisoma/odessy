@@ -1,0 +1,63 @@
+# CodeRabbit reviews complement the repository's tests and human review.
+language: en-US
+
+reviews:
+  profile: chill
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  changed_files_summary: true
+  review_status: true
+  review_info: true
+  estimate_code_review_effort: true
+  enable_prompt_for_ai_agents: true
+  auto_apply_labels: false
+  auto_assign_reviewers: false
+  auto_approvals:
+    enabled: false
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    base_branches:
+      - '^develop$'
+  path_instructions:
+    - path: 'src/**'
+      instructions: |
+        Review changes to authorization, execution, configuration and service
+        boundaries for concrete regressions. Check that tool actions remain bound
+        to the correct approval, session, workspace and target, and that secrets
+        and sensitive payloads do not appear in logs or public responses.
+    - path: 'apps/desktop/**'
+      instructions: |
+        Check that presentation code uses existing controllers rather than
+        bypassing authorization or accessing services directly. Preserve unsaved
+        drafts and pending approvals, distinguish demo and unavailable states,
+        and flag accessibility, keyboard, narrow-layout and lifecycle regressions.
+    - path: 'packages/odessy_client/**'
+      instructions: |
+        Check authentication, endpoint restrictions, session and request identity,
+        streaming and cancellation behavior, and compatibility with the backend.
+    - path: 'native/**'
+      instructions: |
+        Review device identity, pairing, trust, transport and credential handling.
+        Flag changes that widen access or weaken verification or fail-open behavior.
+    - path: 'tools/**'
+      instructions: |
+        Review command execution and tool-server changes for authorization bypass,
+        unsafe arguments or paths, secret exposure, and changes to confinement.
+    - path: 'installer/**'
+      instructions: |
+        Check installation and update safety, path validation, integrity checks,
+        rollback and recovery, and preservation of user data across platforms.
+    - path: 'tests/**'
+      instructions: |
+        Flag tests that weaken security or behavior guarantees, depend on personal
+        credentials or machine state, or omit meaningful failure and boundary cases.
+    - path: '.github/workflows/**'
+      instructions: |
+        Check permissions, untrusted input handling, dependency provenance, and
+        whether changed workflows still exercise their intended checks.
+
+chat:
+  auto_reply: true
+  allow_non_org_members: true

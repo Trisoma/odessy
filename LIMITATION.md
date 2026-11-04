@@ -16,6 +16,15 @@ Third-party MCP servers are supported; see
 Current limits are maintained in [the reference](docs/reference/current-limitations.mdx).
 The dated measurements below are historical evidence, not acceptance for the current build.
 
+## Potential risk: Linux installer build dependencies
+
+The Linux installer payload builder in [PR #44](https://github.com/Trisoma/odessy/pull/44)
+may fail its setuptools version check on a build host whose pip does not bundle
+`packaging` and where a separate `packaging` module is also unavailable. The
+builder tries both locations, but this real-host configuration has not been
+qualified. This concerns building the payload, not a confirmed end-user install
+failure. As of November 4, 2026, PR #44 had not been merged into `develop`.
+
 ## Voice Smoke Test Limitations
 
 The voice path is wired and runnable, but the first live smoke test exposed several limitations that should not be confused with wiring failure.

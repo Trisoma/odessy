@@ -1,0 +1,32 @@
+{
+  "files": [
+    {
+      "path": "SECURITY.md",
+      "description": "Security scope and documented trust boundaries."
+    },
+    {
+      "path": "LIMITATION.md",
+      "description": "Known product and platform limitations."
+    },
+    {
+      "path": "apps/desktop/AGENTS.md",
+      "description": "Desktop ownership, architecture, and review requirements.",
+      "scope": ["apps/desktop/**", "packages/odessy_client/**"]
+    },
+    {
+      "path": "docs/ui/api-contract.md",
+      "description": "Desktop-to-service API and behavior contract.",
+      "scope": ["apps/desktop/**", "packages/odessy_client/**", "src/odessy/application/**"]
+    },
+    {
+      "path": "docs/reference/permissions.mdx",
+      "description": "Permissions and approval semantics.",
+      "scope": ["src/**", "tools/**", "apps/desktop/**"]
+    },
+    {
+      "path": "docs/reference/sandbox.mdx",
+      "description": "Supported sandbox boundaries and limitations.",
+      "scope": ["src/**", "tools/**", "native/**"]
+    }
+  ]
+}
