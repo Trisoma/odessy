@@ -24,6 +24,7 @@ void main() {
     void Function()? onExit,
     String mode = 'setup',
     String installRoot = '',
+    String payloadRoot = '',
   }) async {
     tester.view.physicalSize = const Size(960, 700);
     tester.view.devicePixelRatio = 1;
@@ -32,6 +33,7 @@ void main() {
     await tester.pumpWidget(SetupApplication(
         mode: mode,
         installRoot: installRoot,
+        payloadRoot: payloadRoot,
         backendFactory: () => backend,
         picker: picker ?? FakePicker(),
         acknowledgement: ack ?? FakeAck(true),
@@ -186,6 +188,22 @@ void main() {
     expect(find.text('Odessy is already installed in this folder.'),
         findsOneWidget);
     expect(find.text('Install'), findsNothing);
+  });
+
+  testWidgets('setup management uses the supplied update payload',
+      (tester) async {
+    final backend = FlowBackend()..installed = true;
+    await pumpSetup(tester, backend, payloadRoot: r'C:\new-payload');
+    await tester.tap(find.text('Continue'));
+    await settle(tester);
+    await tester.tap(find.text('Manage this installation'));
+    await settle(tester);
+    await tester.ensureVisible(find.text('Repair or update files'));
+    await tester.tap(find.text('Repair or update files'));
+    await settle(tester);
+    final review = backend.requests.lastWhere(
+        (request) => request.parameters['action'] == 'package-repair-review');
+    expect(review.parameters['payload'], r'C:\new-payload');
   });
 
   test('engine output is appended once, in order, and labelled by stream',

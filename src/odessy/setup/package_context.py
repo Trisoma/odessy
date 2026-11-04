@@ -107,11 +107,19 @@ def _check_retained_runtime(root,payload):
     key=hashlib.sha256(json.dumps(expected,sort_keys=True).encode()).hexdigest()[:32]
     destination=guard(root/'runtimes'/key)
     if not destination.exists(): return
+    message='Retained runtime files conflict with this installer. Back up and move the modified runtime directory before reinstalling: '+str(destination)
+    if not destination.is_dir(): raise ValueError(message)
+    for name in expected['files']:
+        path=guard(destination/name)
+        if path.exists() and not path.is_file(): raise ValueError(message)
+        for parent in path.parents:
+            if parent==destination: break
+            if parent.exists() and not parent.is_dir(): raise ValueError(message)
     for path in destination.rglob('*'):
         if not path.is_file(): continue
         relative=path.relative_to(destination).as_posix()
         if relative not in expected['files'] or digest(guard(path))!=expected['files'][relative]:
-            raise ValueError('Retained runtime files conflict with this installer. Back up and move the modified runtime directory before reinstalling: '+str(destination))
+            raise ValueError(message)
 
 
 def context(*,payload=None,local_app_data=None,root=None):

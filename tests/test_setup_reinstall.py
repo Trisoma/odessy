@@ -94,3 +94,65 @@ def test_retained_runtime_collision_is_reported_without_deletion(tmp_path):
     with pytest.raises(ValueError, match='Back up and move'):
         _check_retained_runtime(tmp_path / 'App', payload)
     assert retained.read_bytes() == b'changed'
+
+
+def test_directory_at_expected_runtime_file_is_rejected(tmp_path):
+    import hashlib
+    from odessy.setup.package_context import _check_retained_runtime
+    from odessy.setup.runtime import inventory
+    payload = tmp_path / 'payload'
+    runtime = payload / 'runtime'
+    (runtime / 'bin').mkdir(parents=True)
+    (runtime / 'bin' / 'python3').write_bytes(b'python')
+    (runtime / 'LICENSE').write_bytes(b'license')
+    key = hashlib.sha256(json.dumps(inventory(runtime), sort_keys=True).encode()).hexdigest()[:32]
+    retained = tmp_path / 'App' / 'runtimes' / key / 'bin' / 'python3'
+    retained.mkdir(parents=True)
+    with pytest.raises(ValueError, match='Back up and move'):
+        _check_retained_runtime(tmp_path / 'App', payload)
+    assert retained.is_dir()
+
+
+def test_reinstall_context_rejects_runtime_directory_before_writes(tmp_path):
+    import hashlib
+    from odessy.setup.runtime import inventory
+    payload = _payload(tmp_path)
+    runtime = payload / 'runtime'
+    (runtime / 'bin').mkdir(parents=True)
+    (runtime / 'bin' / 'python3').write_bytes(b'python')
+    (runtime / 'LICENSE').write_bytes(b'license')
+    manifest_path = payload / 'setup-context.json'
+    manifest = json.loads(manifest_path.read_text())
+    manifest['components'].append('python')
+    for name in ('runtime/bin/python3', 'runtime/LICENSE'):
+        manifest['files'][name] = digest(payload / name)
+    manifest_path.write_text(json.dumps(manifest))
+    root = tmp_path / 'App'
+    root.mkdir()
+    record_path = root / 'installation.json'
+    record = {'schema_version': 1, 'id': 'a' * 32, 'root': str(root),
+              'active': None, 'versions': {}}
+    record_path.write_text(json.dumps(record))
+    key = hashlib.sha256(json.dumps(inventory(runtime), sort_keys=True).encode()).hexdigest()[:32]
+    retained = root / 'runtimes' / key / 'bin' / 'python3'
+    retained.mkdir(parents=True)
+    before = record_path.read_bytes()
+    with pytest.raises(ValueError, match='Back up and move'):
+        context(payload=payload, root=root)
+    assert record_path.read_bytes() == before
+    assert retained.is_dir()
+    assert not (root / 'operation.json').exists()
+
+
+def test_missing_runtime_files_are_reusable(tmp_path):
+    import hashlib
+    from odessy.setup.package_context import _check_retained_runtime
+    from odessy.setup.runtime import inventory
+    payload = tmp_path / 'payload'
+    runtime = payload / 'runtime'
+    (runtime / 'bin').mkdir(parents=True)
+    (runtime / 'bin' / 'python3').write_bytes(b'python')
+    (runtime / 'LICENSE').write_bytes(b'license')
+    key = hashlib.sha256(json.dumps(inventory(runtime), sort_keys=True).encode()).hexdigest()[:32]
+    (tmp_path / 'App' / 'runtimes' / key / 'bin').mkdir(parents=True)
+    _check_retained_runtime(tmp_path / 'App', payload)

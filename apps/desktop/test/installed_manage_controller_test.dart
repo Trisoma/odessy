@@ -75,12 +75,34 @@ InstalledManageController controller(Backend backend) =>
     InstalledManageController(backend, spec: {'root': 'C:/Odessy/App'});
 
 void main() {
+  test('installed payload follows the latest spec after configuration',
+      () async {
+    final backend = Backend()..installedPayload = 'C:/current-payload';
+    final c = InstalledManageController(backend,
+        spec: {'root': 'C:/Odessy/App', 'payload': 'C:/old-payload'});
+    await c.load();
+    expect(c.payload, 'C:/current-payload');
+    backend.installedPayload = 'C:/updated-payload';
+    await c.reviewConfiguration({'role': 'combined'}, 'C:/work');
+    await c.confirm();
+    expect(c.payload, 'C:/updated-payload');
+    await c.reviewRepair();
+    expect(backend.requests.last.parameters['payload'], 'C:/updated-payload');
+    await c.register();
+    expect(
+        backend.requests
+            .lastWhere((r) => r.parameters['action'] == 'package-register')
+            .parameters['payload'],
+        'C:/updated-payload');
+    c.dispose();
+  });
+
   for (final cached in [null, 'C:/old-payload']) {
     test('explicit payload survives reload with cached payload $cached',
         () async {
       final backend = Backend()..installedPayload = cached;
       final c = InstalledManageController(backend,
-          spec: {'root': 'C:/Odessy/App', 'payload': 'C:/new-payload'});
+          spec: {'root': 'C:/Odessy/App'}, setupPayload: 'C:/new-payload');
       await c.load();
       expect(c.payload, 'C:/new-payload');
       await c.reviewRepair();

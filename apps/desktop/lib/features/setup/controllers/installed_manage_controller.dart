@@ -8,8 +8,8 @@ import '../../../app/setup/platform_copy.dart';
 /// The installation root and the maintenance payload come from the installation
 /// itself; the user never supplies an internal Python, wheelhouse or payload path.
 class InstalledManageController extends ChangeNotifier {
-  InstalledManageController(this.backend, {Json? spec})
-      : _suppliedPayload = (spec?['payload'] as String?) ?? '',
+  InstalledManageController(this.backend, {Json? spec, String? setupPayload})
+      : _suppliedPayload = setupPayload ?? '',
         spec = spec ?? const {};
 
   final SetupBackend backend;

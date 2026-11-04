@@ -193,12 +193,8 @@ class _SetupApplicationState extends State<SetupApplication> {
   void _edit() => c.edit(destination: location.text, value: _selection());
 
   void _openManagement({bool reviewUninstall = false}) {
-    final controller = InstalledManageController(c.backend, spec: {
-      'root': c.root,
-      // Repair and update recreate the active version from this payload. Without
-      // it the action stays disabled even though the caller supplied one.
-      if (widget.payloadRoot.isNotEmpty) 'payload': widget.payloadRoot,
-    });
+    final controller = InstalledManageController(c.backend,
+        spec: {'root': c.root}, setupPayload: widget.payloadRoot);
     setState(() => management = controller);
     controller.load().then((_) {
       if (reviewUninstall && !controller.uninstalled) {
