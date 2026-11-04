@@ -34,3 +34,23 @@ def test_setuptools_minimum(version, expected):
     setup = f'import sys,types; sys.modules["setuptools"]=types.SimpleNamespace(__version__={version!r}); '
     result = subprocess.run([sys.executable, '-c', setup + check_code('setuptools.__version__')])
     assert (result.returncode == 0) is expected
+
+
+def test_setuptools_check_without_vendored_pip():
+    setup = ('import sys,types,importlib.machinery; from pip._vendor.packaging.version import Version; '
+             'sys.modules["setuptools"]=types.SimpleNamespace(__version__="68.0"); '
+             'sys.modules["packaging"]=types.ModuleType("packaging"); '
+             'sys.modules["packaging"].__spec__=importlib.machinery.ModuleSpec("packaging",None,is_package=True); '
+             'sys.modules["packaging.version"]=types.SimpleNamespace(Version=Version); '
+             'sys.modules["pip._vendor.packaging.version"]=None; ')
+    result = subprocess.run([sys.executable, '-c', setup + check_code('setuptools.__version__')])
+    assert result.returncode == 0
+
+
+def test_setuptools_check_with_only_vendored_packaging():
+    setup = ('import sys,types,importlib.util; '
+             'sys.modules["setuptools"]=types.SimpleNamespace(__version__="68.0"); '
+             'original=importlib.util.find_spec; '
+             'importlib.util.find_spec=lambda name: None if name=="packaging" else original(name); ')
+    result = subprocess.run([sys.executable, '-c', setup + check_code('setuptools.__version__')])
+    assert result.returncode == 0

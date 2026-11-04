@@ -160,12 +160,14 @@ runner behaves as before and Impeller stays on.
 
 ### Reinstalling into the same folder
 
-Uninstalling removes every file it recorded, then keeps the installation record
-with `active: null` so management can still explain what happened. Such a folder
-is reported as `new` to the installer rather than as an existing installation, so
-installing into it again works without deleting anything by hand; the record and
-its identity are reused for the new version. Files the installer never recorded
-(and anything the user added) are left in place and are not counted as owned.
+Uninstall removes recorded files whose contents still match and retains modified
+files, then keeps the installation record with `active: null` for inspection.
+When no owned version files remain, the folder is reported as `new` and a new
+installation reuses its identity. Unowned files stay in place. If modified owned
+version files remain, inspect and back them up before moving them out of the
+installation folder and retrying. A conflicting retained runtime is reported with
+its location; back it up and move it out before retrying. Setup does not delete or
+overwrite these files automatically.
 
 ## Behavior
 

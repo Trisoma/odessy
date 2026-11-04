@@ -102,7 +102,7 @@ def _check_retained_runtime(root,payload):
     """Stop before offering reinstall if retained runtime files would collide."""
     source=payload/'runtime'
     if not source.is_dir(): return
-    from .runtime import inventory
+    from .runtime import included,inventory
     expected=inventory(source)
     key=hashlib.sha256(json.dumps(expected,sort_keys=True).encode()).hexdigest()[:32]
     destination=guard(root/'runtimes'/key)
@@ -117,7 +117,9 @@ def _check_retained_runtime(root,payload):
             if parent.exists() and not parent.is_dir(): raise ValueError(message)
     for path in destination.rglob('*'):
         if not path.is_file(): continue
-        relative=path.relative_to(destination).as_posix()
+        relative_path=path.relative_to(destination)
+        if not included(relative_path): continue
+        relative=relative_path.as_posix()
         if relative not in expected['files'] or digest(guard(path))!=expected['files'][relative]:
             raise ValueError(message)
 

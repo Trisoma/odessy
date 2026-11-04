@@ -156,3 +156,21 @@ def test_missing_runtime_files_are_reusable(tmp_path):
     key = hashlib.sha256(json.dumps(inventory(runtime), sort_keys=True).encode()).hexdigest()[:32]
     (tmp_path / 'App' / 'runtimes' / key / 'bin').mkdir(parents=True)
     _check_retained_runtime(tmp_path / 'App', payload)
+
+
+def test_excluded_runtime_cache_is_preserved_and_does_not_block_reinstall(tmp_path):
+    import hashlib
+    from odessy.setup.package_context import _check_retained_runtime
+    from odessy.setup.runtime import copy_owned, inventory
+    payload = tmp_path / 'payload'
+    runtime = payload / 'runtime'
+    (runtime / 'bin').mkdir(parents=True)
+    (runtime / 'bin' / 'python3').write_bytes(b'python')
+    (runtime / 'LICENSE').write_bytes(b'license')
+    key = hashlib.sha256(json.dumps(inventory(runtime), sort_keys=True).encode()).hexdigest()[:32]
+    cache = tmp_path / 'App' / 'runtimes' / key / 'lib' / '__pycache__' / 'cache.pyc'
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(b'user-cache')
+    _check_retained_runtime(tmp_path / 'App', payload)
+    copy_owned(runtime, cache.parents[2], inventory(runtime))
+    assert cache.read_bytes() == b'user-cache'

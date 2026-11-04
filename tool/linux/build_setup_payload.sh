@@ -45,7 +45,7 @@ mkdir -p "$work/wheelhouse"
 echo '== 1/4 build the Odessy wheel =='
 # Building without isolation keeps a slow PyPI mirror out of the critical path, but
 # the local setuptools then has to understand the PEP 621 [project] table.
-if ! python3 -c 'import sys,setuptools; from pip._vendor.packaging.version import Version; sys.exit(0 if Version(setuptools.__version__)>=Version("68") else 1)' 2>/dev/null; then
+if ! python3 -c 'import importlib.util,sys,setuptools; Version=__import__("packaging.version" if importlib.util.find_spec("packaging") else "pip._vendor.packaging.version",fromlist=["Version"]).Version; sys.exit(0 if Version(setuptools.__version__)>=Version("68") else 1)' 2>/dev/null; then
   echo 'setuptools>=68 is required. Install it once, then retry:' >&2
   echo '  python3 -m pip install --user -U setuptools wheel' >&2
   exit 2

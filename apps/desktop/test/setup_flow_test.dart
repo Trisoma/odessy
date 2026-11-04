@@ -206,6 +206,22 @@ void main() {
     expect(review.parameters['payload'], r'C:\new-payload');
   });
 
+  testWidgets('menu management uses the current installed payload',
+      (tester) async {
+    final backend = FlowBackend()..installed = true;
+    await pumpSetup(tester, backend,
+        mode: 'manage',
+        installRoot: r'C:\Odessy',
+        payloadRoot: r'C:\old-helper');
+    await tester.ensureVisible(find.text('Repair or update files'));
+    await tester.tap(find.text('Repair or update files'));
+    await settle(tester);
+    final review = backend.requests.lastWhere(
+        (request) => request.parameters['action'] == 'package-repair-review');
+    expect(review.parameters['payload'],
+        r'C:\Users\me\AppData\Local\OdessyMaintenance\id\hash');
+  });
+
   test('engine output is appended once, in order, and labelled by stream',
       () async {
     final backend = FlowBackend()
