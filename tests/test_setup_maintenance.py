@@ -98,6 +98,22 @@ def test_plan_is_invalidated_by_another_installation(tmp_path):
     with pytest.raises(ValueError): manager.install(source,selection,stale)
 
 
+def test_status_exposes_recorded_helper_even_when_executable_is_damaged(tmp_path):
+    from odessy.setup.maintenance import atomic
+    source=bundle(tmp_path)
+    manager=ManagedInstallation(tmp_path/'installation',runner=fake_runner)
+    selection=SetupSelection(role='execution')
+    manager.install(source,selection,manager.plan(source,selection)['plan_id'])
+    helper=tmp_path/'helper';helper.mkdir()
+    (helper/'setup-context.json').write_text('{}')
+    record=manager.record()
+    record['linux_registration']={'state':'complete','helper':str(helper)}
+    atomic(manager.root/'installation.json',record)
+    active=record['active']
+    (manager.root/'versions'/active/'selection.json').write_text('damaged')
+    assert manager.status()['payload']==str(helper)
+
+
 def test_plan_is_invalidated_by_runtime_change(tmp_path):
     source=bundle(tmp_path)
     runtime=tmp_path/'runtime'

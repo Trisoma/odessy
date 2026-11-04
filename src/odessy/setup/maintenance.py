@@ -375,6 +375,12 @@ class ManagedInstallation:
             configuration={'workspace':value.get('workspace'),
                            'model_configured':(value.get('selection') or {}).get('model') is not None,
                            'role':(value.get('selection') or {}).get('role')}
+        registration=record.get('windows_registration') or record.get('linux_registration') or {}
+        helper=registration.get('helper')
+        payload=None
+        if isinstance(helper,str) and helper:
+            candidate=guard(Path(helper))
+            if candidate.is_dir() and (candidate/'setup-context.json').is_file():payload=str(candidate)
         return {**snapshot(operation,log_cursor),'installation_format':'versioned','installation_id':record['id'],'active':active,
                 'versions':list(record['versions']),'operation':{key:value for key,value in operation.items() if key!='logs'} if operation else None,
                 'status':(operation or {}).get('status','idle'),
@@ -382,7 +388,7 @@ class ManagedInstallation:
                 'steps_done':(operation or {}).get('steps_done',0),
                 'steps_total':(operation or {}).get('steps_total',0),
                 'files_written':written,'configuration':configuration,
-                'registration':(record.get('windows_registration') or record.get('linux_registration') or {}).get('state','none'),
+                'payload':payload,'registration':registration.get('state','none'),
                 'service_recorded':(self.root/'service.json').exists(),'ready':False}
 
     def rollback(self,version,*,confirm,expected_state=None,expected_operation=...):

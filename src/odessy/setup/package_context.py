@@ -118,6 +118,8 @@ def _check_retained_runtime(root,payload):
     for path in destination.rglob('*'):
         if not path.is_file(): continue
         relative_path=path.relative_to(destination)
+        if 'site-packages' in relative_path.parts and '__pycache__' not in relative_path.parts:
+            raise ValueError(message)
         if not included(relative_path): continue
         relative=relative_path.as_posix()
         if relative not in expected['files'] or digest(guard(path))!=expected['files'][relative]:

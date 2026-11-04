@@ -174,3 +174,21 @@ def test_excluded_runtime_cache_is_preserved_and_does_not_block_reinstall(tmp_pa
     _check_retained_runtime(tmp_path / 'App', payload)
     copy_owned(runtime, cache.parents[2], inventory(runtime))
     assert cache.read_bytes() == b'user-cache'
+
+
+def test_retained_site_packages_startup_hook_blocks_reinstall(tmp_path):
+    import hashlib
+    from odessy.setup.package_context import _check_retained_runtime
+    from odessy.setup.runtime import inventory
+    payload = tmp_path / 'payload'
+    runtime = payload / 'runtime'
+    (runtime / 'bin').mkdir(parents=True)
+    (runtime / 'bin' / 'python3').write_bytes(b'python')
+    (runtime / 'LICENSE').write_bytes(b'license')
+    key = hashlib.sha256(json.dumps(inventory(runtime), sort_keys=True).encode()).hexdigest()[:32]
+    hook = tmp_path / 'App' / 'runtimes' / key / 'lib' / 'python3.10' / 'site-packages' / 'startup.pth'
+    hook.parent.mkdir(parents=True)
+    hook.write_text('import malicious')
+    with pytest.raises(ValueError, match='Back up and move'):
+        _check_retained_runtime(tmp_path / 'App', payload)
+    assert hook.read_text() == 'import malicious'

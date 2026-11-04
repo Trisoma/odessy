@@ -27,7 +27,9 @@ class InstalledManageController extends ChangeNotifier {
   String get root => (spec['root'] as String?) ?? '';
   String get payload => _suppliedPayload.isNotEmpty
       ? _suppliedPayload
-      : (spec['payload'] as String?) ?? '';
+      : status.containsKey('payload')
+          ? (status['payload'] as String?) ?? ''
+          : (spec['payload'] as String?) ?? '';
   String? get reviewedAction => _reviewedAction;
   bool get canConfirm =>
       !busy && !uninstalled && _reviewedAction != null && _confirmation != null;
@@ -102,10 +104,15 @@ class InstalledManageController extends ChangeNotifier {
     final epoch = ++_epoch;
     _begin();
     try {
-      spec = await _execute('installed-spec', const {});
+      try {
+        spec = await _execute('installed-spec', const {});
+        notice = '';
+      } catch (failure) {
+        spec = {'root': root};
+        _failed(epoch, failure);
+      }
       status = await _execute('package-status', const {});
       if (_disposed || epoch != _epoch) return;
-      notice = '';
     } catch (failure) {
       _failed(epoch, failure);
     } finally {

@@ -5,6 +5,7 @@ import 'package:odessy_desktop/features/setup/controllers/installed_manage_contr
 class Backend implements SetupBackend {
   final requests = <SetupRequest>[];
   String failure = '';
+  bool damaged = false;
   String? installedPayload =
       'C:/Users/me/AppData/Local/OdessyMaintenance/id/hash';
   Json status = {
@@ -31,6 +32,13 @@ class Backend implements SetupBackend {
       }, request.id);
     }
     final action = request.parameters['action'] as String;
+    if (action == 'installed-spec' && damaged) {
+      return SetupReply.fromJson({
+        'id': request.id,
+        'status': 'error',
+        'reason': 'installed executable is damaged'
+      }, request.id);
+    }
     final result = switch (action) {
       'installed-spec' => {
           'root': 'C:/Odessy/App',
@@ -75,6 +83,30 @@ InstalledManageController controller(Backend backend) =>
     InstalledManageController(backend, spec: {'root': 'C:/Odessy/App'});
 
 void main() {
+  test('damaged installation uses current recorded maintenance payload',
+      () async {
+    final backend = Backend()..damaged = true;
+    backend.status['payload'] = 'C:/current-payload';
+    final c =
+        InstalledManageController(backend, spec: {'root': 'C:/Odessy/App'});
+    await c.load();
+    expect(c.error, contains('damaged'));
+    expect(c.payload, 'C:/current-payload');
+    await c.reviewRepair();
+    expect(backend.requests.last.parameters['payload'], 'C:/current-payload');
+    c.dispose();
+  });
+
+  test('status refresh prefers the current registered payload', () async {
+    final backend = Backend()..installedPayload = 'C:/old-payload';
+    backend.status['payload'] = 'C:/old-payload';
+    final c = controller(backend);
+    await c.load();
+    backend.status = {...backend.status, 'payload': 'C:/updated-payload'};
+    await c.refreshStatus();
+    expect(c.payload, 'C:/updated-payload');
+    c.dispose();
+  });
   test('installed payload follows the latest spec after configuration',
       () async {
     final backend = Backend()..installedPayload = 'C:/current-payload';
