@@ -108,7 +108,7 @@ class InstalledManageController extends ChangeNotifier {
         spec = await _execute('installed-spec', const {});
         notice = '';
       } catch (failure) {
-        spec = {'root': root};
+        spec = {'root': root, if (spec['portable'] == true) 'portable': true};
         _failed(epoch, failure);
       }
       status = await _execute('package-status', const {});

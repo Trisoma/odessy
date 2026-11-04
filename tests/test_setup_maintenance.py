@@ -114,6 +114,28 @@ def test_status_exposes_recorded_helper_even_when_executable_is_damaged(tmp_path
     assert manager.status()['payload']==str(helper)
 
 
+@pytest.mark.parametrize('problem',[ValueError('linked installation path'),OSError('helper is inaccessible')])
+def test_status_ignores_unsafe_helper_and_preserves_progress(tmp_path,monkeypatch,problem):
+    from odessy.setup import maintenance
+    source=bundle(tmp_path)
+    manager=ManagedInstallation(tmp_path/'installation',runner=fake_runner)
+    selection=SetupSelection(role='execution')
+    manager.install(source,selection,manager.plan(source,selection)['plan_id'])
+    helper=tmp_path/'unsafe-helper'
+    record=manager.record()
+    record['linux_registration']={'state':'complete','helper':str(helper)}
+    maintenance.atomic(manager.root/'installation.json',record)
+    original_guard=maintenance.guard
+    def check_guard(path):
+        if Path(path)==helper: raise problem
+        return original_guard(path)
+    monkeypatch.setattr(maintenance,'guard',check_guard)
+    status=manager.status()
+    assert status['payload'] is None
+    assert status['active']==record['active']
+    assert status['versions']==list(record['versions'])
+
+
 def test_plan_is_invalidated_by_runtime_change(tmp_path):
     source=bundle(tmp_path)
     runtime=tmp_path/'runtime'

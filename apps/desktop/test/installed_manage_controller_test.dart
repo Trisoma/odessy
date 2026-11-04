@@ -1,6 +1,8 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/features/setup/controllers/installed_manage_controller.dart';
+import 'package:odessy_desktop/features/setup/presentation/manage_page.dart';
 
 class Backend implements SetupBackend {
   final requests = <SetupRequest>[];
@@ -83,6 +85,33 @@ InstalledManageController controller(Backend backend) =>
     InstalledManageController(backend, spec: {'root': 'C:/Odessy/App'});
 
 void main() {
+  test('failed installed spec preserves portable installation type', () async {
+    final backend = Backend()..damaged = true;
+    final c = InstalledManageController(backend,
+        spec: {'root': 'C:/Odessy/App', 'portable': true});
+    await c.load();
+    expect(c.spec['portable'], isTrue);
+    expect(c.error, contains('damaged'));
+    c.dispose();
+  });
+
+  testWidgets('portable recovery keeps unavailable controls disabled',
+      (tester) async {
+    final backend = Backend()..damaged = true;
+    final c = InstalledManageController(backend,
+        spec: {'root': 'C:/Odessy/App', 'portable': true});
+    await c.load();
+    await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: ManagePage(controller: c))));
+    final service = tester.widget<OutlinedButton>(find.ancestor(
+        of: find.text('Service controls'),
+        matching: find.byType(OutlinedButton)));
+    expect(service.onPressed, isNull);
+    expect(find.textContaining('Portable build: close Odessy'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+  });
+
   test('damaged installation uses current recorded maintenance payload',
       () async {
     final backend = Backend()..damaged = true;

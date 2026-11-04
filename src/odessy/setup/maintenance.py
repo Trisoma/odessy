@@ -379,8 +379,12 @@ class ManagedInstallation:
         helper=registration.get('helper')
         payload=None
         if isinstance(helper,str) and helper:
-            candidate=guard(Path(helper))
-            if candidate.is_dir() and (candidate/'setup-context.json').is_file():payload=str(candidate)
+            try:
+                candidate=guard(Path(helper))
+                if candidate.is_dir() and (candidate/'setup-context.json').is_file():payload=str(candidate)
+            except (ValueError,OSError):
+                # A damaged or unsafe helper must not hide installation status.
+                pass
         return {**snapshot(operation,log_cursor),'installation_format':'versioned','installation_id':record['id'],'active':active,
                 'versions':list(record['versions']),'operation':{key:value for key,value in operation.items() if key!='logs'} if operation else None,
                 'status':(operation or {}).get('status','idle'),
