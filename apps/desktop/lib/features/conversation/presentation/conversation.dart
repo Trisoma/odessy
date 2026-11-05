@@ -3,10 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../app/session_controller.dart';
 import '../../../app/readiness_controller.dart';
+import '../../../widgets/pixel_boat.dart';
 import '../controllers/voice_controller.dart';
 import 'interaction_card.dart';
 import 'message_content.dart';
-import 'session_activity.dart';
 
 class ConversationPage extends StatefulWidget {
   const ConversationPage(
@@ -14,17 +14,19 @@ class ConversationPage extends StatefulWidget {
       required this.controller,
       this.readiness,
       this.voice,
+      this.draftController,
       this.onOpenModels});
   final DesktopSession controller;
   final ReadinessController? readiness;
   final VoiceController? voice;
+  final TextEditingController? draftController;
   final VoidCallback? onOpenModels;
   @override
   State<ConversationPage> createState() => _ConversationPageState();
 }
 
 class _ConversationPageState extends State<ConversationPage> {
-  final input = TextEditingController();
+  late TextEditingController input;
   final scroll = ScrollController();
   bool submitting = false, showLatest = false, showVoiceOptions = false;
   Object? contentStamp;
@@ -41,6 +43,7 @@ class _ConversationPageState extends State<ConversationPage> {
   @override
   void initState() {
     super.initState();
+    input = widget.draftController ?? TextEditingController();
     input.addListener(_draftChanged);
     scroll.addListener(_scrolled);
     widget.controller.addListener(_sessionChanged);
@@ -51,6 +54,12 @@ class _ConversationPageState extends State<ConversationPage> {
   @override
   void didUpdateWidget(covariant ConversationPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.draftController != widget.draftController) {
+      input.removeListener(_draftChanged);
+      if (oldWidget.draftController == null) input.dispose();
+      input = widget.draftController ?? TextEditingController();
+      input.addListener(_draftChanged);
+    }
     if (oldWidget.controller != widget.controller ||
         oldWidget.voice != widget.voice) {
       voice.removeListener(_voiceChanged);
@@ -157,7 +166,7 @@ class _ConversationPageState extends State<ConversationPage> {
     if (_ownsVoice) voice.dispose();
     input.removeListener(_draftChanged);
     scroll.removeListener(_scrolled);
-    input.dispose();
+    if (widget.draftController == null) input.dispose();
     scroll.dispose();
     super.dispose();
   }
@@ -253,8 +262,6 @@ class _ConversationPageState extends State<ConversationPage> {
                   child: Text('Working on your request…',
                       style: Theme.of(context).textTheme.bodySmall)),
             ]))),
-      if (s != null && s.events.isNotEmpty)
-        _content(SessionActivity(events: s.events)),
     ];
   }
 
@@ -334,7 +341,11 @@ class _ConversationPageState extends State<ConversationPage> {
           contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
       items: c.profiles
           .map((p) => DropdownMenuItem(
-              value: p, child: Text(p, overflow: TextOverflow.ellipsis)))
+              value: p,
+              child: Tooltip(
+                  message: c.profileLabel(p),
+                  child: Text(c.profileLabel(p),
+                      overflow: TextOverflow.ellipsis))))
           .toList(),
       onChanged: c.busy || c.stopping || !c.connected
           ? null
@@ -424,10 +435,10 @@ class _ConversationPageState extends State<ConversationPage> {
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Padding(
               padding: const EdgeInsets.only(top: 10),
-              child: Icon(
-                  role == 'tool' ? Icons.terminal : Icons.bubble_chart_outlined,
-                  size: 20,
-                  color: Theme.of(context).colorScheme.primary)),
+              child: role == 'tool'
+                  ? Icon(Icons.terminal,
+                      size: 20, color: Theme.of(context).colorScheme.primary)
+                  : const PixelBoat(size: 22)),
           const SizedBox(width: 12),
           Expanded(
               child: Column(

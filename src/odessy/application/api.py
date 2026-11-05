@@ -52,7 +52,8 @@ window.addEventListener('pagehide',()=>streamAbort?.abort());
 
 
 def create_app(controller_factory, *, config=None, settings=None, jobs=None, token=None,
-               config_path=None, profiles=None, monitoring=None, runtime_configuration=None, desktop_voice=None):
+               config_path=None, profiles=None, monitoring=None, runtime_configuration=None, desktop_voice=None,
+               usage_history=None):
     """Build an app; the caller owns loopback-only binding and displaying its token."""
     try:
         from fastapi import FastAPI, Request, HTTPException
@@ -138,6 +139,19 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     async def capabilities():
         return {'schema_version':1,'service_instance_id':app.state.service_instance_id,
                 'configuration':app.state.runtime_configuration,'restart_safe':restart_idle()}
+
+    @app.get('/v1/usage/history')
+    async def usage_history_report(days: int = 30, provider: str | None = None,
+                                   model: str | None = None, limit: int = 50, offset: int = 0):
+        if usage_history is None:
+            raise HTTPException(503, 'Usage history is unavailable')
+        try:
+            return await asyncio.to_thread(usage_history.query, days=days, provider=provider,
+                                           model=model, limit=limit, offset=offset)
+        except ValueError:
+            raise HTTPException(400, 'Invalid usage history filters') from None
+        except Exception:
+            raise HTTPException(503, 'Usage history is unavailable') from None
 
     @app.post('/v1/lifecycle/prepare-restart')
     async def prepare_restart(request: Request):

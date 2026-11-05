@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:odessy_client/odessy_client.dart';
 import '../../../app/theme.dart';
+import '../../../widgets/pixel_boat.dart';
 
 /// A presentation destination. Routing and command admission belong to the app.
 class SidebarDestination {
@@ -55,8 +56,7 @@ class DeviceSidebar extends StatelessWidget {
         Padding(
             padding: const EdgeInsets.fromLTRB(20, 20, 16, 20),
             child: Row(children: [
-              Icon(Icons.bubble_chart_outlined,
-                  size: 23, color: Theme.of(context).colorScheme.primary),
+              const PixelBoat(size: 30),
               const SizedBox(width: 9),
               Expanded(
                   child: Text('Odessy',

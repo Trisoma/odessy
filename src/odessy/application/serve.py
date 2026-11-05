@@ -35,6 +35,8 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
     from odessy.application.api import create_app
     from odessy.application.bootstrap import create_controller
     from odessy.collaboration.config import load_config
+    from odessy.models.usage import set_usage_history
+    from odessy.models.usage_history import UsageHistory, default_history_path
 
     workspace = Path(workspace or Path.cwd()).resolve()
     turn_lock = asyncio.Lock()
@@ -54,8 +56,10 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
                 'local': {'name': 'local', 'adapter': 'lfm'},
                 **{name: profile.public_dict() for name, profile in config.participants.items()}}
 
+    history = UsageHistory(default_history_path())
     app = create_app(factory, config=load_config(), profiles=profiles, runtime_configuration=runtime_configuration, desktop_voice=desktop_voice,
-                     token=token)
+                     token=token, usage_history=history)
+    set_usage_history(history)
     address = f'[{host}]' if ':' in host else host
     print(f'[odessy] HTTP API: http://{address}:{port}', file=sys.stderr, flush=True)
     if print_token:
@@ -86,5 +90,6 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
     try:
         await server.serve()
     finally:
+        set_usage_history(None)
         from odessy.tools.lan_executor import clear
         clear()
