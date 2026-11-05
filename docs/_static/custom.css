@@ -1,0 +1,8 @@
+/* Odessy documentation custom styles (placeholder). */
+
+/* Give the brand a consistent accent so the site reads as Odessy rather than
+   the default furo palette. */
+:root {
+  --color-brand-primary: #2563eb;
+  --color-brand-content: #1e40af;
+}
