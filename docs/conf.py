@@ -63,7 +63,12 @@ master_doc = "index"
 # Myst tries to resolve those as in-tree cross-references and warns when the
 # target has no corresponding document. The links still render as plain URLs,
 # so suppress the noise; a follow-up pass should fix the links themselves.
-suppress_warnings = ["myst.xref_missing"]
+#
+# `misc.highlighting_failure` covers code blocks that name a Pygments lexer
+# Sphinx does not know (e.g. `mermaid` in ARCHITECTURE.md). The block is still
+# rendered as plain text; suppressing keeps the docs build warning-clean until
+# a Mermaid renderer is added separately.
+suppress_warnings = ["myst.xref_missing", "misc.highlighting_failure"]
 
 # -- Options for HTML output -------------------------------------------------
 
