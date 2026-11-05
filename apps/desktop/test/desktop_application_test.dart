@@ -3,10 +3,77 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_desktop/app/app.dart';
 import 'package:odessy_desktop/features/devices/presentation/devices.dart';
+import 'package:odessy_desktop/features/shell/presentation/device_sidebar.dart';
+import 'package:odessy_desktop/features/conversation/presentation/conversation.dart';
 import 'package:odessy_client/odessy_client.dart';
 import 'component_settings_test.dart' show SavedComponents;
 
 void main() {
+  testWidgets('activity button opens usage page and preserves conversation',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 850);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = ActivityEventApi();
+    await tester
+        .pumpWidget(OdessyApp(api: api, setupBackend: SavedComponents()));
+    await tester.pumpAndSettle();
+    final cost = SessionEvent(1, 'cost', {
+      'total': {'calls': 1, 'prompt': 27, 'cached': 3, 'completion': 5},
+      'total_cost': null,
+    });
+    api.ledger = [cost];
+    api.eventsController.add(cost);
+    await tester.pumpAndSettle();
+    expect(
+        find.descendant(
+            of: find.byType(DeviceSidebar),
+            matching: find.text('Activity & usage')),
+        findsOneWidget);
+    expect(
+        find.descendant(
+            of: find.byType(ConversationPage),
+            matching: find.text('Activity & provenance')),
+        findsNothing);
+    await tester.tap(find.text('Activity & usage'));
+    await tester.pumpAndSettle();
+    expect(find.text('API usage and estimated cost'), findsOneWidget);
+    expect(find.text('27'), findsOneWidget);
+    expect(find.text('Not reported'), findsWidgets);
+    expect(find.byType(ConversationPage), findsNothing);
+    await tester.tap(find.text('Assistant'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ConversationPage), findsOneWidget);
+  });
+
+  testWidgets('activity stays accessible in the narrow navigation drawer',
+      (tester) async {
+    tester.view.physicalSize = const Size(800, 700);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final api = ActivityEventApi();
+    await tester
+        .pumpWidget(OdessyApp(api: api, setupBackend: SavedComponents()));
+    await tester.pumpAndSettle();
+    final cost = SessionEvent(1, 'cost', {
+      'total': {'calls': 1, 'prompt': 27, 'cached': 3, 'completion': 5},
+      'total_cost': null,
+    });
+    api.ledger = [cost];
+    api.eventsController.add(cost);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Open navigation menu'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Activity & usage'));
+    await tester.pumpAndSettle();
+    expect(find.text('27'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('model failure is shown once and opens model settings',
       (tester) async {
     tester.view.physicalSize = const Size(1200, 850);
@@ -93,4 +160,11 @@ class ErrorEventApi extends DemoApi {
     unawaited(eventsController.close());
     super.close();
   }
+}
+
+class ActivityEventApi extends ErrorEventApi {
+  List<SessionEvent> ledger = [];
+  @override
+  Future<Session> snapshot(String sid) async =>
+      Session(sid, selectedProfile: 'auto', events: ledger);
 }

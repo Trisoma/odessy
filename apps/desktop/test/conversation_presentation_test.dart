@@ -543,8 +543,7 @@ void main() {
     expect(find.text('Read-only'), findsNothing);
   });
 
-  testWidgets('service cost event is visible from conversation activity',
-      (tester) async {
+  testWidgets('service cost event is visible in activity', (tester) async {
     final api = ConversationFixtureApi()
       ..activity = [
         SessionEvent(1, 'cost', {
@@ -555,7 +554,9 @@ void main() {
     final c = DesktopSession(api);
     addTearDown(c.dispose);
     await c.start();
-    await mountConversation(tester, c);
+    await mountConversation(tester, c,
+        body: SingleChildScrollView(
+            child: SessionActivity(events: c.session!.events)));
     await tester.tap(find.text('Activity & provenance'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('API usage and estimated cost'));

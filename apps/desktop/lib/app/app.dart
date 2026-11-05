@@ -26,6 +26,8 @@ import 'dart:ui' show AppExitResponse;
 import 'package:flutter/material.dart';
 import 'package:odessy_client/odessy_client.dart';
 import '../features/conversation/presentation/conversation.dart';
+import '../features/conversation/presentation/activity_usage_page.dart';
+import '../features/conversation/presentation/usage_history_dashboard.dart';
 import '../features/settings/presentation/settings.dart';
 import 'session_controller.dart';
 import 'theme.dart';
@@ -577,6 +579,13 @@ class _OdessyAppState extends State<OdessyApp> {
                             child: switch (page) {
                           'Device details' => _devicePage(),
                           'Jobs' => JobsPage(controller: jobs),
+                          'Activity & usage' =>
+                            controller.api is UsageHistoryApi
+                                ? UsageHistoryDashboard(session: controller)
+                                : ActivityUsagePage(
+                                    events:
+                                        controller.session?.events ?? const [],
+                                    connected: controller.connected),
                           'Monitor' || 'Devices' => DevicesHub(
                               session: controller,
                               monitoring: monitoring,
@@ -718,6 +727,11 @@ class _OdessyAppState extends State<OdessyApp> {
                 icon: Icons.devices_outlined,
                 selected: page == 'Devices' || page == 'Monitor',
                 onTap: () => _navigate('Devices')),
+            SidebarDestination(
+                label: 'Activity & usage',
+                icon: Icons.insights_outlined,
+                selected: page == 'Activity & usage',
+                onTap: () => _navigate('Activity & usage')),
           ],
           destinations: [
             SidebarDestination(

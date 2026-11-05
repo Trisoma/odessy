@@ -7,7 +7,6 @@ import '../../../widgets/pixel_boat.dart';
 import '../controllers/voice_controller.dart';
 import 'interaction_card.dart';
 import 'message_content.dart';
-import 'session_activity.dart';
 
 class ConversationPage extends StatefulWidget {
   const ConversationPage(
@@ -254,8 +253,6 @@ class _ConversationPageState extends State<ConversationPage> {
                   child: Text('Working on your request…',
                       style: Theme.of(context).textTheme.bodySmall)),
             ]))),
-      if (s != null && s.events.isNotEmpty)
-        _content(SessionActivity(events: s.events)),
     ];
   }
 

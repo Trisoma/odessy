@@ -5,8 +5,14 @@ import 'session_usage.dart';
 
 /// Renders service events without inferring tool success or permission.
 class SessionActivity extends StatelessWidget {
-  const SessionActivity({super.key, required this.events});
+  const SessionActivity(
+      {super.key,
+      required this.events,
+      this.expandUsage = false,
+      this.showUsage = true});
   final List<SessionEvent> events;
+  final bool expandUsage;
+  final bool showUsage;
 
   @override
   Widget build(BuildContext context) => ExpansionTile(
@@ -19,8 +25,8 @@ class SessionActivity extends StatelessWidget {
             : '${events.length} available ${events.length == 1 ? 'event' : 'events'}'),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         children: [
-          if (events.any((event) => event.type == 'cost'))
-            SessionUsage(events: events),
+          if (showUsage && events.any((event) => event.type == 'cost'))
+            SessionUsage(events: events, initiallyExpanded: expandUsage),
           for (final event in events.reversed.take(12))
             ExpansionTile(
               key: ValueKey(event.id),

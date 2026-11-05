@@ -88,6 +88,8 @@ void main() {
     ];
     await page.controller.refresh();
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Activity & usage'));
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Activity & provenance'));
     await tester.tap(find.text('Activity & provenance'));
     await tester.pumpAndSettle();
@@ -105,9 +107,6 @@ void main() {
     ];
     await page.controller.refresh();
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('API usage and estimated cost'));
-    await tester.tap(find.text('API usage and estimated cost'));
-    await tester.pumpAndSettle();
     await tester.ensureVisible(find.textContaining('process-wide'));
     await tester.pumpAndSettle();
     await tester.runAsync(() => capture('usage-dark'));
@@ -115,6 +114,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.runAsync(() => capture('usage-light'));
     await tester.tap(find.byTooltip('Toggle light / dark theme'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Assistant'));
     await tester.pumpAndSettle();
     api.pending = [interactionFixture()];
     await page.controller.refresh();
