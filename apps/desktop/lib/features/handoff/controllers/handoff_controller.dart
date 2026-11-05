@@ -18,6 +18,7 @@ class HandoffController extends ChangeNotifier {
   final DesktopSession session;
   OdessyApi? _api;
   String? _sid;
+  bool _connected = false;
   int _epoch = 0, _seenEvent = 0;
   bool _disposed = false;
   bool loading = false, starting = false, continuing = false;
@@ -68,9 +69,17 @@ class HandoffController extends ChangeNotifier {
   }
 
   void _changed() {
-    final api = session.api,
-        sid = session.connected ? session.session?.id : null;
-    final reset = !identical(api, _api) || sid != _sid;
+    final api = session.api;
+    final connected = session.connected;
+    // A dropped connection is not a different session. Keeping the runs already
+    // known means a waiting run survives a reconnect even when its last event
+    // has fallen out of the service's event window; clearing them here would
+    // leave no way to hand it over or cancel it from this panel.
+    final sid = connected ? session.session?.id : _sid;
+    final reset = !identical(api, _api) || (connected && sid != _sid);
+    // Back on the same session: re-read the event window so the runs are
+    // refreshed, without discarding the ones already known.
+    final resumed = connected && !_connected && !reset;
     if (reset) {
       if (starting) startUncertain = true;
       // A run belongs to its session: the new one cannot act on it.
@@ -86,7 +95,10 @@ class HandoffController extends ChangeNotifier {
       artifact = null;
       error = null;
       loading = starting = continuing = cancelling = loadingArtifact = false;
+    } else if (resumed) {
+      _seenEvent = 0;
     }
+    _connected = connected;
     if (_absorbEvents() || reset) _notify();
   }
 
@@ -250,14 +262,22 @@ class HandoffController extends ChangeNotifier {
       if (!_current(epoch, api, sid) || selectedId != id) return;
       // Shown only while it is the output that is still on offer.
       if (full['sha256'] != offered?['sha256']) {
-        throw const FormatException('Output changed');
+        throw const _OutputChanged();
       }
       artifact = full;
     } catch (failure) {
       if (_current(epoch, api, sid)) {
-        error = failure is FormatException
-            ? 'The output changed while loading. Reload the run.'
-            : _failure(failure, 'Could not load the full output.');
+        // A FormatException is not proof that the output changed: the client
+        // also raises one for a response over 4 MiB and for invalid JSON.
+        // Reloading cannot fix either, so only the sha256 mismatch may tell
+        // the user to reload.
+        error = switch (failure) {
+          _OutputChanged() =>
+            'The output changed while loading. Reload the run.',
+          FormatException() => 'The full output could not be read. It may be '
+              'too large or incomplete; the preview above is what can be shown.',
+          _ => _failure(failure, 'Could not load the full output.'),
+        };
       }
     } finally {
       if (_current(epoch, api, sid)) {
@@ -346,4 +366,10 @@ class HandoffController extends ChangeNotifier {
     session.removeListener(_changed);
     super.dispose();
   }
+}
+
+/// The output on offer changed between the snapshot and the fetch, so the
+/// fetched artifact must not be shown as the one waiting for approval.
+class _OutputChanged implements Exception {
+  const _OutputChanged();
 }

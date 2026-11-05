@@ -401,6 +401,11 @@ class _StepNode extends StatelessWidget {
     final progress = (step['progress'] as List? ?? const []).cast<String>();
     final changed = (step['changed_files'] as List? ?? const []).cast<String>();
     final mode = step['mode'] == 'patch' ? 'writes code' : 'read-only';
+    // The step's final answer. A completed `code_to_review` run keeps the
+    // reviewer's answer here, so it has to be drawn beside the progress.
+    final result = step['result'];
+    final answer =
+        result is String && result.trim().isNotEmpty ? result : null;
     return Semantics(
         container: true,
         label: 'Step $index, ${step['participant']}, $mode, '
@@ -442,6 +447,21 @@ class _StepNode extends StatelessWidget {
                         ?.copyWith(color: colors.error)),
               ],
               if (step['usage'] is Map) JobUsage(usage: step['usage']),
+              if (answer != null) ...[
+                const SizedBox(height: 8),
+                Text('Answer', style: theme.textTheme.labelLarge),
+                const SizedBox(height: 4),
+                Container(
+                    width: double.infinity,
+                    constraints: const BoxConstraints(maxHeight: 220),
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                        color: colors.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(8)),
+                    child: SingleChildScrollView(
+                        child: SelectableText(answer,
+                            style: const TextStyle(fontFamily: 'monospace')))),
+              ],
             ])));
   }
 }
