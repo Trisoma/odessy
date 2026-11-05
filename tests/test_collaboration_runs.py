@@ -490,3 +490,50 @@ def test_latest_run_is_the_default_and_unknown_runs_are_reported(repo):
             runs.get('missing')
         await settled(runs, run_id, 'awaiting_handoff')
     asyncio.run(run())
+
+
+DESKTOP_FIXTURE = Path(__file__).parents[1] / 'apps/desktop/test/fixtures/handoff_run_events.json'
+
+
+def test_the_desktop_panel_fixture_matches_real_run_events(repo):
+    """The Flutter panel's tests parse this file, so it must be what the service sends.
+
+    Set ODESSY_UPDATE_FIXTURES=1 to rewrite it after a deliberate snapshot change.
+    """
+    import json
+    from odessy.application.session import public
+
+    async def run():
+        async def runner(command, *, cwd, env, on_output):
+            if 'implement it' in command[-1]:
+                (Path(cwd) / 'app.py').write_text('value = 2\n')
+                return {'returncode': 0, 'output': ''}
+            return document('The spec')
+        events = []
+        _, runs = managers(repo, runner)
+        runs.event_sink = events.append
+        run_id = (await runs.start(*DOCUMENT, approved=True))['run_id']
+        offered = await settled(runs, run_id, 'awaiting_handoff')
+        await runs.continue_run(run_id, offered['transfers'][0]['artifact']['sha256'], approved=True)
+        await settled(runs, run_id, 'completed')
+        by_state = {}
+        for event in events:
+            by_state[event['state']] = event
+        return [by_state['awaiting_handoff'], by_state['completed']]
+
+    def normalize(event):
+        text = json.dumps(public(event))
+        run = event['run_id']
+        jobs = [step['job_id'] for step in event['steps'] if step['job_id']]
+        for old, new in [(event['worktree'], '/repo-odessy-run'), (event['workspace'], '/repo'),
+                         (run, 'c' * 32), *zip(jobs, ('a' * 32, 'b' * 32))]:
+            text = text.replace(json.dumps(old)[1:-1], new)
+        value = json.loads(text)
+        value['created_at'] = 0
+        value['finished_at'] = None if value['finished_at'] is None else 0
+        return value
+
+    actual = [normalize(event) for event in asyncio.run(run())]
+    if os.environ.get('ODESSY_UPDATE_FIXTURES') == '1':
+        DESKTOP_FIXTURE.write_text(json.dumps(actual, indent=2) + '\n', encoding='utf-8')
+    assert json.loads(DESKTOP_FIXTURE.read_text(encoding='utf-8')) == actual

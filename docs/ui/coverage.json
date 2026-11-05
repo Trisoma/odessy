@@ -15,6 +15,7 @@
     "desktop_voice": "session-controls-adapter-hardware-unqualified",
     "provider_editing": "cloud-ollama-new-sessions",
     "usage_jobs": "live-process-ledger-session-jobs",
-    "persistent_credentials": "windows-opt-in-local-api-token"
+    "persistent_credentials": "windows-opt-in-local-api-token",
+    "handoff_runs": "live-broker-session-events-cli-unqualified"
   }
 }

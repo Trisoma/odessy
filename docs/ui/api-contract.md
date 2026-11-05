@@ -28,6 +28,10 @@ an implicit request target. There are no direct provider/native calls in widgets
 | Runtime setting inventory, read-only | GET `/v1/runtime-settings` |
 | Session job summaries | GET `/v1/sessions/{sid}/jobs?limit=50&after=<cursor>` |
 | Job detail, submission and cancellation | GET/POST `/v1/sessions/{sid}/jobs[/{job_id}[/cancel]]` |
+| Handoff run | POST `/v1/sessions/{sid}/runs`, GET `/v1/sessions/{sid}/runs/{id}` |
+| Handoff output | GET `/v1/sessions/{sid}/runs/{id}/artifact` |
+| Continue a handoff | POST `/v1/sessions/{sid}/runs/{id}/continue`, `{artifact_sha256}` |
+| Cancel a handoff | POST `/v1/sessions/{sid}/runs/{id}/cancel` |
 | Monitoring health/storage | GET `/v1/monitoring` |
 | Monitoring inventory/detail | GET `/v1/monitoring/hosts`, GET `/v1/monitoring/hosts/{id}` |
 | Monitoring metrics/history | GET `/v1/monitoring/hosts/{id}/metrics`, GET `/v1/monitoring/hosts/{id}/history` |
@@ -60,13 +64,14 @@ The Python public route preserves all repeated `series` values when forwarding
 to the Go service; other query fields retain their existing handling.
 These routes add no pairing, trust or configuration mutations. HTTP 503 stays
 unavailable while conversation APIs remain usable; it never activates demo data.
-| Handoff run | POST `/v1/sessions/{sid}/runs`, GET `/v1/sessions/{sid}/runs/{id}` |
-| Handoff output | GET `/v1/sessions/{sid}/runs/{id}/artifact` |
-| Continue a handoff | POST `/v1/sessions/{sid}/runs/{id}/continue`, `{artifact_sha256}` |
-| Cancel a handoff | POST `/v1/sessions/{sid}/runs/{id}/cancel` |
 
 A `run` session event carries the same snapshot as GET: `steps` are the agents and
 `transfers` the data moving between them. Runs do not survive a service restart.
+The desktop `HandoffRunsApi` validates every snapshot with `parseRunSnapshot` and
+builds its run list from `run` events; there is no run listing route. Starting and
+continuing wait for the session approval broker. Continuing sends only the hash of
+the output on screen; the service rejects any other. The client never sends an
+approval, channel or risk.
 
 The backend assigns response-channel identity. The client never sends a channel,
 risk, permission, action modification or model-written authorization. Interaction
