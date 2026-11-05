@@ -404,8 +404,7 @@ class _StepNode extends StatelessWidget {
     // The step's final answer. A completed `code_to_review` run keeps the
     // reviewer's answer here, so it has to be drawn beside the progress.
     final result = step['result'];
-    final answer =
-        result is String && result.trim().isNotEmpty ? result : null;
+    final answer = result is String && result.trim().isNotEmpty ? result : null;
     return Semantics(
         container: true,
         label: 'Step $index, ${step['participant']}, $mode, '

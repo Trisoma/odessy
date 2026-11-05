@@ -83,6 +83,102 @@ abstract interface class HandoffRunsApi {
   Future<Json> cancelRun(String sid, String runId);
 }
 
+/// Read-only, service-owned local history of provider-reported API usage.
+abstract interface class UsageHistoryApi {
+  Future<Json> usageHistory(
+      {int days = 30,
+      String? provider,
+      String? model,
+      int limit = 50,
+      int offset = 0});
+}
+
+/// Validate untrusted history before presentation or caching, including fakes.
+Json validateUsageHistory(Json value) {
+  Never invalid() => throw const FormatException('Invalid usage history');
+  bool count(Object? v) => v is int && v >= 0;
+  bool optionalCount(Object? v) => v == null || count(v);
+  bool optionalText(Object? v) => v == null || v is String;
+  bool optionalCost(Object? v) =>
+      v == null || (v is num && v.isFinite && v >= 0);
+  bool aggregate(Map row) =>
+      const ['requests', 'prompt', 'cached', 'completion', 'cost', 'currency']
+          .every(row.containsKey) &&
+      count(row['requests']) &&
+      optionalCount(row['prompt']) &&
+      optionalCount(row['cached']) &&
+      optionalCount(row['completion']) &&
+      optionalCost(row['cost']) &&
+      optionalText(row['currency']);
+  if (value['schema_version'] != 1 ||
+      value['summary'] is! Map ||
+      !aggregate(value['summary'] as Map) ||
+      !count(value['total']) ||
+      !count(value['offset']) ||
+      !count(value['limit']) ||
+      (value['limit'] as int) < 1 ||
+      (value['limit'] as int) > 100 ||
+      (value['offset'] as int) > 100000 ||
+      (value['recording_error'] != null && value['recording_error'] is! bool))
+    invalid();
+  for (final key in ['daily', 'groups', 'providers', 'requests', 'options']) {
+    if (value[key] is! List || (value[key] as List).any((v) => v is! Map))
+      invalid();
+  }
+  if ((value['groups'] as List).length > 100 ||
+      (value['providers'] as List).length > 100 ||
+      (value['options'] as List).length > 500 ||
+      (value['requests'] as List).length > (value['limit'] as int) ||
+      (value['requests'] as List).length > (value['total'] as int)) invalid();
+  for (final row in value['daily'] as List) {
+    final day = row['day'];
+    if (!aggregate(row) ||
+        day is! String ||
+        !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(day) ||
+        DateTime.tryParse(day) == null) invalid();
+  }
+  for (final row in [
+    ...(value['groups'] as List),
+    ...(value['providers'] as List)
+  ]) {
+    if (!aggregate(row) ||
+        !optionalText(row['provider']) ||
+        !optionalText(row['model'])) invalid();
+  }
+  for (final row in value['requests'] as List) {
+    if (!const [
+          'id',
+          'recorded_at',
+          'provider',
+          'model',
+          'participant',
+          'prompt',
+          'cached',
+          'completion',
+          'cost',
+          'currency'
+        ].every(row.containsKey) ||
+        !count(row['id']) ||
+        row['recorded_at'] is! String ||
+        DateTime.tryParse(row['recorded_at'] as String) == null ||
+        !optionalText(row['provider']) ||
+        !optionalText(row['model']) ||
+        !optionalText(row['participant']) ||
+        !optionalCount(row['prompt']) ||
+        !optionalCount(row['cached']) ||
+        !optionalCount(row['completion']) ||
+        !optionalCost(row['cost']) ||
+        !optionalText(row['currency'])) invalid();
+  }
+  for (final row in value['options'] as List) {
+    if (!row.containsKey('provider') ||
+        !row.containsKey('model') ||
+        !optionalText(row['provider']) ||
+        !optionalText(row['model'])) invalid();
+  }
+  return freezeJson(value);
+}
+
 /// Redacted runtime inventory; it does not expose values or mutate settings.
 abstract interface class RuntimeSettingsApi {
   Future<Json> runtimeSettings();
@@ -173,6 +269,7 @@ class ApiFailure implements Exception {
 class LocalApi
     implements
         OdessyApi,
+        UsageHistoryApi,
         ProfileMetadataApi,
         JobsApi,
         HandoffRunsApi,
@@ -278,6 +375,34 @@ class LocalApi
       bytes.addAll(chunk);
     }
     return jsonDecode(utf8.decode(bytes)) as Json;
+  }
+
+  @override
+  Future<Json> usageHistory(
+      {int days = 30,
+      String? provider,
+      String? model,
+      int limit = 50,
+      int offset = 0}) async {
+    if (![0, 7, 30, 90].contains(days) ||
+        limit < 1 ||
+        limit > 100 ||
+        offset < 0 ||
+        offset > 100000 ||
+        (provider != null && (provider.isEmpty || provider.length > 200)) ||
+        (model != null && (model.isEmpty || model.length > 200))) {
+      throw ArgumentError('Invalid usage history filters');
+    }
+    return validateUsageHistory(await _json(Uri(
+      path: '/v1/usage/history',
+      queryParameters: {
+        'days': '$days',
+        'limit': '$limit',
+        'offset': '$offset',
+        if (provider != null) 'provider': provider,
+        if (model != null) 'model': model,
+      },
+    ).toString()));
   }
 
   @override
@@ -943,6 +1068,102 @@ class _OwnedMonitoringClient extends MonitoringClient {
     } finally {
       _onClose();
     }
+  }
+}
+
+/// Explicitly fictional data for the standalone dashboard preview.
+class UsagePreviewApi extends DemoApi implements UsageHistoryApi {
+  @override
+  Future<Json> usageHistory(
+      {int days = 30,
+      String? provider,
+      String? model,
+      int limit = 50,
+      int offset = 0}) async {
+    final now = DateTime.now().toUtc();
+    final all = List<Json>.generate(62, (index) {
+      final deepseek = index % 3 != 0;
+      final prompt = 840 + (index * 137) % 4200;
+      final cached = (index * 73) % prompt;
+      final completion = 120 + (index * 41) % 850;
+      return {
+        'id': index + 1,
+        'recorded_at':
+            now.subtract(Duration(hours: index * 11)).toIso8601String(),
+        'provider': deepseek ? 'deepseek' : 'openai',
+        'model': deepseek ? 'deepseek-chat' : 'gpt-example',
+        'participant': 'example',
+        'prompt': prompt,
+        'cached': cached,
+        'completion': completion,
+        'cost': (prompt + completion) * 0.000001,
+        'currency': 'USD',
+      };
+    });
+    final options = <Json>[
+      {'provider': 'deepseek', 'model': 'deepseek-chat'},
+      {'provider': 'openai', 'model': 'gpt-example'},
+    ];
+    final records = all
+        .where((row) =>
+            (days == 0 ||
+                DateTime.parse(row['recorded_at'] as String).isAfter(
+                    DateTime.utc(now.year, now.month, now.day).subtract(
+                        Duration(days: days - 1, microseconds: 1)))) &&
+            (provider == null || row['provider'] == provider) &&
+            (model == null || row['model'] == model))
+        .toList();
+    Json aggregate(List<Json> rows) => {
+          'requests': rows.length,
+          'prompt': rows.fold<int>(0, (n, e) => n + (e['prompt'] as int)),
+          'cached': rows.fold<int>(0, (n, e) => n + (e['cached'] as int)),
+          'completion':
+              rows.fold<int>(0, (n, e) => n + (e['completion'] as int)),
+          'cost': rows.fold<double>(0, (n, e) => n + (e['cost'] as double)),
+          'currency': rows.isEmpty ? null : 'USD',
+        };
+    final byDay = <String, List<Json>>{};
+    final byModel = <String, List<Json>>{};
+    for (final row in records) {
+      final day = (row['recorded_at'] as String).substring(0, 10);
+      byDay.putIfAbsent(day, () => []).add(row);
+      byModel
+          .putIfAbsent('${row['provider']}\u0000${row['model']}', () => [])
+          .add(row);
+    }
+    final daily = byDay.entries
+        .map((entry) => {'day': entry.key, ...aggregate(entry.value)})
+        .toList()
+      ..sort((a, b) => (a['day'] as String).compareTo(b['day'] as String));
+    final groups = byModel.values
+        .map((rows) => {
+              'provider': rows.first['provider'],
+              'model': rows.first['model'],
+              ...aggregate(rows),
+            })
+        .toList();
+    final byProvider = <String, List<Json>>{};
+    for (final row in records) {
+      byProvider.putIfAbsent(row['provider'] as String, () => []).add(row);
+    }
+    final providers = byProvider.entries
+        .map((entry) => {
+              'provider': entry.key,
+              ...aggregate(entry.value),
+            })
+        .toList();
+    return {
+      'schema_version': 1,
+      'summary': aggregate(records),
+      'daily': daily,
+      'groups': groups,
+      'providers': providers,
+      'requests': records.skip(offset).take(limit).toList(),
+      'total': records.length,
+      'limit': limit,
+      'offset': offset,
+      'options': options
+    };
   }
 }
 

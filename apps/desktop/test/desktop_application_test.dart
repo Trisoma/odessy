@@ -3,10 +3,132 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_desktop/app/app.dart';
 import 'package:odessy_desktop/features/devices/presentation/devices.dart';
+import 'package:odessy_desktop/features/shell/presentation/device_sidebar.dart';
+import 'package:odessy_desktop/features/conversation/presentation/conversation.dart';
 import 'package:odessy_client/odessy_client.dart';
 import 'component_settings_test.dart' show SavedComponents;
 
 void main() {
+  testWidgets('malformed history from a fake is shown as unavailable',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 850);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+        OdessyApp(api: MalformedHistoryApi(), setupBackend: SavedComponents()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Activity & usage'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Usage history is unavailable'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+  testWidgets('session cost remains available when history endpoint fails',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 850);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = FailingHistoryApi();
+    final event = SessionEvent(1, 'cost', {
+      'total': {'calls': 1, 'prompt': 27, 'cached': 3, 'completion': 5}
+    });
+    api.ledger = [event];
+    await tester
+        .pumpWidget(OdessyApp(api: api, setupBackend: SavedComponents()));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Activity & usage'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Usage history is unavailable'), findsOneWidget);
+    await tester.ensureVisible(find.text('Activity & provenance'));
+    await tester.tap(find.text('Activity & provenance'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('API usage and estimated cost'));
+    await tester.tap(find.text('API usage and estimated cost'));
+    await tester.pumpAndSettle();
+    expect(find.text('Input tokens: 27'), findsOneWidget);
+  });
+  testWidgets('unsent conversation draft survives viewing activity',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 850);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester
+        .pumpWidget(OdessyApp(api: DemoApi(), setupBackend: SavedComponents()));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('composer')), 'Unsent draft');
+    await tester.tap(find.text('Activity & usage'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Assistant'));
+    await tester.pumpAndSettle();
+    expect(find.text('Unsent draft'), findsOneWidget);
+  });
+  testWidgets('activity button opens usage page and preserves conversation',
+      (tester) async {
+    tester.view.physicalSize = const Size(1200, 850);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = ActivityEventApi();
+    await tester
+        .pumpWidget(OdessyApp(api: api, setupBackend: SavedComponents()));
+    await tester.pumpAndSettle();
+    final cost = SessionEvent(1, 'cost', {
+      'total': {'calls': 1, 'prompt': 27, 'cached': 3, 'completion': 5},
+      'total_cost': null,
+    });
+    api.ledger = [cost];
+    api.eventsController.add(cost);
+    await tester.pumpAndSettle();
+    expect(
+        find.descendant(
+            of: find.byType(DeviceSidebar),
+            matching: find.text('Activity & usage')),
+        findsOneWidget);
+    expect(
+        find.descendant(
+            of: find.byType(ConversationPage),
+            matching: find.text('Activity & provenance')),
+        findsNothing);
+    await tester.tap(find.text('Activity & usage'));
+    await tester.pumpAndSettle();
+    expect(find.text('API usage and estimated cost'), findsOneWidget);
+    expect(find.text('27'), findsOneWidget);
+    expect(find.text('Not reported'), findsWidgets);
+    expect(find.byType(ConversationPage), findsNothing);
+    await tester.tap(find.text('Assistant'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ConversationPage), findsOneWidget);
+  });
+
+  testWidgets('activity stays accessible in the narrow navigation drawer',
+      (tester) async {
+    tester.view.physicalSize = const Size(800, 700);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final api = ActivityEventApi();
+    await tester
+        .pumpWidget(OdessyApp(api: api, setupBackend: SavedComponents()));
+    await tester.pumpAndSettle();
+    final cost = SessionEvent(1, 'cost', {
+      'total': {'calls': 1, 'prompt': 27, 'cached': 3, 'completion': 5},
+      'total_cost': null,
+    });
+    api.ledger = [cost];
+    api.eventsController.add(cost);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Open navigation menu'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Activity & usage'));
+    await tester.pumpAndSettle();
+    expect(find.text('27'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('model failure is shown once and opens model settings',
       (tester) async {
     tester.view.physicalSize = const Size(1200, 850);
@@ -93,4 +215,44 @@ class ErrorEventApi extends DemoApi {
     unawaited(eventsController.close());
     super.close();
   }
+}
+
+class ActivityEventApi extends ErrorEventApi {
+  List<SessionEvent> ledger = [];
+  @override
+  Future<Session> snapshot(String sid) async =>
+      Session(sid, selectedProfile: 'auto', events: ledger);
+}
+
+class FailingHistoryApi extends ActivityEventApi implements UsageHistoryApi {
+  @override
+  Future<Json> usageHistory(
+          {int days = 30,
+          String? provider,
+          String? model,
+          int limit = 50,
+          int offset = 0}) async =>
+      throw const ApiFailure(404);
+}
+
+class MalformedHistoryApi extends FailingHistoryApi {
+  @override
+  Future<Json> usageHistory(
+          {int days = 30,
+          String? provider,
+          String? model,
+          int limit = 50,
+          int offset = 0}) async =>
+      {
+        'schema_version': 1,
+        'summary': {'requests': 'bad'},
+        'daily': [],
+        'groups': [],
+        'providers': [],
+        'requests': [],
+        'options': [],
+        'total': 0,
+        'limit': limit,
+        'offset': offset,
+      };
 }

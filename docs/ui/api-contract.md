@@ -12,6 +12,7 @@ an implicit request target. There are no direct provider/native calls in widgets
 | Submit once | POST `/v1/sessions/{sid}/turns`, `{text}` |
 | Stop | POST `/v1/sessions/{sid}/stop` |
 | Events | GET `/v1/sessions/{sid}/events?after_id=N` |
+| Local usage history | GET `/v1/usage/history?days=30&provider=...&model=...&limit=20&offset=0` |
 | Approval | POST `/v1/sessions/{sid}/approvals/{id}`, `{approved: bool}` |
 | Clarification | POST `/v1/sessions/{sid}/questions/{id}`, `{answer: string}` |
 | Collaboration settings | GET/PUT `/v1/settings` |
@@ -41,6 +42,16 @@ Session snapshots include `available_profiles`, the model names accepted by that
 session's model selector. The desktop falls back to the global profiles endpoint
 for older services that omit this field. Existing sessions keep their configuration
 snapshot; profile edits apply to newly created sessions.
+
+Usage history is a read-only, bearer-authenticated view of provider-reported cloud
+API calls recorded by this service. Allowed ranges are 7, 30, 90 and 0 (all time)
+days; limit is 1–100. The response contains request metadata, daily aggregates,
+model groups and filter options, never prompts, responses or credentials. Counts
+and prices can be null. Mixed currencies and incomplete cost data have no total;
+configured prices are estimates, not provider bills. The `recording_error` flag
+means history may be incomplete. Older services can report this endpoint unavailable.
+The database is local to the service configuration; it contains no earlier records
+before recording began, and local models or calls without usage data may be absent.
 
 Model request limits use the shared settings instance and revision. Timeout is
 1–3600 seconds and maximum output tokens is 1–1000000; updates apply to new sessions.

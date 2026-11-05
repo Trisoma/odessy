@@ -3,8 +3,10 @@ import 'package:odessy_client/odessy_client.dart';
 
 /// Reports only the latest service ledger event; it is not a billing statement.
 class SessionUsage extends StatelessWidget {
-  const SessionUsage({super.key, required this.events});
+  const SessionUsage(
+      {super.key, required this.events, this.initiallyExpanded = false});
   final List<SessionEvent> events;
+  final bool initiallyExpanded;
 
   String _count(Object? value) =>
       value is int && value >= 0 ? value.toString() : 'Not reported';
@@ -34,6 +36,7 @@ class SessionUsage extends StatelessWidget {
     final profiles = event?.data['profiles'];
     return Card(
       child: ExpansionTile(
+        initiallyExpanded: initiallyExpanded,
         title: const Text('API usage and estimated cost'),
         subtitle: const Text('Latest service ledger report'),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),

@@ -23,6 +23,10 @@ Future<void> main(List<String> arguments) async {
     return;
   }
   if (mode == null) {
+    if (arguments.contains('--usage-preview')) {
+      runApp(OdessyApp(api: UsagePreviewApi()));
+      return;
+    }
     runApp(applicationFor(arguments));
     return;
   }

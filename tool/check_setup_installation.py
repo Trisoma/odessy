@@ -29,7 +29,7 @@ def main():
         artifacts.append({'file':wheel.name,'sha256':hashlib.sha256(wheel.read_bytes()).hexdigest(),'license':license_})
     (bundle/'manifest.json').write_text(json.dumps({'schema_version':1,'artifacts':artifacts},indent=2),encoding='utf-8')
     with tempfile.TemporaryDirectory(prefix='odessy-native-acceptance-') as temporary:
-        parent=Path(temporary);root=parent/'runtime';external=parent/'external-model';external.write_bytes(b'preserve')
+        parent=Path(temporary).resolve(strict=True);root=parent/'runtime';external=parent/'external-model';external.write_bytes(b'preserve')
         manager=ManagedInstallation(root);selection=SetupSelection(role='execution')
         report=manager.install(bundle,selection,manager.plan(bundle,selection)['plan_id'])
         assert report['installed'] and manager.verify()['valid']

@@ -28,6 +28,7 @@ import os
 import sys
 import threading
 import copy
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 
@@ -37,6 +38,39 @@ PRICE_ENVS = ("ODESSY_CLOUD_PRICE_INPUT", "ODESSY_CLOUD_PRICE_CACHED_INPUT", "OD
 CURRENCY_ENV = "ODESSY_CLOUD_PRICE_CURRENCY"
 #: Share of a budget at which a one-time warning is printed.
 WARN_AT = 0.8
+
+_usage_history = None
+
+
+def set_usage_history(history):
+    """Attach optional service-owned history; recording failures never block calls."""
+    global _usage_history
+    _usage_history = history
+
+
+def _record_history(*, participant, provider, model, pricing, prompt, cached, completion):
+    history = _usage_history
+    if history is None:
+        return
+    try:
+        def count(value):
+            return value if type(value) is int and 0 <= value <= 2**63 - 1 else None
+        prompt, cached, completion = map(count, (prompt, cached, completion))
+        if prompt is None and completion is None:
+            return
+        if prompt is not None and cached is not None and cached > prompt:
+            cached = None
+        cost = None
+        if pricing is not None and all(isinstance(v, int) and not isinstance(v, bool) and v >= 0
+                                       for v in (prompt, cached, completion)):
+            cost = pricing.cost(prompt=prompt, cached=cached, completion=completion)
+        history.record(participant=participant, provider=provider, model=model,
+                       prompt=prompt, cached=cached, completion=completion,
+                       cost=cost, currency=pricing.currency if cost is not None else None)
+    except Exception:
+        if hasattr(history, 'recording_error'):
+            history.recording_error = True
+        logging.getLogger(__name__).warning('Usage history could not be recorded.')
 
 
 class CloudUsageConfigError(ValueError):
@@ -199,6 +233,8 @@ class UsageLedger:
             self._legacy_total.add(**values)
             self._legacy_turn.add(**values)
             message = self._warning()
+        _record_history(participant=None, provider=None, model=None, pricing=self.pricing,
+                        prompt=prompt, cached=cached, completion=completion)
         if message:
             self.warn(message)
 
@@ -335,6 +371,10 @@ class ProfileUsage:
             for total in (ledger.total, ledger.turn, entry['total'], entry['turn']):
                 total.add(**values)
             message = ledger._warning()
+            pricing = entry['pricing']
+        participant, provider, model = self.key
+        _record_history(participant=participant, provider=provider, model=model, pricing=pricing,
+                        prompt=prompt, cached=cached, completion=completion)
         if message:
             ledger.warn(message)
 
