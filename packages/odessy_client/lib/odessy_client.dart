@@ -15,6 +15,8 @@ export 'src/capabilities.dart';
 import 'src/capabilities.dart';
 export 'src/voice.dart';
 import 'src/voice.dart';
+export 'src/handoff.dart';
+import 'src/handoff.dart';
 
 /// Bounded SSE parsing. UTF-8 decoding belongs to the transport, before this parser.
 Stream<SessionEvent> decodeEvents(Stream<String> chunks) async* {
@@ -66,6 +68,19 @@ abstract interface class JobsApi {
   Future<Json> readJob(String sid, String jobId);
   Future<Json> submitJob(String sid, Json request);
   Future<Json> cancelJob(String sid, String jobId);
+}
+
+/// Session-scoped two-step handoff runs between coding agents.
+///
+/// Starting and continuing wait for the service approval broker; the client
+/// never sends an approval. Continuing names the hash of the output the user
+/// saw, so a different output cannot be handed over in its place.
+abstract interface class HandoffRunsApi {
+  Future<Json> startRun(String sid, Json request);
+  Future<Json> readRun(String sid, String runId);
+  Future<Json> readRunArtifact(String sid, String runId);
+  Future<Json> continueRun(String sid, String runId, String artifactSha256);
+  Future<Json> cancelRun(String sid, String runId);
 }
 
 /// Read-only, service-owned local history of provider-reported API usage.
@@ -257,6 +272,7 @@ class LocalApi
         UsageHistoryApi,
         ProfileMetadataApi,
         JobsApi,
+        HandoffRunsApi,
         RuntimeSettingsApi,
         ConsultationLimitApi,
         ContextLimitApi,
@@ -530,6 +546,52 @@ class LocalApi
   @override
   Future<Json> cancelJob(String sid, String jobId) =>
       _json('${_job(sid, jobId)}/cancel', 'POST');
+
+  String _run(String sid, String id) {
+    if (!isRunId(id)) throw const FormatException('Invalid run ID');
+    return '${_session(sid)}/runs/$id';
+  }
+
+  static const _runFields = {
+    'flow',
+    'from_participant',
+    'from_task',
+    'to_participant',
+    'to_task',
+  };
+
+  @override
+  Future<Json> startRun(String sid, Json request) async {
+    if (request.keys.toSet().difference(_runFields).isNotEmpty ||
+        _runFields.any((key) => request[key] is! String) ||
+        !handoffFlows.contains(request['flow'])) {
+      throw const FormatException('Invalid handoff request');
+    }
+    // Waits for the approval the service asks for before anything starts.
+    return parseRunSnapshot(await _json(
+        '${_session(sid)}/runs', 'POST', request, const Duration(minutes: 5)));
+  }
+
+  @override
+  Future<Json> readRun(String sid, String runId) async =>
+      parseRunSnapshot(await _json(_run(sid, runId)));
+  @override
+  Future<Json> readRunArtifact(String sid, String runId) async =>
+      parseRunArtifact(await _json('${_run(sid, runId)}/artifact'));
+  @override
+  Future<Json> continueRun(
+      String sid, String runId, String artifactSha256) async {
+    if (!isArtifactSha256(artifactSha256)) {
+      throw const FormatException('Invalid artifact hash');
+    }
+    return parseRunSnapshot(await _json('${_run(sid, runId)}/continue', 'POST',
+        {'artifact_sha256': artifactSha256}, const Duration(minutes: 5)));
+  }
+
+  @override
+  Future<Json> cancelRun(String sid, String runId) async =>
+      parseRunSnapshot(await _json('${_run(sid, runId)}/cancel', 'POST', null,
+          const Duration(minutes: 2)));
 
   @override
   Future<VoiceSnapshot> voiceState(String sid) async =>

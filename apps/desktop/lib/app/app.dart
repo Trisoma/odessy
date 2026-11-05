@@ -7,6 +7,8 @@ import '../features/devices/presentation/monitoring_history.dart';
 import '../features/shell/presentation/device_sidebar.dart';
 import '../features/jobs/controllers/jobs_controller.dart';
 import '../features/jobs/presentation/jobs_page.dart';
+import '../features/handoff/controllers/handoff_controller.dart';
+import '../features/handoff/presentation/handoff_page.dart';
 import 'connections/windows_credential_store.dart';
 import '../features/monitoring/controllers/monitor_controller.dart';
 import '../features/devices/presentation/devices_hub.dart';
@@ -86,6 +88,7 @@ class _OdessyAppState extends State<OdessyApp> {
   final monitoring = MonitorController();
   final deviceInventory = DeviceMonitoringController();
   late final JobsController jobs;
+  late final HandoffController handoffs;
   late final SetupController setup;
   late final ComponentSettingsController componentSettings;
   final readiness = ReadinessController();
@@ -333,6 +336,7 @@ class _OdessyAppState extends State<OdessyApp> {
     super.initState();
     controller = DesktopSession(widget.api ?? DisconnectedApi());
     jobs = JobsController(controller);
+    handoffs = HandoffController(controller);
     voice = VoiceController(controller);
     controller.addListener(_observeConnection);
     _observeConnection();
@@ -405,6 +409,7 @@ class _OdessyAppState extends State<OdessyApp> {
     monitoring.dispose();
     deviceInventory.dispose();
     jobs.dispose();
+    handoffs.dispose();
     controller.removeListener(_observeConnection);
     executionHosts?.dispose();
     voice.dispose();
@@ -581,6 +586,7 @@ class _OdessyAppState extends State<OdessyApp> {
                             child: switch (page) {
                           'Device details' => _devicePage(),
                           'Jobs' => JobsPage(controller: jobs),
+                          'Handoffs' => HandoffPage(controller: handoffs),
                           'Activity & usage' =>
                             controller.api is UsageHistoryApi
                                 ? UsageHistoryDashboard(session: controller)
@@ -742,6 +748,11 @@ class _OdessyAppState extends State<OdessyApp> {
                 icon: Icons.work_outline,
                 selected: page == 'Jobs',
                 onTap: () => _navigate('Jobs')),
+            SidebarDestination(
+                label: 'Handoffs',
+                icon: Icons.swap_horiz,
+                selected: page == 'Handoffs',
+                onTap: () => _navigate('Handoffs')),
             SidebarDestination(
                 label: 'Installation',
                 icon: Icons.settings_outlined,

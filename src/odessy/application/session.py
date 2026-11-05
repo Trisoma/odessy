@@ -25,7 +25,7 @@ from odessy.interaction.context import interaction_scope
 _TOKEN_METRICS = frozenset({
     'prompt_tokens', 'completion_tokens', 'cached_prompt_tokens', 'total_tokens',
     'input_tokens', 'output_tokens', 'cache_creation_input_tokens',
-    'cache_read_input_tokens', 'generation_tokens_per_sec',
+    'cache_read_input_tokens', 'cached_input_tokens', 'generation_tokens_per_sec',
     'generation_tokens_per_second',
 })
 

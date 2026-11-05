@@ -32,16 +32,28 @@ Odessy 现在可以让一个编程 agent 把工作交给另一个：
 - 工具：`agent.run`、`agent.run_continue`、`agent.run_status`、`agent.run_cancel`
 - HTTP API：见 [api-contract.md](ui/api-contract.md)
 - 给前端面板的数据：`run` 事件和 `GET .../runs/{id}` 返回同样的快照，`steps` 是节点，`transfers` 是数据流向的边
-- 离线测试：`tests/test_collaboration_runs.py`、`tests/test_handoff_live_eval.py`
+- 桌面端面板（Flutter）：侧边栏的 **Handoffs** 页
+  - 发起表单：选方向，填两步的参与者和任务
+  - 运行列表：来自 `run` 会话事件，不需要单独的列表接口
+  - 数据流向图：两个 agent 是节点，中间的箭头是传递的产出，显示状态、大小和 SHA-256 前 12 位；窗口窄时改成上下排列
+  - 每一步显示最近进度、改动文件、错误和 CLI 用量
+  - 等待确认时显示产出开头和完整 SHA-256，可加载全文，点“Hand over to …”后走正常审批
+  - 交出的哈希就是屏幕上显示的哈希；之后出现了新产出，旧的全文会被清掉
+  - 结果不确定时（超时、断线）禁止重复发起或重复交出，要先刷新或确认
+  - 代码：`apps/desktop/lib/features/handoff/`，客户端接口 `HandoffRunsApi` 在 `packages/odessy_client/`
+- 离线测试：`tests/test_collaboration_runs.py`、`tests/test_handoff_live_eval.py`，
+  Flutter 的 `apps/desktop/test/handoff_page_test.dart` 和 `packages/odessy_client/test/handoff_api_test.dart`
 - 实测脚本：`evals/handoff_live.py`、`evals/handoff_cases.py`
 
 ## 还没做
 
 | 内容 | 状态 |
 |---|---|
-| 前端面板 | 未开始，后端数据已准备好 |
+| 前端面板 | 已完成。开发机上 `dart analyze` 无问题，客户端 39 个测试和桌面端 458 个测试中 457 个通过；唯一失败的是 `setup_usability_test.dart` 的实例锁测试，干净的 `develop` 上同样失败（测试要启动 `dart.exe`，开发机 PATH 里没有）。**没有连真实服务和真实 CLI 点过**，见第四步 |
+| 面板截图、Linux/macOS 上的面板 | 未做 |
+| 面板里拒绝交出 | 没有单独的“拒绝”按钮：在审批卡上点拒绝，或取消运行 |
 | 真实 Claude Code 和 Codex 联调 | 未验证，这正是本次评测的目的 |
-| HTTP API 的自动化测试 | 测试已写好，但开发机没装 `[ui]` 依赖，**还没实际跑过**，见下面“第零步” |
+| HTTP API 的自动化测试 | 已在开发机上跑过并通过；第零步请再跑一次确认 |
 | 重启后恢复 | 未做，运行记录只保存在进程内 |
 | 自动返工、三步及以上流程、并行 | 未做 |
 | 自动合并 | 未做，需要人工检查工作树 |
@@ -61,7 +73,7 @@ Odessy 现在可以让一个编程 agent 把工作交给另一个：
 
 ### 第零步：跑离线测试
 
-这一步不调用模型，不花钱。这里的 API 测试还没人跑过，失败了请直接反馈。
+这一步不调用模型，不花钱。失败了请直接反馈。
 
 ```bash
 python -m pip install -e ".[ui,test]"
@@ -71,7 +83,17 @@ python -m pip install -e ".[ui,test]"
 python -m pytest tests/test_collaboration_runs.py tests/test_handoff_live_eval.py
 ```
 
-结果应该全部通过，没有 skipped。
+结果应该全部通过。Windows 上没有创建符号链接的权限时，会跳过 1 个符号链接用例，这是正常的。
+
+桌面端面板的离线测试（需要 Flutter 3.47.7）：
+
+```bash
+cd packages/odessy_client && dart pub get && dart test
+```
+
+```bash
+cd apps/desktop && flutter pub get && flutter test test/handoff_page_test.dart
+```
 
 ### 第一步：先跑一遍冒烟
 
@@ -158,12 +180,52 @@ ODESSY_MODEL_BACKEND=deepseek python -m odessy serve --host 127.0.0.1 --port 876
 
 打开 `http://127.0.0.1:8765/`，填入自己配置的 `ODESSY_API_TOKEN`（服务不会打印凭据），新建会话后发第 1 句话并批准。第一步结束后再发“把结果交给下一步”，审批内容里应出现产出的 SHA-256，批准后第二步开始运行。
 
+### 第四步：检查桌面面板
+
+这一步看面板显示是否正确。会真实调用两个 CLI，任务尽量小，花费很少。协调模型用 `--fake-model` 就行，因为面板直接调用接口，不经过模型。
+
+1. 按第三步准备测试仓库和 `collaboration.toml`。
+2. 启动服务：
+
+   ```bash
+   export ODESSY_API_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+   python -m odessy serve --fake-model --host 127.0.0.1 --port 8765
+   ```
+
+3. 另开一个终端启动桌面端（Windows 用 `-d windows`，Linux 用 `-d linux`）：
+
+   ```bash
+   cd apps/desktop
+   flutter pub get
+   flutter run -d windows
+   ```
+
+4. 点连接图标，填 `http://127.0.0.1:8765` 和上面的 token，然后在侧边栏打开 **Handoffs**。
+
+按下面检查，每项记“对 / 不对”：
+
+| 检查 | 期望 |
+|---|---|
+| 选 `Document → code`，step 1 填 `claude`，任务“写一份 add(a, b) 的设计文档”；step 2 填 `codex`，任务“按文档实现 add”，点 Request handoff | 页面上出现审批卡，批准前不会开始 |
+| 批准后 | 列表出现一条运行，step 1 显示 Running 和进度，箭头显示 Waiting for step 1 |
+| step 1 结束 | 状态变成 Waiting for your decision，显示产出开头和完整 SHA-256 |
+| 点 Show full output | 显示全文 |
+| 点 Hand over to codex | 再出现一张审批卡，卡上的哈希和面板上的一致 |
+| 批准后 | 箭头变成 Delivered，显示 `.odessy-handoff/t1.md`；step 2 显示 Running |
+| step 2 结束 | 运行显示 Completed，下面显示工作树路径，工作树里有新代码 |
+| 再发起一次，在审批卡上点拒绝 | 显示 The service declined this request.，不出现新运行 |
+| 再发起一次，step 1 运行中点 Cancel run | 运行变成 Cancelled |
+| 再发起一次，等到 Waiting for your decision 时，在工作树里随便改一个文件，再点交出并批准 | 运行变成 Needs attention，显示原因 |
+| 把窗口拉窄 | 两个节点改成上下排列，没有内容溢出 |
+| `Code → review` 方向走一遍 | 箭头显示 Code changes，step 2 是 read-only |
+
 ### 怎么反馈
 
 把这些发回来：
 
 - 结果目录里的 `summary.json` 和 `attempts.json`
 - 场景 D 的 5 句结果
+- 第四步每项的结果，不对的项附截图
 - 任何 `exception`、`needs_attention` 或看起来不对的情况
 
 `attempts.json` 含 agent 的审查文本和报错，发出前看一眼有没有不想外传的内容。

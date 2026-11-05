@@ -1,0 +1,137 @@
+[
+  {
+    "type": "collaboration.run",
+    "run_id": "cccccccccccccccccccccccccccccccc",
+    "flow": "document_to_code",
+    "state": "awaiting_handoff",
+    "workspace": "/repo",
+    "worktree": "/repo-odessy-run",
+    "error": null,
+    "created_at": 0,
+    "finished_at": null,
+    "steps": [
+      {
+        "step_id": "s1",
+        "participant": "writer",
+        "mode": "advice",
+        "task": "write the spec",
+        "state": "completed",
+        "job_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "progress": [],
+        "usage": {
+          "source": "coding_cli",
+          "outside_api_budget": true,
+          "input_tokens": null,
+          "cached_input_tokens": null,
+          "output_tokens": null,
+          "cost": null,
+          "currency": null
+        },
+        "changed_files": [],
+        "result": "The spec",
+        "error": null
+      },
+      {
+        "step_id": "s2",
+        "participant": "coder",
+        "mode": "patch",
+        "task": "implement it",
+        "state": "pending",
+        "job_id": null,
+        "progress": [],
+        "usage": null,
+        "changed_files": [],
+        "result": null,
+        "error": null
+      }
+    ],
+    "transfers": [
+      {
+        "transfer_id": "t1",
+        "from": "s1",
+        "to": "s2",
+        "state": "pending",
+        "artifact": {
+          "kind": "document",
+          "sha256": "a1344a81b9b40b100608e446207da7a6fa4efe815b762995ed67cf815041a646",
+          "bytes": 8,
+          "preview": "The spec",
+          "changed_files": []
+        }
+      }
+    ]
+  },
+  {
+    "type": "collaboration.run",
+    "run_id": "cccccccccccccccccccccccccccccccc",
+    "flow": "document_to_code",
+    "state": "completed",
+    "workspace": "/repo",
+    "worktree": "/repo-odessy-run",
+    "error": null,
+    "created_at": 0,
+    "finished_at": 0,
+    "steps": [
+      {
+        "step_id": "s1",
+        "participant": "writer",
+        "mode": "advice",
+        "task": "write the spec",
+        "state": "completed",
+        "job_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "progress": [],
+        "usage": {
+          "source": "coding_cli",
+          "outside_api_budget": true,
+          "input_tokens": null,
+          "cached_input_tokens": null,
+          "output_tokens": null,
+          "cost": null,
+          "currency": null
+        },
+        "changed_files": [],
+        "result": "The spec",
+        "error": null
+      },
+      {
+        "step_id": "s2",
+        "participant": "coder",
+        "mode": "patch",
+        "task": "implement it",
+        "state": "completed",
+        "job_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "progress": [],
+        "usage": {
+          "source": "coding_cli",
+          "outside_api_budget": true,
+          "input_tokens": null,
+          "cached_input_tokens": null,
+          "output_tokens": null,
+          "cost": null,
+          "currency": null
+        },
+        "changed_files": [
+          "app.py"
+        ],
+        "result": "",
+        "error": null
+      }
+    ],
+    "transfers": [
+      {
+        "transfer_id": "t1",
+        "from": "s1",
+        "to": "s2",
+        "state": "delivered",
+        "artifact": {
+          "kind": "document",
+          "sha256": "a1344a81b9b40b100608e446207da7a6fa4efe815b762995ed67cf815041a646",
+          "bytes": 8,
+          "preview": "The spec",
+          "changed_files": []
+        },
+        "path": ".odessy-handoff/t1.md"
+      }
+    ]
+  }
+]
