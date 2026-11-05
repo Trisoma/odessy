@@ -14,17 +14,19 @@ class ConversationPage extends StatefulWidget {
       required this.controller,
       this.readiness,
       this.voice,
+      this.draftController,
       this.onOpenModels});
   final DesktopSession controller;
   final ReadinessController? readiness;
   final VoiceController? voice;
+  final TextEditingController? draftController;
   final VoidCallback? onOpenModels;
   @override
   State<ConversationPage> createState() => _ConversationPageState();
 }
 
 class _ConversationPageState extends State<ConversationPage> {
-  final input = TextEditingController();
+  late TextEditingController input;
   final scroll = ScrollController();
   bool submitting = false, showLatest = false, showVoiceOptions = false;
   Object? contentStamp;
@@ -41,6 +43,7 @@ class _ConversationPageState extends State<ConversationPage> {
   @override
   void initState() {
     super.initState();
+    input = widget.draftController ?? TextEditingController();
     input.addListener(_draftChanged);
     scroll.addListener(_scrolled);
     widget.controller.addListener(_sessionChanged);
@@ -51,6 +54,12 @@ class _ConversationPageState extends State<ConversationPage> {
   @override
   void didUpdateWidget(covariant ConversationPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.draftController != widget.draftController) {
+      input.removeListener(_draftChanged);
+      if (oldWidget.draftController == null) input.dispose();
+      input = widget.draftController ?? TextEditingController();
+      input.addListener(_draftChanged);
+    }
     if (oldWidget.controller != widget.controller ||
         oldWidget.voice != widget.voice) {
       voice.removeListener(_voiceChanged);
@@ -157,7 +166,7 @@ class _ConversationPageState extends State<ConversationPage> {
     if (_ownsVoice) voice.dispose();
     input.removeListener(_draftChanged);
     scroll.removeListener(_scrolled);
-    input.dispose();
+    if (widget.draftController == null) input.dispose();
     scroll.dispose();
     super.dispose();
   }

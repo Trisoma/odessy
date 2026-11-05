@@ -198,6 +198,7 @@ class _OdessyAppState extends State<OdessyApp> {
   final navigatorKey = GlobalKey<NavigatorState>();
   final scaffoldKey = GlobalKey<ScaffoldState>();
   final navigationFocus = <String, FocusNode>{};
+  final conversationDraft = TextEditingController();
   bool _navigating = false;
 
   final collaborationForms = <OdessyApi, SettingsFormController<int>>{};
@@ -400,6 +401,7 @@ class _OdessyAppState extends State<OdessyApp> {
       node.dispose();
     }
     lifecycle.dispose();
+    conversationDraft.dispose();
     monitoring.dispose();
     deviceInventory.dispose();
     jobs.dispose();
@@ -680,6 +682,7 @@ class _OdessyAppState extends State<OdessyApp> {
                                   }),
                               onOpenManagement: widget.installed == null ? null : () => setState(() => page = 'Manage installation')),
                           _ => ConversationPage(
+                              draftController: conversationDraft,
                               voice: voice,
                               controller: controller,
                               readiness: readiness,

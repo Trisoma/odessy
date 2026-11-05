@@ -78,6 +78,92 @@ abstract interface class UsageHistoryApi {
       int offset = 0});
 }
 
+/// Validate untrusted history before presentation or caching, including fakes.
+Json validateUsageHistory(Json value) {
+  Never invalid() => throw const FormatException('Invalid usage history');
+  bool count(Object? v) => v is int && v >= 0;
+  bool optionalCount(Object? v) => v == null || count(v);
+  bool optionalText(Object? v) => v == null || v is String;
+  bool optionalCost(Object? v) =>
+      v == null || (v is num && v.isFinite && v >= 0);
+  bool aggregate(Map row) =>
+      const ['requests', 'prompt', 'cached', 'completion', 'cost', 'currency']
+          .every(row.containsKey) &&
+      count(row['requests']) &&
+      optionalCount(row['prompt']) &&
+      optionalCount(row['cached']) &&
+      optionalCount(row['completion']) &&
+      optionalCost(row['cost']) &&
+      optionalText(row['currency']);
+  if (value['schema_version'] != 1 ||
+      value['summary'] is! Map ||
+      !aggregate(value['summary'] as Map) ||
+      !count(value['total']) ||
+      !count(value['offset']) ||
+      !count(value['limit']) ||
+      (value['limit'] as int) < 1 ||
+      (value['limit'] as int) > 100 ||
+      (value['offset'] as int) > 100000 ||
+      (value['recording_error'] != null && value['recording_error'] is! bool))
+    invalid();
+  for (final key in ['daily', 'groups', 'providers', 'requests', 'options']) {
+    if (value[key] is! List || (value[key] as List).any((v) => v is! Map))
+      invalid();
+  }
+  if ((value['groups'] as List).length > 100 ||
+      (value['providers'] as List).length > 100 ||
+      (value['options'] as List).length > 500 ||
+      (value['requests'] as List).length > (value['limit'] as int) ||
+      (value['requests'] as List).length > (value['total'] as int)) invalid();
+  for (final row in value['daily'] as List) {
+    final day = row['day'];
+    if (!aggregate(row) ||
+        day is! String ||
+        !RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(day) ||
+        DateTime.tryParse(day) == null) invalid();
+  }
+  for (final row in [
+    ...(value['groups'] as List),
+    ...(value['providers'] as List)
+  ]) {
+    if (!aggregate(row) ||
+        !optionalText(row['provider']) ||
+        !optionalText(row['model'])) invalid();
+  }
+  for (final row in value['requests'] as List) {
+    if (!const [
+          'id',
+          'recorded_at',
+          'provider',
+          'model',
+          'participant',
+          'prompt',
+          'cached',
+          'completion',
+          'cost',
+          'currency'
+        ].every(row.containsKey) ||
+        !count(row['id']) ||
+        row['recorded_at'] is! String ||
+        DateTime.tryParse(row['recorded_at'] as String) == null ||
+        !optionalText(row['provider']) ||
+        !optionalText(row['model']) ||
+        !optionalText(row['participant']) ||
+        !optionalCount(row['prompt']) ||
+        !optionalCount(row['cached']) ||
+        !optionalCount(row['completion']) ||
+        !optionalCost(row['cost']) ||
+        !optionalText(row['currency'])) invalid();
+  }
+  for (final row in value['options'] as List) {
+    if (!row.containsKey('provider') ||
+        !row.containsKey('model') ||
+        !optionalText(row['provider']) ||
+        !optionalText(row['model'])) invalid();
+  }
+  return freezeJson(value);
+}
+
 /// Redacted runtime inventory; it does not expose values or mutate settings.
 abstract interface class RuntimeSettingsApi {
   Future<Json> runtimeSettings();
@@ -277,21 +363,31 @@ class LocalApi
 
   @override
   Future<Json> usageHistory(
-          {int days = 30,
-          String? provider,
-          String? model,
-          int limit = 50,
-          int offset = 0}) =>
-      _json(Uri(
-        path: '/v1/usage/history',
-        queryParameters: {
-          'days': '$days',
-          'limit': '$limit',
-          'offset': '$offset',
-          if (provider != null) 'provider': provider,
-          if (model != null) 'model': model,
-        },
-      ).toString());
+      {int days = 30,
+      String? provider,
+      String? model,
+      int limit = 50,
+      int offset = 0}) async {
+    if (![0, 7, 30, 90].contains(days) ||
+        limit < 1 ||
+        limit > 100 ||
+        offset < 0 ||
+        offset > 100000 ||
+        (provider != null && (provider.isEmpty || provider.length > 200)) ||
+        (model != null && (model.isEmpty || model.length > 200))) {
+      throw ArgumentError('Invalid usage history filters');
+    }
+    return validateUsageHistory(await _json(Uri(
+      path: '/v1/usage/history',
+      queryParameters: {
+        'days': '$days',
+        'limit': '$limit',
+        'offset': '$offset',
+        if (provider != null) 'provider': provider,
+        if (model != null) 'model': model,
+      },
+    ).toString()));
+  }
 
   @override
   Future<Json> scanExecutionHosts() => _json('/v1/execution-hosts');

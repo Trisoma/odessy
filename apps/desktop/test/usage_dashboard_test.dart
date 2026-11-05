@@ -70,6 +70,8 @@ void main() {
     await tester.ensureVisible(find.text('Providers'));
     await tester.tap(find.text('Providers'));
     await tester.pumpAndSettle();
+    expect(find.text('Showing up to the top 100 providers by request count.'),
+        findsOneWidget);
     expect(find.text('Models'), findsOneWidget);
     await tester.ensureVisible(find.text('Last 30 days'));
     await tester.tap(find.text('Last 30 days'));
@@ -151,7 +153,8 @@ class SingleUsageApi extends UsagePreviewApi {
         'prompt': 800,
         'cached': 768,
         'completion': 139,
-        'cost': null
+        'cost': null,
+        'currency': null
       },
       'daily': [
         {
@@ -160,7 +163,8 @@ class SingleUsageApi extends UsagePreviewApi {
           'prompt': 800,
           'cached': 768,
           'completion': 139,
-          'cost': null
+          'cost': null,
+          'currency': null
         }
       ],
       'groups': <Json>[],

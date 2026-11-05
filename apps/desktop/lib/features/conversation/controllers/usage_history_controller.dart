@@ -79,15 +79,7 @@ class UsageHistoryController extends ChangeNotifier {
           limit: 20,
           offset: offset);
       if (_disposed || epoch != _epoch || !identical(api, session.api)) return;
-      if (result['schema_version'] != 1 ||
-          result['summary'] is! Map ||
-          result['requests'] is! List ||
-          result['daily'] is! List ||
-          result['groups'] is! List ||
-          result['options'] is! List) {
-        throw const FormatException('Invalid history response');
-      }
-      data = result;
+      data = validateUsageHistory(result);
     } catch (_) {
       if (!_disposed && epoch == _epoch) {
         data = null;

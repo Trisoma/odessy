@@ -344,6 +344,13 @@ class _UsageHistoryDashboardState extends State<UsageHistoryDashboard> {
                                           setState(() => table = value.first)),
                                 ]),
                             const SizedBox(height: 12),
+                            if (table != 'Requests')
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Text(
+                                    'Showing up to the top 100 ${table.toLowerCase()} by request count.',
+                                    style: theme.textTheme.bodySmall),
+                              ),
                             if (total == 0)
                               _panel(context,
                                   child: const Padding(
@@ -398,7 +405,8 @@ class _UsageHistoryDashboardState extends State<UsageHistoryDashboard> {
                           SessionActivity(
                               events:
                                   widget.session.session?.events ?? const [],
-                              showUsage: false),
+                              showUsage: history.error != null ||
+                                  !widget.session.connected),
                         ]))),
           );
         },
