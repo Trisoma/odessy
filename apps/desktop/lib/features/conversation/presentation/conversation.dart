@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../../app/session_controller.dart';
 import '../../../app/readiness_controller.dart';
+import '../../../widgets/pixel_boat.dart';
 import '../controllers/voice_controller.dart';
 import 'interaction_card.dart';
 import 'message_content.dart';
@@ -334,7 +335,11 @@ class _ConversationPageState extends State<ConversationPage> {
           contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
       items: c.profiles
           .map((p) => DropdownMenuItem(
-              value: p, child: Text(p, overflow: TextOverflow.ellipsis)))
+              value: p,
+              child: Tooltip(
+                  message: c.profileLabel(p),
+                  child: Text(c.profileLabel(p),
+                      overflow: TextOverflow.ellipsis))))
           .toList(),
       onChanged: c.busy || c.stopping || !c.connected
           ? null
@@ -424,10 +429,10 @@ class _ConversationPageState extends State<ConversationPage> {
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Padding(
               padding: const EdgeInsets.only(top: 10),
-              child: Icon(
-                  role == 'tool' ? Icons.terminal : Icons.bubble_chart_outlined,
-                  size: 20,
-                  color: Theme.of(context).colorScheme.primary)),
+              child: role == 'tool'
+                  ? Icon(Icons.terminal,
+                      size: 20, color: Theme.of(context).colorScheme.primary)
+                  : const PixelBoat(size: 22)),
           const SizedBox(width: 12),
           Expanded(
               child: Column(

@@ -9,6 +9,9 @@ import 'package:odessy_desktop/features/conversation/presentation/conversation.d
 import 'package:odessy_desktop/features/conversation/presentation/interaction_card.dart';
 import 'package:odessy_desktop/features/conversation/presentation/session_activity.dart';
 import 'package:odessy_desktop/features/conversation/controllers/voice_controller.dart';
+import 'package:odessy_desktop/features/shell/presentation/device_sidebar.dart';
+import 'package:odessy_desktop/widgets/pixel_boat.dart';
+import 'session_controller_test.dart' show MetadataApi;
 import 'voice_controller_test.dart' show AudioApi;
 
 Json interactionFixture(
@@ -98,6 +101,40 @@ Future<void> mountConversation(WidgetTester tester, DesktopSession c,
 }
 
 void main() {
+  testWidgets('model picker shows provider metadata but keeps profile identity',
+      (tester) async {
+    final c = DesktopSession(MetadataApi());
+    addTearDown(c.dispose);
+    await c.start();
+    c.session = Session('demo', selectedProfile: 'current');
+    await mountConversation(tester, c);
+    expect(find.text('deepseek-flash · deepseek (current)'), findsOneWidget);
+    final item = tester.widget<DropdownMenuItem<String>>(
+        find.byType(DropdownMenuItem<String>).first);
+    expect(item.value, 'current');
+  });
+
+  testWidgets('Odessy uses the boat in navigation and assistant messages',
+      (tester) async {
+    final api = ConversationFixtureApi()
+      ..messages = [const ChatMessage('assistant', 'Hello')];
+    final c = DesktopSession(api);
+    addTearDown(c.dispose);
+    await c.start();
+    await mountConversation(tester, c,
+        body: Row(children: [
+          SizedBox(
+              width: 240,
+              child: DeviceSidebar(
+                  hosts: const [],
+                  onInspect: (_) {},
+                  onConversation: () {},
+                  onSettings: () {})),
+          Expanded(child: ConversationPage(controller: c)),
+        ]));
+    expect(find.byType(PixelBoat), findsNWidgets(2));
+  });
+
   testWidgets('offline empty session shows recovery instead of example prompts',
       (tester) async {
     final c = DesktopSession(ConversationFixtureApi());
