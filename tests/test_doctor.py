@@ -75,7 +75,13 @@ def test_an_untagged_model_matches_its_latest_tag() -> None:
     assert all(check.status == "ok" for check in _by_section(checks, "Model"))
 
 
-def test_a_cloud_backend_checks_the_key_without_printing_it() -> None:
+def test_a_cloud_backend_checks_the_key_without_printing_it(monkeypatch) -> None:
+    # This test exercises environment credentials, independently of the user's
+    # OS credential store and any sessions from other tests.
+    from odessy import credentials
+    monkeypatch.setattr(credentials, '_backend', lambda: None)
+    monkeypatch.setattr(credentials, '_sessions', {})
+    monkeypatch.setattr(credentials, '_references', {})
     missing = run_checks("deepseek", {"ODESSY_DEPLOYMENT": "single"}, _probes())
     assert _by_section(missing, "Model")[0].status == "fail"
 

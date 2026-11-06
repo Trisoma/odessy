@@ -47,8 +47,7 @@ void main() {
     await tester.tap(find.text('Continue'));
     await settle(tester);
     await tester.tap(find.text('Continue'));
-    await settle(tester);
-    await tester.tap(find.text('Review this installation'));
+    // The review runs when the step opens; there is no separate button.
     await settle(tester);
   }
 
@@ -67,8 +66,6 @@ void main() {
     await tester.tap(find.text('Continue'));
     await settle(tester);
     await tester.tap(find.text('Continue'));
-    await settle(tester);
-    await tester.tap(find.text('Review this installation'));
     await settle(tester);
     // The reason appears in the message and again in its details.
     expect(find.textContaining('setup payload lacks required components'),

@@ -40,6 +40,22 @@ def test_launch_active(tmp_path, monkeypatch):
     assert calls[1][0]==[str(exe),'--installed','--install-root',str(root)]
 
 
+def test_installed_launch_does_not_inherit_installer_python_environment(tmp_path, monkeypatch):
+    installation(tmp_path)
+    calls=[]
+    monkeypatch.setenv('PYTHONPATH', str(tmp_path/'bootstrap'))
+    monkeypatch.setenv('PYTHONHOME', str(tmp_path/'runtime'))
+    monkeypatch.setenv('ODESSY_SETUP_PAYLOAD', str(tmp_path/'payload'))
+    monkeypatch.setenv('ODESSY_TEST_KEEP', 'preserved')
+    monkeypatch.setattr(w.subprocess, 'Popen', lambda argv, **kwargs: calls.append(kwargs))
+    w.launch(tmp_path)
+    environment = calls[0]['env']
+    assert 'PYTHONPATH' not in environment
+    assert 'PYTHONHOME' not in environment
+    assert 'ODESSY_SETUP_PAYLOAD' not in environment
+    assert environment['ODESSY_TEST_KEEP'] == 'preserved'
+
+
 @pytest.mark.skipif(w.os.name!='nt',reason='Windows registration guard')
 def test_registration_targets_active_version_and_records_complete_state(tmp_path, monkeypatch):
     root=tmp_path/'App';record=installation(root);written={}

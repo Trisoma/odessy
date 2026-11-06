@@ -105,17 +105,30 @@ def configure_model(model):
         _references[(scope.provider, scope.endpoint)] = model.credential_env
 
 
+def _override_account(scope):
+    # A separate vault entry records an explicit user choice without changing
+    # precedence for keys saved by older versions.
+    return scope.identity + ':user-override-v1'
+
+
 def resolve(scope, *, environ=None):
     env = os.environ if environ is None else environ
-    value = _environment_value(scope, env)
-    if value:
-        return value
     with _lock:
         value = _sessions.get(scope.identity)
     if value:
         return value
     try:
-        value = _backend().get_password(SERVICE, scope.identity)
+        backend = _backend()
+        value = backend.get_password(SERVICE, _override_account(scope))
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    except Exception:
+        backend = None
+    value = _environment_value(scope, env)
+    if value:
+        return value
+    try:
+        value = backend.get_password(SERVICE, scope.identity) if backend else None
         return value.strip() if isinstance(value, str) and value.strip() else None
     except Exception:
         return None
@@ -124,28 +137,30 @@ def resolve(scope, *, environ=None):
 def describe(scope, *, environ=None):
     env = os.environ if environ is None else environ
     source, available, message = 'none', True, ''
-    stored = None
+    stored = override = None
     try:
-        stored = _backend().get_password(SERVICE, scope.identity)
+        backend = _backend()
+        override = backend.get_password(SERVICE, _override_account(scope))
+        stored = backend.get_password(SERVICE, scope.identity)
     except Exception:
         available = False
         message = 'Secure storage is unavailable or locked. You can use this session only.'
-    if _environment_value(scope, env):
-        source = 'env'
-    elif _sessions.get(scope.identity):
+    if _sessions.get(scope.identity):
         source = 'session'
+    elif isinstance(override, str) and override.strip():
+        source = 'keyring'
+    elif _environment_value(scope, env):
+        source = 'env'
     elif isinstance(stored, str) and stored.strip():
         source = 'keyring'
     return {'scope': scope.identity, 'configured': source != 'none', 'source': source,
-            'writable': source != 'env', 'persistence': 'persistent' if source == 'keyring' else 'session' if source == 'session' else 'none',
+            'writable': True, 'persistence': 'persistent' if source == 'keyring' else 'session' if source == 'session' else 'none',
             'secure_storage_available': available, 'message': message}
 
 
 def _writable(scope, storage, environ):
     if storage not in ('keyring', 'session'):
         raise CredentialError('Choose secure storage or this session only.')
-    if _environment_value(scope, os.environ if environ is None else environ):
-        raise CredentialError('This credential comes from the process environment and is read-only. Remove that environment value and reopen Odessy to manage it here.')
 
 
 def set_value(scope, value, *, storage, environ=None):
@@ -156,8 +171,8 @@ def set_value(scope, value, *, storage, environ=None):
     if storage == 'keyring':
         try:
             backend = _backend()
-            backend.set_password(SERVICE, scope.identity, value)
-            if backend.get_password(SERVICE, scope.identity) != value:
+            backend.set_password(SERVICE, _override_account(scope), value)
+            if backend.get_password(SERVICE, _override_account(scope)) != value:
                 raise CredentialError('Secure save could not be confirmed.')
         except Exception:
             raise CredentialError('Secure save failed. Unlock the OS credential service or choose this session only.', code='unavailable') from None
@@ -174,8 +189,11 @@ def remove(scope, *, storage, environ=None):
     if storage == 'keyring':
         try:
             backend = _backend()
-            if backend.get_password(SERVICE, scope.identity) is not None:
-                backend.delete_password(SERVICE, scope.identity)
+            account = _override_account(scope)
+            if backend.get_password(SERVICE, account) is None:
+                account = scope.identity
+            if backend.get_password(SERVICE, account) is not None:
+                backend.delete_password(SERVICE, account)
         except Exception:
             raise CredentialError('Secure removal failed. Unlock the OS credential service and inspect status before retrying.', code='unavailable') from None
     with _lock:

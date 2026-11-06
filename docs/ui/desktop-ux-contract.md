@@ -16,8 +16,11 @@ value appears in acknowledgements or process arguments. Startup opts into this
 channel with `--credentials-stdin`; existing headless launches remain compatible.
 
 Saving a key contacts no provider, downloads no model and grants no tool authority.
-Environment credentials are read-only. OS-store failure offers explicit session
-use; it never selects a file fallback. Provider-origin changes select a new scope.
+An explicit session or newly saved secure credential overrides an environment key
+for the same scope. Existing pre-upgrade saved keys retain their original precedence.
+Removing an override can expose the environment or an older saved key; the displayed
+source refreshes. OS-store failure offers explicit session use; it never selects a
+file fallback. Provider-origin changes select a new scope.
 
 Scope: M1 navigation and shared layout on `develop`, starting from `f016a7c`.
 This is an implemented presentation contract, not a new HTTP protocol or release

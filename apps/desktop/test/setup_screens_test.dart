@@ -50,10 +50,11 @@ void main() {
           await tester.pump(const Duration(milliseconds: 50));
         }
       }
-      await tester.tap(find.text('Review this installation'));
       for (var i = 0; i < 8; i++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
+      // The review runs when the step opens; no button press is required.
+      expect(find.text('Recalculate this review'), findsOneWidget);
       expect(tester.takeException(), isNull,
           reason: 'no overflow or layout error at ${entry.$1}');
       await tester.runAsync(() async {

@@ -77,7 +77,7 @@ class _ModelCredentialPanelState extends State<ModelCredentialPanel> {
           const SizedBox(height: 8),
           Text(switch (state?.source) {
             'keyring' => 'Configured · OS credential store',
-            'env' => 'Configured · environment (read-only)',
+            'env' => 'Configured · environment',
             'session' => 'Configured · this session only',
             _ => controller.busy
                 ? 'Checking credential status…'
@@ -107,7 +107,9 @@ class _ModelCredentialPanelState extends State<ModelCredentialPanel> {
                 onPressed: writable ? () => _save(false) : null,
                 child: const Text('Use for this session only')),
             TextButton(
-                onPressed: writable && state?.configured == true
+                onPressed: writable &&
+                        state?.configured == true &&
+                        state?.source != 'env'
                     ? controller.remove
                     : null,
                 child: const Text('Remove')),
@@ -118,7 +120,7 @@ class _ModelCredentialPanelState extends State<ModelCredentialPanel> {
           if (state?.message.isNotEmpty == true) Text(state!.message),
           if (state?.source == 'env')
             const Text(
-                'An environment value takes precedence. Remove it and reopen Odessy to manage this key here.'),
+                'An environment key is currently active. Saving a key here replaces it for this provider and endpoint without changing the environment.'),
           if (controller.message.isNotEmpty)
             Semantics(liveRegion: true, child: Text(controller.message)),
           if (controller.error.isNotEmpty)

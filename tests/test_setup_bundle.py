@@ -39,6 +39,10 @@ def test_bundle_contains_offline_bootstrap_and_license_manifest(tmp_path):
         manifest=json.loads(archive.read('wheelhouse/manifest.json'))
         assert manifest['artifacts'][0]['license']=='Apache-2.0'
         assert 'bootstrap/odessy/setup/maintenance.py' in archive.namelist()
+        # The pinned voice manifest is data the helper reads by path; a payload
+        # without it cannot offer voice installation at all.
+        assert 'bootstrap/odessy/setup/voice-artifacts.json' in archive.namelist()
+        assert 'bootstrap/odessy/setup/voice_install.py' in archive.namelist()
         assert not any('model' in name.lower() and name.endswith('.onnx') for name in archive.namelist())
 
 

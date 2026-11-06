@@ -38,4 +38,47 @@ void main() {
             'message',
             contains('could not be started'))));
   });
+
+  test('installed coordinator starts Python in isolated mode', () async {
+    List<String>? observed;
+    final coordinator = InstalledCoordinator(
+        python: 'python',
+        root: 'app',
+        workspace: '',
+        portPicker: () async => 8765,
+        launcher: (python, arguments, cwd, environment) async {
+          observed = arguments;
+          throw const ProcessException('launch', []);
+        });
+    await expectLater(
+        coordinator.start(), throwsA(isA<CoordinatorStartFailure>()));
+    expect(observed!.take(3).toList(), ['-I', '-m', 'odessy.setup.installed']);
+  });
+
+  test('source coordinator keeps its explicitly supplied Python path',
+      () async {
+    List<String>? observed;
+    Map<String, String>? environment;
+    final coordinator = InstalledCoordinator(
+        python: 'python',
+        root: 'source',
+        workspace: '',
+        configuration: const {
+          'config': 'config.json',
+          'format': 'selection',
+          'selection': <String, dynamic>{},
+          'sha256': 'hash',
+          'pythonpath': 'source-path',
+        },
+        portPicker: () async => 8765,
+        launcher: (python, arguments, cwd, env) async {
+          observed = arguments;
+          environment = env;
+          throw const ProcessException('launch', []);
+        });
+    await expectLater(
+        coordinator.start(), throwsA(isA<CoordinatorStartFailure>()));
+    expect(observed!.first, '-m');
+    expect(environment!['PYTHONPATH'], 'source-path');
+  });
 }

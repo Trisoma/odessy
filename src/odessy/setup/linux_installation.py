@@ -111,7 +111,8 @@ def launch(root,mode='app',launch_id=None):
         args+=['--launch-id',launch_id]
     # Same rule as the Windows launcher: the long-lived desktop must not inherit the
     # stdio bridge's response pipes, and it must outlive the shell that started it.
-    return subprocess.Popen(args,cwd=tempfile.gettempdir(),stdin=subprocess.DEVNULL,
+    from .platform_installation import desktop_environment
+    return subprocess.Popen(args,cwd=tempfile.gettempdir(),env=desktop_environment(),stdin=subprocess.DEVNULL,
                             stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
                             close_fds=True,start_new_session=True)
 

@@ -121,6 +121,7 @@ class InstalledCoordinator implements InstalledCoordinatorHandle {
       process = await launcher(
           python,
           [
+            if (configuration == null) '-I',
             '-m',
             if (configuration == null) ...[
               'odessy.setup.installed',
