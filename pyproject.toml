@@ -57,6 +57,12 @@ voice = [
   "onnxruntime>=1.17",
   "numpy>=1.26",
 ]
+# Build the Sphinx documentation site (GitHub Pages).
+docs = [
+  "sphinx>=7.4,<9",
+  "furo>=2024",
+  "myst-parser>=3.0,<5",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
