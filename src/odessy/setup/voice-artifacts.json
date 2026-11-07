@@ -1,0 +1,633 @@
+{
+  "schema_version": 2,
+  "artifacts": [
+    {
+      "id": "whisper-cli",
+      "label": "Whisper.cpp executable",
+      "kind": "archive",
+      "file": "whisper-bin-x64.zip",
+      "url": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.2/whisper-bin-x64.zip",
+      "sha256": "b1514ebc099765e39fa37eb780b92a140a94c86bb0b3b3d98226b38825979732",
+      "size_bytes": 3832432,
+      "license": "MIT",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice"
+      ],
+      "provenance": "github-release-digest",
+      "members": [
+        "whisper-cli.exe",
+        "whisper.dll",
+        "ggml.dll",
+        "ggml-base.dll",
+        "ggml-cpu.dll"
+      ],
+      "strip_prefix": "Release/",
+      "executable": "whisper-cli.exe",
+      "field": "whisper_bin"
+    },
+    {
+      "id": "whisper-model",
+      "label": "Whisper model (ggml-base.en)",
+      "kind": "file",
+      "file": "ggml-base.en.bin",
+      "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.en.bin",
+      "sha256": "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002",
+      "size_bytes": 147964211,
+      "license": "MIT",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice"
+      ],
+      "provenance": "file-only",
+      "field": "whisper_model"
+    },
+    {
+      "id": "kokoro-model",
+      "label": "Kokoro model (int8)",
+      "kind": "file",
+      "file": "kokoro-v1.0.int8.onnx",
+      "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/kokoro-v1.0.int8.onnx",
+      "sha256": "ae315a79b623f244700e4afb9246c46a26066782e049ba174bf3ba433970ee9c",
+      "size_bytes": 114119327,
+      "license": "Apache-2.0",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice"
+      ],
+      "provenance": "github-release-digest",
+      "field": "kokoro_model"
+    },
+    {
+      "id": "kokoro-voices",
+      "label": "Kokoro voices",
+      "kind": "file",
+      "file": "voices-v1.0.bin",
+      "url": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/voices-v1.0.bin",
+      "sha256": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d",
+      "size_bytes": 28214398,
+      "license": "Apache-2.0",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice"
+      ],
+      "provenance": "github-release-digest",
+      "field": "kokoro_voices"
+    },
+    {
+      "id": "py-attrs",
+      "label": "attrs 26.1.0",
+      "kind": "wheel",
+      "file": "attrs-26.1.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl",
+      "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309",
+      "size_bytes": 67548,
+      "license": "MIT",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice",
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-certifi",
+      "label": "certifi 2026.10.23",
+      "kind": "wheel",
+      "file": "certifi-2026.10.23-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/32/d1/a3652fe2c19134d0d15922177821d863cbd7e842d53a21bbe7e8e3a1b5ac/certifi-2026.10.23-py3-none-any.whl",
+      "sha256": "e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1",
+      "size_bytes": 135082,
+      "license": "MPL-2.0",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-cffi",
+      "label": "cffi 2.1.1",
+      "kind": "wheel",
+      "file": "cffi-2.1.1-cp311-cp311-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/73/c0/77ba02423c2f7d7091143c45cd49e0e6575c4c1967394bb542bd923a9b74/cffi-2.1.1-cp311-cp311-win_amd64.whl",
+      "sha256": "42f6930c31dc7f50732c9ae793c2786c7b6b044195967bbdde40bb9be81c4cc0",
+      "size_bytes": 185096,
+      "license": "MIT",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice",
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-charset_normalizer",
+      "label": "charset_normalizer 3.5.2",
+      "kind": "wheel",
+      "file": "charset_normalizer-3.5.2-cp311-cp311-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/e8/fc/fdf8cf52ff21cd5bf158f20978991cf985325842f74283eb6df26c8a39d8/charset_normalizer-3.5.2-cp311-cp311-win_amd64.whl",
+      "sha256": "87e50a3e7cb90af586b6c5faf23e302a970415ac73bd7bd90a515a04b427ef96",
+      "size_bytes": 214932,
+      "license": "MIT",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-cloudpickle",
+      "label": "cloudpickle 3.1.2",
+      "kind": "wheel",
+      "file": "cloudpickle-3.1.2-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/88/39/799be3f2f0f38cc727ee3b4f1445fe6d5e4133064ec2e4115069418a5bb6/cloudpickle-3.1.2-py3-none-any.whl",
+      "sha256": "9acb47f6afd73f60dc1df93bb801b472f05ff42fa6c84167d25cb206be1fbf4a",
+      "size_bytes": 22228,
+      "license": "BSD-3-Clause",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice",
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-colorama",
+      "label": "colorama 0.4.6",
+      "kind": "wheel",
+      "file": "colorama-0.4.6-py2.py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/d1/d6/3965ed04c63042e047cb6a3e6ed1a63a35087b6a609aa3a15ed8ac56c221/colorama-0.4.6-py2.py3-none-any.whl",
+      "sha256": "4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6",
+      "size_bytes": 25335,
+      "license": "BSD-3-Clause",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-dlinfo",
+      "label": "dlinfo 2.0.0",
+      "kind": "wheel",
+      "file": "dlinfo-2.0.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/da/90/022c79d6e5e6f843268c10b84d4a021ee3afba0621d3c176d3ff2024bfc8/dlinfo-2.0.0-py3-none-any.whl",
+      "sha256": "b32cc18e3ea67c0ca9ca409e5b41eed863bd1363dbc9dd3de90fedf11b61e7bc",
+      "size_bytes": 3654,
+      "license": "MIT",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-espeakng_loader",
+      "label": "espeakng_loader 0.2.4",
+      "kind": "wheel",
+      "file": "espeakng_loader-0.2.4-py3-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/9d/ed/a3d872fbad4f3a3f3db0e8c31768ab14e77cd77306de16b8b20b1e1df7ea/espeakng_loader-0.2.4-py3-none-win_amd64.whl",
+      "sha256": "41f1e08ac9deda2efd1ea9de0b81dab9f5ae3c4b24284f76533d0a7b1dd7abd7",
+      "size_bytes": 9437292,
+      "license": "GPL-3.0-or-later",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-flatbuffers",
+      "label": "flatbuffers 25.12.19",
+      "kind": "wheel",
+      "file": "flatbuffers-25.12.19-py2.py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/e8/2d/d2a548598be01649e2d46231d151a6c56d10b964d94043a335ae56ea2d92/flatbuffers-25.12.19-py2.py3-none-any.whl",
+      "sha256": "7634f50c427838bb021c2d66a3d1168e9d199b0607e6329399f04846d42e20b4",
+      "size_bytes": 26661,
+      "license": "Apache-2.0",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice",
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-idna",
+      "label": "idna 3.20",
+      "kind": "wheel",
+      "file": "idna-3.20-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl",
+      "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c",
+      "size_bytes": 69583,
+      "license": "BSD-3-Clause",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-joblib",
+      "label": "joblib 1.6.0",
+      "kind": "wheel",
+      "file": "joblib-1.6.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/18/53/84099323c2ec4be98d935f63c033ac4151ee83836ca1050ede3b3aadf155/joblib-1.6.0-py3-none-any.whl",
+      "sha256": "3dbbf9f6e4b592a2357b854608e980fe6390d131d7a82f011a377ef2ebef7aba",
+      "size_bytes": 306115,
+      "license": "BSD-3-Clause",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice",
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-kokoro_onnx",
+      "label": "kokoro_onnx 0.6.1",
+      "kind": "wheel",
+      "file": "kokoro_onnx-0.6.1-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/60/e1/a27e5a70a525a5ee1fd5357596f07b724d02ff317f134e86cb6e3d9db968/kokoro_onnx-0.6.1-py3-none-any.whl",
+      "sha256": "50c8de4950d601df41428ee5462a48c8a78bef441bf671f2492e070ef44d8a32",
+      "size_bytes": 26084,
+      "license": "Apache-2.0",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-narwhals",
+      "label": "narwhals 2.28.0",
+      "kind": "wheel",
+      "file": "narwhals-2.28.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/cf/82/8ef9c7e0f50493307a49c09cfa7f00c5a778b6d1921f7b2dabe1d3a5809e/narwhals-2.28.0-py3-none-any.whl",
+      "sha256": "1f69d6385ec30e2fa6e1fdeb37c562ecabd0f713f6f3e3b58a668c5c9df9567f",
+      "size_bytes": 490591,
+      "license": "MIT",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-numpy",
+      "label": "numpy 2.4.6",
+      "kind": "wheel",
+      "file": "numpy-2.4.6-cp311-cp311-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/c5/31/7fc6239c12bce7e931463251cca4426c465e1876ba3cc785402ef4dd8f4e/numpy-2.4.6-cp311-cp311-win_amd64.whl",
+      "sha256": "1e254a00cdf42b1e4d5b3d68d33af63268d41340d8885df2ab6470f2e1500147",
+      "size_bytes": 12608406,
+      "license": "BSD-3-Clause",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice",
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-onnxruntime",
+      "label": "onnxruntime 1.31.1",
+      "kind": "wheel",
+      "file": "onnxruntime-1.31.1-cp311-cp311-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/69/82/2e2bf967ade9567d77c307533566ef56a19c32e2114fc062a405703def88/onnxruntime-1.31.1-cp311-cp311-win_amd64.whl",
+      "sha256": "c3d91b5de31e2fc82d71bd65b2b22bddee8b49057a3a36338e9a868e0ea90c05",
+      "size_bytes": 14885761,
+      "license": "MIT",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice",
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-openwakeword",
+      "label": "openwakeword 0.6.0",
+      "kind": "wheel",
+      "file": "openwakeword-0.6.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/8a/33/dafd6822bebe463a9098951d06a0d88fb4f8c946ce087025bc4fa132e533/openwakeword-0.6.0-py3-none-any.whl",
+      "sha256": "6f423a4e3ae9dd0e3cd12b50ff8abf69679f687b4ab349d7c82c021c0e2abc9d",
+      "size_bytes": 60690,
+      "license": "Apache-2.0",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-packaging",
+      "label": "packaging 26.3",
+      "kind": "wheel",
+      "file": "packaging-26.3-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl",
+      "sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c",
+      "size_bytes": 129956,
+      "license": "Apache-2.0 OR BSD-2-Clause",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice",
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-phonemizer",
+      "label": "phonemizer 3.6.0",
+      "kind": "wheel",
+      "file": "phonemizer-3.6.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/9b/70/681cea1684270c8d70b4e0fd7f17aaeb4e97fa9fc17b7bc2a6dee6a74e96/phonemizer-3.6.0-py3-none-any.whl",
+      "sha256": "efb0703d3204f334756cafc9c97390c588446469c69214af4092836ca128cbab",
+      "size_bytes": 125087,
+      "license": "GPL-3.0-or-later",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-protobuf",
+      "label": "protobuf 7.36.2",
+      "kind": "wheel",
+      "file": "protobuf-7.36.2-cp310-abi3-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/8a/55/b77bda4e5e5f5971fb51b07663694690e9afdb9402136c16a522bd621cad/protobuf-7.36.2-cp310-abi3-win_amd64.whl",
+      "sha256": "a300819d441e078a5608c0d3c709796bb548136058fda017ae51d425b44fd353",
+      "size_bytes": 456514,
+      "license": "BSD-3-Clause",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice",
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-pycparser",
+      "label": "pycparser 3.12",
+      "kind": "wheel",
+      "file": "pycparser-3.12-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/b6/ae/315bbeee126a769cbde43cf4908acb4b40408d8bf8bbf334dd7368d8dadf/pycparser-3.12-py3-none-any.whl",
+      "sha256": "a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e",
+      "size_bytes": 62600,
+      "license": "BSD-3-Clause",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice",
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-requests",
+      "label": "requests 2.34.2",
+      "kind": "wheel",
+      "file": "requests-2.34.2-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/a0/f4/c67b0b3f1b9245e8d266f0f112c500d50e5b4e83cb6f3b71b6528104182a/requests-2.34.2-py3-none-any.whl",
+      "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0",
+      "size_bytes": 73075,
+      "license": "Apache-2.0",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-scikit_learn",
+      "label": "scikit_learn 1.9.1",
+      "kind": "wheel",
+      "file": "scikit_learn-1.9.1-cp311-cp311-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/29/8a/8d1e888fe3d0dd4e2a1f3356dad703eed569aaf673e222b6f647005ad30f/scikit_learn-1.9.1-cp311-cp311-win_amd64.whl",
+      "sha256": "220fa18152852a5ce29c49e1eaba9d44ec44631cd2e5cf65f5a40eafa5ab3412",
+      "size_bytes": 8329877,
+      "license": "BSD-3-Clause",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-scipy",
+      "label": "scipy 1.17.1",
+      "kind": "wheel",
+      "file": "scipy-1.17.1-cp311-cp311-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/95/da/0d1df507cf574b3f224ccc3d45244c9a1d732c81dcb26b1e8a766ae271a8/scipy-1.17.1-cp311-cp311-win_amd64.whl",
+      "sha256": "d30e57c72013c2a4fe441c2fcb8e77b14e152ad48b5464858e07e2ad9fbfceff",
+      "size_bytes": 36607512,
+      "license": "BSD-3-Clause",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-sounddevice",
+      "label": "sounddevice 0.5.6",
+      "kind": "wheel",
+      "file": "sounddevice-0.5.6-py3-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/8d/3e/cbc593c31a5f0d817b3fe97e64aa8461bd0f55cb07b67ce1b776296ae336/sounddevice-0.5.6-py3-none-win_amd64.whl",
+      "sha256": "7f4162f514f007b0bf25a3ccfed3f1705bc2ec311888a90232729eec4f57a4f4",
+      "size_bytes": 1009630,
+      "license": "MIT",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-soundfile",
+      "label": "soundfile 0.14.0",
+      "kind": "wheel",
+      "file": "soundfile-0.14.0-py2.py3-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/ed/97/b39c18ac1df45e755ca22b8b00e872929da5d107998a207a5e4ac831bfda/soundfile-0.14.0-py2.py3-none-win_amd64.whl",
+      "sha256": "299491d3499460fb1b74bb4bd78b57ffc2d243a5fafa7b6ec1b264875c78453e",
+      "size_bytes": 1021480,
+      "license": "BSD-3-Clause",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-threadpoolctl",
+      "label": "threadpoolctl 3.8.0",
+      "kind": "wheel",
+      "file": "threadpoolctl-3.8.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/54/1b/831f2de4840a25db1dd7b1afea433ccafe6bb10aca07e13264f2079462d0/threadpoolctl-3.8.0-py3-none-any.whl",
+      "sha256": "f1b49c82704d50f13ffae019c727b0fa4f6791a58f48f06a09c45face1be66da",
+      "size_bytes": 32091,
+      "license": "BSD-3-Clause",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-tqdm",
+      "label": "tqdm 4.70.1",
+      "kind": "wheel",
+      "file": "tqdm-4.70.1-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/a7/03/921a3d3c75785aca9ebfbfcabfbc3a1be12e2ab5265deb026d55a5a3f83e/tqdm-4.70.1-py3-none-any.whl",
+      "sha256": "c293e525e6fef9c20e8728fd4612df02a0aa31bb5fe91ecd93e123b1b7bffa73",
+      "size_bytes": 80199,
+      "license": "MIT",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-typing_extensions",
+      "label": "typing_extensions 4.16.0",
+      "kind": "wheel",
+      "file": "typing_extensions-4.16.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/49/d3/b8441a820a491ddfc024b0b0cf0393375b75ea13866d9c66727e54c2fc80/typing_extensions-4.16.0-py3-none-any.whl",
+      "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+      "size_bytes": 45571,
+      "license": "PSF-2.0",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice",
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "py-urllib3",
+      "label": "urllib3 2.8.0",
+      "kind": "wheel",
+      "file": "urllib3-2.8.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl",
+      "sha256": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3",
+      "size_bytes": 135717,
+      "license": "MIT",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "wake"
+      ],
+      "provenance": "pypi-digest"
+    },
+    {
+      "id": "wake-model",
+      "label": "Wake-word model (hey_jarvis_v0.1.onnx)",
+      "kind": "file",
+      "file": "hey_jarvis_v0.1.onnx",
+      "field": "wake_model",
+      "location": "wake",
+      "features": [
+        "wake"
+      ],
+      "url": "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/hey_jarvis_v0.1.onnx",
+      "sha256": "94a13cfe60075b132f6a472e7e462e8123ee70861bc3fb58434a73712ee0d2cb",
+      "size_bytes": 1271370,
+      "license": "CC-BY-NC-SA-4.0",
+      "version": "openWakeWord v0.5.1",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "provenance": "runtime-pin-verified"
+    },
+    {
+      "id": "wake-model-1",
+      "label": "Wake-word model (melspectrogram.onnx)",
+      "kind": "file",
+      "file": "melspectrogram.onnx",
+      "field": "wake_melspectrogram",
+      "location": "wake",
+      "features": [
+        "wake"
+      ],
+      "url": "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/melspectrogram.onnx",
+      "sha256": "ba2b0e0f8b7b875369a2c89cb13360ff53bac436f2895cced9f479fa65eb176f",
+      "size_bytes": 1087958,
+      "license": "Apache-2.0",
+      "version": "openWakeWord v0.5.1",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "provenance": "runtime-pin-verified"
+    },
+    {
+      "id": "wake-model-2",
+      "label": "Wake-word model (embedding_model.onnx)",
+      "kind": "file",
+      "file": "embedding_model.onnx",
+      "field": "wake_embedding",
+      "location": "wake",
+      "features": [
+        "wake"
+      ],
+      "url": "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/embedding_model.onnx",
+      "sha256": "70d164290c1d095d1d4ee149bc5e00543250a7316b59f31d056cff7bd3075c1f",
+      "size_bytes": 1326578,
+      "license": "Apache-2.0",
+      "version": "openWakeWord v0.5.1",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "provenance": "runtime-pin-verified"
+    },
+    {
+      "id": "wake-model-3",
+      "label": "Wake-word model (silero_vad.onnx)",
+      "kind": "file",
+      "file": "silero_vad.onnx",
+      "field": "wake_vad",
+      "location": "wake",
+      "features": [
+        "wake"
+      ],
+      "url": "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/silero_vad.onnx",
+      "sha256": "a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28",
+      "size_bytes": 1807522,
+      "license": "MIT",
+      "version": "openWakeWord v0.5.1",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "provenance": "runtime-pin-verified"
+    }
+  ]
+}

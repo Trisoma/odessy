@@ -49,7 +49,8 @@ def launch(root, mode='app', launch_id=None):
         args += ['--launch-id', launch_id]
     # The long-lived desktop must not inherit the stdio bridge's response pipes.
     # Otherwise its helper exits but Flutter waits for EOF until the app closes.
-    return subprocess.Popen(args,cwd=tempfile.gettempdir(),stdin=subprocess.DEVNULL,
+    from .platform_installation import desktop_environment
+    return subprocess.Popen(args,cwd=tempfile.gettempdir(),env=desktop_environment(),stdin=subprocess.DEVNULL,
                             stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
                             close_fds=True)
 

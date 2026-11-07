@@ -48,6 +48,17 @@ def test_window_class_matches_the_native_application_id():
     assert declared.group(1)==linux.WM_CLASS
 
 
+def test_launch_drops_setup_python_environment(tmp_path, monkeypatch):
+    root, _ = _root(tmp_path)
+    calls=[]
+    monkeypatch.setenv('PYTHONPATH', str(tmp_path/'bootstrap'))
+    monkeypatch.setenv('ODESSY_TEST_KEEP', 'preserved')
+    monkeypatch.setattr(linux.subprocess, 'Popen', lambda args, **kwargs: calls.append(kwargs))
+    linux.launch(root)
+    assert 'PYTHONPATH' not in calls[0]['env']
+    assert calls[0]['env']['ODESSY_TEST_KEEP'] == 'preserved'
+
+
 def test_register_writes_an_executable_launcher_and_a_menu_entry(tmp_path,data_home):
     root,record=_root(tmp_path)
     resources=linux.register(root,record)

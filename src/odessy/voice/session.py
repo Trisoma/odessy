@@ -475,6 +475,7 @@ class VoiceSession:
         self.segmenter.begin()
         self._blank_attempts = 0
         self.state = "RECORDING"
+        self.status("Recording speech")
 
     async def _feed_segmenter(self, frame: bytes) -> None:
         for vad_frame in self._vad_frames.push(frame):

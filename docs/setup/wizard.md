@@ -35,10 +35,26 @@ OdessySetup.exe
   referenced by environment-variable name only.
 - **Voice.** Optional and unavailable until all four existing asset paths
   (Whisper.cpp executable, Whisper model, Kokoro model, Kokoro voices) are
-  supplied; otherwise the wizard continues text-only.
+  supplied; otherwise the wizard continues text-only. A separate opt-in offers
+  verified downloads of those four components, showing the size and the internet
+  requirement before anything starts. Continue to review, then Install runs the
+  voice download and installs its dependencies with Odessy; see
+  `docs/setup/voice-components.md`.
+- **Wake word.** Optional, on the same step as voice and deliberately separate
+  from it: one pretrained model (Hey Jarvis / openWakeWord) under CC BY-NC-SA
+  4.0, so its licence is stated when the option is chosen rather than afterwards.
+  Choosing it shows the exact size and then either downloads it immediately or
+  leaves it to the installation, which fetches it alongside the runtime and any
+  selected speech components. A failure keeps the user on this step with a retry
+  and a "Skip the wake word" escape, so nothing about the runtime is blocked by
+  it. Setup reports wake-word detection as ready only when the model is verified
+  **and** `openwakeword` imports in the installed runtime.
 - **Review.** A human-readable summary (role, location, model, voice, downloads,
-  service) with expandable technical details. Editing any option invalidates the
-  review; Install is disabled until a fresh review exists.
+  service) with expandable technical details. The review is generated when the
+  step opens, and again whenever an option changes, so there is no separate
+  review button; a failure states its reason and offers a retry. Editing any
+  option invalidates the plan, and Install sends that exact plan identity, so a
+  stale plan is refused by the helper.
 - **Progress.** Installation progress is read from the durable operation journal
   by a second read-only helper (stage, packaged steps, files written). Cancelling
   stops future steps and leaves the previous active version untouched.

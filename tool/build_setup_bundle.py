@@ -63,6 +63,11 @@ def build(wheels, licenses, output, *, runtime=None, desktop=None, node=None, to
             archive.write(ROOT/'src/odessy/model_providers.py', 'bootstrap/odessy/model_providers.py')
             for module in (ROOT/'src/odessy/setup').glob('*.py'):
                 archive.write(module,'bootstrap/odessy/setup/'+module.name)
+            # The voice artifact manifest is data, not code, but the helper reads
+            # it by path at install time. Omitting it would make the packaged
+            # installer unable to offer voice at all.
+            archive.write(ROOT/'src/odessy/setup/voice-artifacts.json',
+                          'bootstrap/odessy/setup/voice-artifacts.json')
             # Progress runs before the application wheel is installed. Include
             # its shared stdlib-only redactor in the standalone bootstrap too.
             for name in ('__init__.py', 'redaction.py'):

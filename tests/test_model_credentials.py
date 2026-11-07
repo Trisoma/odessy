@@ -37,20 +37,54 @@ def test_secure_save_resolve_metadata_and_endpoint_isolation(credentials):
     assert credentials.describe(scope, environ={})['source'] == 'none'
 
 
-def test_precedence_and_environment_shadowing_are_explicit(credentials):
+def test_explicit_user_keys_override_environment_and_restore_it_on_removal(credentials):
     scope = credentials.Scope('deepseek', '')
-    credentials.set_value(scope, 'stored', storage='keyring', environ={})
-    credentials.set_value(scope, 'ephemeral', storage='session', environ={})
-    assert credentials.resolve(scope, environ={}) == 'ephemeral'
     env = {'ODESSY_CLOUD_API_KEY': 'generic', 'DEEPSEEK_API_KEY': 'provider'}
     assert credentials.resolve(scope, environ=env) == 'generic'
-    assert credentials.describe(scope, environ=env)['writable'] is False
-    with pytest.raises(credentials.CredentialError):
-        credentials.set_value(scope, 'shadowed', storage='keyring', environ=env)
+    assert credentials.describe(scope, environ=env)['writable'] is True
+    credentials.set_value(scope, 'stored', storage='keyring', environ=env)
+    assert credentials.resolve(scope, environ=env) == 'stored'
+    assert credentials.describe(scope, environ=env)['source'] == 'keyring'
+    credentials.set_value(scope, 'ephemeral', storage='session', environ=env)
+    assert credentials.resolve(scope, environ=env) == 'ephemeral'
+    credentials.clear_sessions()
+    assert credentials.resolve(scope, environ=env) == 'stored'
+    credentials.remove(scope, storage='keyring', environ=env)
+    assert credentials.resolve(scope, environ=env) == 'generic'
     explicit = credentials.Scope('deepseek', '', 'CUSTOM_MODEL_CREDENTIAL')
     assert credentials.resolve(explicit, environ=env) is None
-    credentials.clear_sessions()
-    assert credentials.resolve(scope, environ={}) == 'stored'
+
+
+def test_existing_legacy_key_does_not_silently_override_environment(credentials):
+    scope = credentials.Scope('deepseek', '')
+    credentials._backend().set_password(credentials.SERVICE, scope.identity, 'old-stored')
+    env = {'DEEPSEEK_API_KEY': 'existing-env'}
+    assert credentials.resolve(scope, environ=env) == 'existing-env'
+    credentials.set_value(scope, 'chosen-new', storage='keyring', environ=env)
+    assert credentials.resolve(scope, environ=env) == 'chosen-new'
+    credentials.remove(scope, storage='keyring', environ=env)
+    assert credentials.resolve(scope, environ=env) == 'existing-env'
+    assert credentials.resolve(scope, environ={}) == 'old-stored'
+
+
+def test_environment_is_restored_after_removing_session_override(credentials):
+    scope = credentials.Scope('deepseek', '')
+    env = {'DEEPSEEK_API_KEY': 'environment-value'}
+    credentials.set_value(scope, 'session-value', storage='session', environ=env)
+    assert credentials.describe(scope, environ=env)['source'] == 'session'
+    credentials.remove(scope, storage='session', environ=env)
+    assert credentials.describe(scope, environ=env)['source'] == 'env'
+    assert credentials.resolve(scope, environ=env) == 'environment-value'
+
+
+def test_explicit_override_is_scoped_to_provider_origin_and_reference(credentials):
+    original = credentials.Scope('deepseek', 'https://one.example', 'MY_DEEPSEEK_KEY')
+    other = credentials.Scope('deepseek', 'https://two.example', 'MY_DEEPSEEK_KEY')
+    env = {'MY_DEEPSEEK_KEY': 'environment-value'}
+    credentials.set_value(original, 'chosen-value', storage='keyring', environ=env)
+    assert credentials.resolve(original, environ=env) == 'chosen-value'
+    assert credentials.resolve(other, environ=env) == 'environment-value'
+    assert 'chosen-value' not in json.dumps(credentials.describe(original, environ=env))
 
 
 def test_storage_failures_do_not_fall_back_to_plaintext(credentials, monkeypatch):
@@ -65,6 +99,21 @@ def test_storage_failures_do_not_fall_back_to_plaintext(credentials, monkeypatch
     assert credentials.describe(scope, environ={})['source'] == 'session'
 
 
+def test_session_replacement_works_when_environment_is_set_and_vault_is_locked(credentials, monkeypatch):
+    def unavailable():
+        raise credentials.CredentialError('Secure storage unavailable.', code='unavailable')
+    monkeypatch.setattr(credentials, '_backend', unavailable)
+    scope = credentials.Scope('deepseek', '')
+    env = {'DEEPSEEK_API_KEY': 'env-fixture'}
+    before = credentials.describe(scope, environ=env)
+    assert before['source'] == 'env' and before['writable'] is True
+    assert before['secure_storage_available'] is False
+    credentials.set_value(scope, 'session-fixture', storage='session', environ=env)
+    assert credentials.resolve(scope, environ=env) == 'session-fixture'
+    credentials.clear_sessions()
+    assert credentials.resolve(scope, environ=env) == 'env-fixture'
+
+
 def test_backend_rejects_file_and_chained_keyrings():
     from odessy.credentials import approved_backend
     assert not approved_backend(Vault())
@@ -77,7 +126,7 @@ def test_backend_rejects_file_and_chained_keyrings():
 
 def test_bridge_replies_never_echo_secret(credentials, monkeypatch):
     from odessy.setup.bridge import run
-    monkeypatch.delenv('DEEPSEEK_API_KEY', raising=False)
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'disposable-environment-fixture')
     monkeypatch.delenv('ODESSY_CLOUD_API_KEY', raising=False)
     secret = 'bridge-secret-123456'
     request = {'id': 'credential-test', 'operation': 'model-credential', 'selection': {},
@@ -135,7 +184,7 @@ def test_native_vault_persists_across_processes_without_revealing_key(monkeypatc
     from odessy import credentials
     scope = credentials.Scope('deepseek', 'https://' + uuid.uuid4().hex + '.odessy-qualification.invalid')
     monkeypatch.delenv('ODESSY_CLOUD_API_KEY', raising=False)
-    monkeypatch.delenv('DEEPSEEK_API_KEY', raising=False)
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'disposable-environment-fixture')
     try:
         assert credentials.describe(scope)['secure_storage_available']
         credentials.set_value(scope, 'native-dummy-sentinel', storage='keyring')
@@ -147,6 +196,8 @@ def test_native_vault_persists_across_processes_without_revealing_key(monkeypatc
         assert child.returncode == 0, 'Native credential restart check failed.'
         assert json.loads(child.stdout)['source'] == 'keyring'
         assert 'native-dummy-sentinel' not in child.stdout + child.stderr
+        credentials.remove(scope, storage='keyring')
+        assert credentials.resolve(scope) == 'disposable-environment-fixture'
     finally:
         credentials.remove(scope, storage='keyring')
 

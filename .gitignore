@@ -76,3 +76,6 @@ evals/results/
 
 # Local verification wheels, inventories, logs and baseline exports
 /.qualification/
+
+# Downloaded speech models and wheels used to pin installer artifacts.
+/.voice-cache/

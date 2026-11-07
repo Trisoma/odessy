@@ -8,19 +8,50 @@ import 'session_model_credentials.dart';
 
 import 'payload_locator.dart';
 
+/// Long-running writes stop only when the user cancels, not at an arbitrary
+/// wall-clock deadline that could interrupt registration after activation.
+Duration? setupRequestTimeout(SetupRequest request, Duration defaultTimeout) {
+  const longWrites = {
+    'install',
+    'repair',
+    'rollback',
+    'uninstall',
+    'service-install',
+    'service-remove',
+    'package-install',
+    'package-repair',
+    'package-rollback',
+    'package-configure',
+    'package-uninstall',
+    'package-register',
+    'voice-install',
+    'voice-python-install',
+  };
+  if (request.operation == 'installer' ||
+      (request.operation == 'manage' &&
+          longWrites.contains(request.parameters['action']))) {
+    return null;
+  }
+  return request.operation == 'manage'
+      ? const Duration(minutes: 12)
+      : defaultTimeout;
+}
+
 /// Launches only the configured Python interpreter and fixed setup module.
 class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
   @override
-  SetupBackend createMetadataReader() => LocalSetupBackend(
+  SetupBackend createMetadataReader() => LocalSetupBackend._(
       python: python,
       sourceRoot: sourceRoot,
       payloadRoot: payloadRoot,
-      timeout: timeout);
+      timeout: timeout,
+      isolated: isolated);
   LocalSetupBackend._({
     required this.python,
     required this.sourceRoot,
     required this.payloadRoot,
     required this.timeout,
+    required this.isolated,
   });
   factory LocalSetupBackend({
     String python = const String.fromEnvironment('ODESSY_SETUP_PYTHON'),
@@ -36,13 +67,16 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
         ? payloadRoot
         : discoverPayloadRoot(executablePath: executablePath);
     final bundled = _bundledRoot(executablePath, payload);
+    final installedPython = _installedPython(executablePath);
     final root = sourceRoot.isNotEmpty
         ? sourceRoot
-        : (bundled.isNotEmpty ? bundled : _sourceRoot(executablePath));
+        : (bundled.isNotEmpty
+            ? bundled
+            : (installedPython == null ? _sourceRoot(executablePath) : ''));
     final interpreter = python.isNotEmpty
         ? python
         : (_bundledInterpreter(root) ??
-            _installedPython(executablePath) ??
+            installedPython ??
             _sourcePython(root) ??
             'python');
     return LocalSetupBackend._(
@@ -50,6 +84,7 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
       sourceRoot: root,
       payloadRoot: payload,
       timeout: timeout,
+      isolated: root.isEmpty && installedPython != null,
     );
   }
 
@@ -143,6 +178,7 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
   }
 
   final String python, sourceRoot, payloadRoot;
+  final bool isolated;
   final Duration timeout;
   Process? _process;
   Directory? _cancelDirectory;
@@ -192,7 +228,7 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
       }
       process = await Process.start(
         python,
-        ['-m', 'odessy.setup.bridge'],
+        [if (isolated) '-I', '-m', 'odessy.setup.bridge'],
         workingDirectory: sourceRoot.isEmpty ? null : sourceRoot,
         environment: {
           'PYTHONUNBUFFERED': '1',
@@ -212,16 +248,14 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
       final stderr = _read(process.stderr, 65536);
       process.stdin.add(payload);
       await process.stdin.close();
-      final results = await Future.wait<Object>([
+      final response = Future.wait<Object>([
         stdout,
         stderr,
         process.exitCode,
-      ], eagerError: true)
-          .timeout(
-        {'manage', 'installer'}.contains(request.operation)
-            ? const Duration(minutes: 12)
-            : timeout,
-      );
+      ], eagerError: true);
+      final deadline = setupRequestTimeout(request, timeout);
+      final results =
+          await (deadline == null ? response : response.timeout(deadline));
       if (_closed || epoch != _epoch) throw const SetupCancelled();
       final value = jsonDecode(results[0] as String);
       if (value is! Json) {

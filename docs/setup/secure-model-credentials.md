@@ -9,8 +9,10 @@ Contract: fixed local setup operation `model-credential`, with `action` of
 and `value` for set only. Values are stdin-only. Replies contain scope identity
 and configured/source/writable/persistence metadata, never the value.
 
-Sources: env > session > keyring > none. Environment precedence within a scope
-preserves the explicit reference, otherwise generic key before provider key.
+Sources: explicit session > explicitly saved secure override > environment >
+legacy saved key > none. Without an explicit new choice, older installations
+retain environment precedence. Within the environment, an explicit reference
+is used alone; otherwise the generic key precedes the provider key.
 Only Windows Credential Manager and Linux Secret Service are approved. No file
 fallback. Session secrets live only in desktop/coordinator memory and private
 stdio; they do not enter configuration drafts or persistent settings.
@@ -40,13 +42,16 @@ The key is stored separately from the model configuration. Save changed model
 settings using their existing section save control, then connect the saved
 configuration. A failed prior start can be retried without closing the app.
 
-If the key comes from an environment variable, the field is read-only. Remove
-that environment value and reopen Odessy before managing the key here. The app
-does not silently change or delete Windows user variables or shell settings.
+When a key comes from an environment variable, you can enter a replacement and
+save it securely or use it for the session. The chosen key becomes active for
+that provider and endpoint; the environment variable is never changed or deleted.
+Removing the chosen key reveals the next available source and shows it in Settings.
 
 **Use for this session only** is explicit: closing Odessy forgets that value.
-Removing a session key reveals any underlying saved OS-store key; status reports
-the resulting source. Secure storage failures never produce a plaintext file.
+Removing a session key reveals the next available source in precedence order;
+an environment credential can take priority over a legacy saved OS-store key.
+Settings reports the resulting source. Secure storage failures never produce a
+plaintext file.
 
 ## Packaging and review
 

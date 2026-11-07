@@ -242,10 +242,12 @@ directories, caches, test output or build logs.
 ## Current scope
 
 The implementation covers install and maintenance for Windows x64, on-machine deployment and
-a pinned local model. Automatic voice-dependency preparation, model migration, cloud account
-configuration, distributed deployment and a minimal UI for the core workflow are not
-included. The launch panel still takes requests and completes confirmations through the
-terminal.
+a pinned local model. Speech components are an explicit opt-in download: pinned, verified
+Whisper.cpp and Kokoro artifacts plus their Python packages, prepared before installation and
+installed into the application runtime afterwards (see `docs/setup/voice-components.md`).
+Model migration, cloud account configuration, distributed deployment and a minimal UI for the
+core workflow are not included. The launch panel still takes requests and completes
+confirmations through the terminal.
 
 Runtime checks do not guarantee that arbitrary unprobed file damage is found, nor model
 performance on every machine. Acceptance on a clean Windows machine and a formal release are

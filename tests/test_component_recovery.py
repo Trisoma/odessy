@@ -42,8 +42,16 @@ settings.dispatch({'action':'save','confirm':review['plan_id'],**data})
         child.kill();child.wait(timeout=5)
         files=set(tmp_path.glob('components-*.json'))
         assert files
-        inspection=settings.dispatch({'action':'lock-inspect'})
-        assert inspection['recoverable'] is True
+        # Windows can release a killed process's byte lock shortly after its
+        # process handle is signalled. Retry only the explicit busy response;
+        # never treat a different recovery error as a transient lock.
+        deadline=time.monotonic()+2
+        while True:
+            inspection=settings.dispatch({'action':'lock-inspect'})
+            if 'writer is active' not in inspection.get('status','').lower() or time.monotonic()>=deadline:
+                break
+            time.sleep(.05)
+        assert inspection['recoverable'] is True, inspection
         loaded=settings.dispatch({'action':'load'})
         assert loaded['writer']['pending'] is True
         assert (loaded['selection']['voice']['tts_provider']=='custom_audio:factory') is after_pointer

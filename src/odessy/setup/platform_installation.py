@@ -15,6 +15,12 @@ import sys
 DESKTOP_RELATIVE='desktop/odessy_desktop.exe' if os.name=='nt' else 'desktop/odessy_desktop'
 
 
+def desktop_environment():
+    """Keep user settings while dropping the setup helper's Python context."""
+    transient = {'PYTHONPATH', 'PYTHONHOME', 'VIRTUAL_ENV', 'ODESSY_SETUP_PAYLOAD'}
+    return {key: value for key, value in os.environ.items() if key.upper() not in transient}
+
+
 def implementation():
     """Return the platform module, or None when this platform has no adapter yet."""
     if sys.platform=='win32':

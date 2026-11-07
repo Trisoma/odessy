@@ -44,6 +44,27 @@ class CredentialBackend implements SetupBackend {
 }
 
 void main() {
+  testWidgets('environment credential permits explicit replacement',
+      (tester) async {
+    final backend = CredentialBackend()..source = 'env';
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: SingleChildScrollView(
+      child: ModelCredentialPanel(
+          backend: backend, provider: 'deepseek', endpoint: '', reference: ''),
+    ))));
+    await tester.pumpAndSettle();
+    final field = find.byKey(const ValueKey('model-api-key'));
+    expect(tester.widget<TextField>(field).enabled, isTrue);
+    expect(find.textContaining('environment'), findsWidgets);
+    expect(find.textContaining('read-only'), findsNothing);
+    await tester.enterText(field, 'replacement-test-key');
+    await tester.tap(find.text('Save securely'));
+    await tester.pumpAndSettle();
+    expect(backend.requests.last.parameters['storage'], 'keyring');
+    expect(find.textContaining('OS credential store'), findsOneWidget);
+    expect(find.text('replacement-test-key'), findsNothing);
+  });
   testWidgets(
       'credential controls wrap at large text and render without exposing values',
       (tester) async {

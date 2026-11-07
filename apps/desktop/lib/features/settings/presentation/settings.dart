@@ -440,7 +440,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   session: widget.controller,
                   onDialogChange: (open) => _dialogOpen = open)),
           const Text(
-              'Save your API key securely below, or use it for this session only. Environment-provided keys remain supported and read-only.'),
+              'Save your API key securely below, or use it for this session only. A key you choose here takes precedence for this provider and endpoint.'),
           KeyedSubtree(
               key: _modelSettingsKey,
               child: components != null

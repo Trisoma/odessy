@@ -36,6 +36,10 @@ def test_catalog_fetch_uses_ids_and_never_returns_credentials(monkeypatch):
 
 
 def test_catalog_missing_key_is_actionable_and_preserves_suggestions(monkeypatch):
+    from odessy import credentials
+    monkeypatch.setattr(credentials, '_backend', lambda: None)
+    monkeypatch.setattr(credentials, '_sessions', {})
+    monkeypatch.setattr(credentials, '_references', {})
     monkeypatch.delenv('DEEPSEEK_API_KEY',raising=False)
     monkeypatch.delenv('ODESSY_CLOUD_API_KEY',raising=False)
     reply=execute({'operation':'model-catalog','parameters':{'provider':'deepseek','refresh':True}})

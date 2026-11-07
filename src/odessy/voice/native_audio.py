@@ -18,6 +18,29 @@ from .capture import CommandAudioStream, CommandPlayer
 ALSA_PROBE_TIMEOUT = 2.0
 MAX_LISTED_DEVICES = 256
 
+def prepare_native_dependencies():
+    """Load Windows audio DLLs before request workers can start concurrently.
+
+    A first NumPy/OpenBLAS import in an executor can hold the Windows loader
+    lock while the event-loop thread waits for a new executor thread to start.
+    Import libraries before serving HTTP; do not open devices or model files.
+    Optional dependencies remain optional, so missing voice extras never stop
+    the text service. Their normal audio checks still report unavailability.
+    Linux keeps its existing lazy initialization (including Jetson providers).
+    """
+    if sys.platform != 'win32':
+        return ()
+    if threading.current_thread() is not threading.main_thread():
+        raise RuntimeError('Prepare native audio on the main thread before starting workers')
+    unavailable = []
+    for name in ('numpy', 'onnxruntime', 'sounddevice', 'openwakeword.model',
+                 'openwakeword.vad', 'kokoro_onnx'):
+        try:
+            importlib.import_module(name)
+        except (ImportError, OSError, RuntimeError):
+            unavailable.append(name)
+    return tuple(unavailable)
+
 def backend_name(value):
     return ('command' if sys.platform.startswith('linux') else 'native') if value=='auto' else value
 

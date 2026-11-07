@@ -16,7 +16,11 @@ MANAGE_ACTIONS={'plan','repair-plan','install','inspect','verify','repair','roll
 PACKAGE_ACTIONS={'package-review','package-install','package-launch','package-status','package-verify',
     'package-repair-review','package-repair','package-rollback-review','package-rollback',
     'package-configure-review','package-configure','package-uninstall-review','package-uninstall',
-    'package-register','installed-spec','package-launch-ack','package-launch-status','package-launch-pending'}
+    'package-register','installed-spec','package-launch-ack','package-launch-status','package-launch-pending',
+    'voice-plan','voice-install','voice-status','voice-python-install'}
+
+#: Opt-in speech components. The voice root is computed by the helper, never supplied.
+VOICE_ACTIONS={'voice-plan','voice-install','voice-status','voice-python-install'}
 
 
 def _versioned_root(parameters,name):
@@ -46,6 +50,28 @@ def _review_projection(plan):
 def _packaged(parameters,*,cancelled=lambda:False):
     """Installed lifecycle operations; internal paths never come from the user."""
     action=parameters.get('action')
+    if action in VOICE_ACTIONS:
+        from .voice_install import dispatch as voice
+        # The voice root is the helper's own choice; a caller-supplied value is
+        # ignored rather than rejected, so the shared packaged request shape
+        # (action/root/payload/selection) stays usable here. `install_root` is
+        # the installation whose runtime receives the Python packages, and it is
+        # normalised before use.
+        allowed={'action','payload','confirm','features'} if action=='voice-install' else {
+            'action','payload','install_root','features'}
+        data={key:value for key,value in parameters.items() if key in allowed}
+        if 'install_root' in data:
+            value=data.get('install_root')
+            data['install_root']=str(guard(value)) if isinstance(value,str) and value.strip() else None
+        if 'features' in data:
+            # Narrowed here as well as in the helper: planning, installing and
+            # checking must not be able to disagree about what was chosen.
+            wanted=data.get('features')
+            if (not isinstance(wanted,list) or not wanted or len(wanted)>2
+                    or any(not isinstance(name,str) for name in wanted)):
+                raise ValueError('select at least one speech feature')
+            data['features']=wanted
+        return voice(data,cancelled=cancelled)
     if action=='package-launch-pending':
         from .launch_receipts import pending
         data=fields(parameters,{'action','root','version'},'pending launch handoffs')

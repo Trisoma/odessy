@@ -5,6 +5,31 @@ import 'package:odessy_desktop/app/setup/disconnected_api.dart';
 import 'package:odessy_desktop/app/session_controller.dart';
 
 void main() {
+  test('installed desktop never adopts a parent source checkout', () {
+    final root = Directory.systemTemp.createTempSync('odessy-installed-');
+    addTearDown(() => root.deleteSync(recursive: true));
+    File('${root.path}/pyproject.toml')
+        .writeAsStringSync('[project]\nname = "odessy"\n');
+    final bridge = File('${root.path}/src/odessy/setup/bridge.py');
+    bridge.parent.createSync(recursive: true);
+    bridge.writeAsStringSync('');
+    final version = Directory('${root.path}/versions/abcd')
+      ..createSync(recursive: true);
+    final executable = File('${version.path}/desktop/odessy_desktop.exe');
+    executable.parent.createSync(recursive: true);
+    executable.writeAsStringSync('');
+    final python = File(
+        '${version.path}/${Platform.isWindows ? 'Scripts/python.exe' : 'bin/python3'}');
+    python.parent.createSync(recursive: true);
+    python.writeAsStringSync('');
+    final backend = LocalSetupBackend(executablePath: executable.path);
+    expect(backend.sourceRoot, isEmpty);
+    expect(File(backend.python).absolute.uri, python.absolute.uri);
+    expect(backend.isolated, isTrue);
+    final metadata = backend.createMetadataReader() as LocalSetupBackend;
+    expect(metadata.isolated, isTrue);
+    expect(metadata.python, backend.python);
+  });
   test('direct checkout build discovers its own source and virtual environment',
       () {
     final root =

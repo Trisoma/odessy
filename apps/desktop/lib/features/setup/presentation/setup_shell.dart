@@ -38,7 +38,7 @@ class SetupShell extends StatelessWidget {
                 child: SingleChildScrollView(
                     padding: const EdgeInsets.symmetric(
                         horizontal: OdessyTokens.spaceLarge,
-                        vertical: OdessyTokens.spaceLarge),
+                        vertical: OdessyTokens.spaceRegular),
                     child: Center(
                         child: ConstrainedBox(
                             constraints:
@@ -49,7 +49,7 @@ class SetupShell extends StatelessWidget {
               Padding(
                   padding: const EdgeInsets.symmetric(
                       horizontal: OdessyTokens.spaceLarge,
-                      vertical: OdessyTokens.spaceRegular),
+                      vertical: OdessyTokens.spaceCompact),
                   child: Center(
                       child: ConstrainedBox(
                           constraints:
@@ -61,7 +61,7 @@ class SetupShell extends StatelessWidget {
   Widget _header(BuildContext context) => Padding(
       padding: const EdgeInsets.symmetric(
           horizontal: OdessyTokens.spaceLarge,
-          vertical: OdessyTokens.spaceRegular),
+          vertical: OdessyTokens.spaceCompact),
       child: Center(
           child: ConstrainedBox(
               constraints: BoxConstraints(maxWidth: maxContentWidth),
@@ -205,7 +205,7 @@ class SetupSection extends StatelessWidget {
   final Widget child;
   @override
   Widget build(BuildContext context) => Padding(
-      padding: const EdgeInsets.only(bottom: OdessyTokens.spaceLarge),
+      padding: const EdgeInsets.only(bottom: OdessyTokens.spaceMedium),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(title, style: Theme.of(context).textTheme.titleMedium),
         if (description != null) ...[

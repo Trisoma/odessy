@@ -68,3 +68,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.package-data]
 "odessy.execution" = ["contract.json"]
+# The pinned voice artifact manifest must travel with the code: the setup helper
+# reads it by path at install time, and an installed application reads it when
+# reporting voice readiness.
+"odessy.setup" = ["voice-artifacts.json"]

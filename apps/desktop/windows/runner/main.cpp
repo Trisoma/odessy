@@ -25,6 +25,12 @@ std::wstring Wide(const std::string& value) {
   result.pop_back();
   return result;
 }
+bool IsSetupMode(const std::vector<std::string>& arguments) {
+  for (const auto& arg : arguments) {
+    if (arg == "--setup" || arg == "--manage" || arg == "--uninstall") return true;
+  }
+  return false;
+}
 std::wstring InstanceKey(const std::vector<std::string>& arguments) {
   std::wstring mode, root;
   for (size_t i = 0; i < arguments.size(); ++i) {
@@ -96,7 +102,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
-  Win32Window::Size size(1200, 850);
+  // Setup, manage and uninstall are short, linear flows: a large first window
+  // wastes space and pushes the footer actions away from the content. The
+  // installed Odessy window keeps its dimensions.
+  Win32Window::Size size = IsSetupMode(arguments) ? Win32Window::Size(980, 720)
+                                                 : Win32Window::Size(1200, 850);
   if (!window.Create(L"Odessy", origin, size)) {
     if (instance_mutex) CloseHandle(instance_mutex);
     return EXIT_FAILURE;
