@@ -117,6 +117,16 @@ that exists but does not match its recorded digest is an **error**, because it
 will not be used. Microphone and audio-device readiness remain a separate check
 in Settings.
 
+On Windows, a voice-enabled coordinator imports the optional native audio
+libraries on its main thread before serving requests or starting executor
+workers. First loading NumPy's native DLLs in a worker while the main thread
+starts another worker can hang the local service. This initialization opens no
+microphone and loads no model weights; missing optional libraries still allow
+the text service to start. Linux retains its existing lazy initialization.
+After a wake cue finishes, the session reports `Recording speech` so the desktop
+can show that the command window is open. Model-file verification alone does not
+verify microphone selection, wake sensitivity or transcription accuracy.
+
 ## Where the ideas came from
 
 Reference implementations were read, and only the mechanics were adapted:

@@ -593,6 +593,21 @@ async def test_live_capture_overflow_stops_admission():
     assert session._stop.is_set()
     assert harness.turns == []
 
+
+@pytest.mark.anyio
+async def test_recording_is_reported_only_after_ready_cue_finishes():
+    harness = Harness([])
+    session = harness.build()
+
+    async def cue():
+        assert session.state == 'READY'
+        assert 'Recording speech' not in harness.statuses
+
+    session.cue = cue
+    await session._activate()
+    assert session.state == 'RECORDING'
+    assert harness.statuses[-1] == 'Recording speech'
+
 @pytest.mark.anyio
 async def test_cli_drops_reply_interrupted_during_synthesis(tmp_path):
     import ast

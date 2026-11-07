@@ -28,6 +28,12 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
     token = token if token is not None else os.environ.get('ODESSY_API_TOKEN') or None
     if print_token and not token:
         raise ValueError('Set ODESSY_API_TOKEN before starting the manual HTTP server; credentials are never printed to logs.')
+    if desktop_voice is not None:
+        from odessy.voice.native_audio import prepare_native_dependencies
+        unavailable = prepare_native_dependencies()
+        if unavailable:
+            print('[odessy] Optional audio libraries unavailable: ' + ', '.join(unavailable)
+                  + '. Typed input remains available.', file=sys.stderr, flush=True)
     try:
         import uvicorn
     except ImportError as exc:
