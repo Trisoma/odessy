@@ -48,8 +48,10 @@ that provider and endpoint; the environment variable is never changed or deleted
 Removing the chosen key reveals the next available source and shows it in Settings.
 
 **Use for this session only** is explicit: closing Odessy forgets that value.
-Removing a session key reveals any underlying saved OS-store key; status reports
-the resulting source. Secure storage failures never produce a plaintext file.
+Removing a session key reveals the next available source in precedence order;
+an environment credential can take priority over a legacy saved OS-store key.
+Settings reports the resulting source. Secure storage failures never produce a
+plaintext file.
 
 ## Packaging and review
 

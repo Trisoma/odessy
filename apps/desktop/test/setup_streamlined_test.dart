@@ -2,10 +2,23 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/app/setup/setup_application.dart';
 
 import 'setup_flow_fakes.dart';
 import 'setup_usability_test.dart' show FakeAck, FakePicker;
+
+class MissingVoiceWheelsBackend extends FlowBackend {
+  @override
+  Future<SetupReply> execute(SetupRequest request) async {
+    if (request.parameters['action'] == 'voice-python-install' &&
+        FlowBackend.featuresOf(request).contains('voice')) {
+      requests.add(request);
+      throw StateError('Voice wheels have not been downloaded');
+    }
+    return super.execute(request);
+  }
+}
 
 /// Drives the packaged setup surface the way a person would: continue, continue,
 /// continue. The review is expected to have run by the time the third tap settles.
@@ -49,6 +62,135 @@ Future<void> _openVoiceStep(WidgetTester tester, FlowBackend backend) async {
 }
 
 void main() {
+  testWidgets('missing voice wheels do not block installed wake support',
+      (tester) async {
+    final backend = MissingVoiceWheelsBackend();
+    await _openVoiceStep(tester, backend);
+    await tester.tap(find.byKey(const Key('setup-voice-toggle')));
+    await tester.pumpAndSettle();
+    for (final field in {
+      'setup-whisper-bin': 'C:/voice/whisper-cli.exe',
+      'setup-whisper-model': 'C:/voice/whisper.bin',
+      'setup-kokoro-model': 'C:/voice/kokoro.onnx',
+      'setup-kokoro-voices': 'C:/voice/voices.bin',
+    }.entries) {
+      final input = find.byKey(Key(field.key));
+      await tester.ensureVisible(input);
+      await tester.enterText(input, field.value);
+    }
+    await _toggleWake(tester);
+    await tester.ensureVisible(find.text('Continue'));
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Install'));
+    for (var i = 0; i < 80; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(backend.wakeDependenciesInstalled, isTrue);
+    expect(backend.voiceDependenciesInstalled, isFalse);
+    expect(find.textContaining('Voice wheels have not been downloaded'),
+        findsOneWidget);
+    expect(find.text('Install speech dependencies'), findsOneWidget);
+    expect(find.textContaining('Wake-word detection is ready'), findsOneWidget);
+  });
+  testWidgets('unrequested wake plan failures stay out of the review',
+      (tester) async {
+    final backend = FlowBackend()
+      ..failActions = {'voice-plan'}
+      ..failureReason = 'wake manifest missing';
+    await _openReview(tester, backend);
+    expect(find.textContaining('wake manifest missing'), findsNothing);
+    expect(
+        tester
+            .widget<FilledButton>(find.widgetWithText(FilledButton, 'Install'))
+            .onPressed,
+        isNotNull);
+  });
+
+  testWidgets('execution role excludes an already installed wake model',
+      (tester) async {
+    final backend = FlowBackend()..wakeInstalled = true;
+    await _openVoiceStep(tester, backend);
+    await tester.tap(find.text('Back'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Custom setup'));
+    await tester.tap(find.text('Custom setup'));
+    await tester.pumpAndSettle();
+    final role = find.byType(DropdownButtonFormField<String>);
+    await tester.ensureVisible(role);
+    await tester.tap(role);
+    await tester.pumpAndSettle();
+    await tester
+        .tap(find.text('Execution node owned by another coordinator').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    expect(find.text('Model installed'), findsNothing);
+    await tester.tap(find.text('Install'));
+    await tester.pumpAndSettle();
+    final install = backend.requests
+        .firstWhere((r) => r.parameters['action'] == 'package-install');
+    expect(
+        (install.parameters['selection'] as Map).containsKey('voice'), isFalse);
+    expect(
+        backend.requests
+            .where((r) => r.parameters['action'] == 'voice-python-install'),
+        isEmpty);
+    expect(
+        backend.requests
+            .where((r) => r.parameters['action'] == 'voice-install'),
+        isEmpty);
+  });
+
+  testWidgets('wake download cancellation stops the pending runtime install',
+      (tester) async {
+    final backend = FlowBackend()..pendingWakeInstall = Completer();
+    await _openVoiceStep(tester, backend);
+    await _toggleWake(tester);
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Install'));
+    await tester.pump();
+    expect(find.text('Cancel installation'), findsOneWidget);
+    await tester.tap(find.text('Cancel installation'));
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(backend.pendingWakeInstall!.isCompleted, isTrue);
+    expect(
+        backend.requests
+            .where((r) => r.parameters['action'] == 'package-install'),
+        isEmpty);
+  });
+
+  testWidgets(
+      'opting out of an existing wake model omits saved wake configuration and dependencies',
+      (tester) async {
+    final backend = FlowBackend()..wakeInstalled = true;
+    await _openVoiceStep(tester, backend);
+    final toggle = find.byKey(const Key('setup-wake-download'));
+    expect(tester.widget<SwitchListTile>(toggle).value, isTrue);
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pump();
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Install'));
+    await tester.pumpAndSettle();
+    final install = backend.requests
+        .firstWhere((r) => r.parameters['action'] == 'package-install');
+    final selection = install.parameters['selection'] as Map;
+    expect((selection['voice'] as Map).containsKey('wake_model'), isFalse);
+    expect(
+        backend.requests
+            .where((r) => r.parameters['action'] == 'voice-python-install'),
+        isEmpty);
+    expect(backend.wakeInstalled, isTrue,
+        reason: 'opting out preserves downloaded files');
+  });
+
   testWidgets('user can cancel an in-progress voice download', (tester) async {
     final backend = FlowBackend()..pendingVoiceInstall = Completer();
     await _openVoiceStep(tester, backend);

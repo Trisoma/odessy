@@ -86,6 +86,8 @@ class PackageSetupController extends ChangeNotifier {
   Timer? _poll;
   bool _polling = false;
   int _epoch = 0;
+  int _requestEpoch = 0;
+  Future<void> _requests = Future<void>.value();
   bool _disposed = false;
 
   double? get progress =>
@@ -114,7 +116,7 @@ class PackageSetupController extends ChangeNotifier {
 
   Future<Json> call(String action,
       {String? confirm, Json parameters = const {}}) async {
-    final reply = await backend.execute(SetupRequest(
+    final reply = await _execute(SetupRequest(
         id: 'package-${DateTime.now().microsecondsSinceEpoch}',
         operation: 'manage',
         selection: const {},
@@ -131,6 +133,25 @@ class PackageSetupController extends ChangeNotifier {
       throw StateError(reply.reason.isNotEmpty ? reply.reason : reply.error);
     }
     return reply.result;
+  }
+
+  // LocalSetupBackend is single-flight. Read-only checks and foreground actions
+  // share its queue; the separate progress backend remains independently usable.
+  Future<SetupReply> _execute(SetupRequest request) {
+    final epoch = _requestEpoch;
+    final operation = _requests.then((_) async {
+      if (_disposed || epoch != _requestEpoch) {
+        throw StateError('Setup operation was cancelled.');
+      }
+      final reply = await backend.execute(request);
+      if (_disposed || epoch != _requestEpoch) {
+        throw StateError('Setup operation was cancelled.');
+      }
+      return reply;
+    });
+    _requests =
+        operation.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return operation;
   }
 
   void _log(String message) {
@@ -262,9 +283,9 @@ class PackageSetupController extends ChangeNotifier {
       }
       status = 'No automatic retry. Inspect before recovery.';
     } finally {
-      _stopPolling();
-      _stopTicker();
       if (!_disposed && epoch == _epoch) {
+        _stopPolling();
+        _stopTicker();
         busy = false;
         notifyListeners();
       }
@@ -297,13 +318,17 @@ class PackageSetupController extends ChangeNotifier {
   /// testable without a live engine; the view never calls it directly.
   @visibleForTesting
   Future<void> readProgress() async {
+    final epoch = _epoch;
     try {
-      final reply = await progressBackend.execute(SetupRequest(
+      final request = SetupRequest(
           id: 'progress-${DateTime.now().microsecondsSinceEpoch}',
           operation: 'manage',
           selection: const {},
-          parameters: {'action': 'package-status', 'root': root}));
-      if (!reply.ok || _disposed) return;
+          parameters: {'action': 'package-status', 'root': root});
+      final reply = await (identical(progressBackend, backend)
+          ? _execute(request)
+          : progressBackend.execute(request));
+      if (!reply.ok || _disposed || epoch != _epoch) return;
       final value = reply.result;
       final nextStage = (value['stage'] as String?) ?? '';
       final done = (value['steps_done'] as num?)?.toInt() ?? 0;
@@ -330,7 +355,7 @@ class PackageSetupController extends ChangeNotifier {
     reason = '';
     notifyListeners();
     try {
-      final reply = await backend.execute(SetupRequest(
+      final reply = await _execute(SetupRequest(
           id: 'discover-${DateTime.now().microsecondsSinceEpoch}',
           operation: 'discover',
           selection: {'role': (selection['role'] as String?) ?? 'combined'},
@@ -354,21 +379,27 @@ class PackageSetupController extends ChangeNotifier {
   }
 
   Future<void> cancel() async {
-    if (!busy) return;
     interrupted = true;
     review = const {};
     ++_epoch;
+    ++_requestEpoch;
     _stopPolling();
+    _stopTicker();
     _log('Cancellation requested; no further steps will start');
     _advanceStages(cancelled: true);
     await backend.cancel();
-    await progressBackend.cancel();
-    if (!_disposed) notifyListeners();
+    if (!identical(progressBackend, backend)) await progressBackend.cancel();
+    if (!_disposed) {
+      busy = false;
+      notifyListeners();
+    }
   }
 
   Future<void> close() async {
     _disposed = true;
+    ++_requestEpoch;
     _stopPolling();
+    _stopTicker();
     await backend.cancel();
     await backend.close();
     if (!identical(progressBackend, backend)) {
@@ -380,6 +411,7 @@ class PackageSetupController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    ++_requestEpoch;
     _stopPolling();
     _stopTicker();
     super.dispose();

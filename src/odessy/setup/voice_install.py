@@ -20,12 +20,14 @@ are user-owned data that survive an upgrade, rollback or uninstall.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager, ExitStack
 import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -430,12 +432,70 @@ def _plan_id(available):
     return digest.hexdigest()[:32] if available else ''
 
 
+@contextmanager
+def _operation_locks(roots, *, cancelled=lambda: False):
+    """Serialize writers across processes, including shared wake roots.
+
+    Lock files stay in place: unlinking one could let another process lock a
+    different inode. ExitStack releases earlier locks if later acquisition fails.
+    Readers use atomic JSON snapshots and do not need to hold these locks.
+    """
+    with ExitStack() as stack:
+        for root in sorted({Path(root).resolve() for root in roots}, key=str):
+            if cancelled():
+                raise ValueError('cancelled')
+            root.mkdir(parents=True, exist_ok=True)
+            stream = stack.enter_context((root / '.voice-install.lock').open('a+b'))
+            if not stream.seek(0, 2):
+                stream.write(b'0')
+                stream.flush()
+            stream.seek(0)
+            try:
+                if os.name == 'nt':
+                    import msvcrt
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                    def unlock(stream=stream):
+                        stream.seek(0)
+                        msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    def unlock(stream=stream):
+                        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                raise ValueError('another speech installation is already running; retry when it finishes') from None
+            stack.callback(unlock)
+        if cancelled():
+            raise ValueError('cancelled')
+        yield
+
+
+def _temporary(path):
+    """Reserve a unique sibling that only this operation may clean up."""
+    descriptor, name = tempfile.mkstemp(prefix=path.name + '.', suffix='.partial', dir=path.parent)
+    os.close(descriptor)
+    return Path(name)
+
+
+def _publish(temporary, target):
+    # Windows rename refuses existing destinations, including on filesystems
+    # without hard links. POSIX rename would replace them, so use a hard link.
+    if os.name == 'nt':
+        os.rename(temporary, target)
+        return
+    os.link(temporary, target)
+    temporary.unlink()
+
+
 def _write_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + '.partial')
-    temporary.write_text(json.dumps(value, indent=2), encoding='utf-8')
-    os.replace(temporary, path)
+    temporary = _temporary(path)
+    try:
+        temporary.write_text(json.dumps(value, indent=2), encoding='utf-8')
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _progress(root, state, *, message, downloaded=0, total=0, current=''):
@@ -692,6 +752,16 @@ def python_status(voice_root, *, install_root=None, feature='voice', runner=None
 # ---------------------------------------------------------------------- install
 
 def install(plan_value, *, confirm, cancelled=lambda: False):
+    """Download verified artifacts while holding every shared destination lock."""
+    if confirm != plan_value.get('plan_id'):
+        raise ValueError('review the exact voice installation before installing it')
+    roots = [Path(plan_value['root'])]
+    roots.extend(_base(roots[0], entry) for entry in plan_value.get('entries', []))
+    with _operation_locks(roots):
+        return _install_locked(plan_value, confirm=confirm, cancelled=cancelled)
+
+
+def _install_locked(plan_value, *, confirm, cancelled=lambda: False):
     """Download, verify and place every offered artifact.
 
     A stale plan, a mismatch, a short download and an existing different file all
@@ -866,13 +936,13 @@ def _install_one(root, entry, *, cancelled):
             return {'preserved': True, 'path': str(target)}
         raise ValueError(f'{target.name} already exists with different contents; '
                          'it was not replaced')
-    partial = target.with_name(target.name + '.partial')
+    partial = _temporary(target)
     try:
         _download(entry, partial, root, cancelled)
         digest, size = _digest_file(partial)
         if size != entry['size_bytes'] or digest != entry['sha256']:
             raise ValueError(f'{entry["label"]} failed verification and was discarded')
-        os.replace(partial, target)
+        _publish(partial, target)
     except BaseException:
         if partial.is_file():
             partial.unlink(missing_ok=True)
@@ -885,7 +955,7 @@ def _install_archive(root, entry, *, cancelled):
     root = Path(root)
     if _present(root, entry):
         return {'preserved': True, 'path': str(root / entry['executable'])}
-    partial = root / (entry['file'] + '.partial')
+    partial = _temporary(root / entry['file'])
     try:
         _download(entry, partial, root, cancelled)
         digest, size = _digest_file(partial)
@@ -917,9 +987,12 @@ def _install_archive(root, entry, *, cancelled):
                     continue
                 raise ValueError(f'{destination.name} already exists with different contents; '
                                  'it was not replaced')
-            temporary = destination.with_name(destination.name + '.partial')
-            temporary.write_bytes(data)
-            os.replace(temporary, destination)
+            temporary = _temporary(destination)
+            try:
+                temporary.write_bytes(data)
+                _publish(temporary, destination)
+            finally:
+                temporary.unlink(missing_ok=True)
     finally:
         # Success or failure, the downloaded archive itself is never kept: only
         # the extracted members belong in the voice directory.
@@ -1006,6 +1079,14 @@ def requirements_text(entries):
 
 
 def python_install(install_root, voice_root, *, entries=None, payload=None,
+                   cancelled=lambda: False, runner=None, features=None):
+    """Install hash-locked cached wheels without racing another speech writer."""
+    with _operation_locks([Path(voice_root)], cancelled=cancelled):
+        return _python_install_locked(install_root, voice_root, entries=entries,
+            payload=payload, cancelled=cancelled, runner=runner, features=features)
+
+
+def _python_install_locked(install_root, voice_root, *, entries=None, payload=None,
                    cancelled=lambda: False, runner=None, features=None):
     """Install the cached wheels into the installed application runtime.
 

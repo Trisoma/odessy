@@ -78,9 +78,9 @@ RELEASES = [
     },
 ]
 
-#: The Python side of the voice stack, resolved for CPython 3.12 / win_amd64.
-#: `pip download --only-binary=:all: --platform win_amd64 --python-version 312
-#: --implementation cp --abi cp312` produced this set; the licensing column
+#: The Python side of the voice stack, resolved for CPython 3.11 / win_amd64.
+#: `pip download --only-binary=:all: --platform win_amd64 --python-version 311
+#: --implementation cp --abi cp311` produced this set; the licensing column
 #: records what ships inside each wheel.
 #: Which opt-in feature(s) each wheel serves. A wheel that both need is listed
 #: under both, so selecting either feature fetches exactly what it needs.

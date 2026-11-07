@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 import zipfile
@@ -161,7 +162,7 @@ def test_a_stale_plan_is_refused(tmp_path):
     plan = voice_install.plan(manifest=entries, root=tmp_path / 'voice')
     with pytest.raises(ValueError):
         voice_install.install({**plan, 'entries': entries}, confirm='not-the-plan')
-    assert not (tmp_path / 'voice' / 'model.bin').exists()
+    assert not (tmp_path / 'voice').exists()
 
 
 def test_a_wrong_digest_leaves_nothing_behind(tmp_path):
@@ -286,8 +287,9 @@ def test_wheels_are_cached_for_the_installed_runtime(tmp_path):
 def _installed_runtime(tmp_path: Path) -> Path:
     root = tmp_path / 'App'
     version = 'a' * 32
-    (root / 'versions' / version / 'Scripts').mkdir(parents=True)
-    interpreter = root / 'versions' / version / 'Scripts' / 'python.exe'
+    relative = Path('Scripts/python.exe') if os.name == 'nt' else Path('bin/python3')
+    interpreter = root / 'versions' / version / relative
+    interpreter.parent.mkdir(parents=True)
     interpreter.write_bytes(b'MZ')
     (root / 'installation.json').write_text(
         json.dumps({'schema_version': 1, 'active': version}), encoding='utf-8')
@@ -625,3 +627,85 @@ def test_the_wake_directory_mirrors_the_runtime_default(monkeypatch):
     monkeypatch.delenv('ODESSY_WAKE_MODEL', raising=False)
     assert voice_install.wake_root() == voice_assets.wake_directory()
     assert voice_install.wake_root() == assets.asset_dir()
+
+
+@pytest.mark.parametrize("shared_location", ["voice", "wake"])
+def test_another_process_holds_a_shared_asset_root(tmp_path, shared_location, monkeypatch):
+    import os
+    import sys
+    monkeypatch.delenv('PYTHONPATH', raising=False)
+    shared = tmp_path / shared_location
+    code = ('import sys; from pathlib import Path; sys.path.insert(0, sys.argv[2]); '
+            'from odessy.setup.voice_install import _operation_locks; '
+            'lock = _operation_locks([Path(sys.argv[1])]); lock.__enter__(); '
+            'print("locked", flush=True); sys.stdin.readline()')
+    source = str(Path(voice_install.__file__).resolve().parents[2])
+    child = subprocess.Popen([sys.executable, '-c', code, str(shared), source],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True, env=os.environ.copy())
+    try:
+        assert child.stdout.readline().strip() == 'locked'
+        name = 'wake.onnx' if shared_location == 'wake' else 'model.bin'
+        entry = (_wake_artifact(tmp_path, name, b'model')
+                 if shared_location == 'wake' else _artifact(tmp_path, name, b'model'))
+        entries = voice_install.load_manifest(_manifest(tmp_path, [entry]))
+        plan = voice_install.plan(manifest=entries,
+            root=tmp_path / ('other-voice' if shared_location == 'wake' else 'voice'))
+        with pytest.raises(ValueError, match='already running'):
+            voice_install.install({**plan, 'entries': entries}, confirm=plan['plan_id'])
+        assert not (shared / name).exists()
+    finally:
+        child.communicate('done\n', timeout=10)
+
+
+def test_download_preserves_other_operation_partial_and_a_new_destination(tmp_path, monkeypatch):
+    entry = _artifact(tmp_path, 'model.bin', b'verified')
+    entries = voice_install.load_manifest(_manifest(tmp_path, [entry]))
+    root = tmp_path / 'voice'
+    root.mkdir()
+    foreign = root / 'model.bin.partial'
+    foreign.write_bytes(b'other operation')
+    original = voice_install._download
+    def download(*args):
+        original(*args)
+        (root / 'model.bin').write_bytes(b'user changed file')
+    monkeypatch.setattr(voice_install, '_download', download)
+    plan = voice_install.plan(manifest=entries, root=root)
+    with pytest.raises((ValueError, FileExistsError)):
+        voice_install.install({**plan, 'entries': entries}, confirm=plan['plan_id'])
+    assert (root / 'model.bin').read_bytes() == b'user changed file'
+    assert foreign.read_bytes() == b'other operation'
+
+
+def test_locks_release_after_cancellation_and_partial_acquisition(tmp_path):
+    roots = [tmp_path / 'a', tmp_path / 'b']
+    with voice_install._operation_locks([roots[1]]):
+        with pytest.raises(ValueError, match='already running'):
+            with voice_install._operation_locks(roots):
+                pass
+        with voice_install._operation_locks([roots[0]]):
+            pass
+    with pytest.raises(ValueError, match='cancelled'):
+        with voice_install._operation_locks(roots, cancelled=lambda: True):
+            pass
+    with voice_install._operation_locks(roots):
+        pass
+
+
+def test_json_writes_do_not_touch_another_operations_temporary(tmp_path, monkeypatch):
+    target = tmp_path / 'progress.json'
+    foreign = tmp_path / 'progress.json.partial'
+    foreign.write_bytes(b'other operation')
+    original = voice_install.os.replace
+    def fail_replace(source, destination):
+        assert Path(source) != foreign
+        raise OSError('interrupted publication')
+    monkeypatch.setattr(voice_install.os, 'replace', fail_replace)
+    with pytest.raises(OSError):
+        voice_install._write_json(target, {'state': 'ready'})
+    assert foreign.read_bytes() == b'other operation'
+    assert list(tmp_path.glob('*.partial')) == [foreign]
+    monkeypatch.setattr(voice_install.os, 'replace', original)
+    voice_install._write_json(target, {'state': 'ready'})
+    assert json.loads(target.read_text()) == {'state': 'ready'}
+    assert foreign.read_bytes() == b'other operation'
