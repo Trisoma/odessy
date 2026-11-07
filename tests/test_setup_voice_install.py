@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 import zipfile
 
@@ -48,8 +49,46 @@ def _manifest(tmp_path: Path, artifacts: list) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def _windows(monkeypatch):
+def _windows(monkeypatch, tmp_path):
     monkeypatch.setattr(voice_install, '_platform', lambda: ('windows', 'x86_64'))
+    # Never write into the developer's real wake-asset directory.
+    monkeypatch.setenv('ODESSY_WAKE_ASSET_DIR', str(tmp_path / 'wake'))
+
+
+def _wake_artifact(cache: Path, name: str, data: bytes, **overrides) -> dict:
+    entry = _artifact(cache, name, data, field='wake_model', location='wake',
+                      features=['wake'], license='CC-BY-NC-SA-4.0',
+                      version='openWakeWord v0.5.1')
+    entry.update(overrides)
+    return entry
+
+
+def _wheel_artifact(cache: Path, filename: str, data: bytes, features: list) -> dict:
+    source = _write(cache / 'source' / filename, data)
+    return {
+        'id': f'py-{filename.split("-")[0]}',
+        'label': filename,
+        'kind': 'wheel',
+        'file': filename,
+        'url': source.as_uri(),
+        'sha256': _digest(source),
+        'size_bytes': source.stat().st_size,
+        'license': 'MIT',
+        'platform': 'windows',
+        'architecture': 'x86_64',
+        'features': features,
+    }
+
+
+class _OkResult:
+    returncode = 0
+    stdout = 'ok'
+    stderr = ''
+
+
+def _import_ok(argv, **_kwargs):
+    """Stands in for an interpreter that can import the feature's modules."""
+    return _OkResult()
 
 
 def _zip(cache: Path, members: dict, *, prefix: str = 'Release/', name='whisper.zip') -> Path:
@@ -414,3 +453,175 @@ def test_the_bridge_uses_its_own_voice_root_and_ignores_a_caller_path(tmp_path, 
     fields = {item['field'] for item in plan['available'] if item['kind'] != 'wheel'}
     assert fields == set(voice_install.COMPONENT_FIELDS)
     assert any(item['kind'] == 'wheel' for item in plan['available'])
+
+
+# ----------------------------------------------------------------- wake word
+
+def test_a_wake_plan_offers_only_the_wake_feature(tmp_path):
+    entries = voice_install.load_manifest(_manifest(tmp_path, [
+        _artifact(tmp_path, 'model.bin', b'weights'),
+        _wake_artifact(tmp_path, 'hey_jarvis_v0.1.onnx', b'wake-weights'),
+    ]))
+    wake = voice_install.plan(manifest=entries, root=tmp_path / 'voice', features=['wake'])
+    assert [item['id'] for item in wake['available']] == ['hey_jarvis_v0-1-onnx']
+    assert wake['features'] == ['wake']
+    assert wake['wake_root'] == str(tmp_path / 'wake')
+    voice = voice_install.plan(manifest=entries, root=tmp_path / 'voice', features=['voice'])
+    assert [item['id'] for item in voice['available']] == ['model-bin']
+    # A plan is bound to its feature set, so the wrong selection cannot install it.
+    with pytest.raises(ValueError):
+        voice_install.install({**wake, 'entries': entries}, confirm=voice['plan_id'])
+
+
+def test_an_unknown_feature_is_refused(tmp_path):
+    entries = voice_install.load_manifest(
+        _manifest(tmp_path, [_artifact(tmp_path, 'model.bin', b'weights')]))
+    with pytest.raises(ValueError, match='unsupported speech feature'):
+        voice_install.plan(manifest=entries, root=tmp_path / 'voice', features=['wakeword'])
+
+
+def test_the_wake_model_lands_where_the_runtime_reads_it(tmp_path):
+    from odessy.voice import assets
+
+    entries = voice_install.load_manifest(_manifest(tmp_path, [
+        _wake_artifact(tmp_path, 'hey_jarvis_v0.1.onnx', b'wake-weights')]))
+    root = tmp_path / 'voice'
+    plan = voice_install.plan(manifest=entries, root=root, features=['wake'])
+    result = voice_install.install({**plan, 'entries': entries}, confirm=plan['plan_id'])
+    model = tmp_path / 'wake' / 'hey_jarvis_v0.1.onnx'
+    assert model.read_bytes() == b'wake-weights'
+    assert result['paths'] == {'wake_model': str(model)}
+    # The runtime's own loader must see it as verified, or the detector would
+    # refuse a model the installer just claimed to have installed.
+    recorded = assets.load_manifest(tmp_path / 'wake')
+    assert recorded == {'hey_jarvis_v0.1.onnx': True}
+    manifest = json.loads((tmp_path / 'wake' / 'assets.json').read_text(encoding='utf-8'))
+    record = manifest['assets'][0]
+    assert record['license'] == 'CC-BY-NC-SA-4.0'
+    assert record['version'] == 'openWakeWord v0.5.1'
+    assert record['sha256_observed'] == record['sha256']
+
+
+def test_writing_the_wake_manifest_keeps_a_users_other_models(tmp_path):
+    wake = tmp_path / 'wake'
+    wake.mkdir()
+    (wake / 'assets.json').write_text(json.dumps({'assets': [
+        {'name': 'custom_model.onnx', 'verified': True, 'sha256': 'a' * 64}]}), encoding='utf-8')
+    entries = voice_install.load_manifest(_manifest(tmp_path, [
+        _wake_artifact(tmp_path, 'hey_jarvis_v0.1.onnx', b'wake-weights')]))
+    plan = voice_install.plan(manifest=entries, root=tmp_path / 'voice', features=['wake'])
+    voice_install.install({**plan, 'entries': entries}, confirm=plan['plan_id'])
+    names = [item['name'] for item in
+             json.loads((wake / 'assets.json').read_text(encoding='utf-8'))['assets']]
+    assert 'custom_model.onnx' in names and 'hey_jarvis_v0.1.onnx' in names
+
+
+def test_wake_readiness_needs_the_model_and_openwakeword(tmp_path):
+    entries = voice_install.load_manifest(_manifest(tmp_path, [
+        _wake_artifact(tmp_path, 'hey_jarvis_v0.1.onnx', b'wake-weights'),
+        _wheel_artifact(tmp_path, 'openwakeword-0.6.0-py3-none-any.whl', b'PK', ['wake']),
+    ]))
+    root = tmp_path / 'voice'
+    plan = voice_install.plan(manifest=entries, root=root, features=['wake'])
+    voice_install.install({**plan, 'entries': entries}, confirm=plan['plan_id'])
+
+    # Model present, but nothing installed into a runtime yet.
+    pending = voice_install.status(manifest=entries, root=root, features=['wake'])
+    assert pending['wake']['ready'] is False
+    assert pending['readiness'] == {'wake': False}
+    assert 'not ready' in pending['wake']['message']
+
+    installed = voice_install.status(manifest=entries, root=root, features=['wake'],
+                                     install_root=_installed_runtime(tmp_path),
+                                     runner=_import_ok)
+    assert installed['wake']['ready'] is True
+    assert installed['readiness'] == {'wake': True}
+    assert installed['ready'] is True
+
+
+def test_wake_readiness_requires_loading_the_detector(tmp_path):
+    entries = voice_install.load_manifest(_manifest(tmp_path, [
+        _wake_artifact(tmp_path, 'hey_jarvis_v0.1.onnx', b'wake-weights'),
+        _wheel_artifact(tmp_path, 'openwakeword-0.6.0-py3-none-any.whl', b'PK', ['wake']),
+    ]))
+    root = tmp_path / 'voice'
+    plan = voice_install.plan(manifest=entries, root=root, features=['wake'])
+    voice_install.install({**plan, 'entries': entries}, confirm=plan['plan_id'])
+
+    def missing_resources(command, **kwargs):
+        if 'OpenWakeWordDetector' in ' '.join(command):
+            return subprocess.CompletedProcess(command, 1, '', 'missing model resources')
+        return _import_ok(command, **kwargs)
+
+    report = voice_install.status(manifest=entries, root=root, features=['wake'],
+                                  install_root=_installed_runtime(tmp_path),
+                                  runner=missing_resources)
+    assert report['readiness']['wake'] is False
+    assert 'not ready' in report['wake']['message']
+
+
+def test_a_tampered_wake_model_is_an_error_not_readiness(tmp_path):
+    entries = voice_install.load_manifest(_manifest(tmp_path, [
+        _wake_artifact(tmp_path, 'hey_jarvis_v0.1.onnx', b'wake-weights')]))
+    root = tmp_path / 'voice'
+    plan = voice_install.plan(manifest=entries, root=root, features=['wake'])
+    voice_install.install({**plan, 'entries': entries}, confirm=plan['plan_id'])
+    (tmp_path / 'wake' / 'hey_jarvis_v0.1.onnx').write_bytes(b'swapped')
+    report = voice_install.status(manifest=entries, root=root, features=['wake'])
+    assert report['components'][0]['state'] == 'unverified'
+    assert report['severity'] == 'error' and report['wake']['ready'] is False
+    replanned = voice_install.plan(manifest=entries, root=root, features=['wake'])
+    assert replanned['nothing_to_do'] is False
+
+
+def test_a_wake_only_install_installs_only_the_wake_wheels(tmp_path):
+    entries = voice_install.load_manifest(_manifest(tmp_path, [
+        _wake_artifact(tmp_path, 'hey_jarvis_v0.1.onnx', b'wake-weights'),
+        _wheel_artifact(tmp_path, 'openwakeword-0.6.0-py3-none-any.whl', b'wake-wheel', ['wake']),
+        _wheel_artifact(tmp_path, 'kokoro_onnx-0.6.1-py3-none-any.whl', b'voice-wheel', ['voice']),
+    ]))
+    root = tmp_path / 'voice'
+    plan = voice_install.plan(manifest=entries, root=root, features=['wake'])
+    voice_install.install({**plan, 'entries': entries}, confirm=plan['plan_id'])
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = 'ok'
+        stderr = ''
+
+    def runner(argv, **_kwargs):
+        calls.append(argv)
+        return Result()
+
+    result = voice_install.python_install(_installed_runtime(tmp_path), root, entries=entries,
+                                          features=['wake'], runner=runner)
+    assert result['verified'] is True and result['features'] == ['wake']
+    requirement = (root / 'wheels' / voice_install.REQUIREMENTS_NAME).read_text(encoding='utf-8')
+    assert 'openwakeword==0.6.0' in requirement
+    assert 'kokoro_onnx' not in requirement
+    assert 'openwakeword' in ' '.join(calls[0]) or '--require-hashes' in calls[0]
+
+
+def test_the_shipped_wake_pin_matches_the_runtime_table():
+    from odessy.voice.assets import WAKE_ASSETS
+
+    entries = voice_install.load_manifest(voice_install.manifest_path())
+    wake = [entry for entry in entries if entry['location'] == 'wake']
+    assert len(wake) == len(WAKE_ASSETS)
+    for entry, asset in zip(wake, WAKE_ASSETS):
+        assert entry['file'] == asset.name
+        assert entry['sha256'] == asset.sha256
+        assert entry['license'] == asset.license
+        assert entry['features'] == ('wake',)
+        assert entry['size_bytes'] > 0
+
+
+def test_the_wake_directory_mirrors_the_runtime_default(monkeypatch):
+    from odessy.setup import voice_assets
+    from odessy.voice import assets
+
+    monkeypatch.delenv('ODESSY_WAKE_ASSET_DIR', raising=False)
+    monkeypatch.delenv('ODESSY_WAKE_MODEL', raising=False)
+    assert voice_install.wake_root() == voice_assets.wake_directory()
+    assert voice_install.wake_root() == assets.asset_dir()

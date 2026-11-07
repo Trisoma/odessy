@@ -99,6 +99,17 @@ class _SetupApplicationState extends State<SetupApplication> {
   bool _voicePolling = false;
   double? voiceProgress;
 
+  // The wake word is its own opt-in: a different model, a non-commercial
+  // licence, and a directory outside the voice components.
+  Json wakePlan = const {};
+  Json wakeState = const {};
+  bool wakeRequested = false, wakePlanLoading = false, installingWake = false;
+  bool wakeInstalled = false;
+  String wakeError = '', wakeNotice = '', wakeModelPath = '';
+  Timer? _wakePoll;
+  bool _wakePolling = false;
+  double? wakeProgress;
+
   PackageSetupController get c => controller;
 
   /// The State's own context sits above the MaterialApp, so theme lookups here
@@ -150,6 +161,10 @@ class _SetupApplicationState extends State<SetupApplication> {
     setState(() {});
     if (widget.mode == 'setup') {
       unawaited(_refreshVoiceState());
+      unawaited(_refreshWakeState());
+      // Planned up front and offline: an already-installed model arrives chosen,
+      // and the step must be able to carry on without a toggle to fetch a plan.
+      unawaited(_loadWakePlan());
     }
     if (widget.mode == 'manage' || widget.mode == 'uninstall') {
       _openManagement(reviewUninstall: widget.mode == 'uninstall');
@@ -208,6 +223,9 @@ class _SetupApplicationState extends State<SetupApplication> {
               'kokoro_model': kokoroModel.text.trim(),
               'kokoro_voices': kokoroVoices.text.trim(),
             },
+            // Recorded only once the model exists, so the saved configuration
+            // never points at a file that is not there.
+            if (wakeModelPath.isNotEmpty) 'wake_model': wakeModelPath,
           },
       };
 
@@ -241,7 +259,9 @@ class _SetupApplicationState extends State<SetupApplication> {
     if (voicePlanLoading || c.busy) return;
     setState(() => voicePlanLoading = true);
     try {
-      final value = await c.call('voice-plan');
+      final value = await c.call('voice-plan', parameters: {
+        'features': ['voice']
+      });
       if (!mounted) return;
       setState(() {
         voicePlan = value;
@@ -260,8 +280,10 @@ class _SetupApplicationState extends State<SetupApplication> {
     try {
       // The installation root lets the helper check the interpreter that will
       // actually import the voice modules, rather than guessing from files.
-      final value = await c.call('voice-status',
-          parameters: {if (c.root.trim().isNotEmpty) 'install_root': c.root});
+      final value = await c.call('voice-status', parameters: {
+        'features': ['voice'],
+        if (c.root.trim().isNotEmpty) 'install_root': c.root,
+      });
       if (!mounted) return;
       setState(() => voiceState = value);
     } catch (_) {
@@ -275,25 +297,34 @@ class _SetupApplicationState extends State<SetupApplication> {
   /// installation completes and reports its own failure instead of blocking it.
   Future<void> _installVoiceDependencies() async {
     if (voiceDependenciesRunning || c.root.trim().isEmpty) return;
+    final features = <String>[
+      if (voice && _voiceComplete) 'voice',
+      if (wakeInstalled) 'wake',
+    ];
+    if (features.isEmpty) return;
     setState(() {
       voiceDependenciesRunning = true;
       voiceDependenciesError = '';
     });
     try {
-      final result = await c
-          .call('voice-python-install', parameters: {'install_root': c.root});
+      final result = await c.call('voice-python-install', parameters: {
+        'install_root': c.root,
+        'features': features,
+      });
       if (!mounted) return;
       setState(() {
         voiceDependencies = result;
         voiceDependenciesError = result['verified'] == true
             ? ''
-            : '${result['manual_step'] ?? 'Voice dependencies are not ready.'}';
+            : '${result['manual_step'] ?? 'The speech dependencies are not ready.'}';
       });
-      await _refreshVoiceState();
+      // Only the feature that was installed needs a fresh answer.
+      if (features.contains('voice')) await _refreshVoiceState();
+      if (features.contains('wake')) await _refreshWakeState();
     } catch (failure) {
       if (!mounted) return;
       setState(() => voiceDependenciesError =
-          'Voice dependencies could not be installed: ${failure.toString().replaceFirst('Bad state: ', '')} '
+          'The Python support for the speech options could not be installed: ${failure.toString().replaceFirst('Bad state: ', '')} '
               'You can retry, or keep using text only.');
     } finally {
       if (mounted) setState(() => voiceDependenciesRunning = false);
@@ -312,6 +343,7 @@ class _SetupApplicationState extends State<SetupApplication> {
             selection: const {},
             parameters: {
               'action': 'voice-status',
+              'features': ['voice'],
               if (c.context['payload_root'] is String)
                 'payload': c.context['payload_root'],
             }));
@@ -349,7 +381,10 @@ class _SetupApplicationState extends State<SetupApplication> {
     });
     _startVoicePolling();
     try {
-      final result = await c.call('voice-install', confirm: planId);
+      final result =
+          await c.call('voice-install', confirm: planId, parameters: {
+        'features': ['voice']
+      });
       if (!mounted) return false;
       final missing = result['missing'];
       final verified = result['verified'] == true;
@@ -426,6 +461,177 @@ class _SetupApplicationState extends State<SetupApplication> {
     _edit();
   }
 
+  // ---------------------------------------------------------------- wake word
+
+  Future<void> _loadWakePlan() async {
+    if (wakePlanLoading || c.busy) return;
+    setState(() => wakePlanLoading = true);
+    try {
+      final value = await c.call('voice-plan', parameters: {
+        'features': ['wake']
+      });
+      if (!mounted) return;
+      setState(() {
+        wakePlan = value;
+        wakeError = '';
+      });
+      // A plan with nothing pending means the model is already where the
+      // runtime reads it; that is a result, not an action to offer.
+      if (value['nothing_to_do'] == true) {
+        setState(() {
+          wakeInstalled = true;
+          wakeRequested = true;
+        });
+        await _refreshWakeState();
+      }
+    } catch (failure) {
+      if (!mounted) return;
+      setState(() => wakeError =
+          'The wake-word download could not be checked: ${failure.toString().replaceFirst('Bad state: ', '')}');
+    } finally {
+      if (mounted) setState(() => wakePlanLoading = false);
+    }
+  }
+
+  Future<void> _refreshWakeState() async {
+    try {
+      final value = await c.call('voice-status', parameters: {
+        'features': ['wake'],
+        if (c.root.trim().isNotEmpty) 'install_root': c.root,
+      });
+      if (!mounted) return;
+      final paths = value['paths'];
+      final installed = value['readiness'] is Map &&
+          (value['readiness'] as Map)['wake'] == true;
+      final path = paths is Map && paths['wake_model'] is String
+          ? paths['wake_model'] as String
+          : '';
+      // Captured before the rebuild: the form is only dirty when the path is news.
+      final previous = wakeModelPath;
+      setState(() {
+        wakeState = value;
+        if (installed) {
+          wakeInstalled = true;
+          // An already-installed model is worth showing without a toggle first.
+          wakeRequested = true;
+        }
+        if (path.isNotEmpty) wakeModelPath = path;
+      });
+      if (path.isNotEmpty && previous != path) _edit();
+    } catch (_) {
+      // Observational only; a missing record must not look like a failure.
+    }
+  }
+
+  void _startWakePolling() {
+    _wakePoll?.cancel();
+    _wakePoll = Timer.periodic(const Duration(milliseconds: 600), (_) async {
+      if (!installingWake || _wakePolling) return;
+      _wakePolling = true;
+      try {
+        final reply = await c.progressBackend.execute(SetupRequest(
+            id: 'wake-progress-${DateTime.now().microsecondsSinceEpoch}',
+            operation: 'manage',
+            selection: const {},
+            parameters: {
+              'action': 'voice-status',
+              'features': ['wake'],
+              if (c.context['payload_root'] is String)
+                'payload': c.context['payload_root'],
+            }));
+        if (!reply.ok) return;
+        final value = reply.result;
+        if (!mounted) return;
+        final progress = value['progress'];
+        final done =
+            progress is Map ? (progress['downloaded_bytes'] as num?) : null;
+        final total =
+            progress is Map ? (progress['total_bytes'] as num?) : null;
+        setState(() {
+          wakeState = value;
+          wakeProgress = done == null || total == null || total <= 0
+              ? null
+              : (done / total).clamp(0.0, 1.0).toDouble();
+        });
+      } catch (_) {
+        // Progress is advisory; installation reports any actual failure.
+      } finally {
+        _wakePolling = false;
+      }
+    });
+  }
+
+  Future<bool> _installWake() async {
+    // Toggling the switch asks for the plan; pressing Install is allowed to win
+    // that race, so the plan is awaited rather than assumed.
+    if (wakePlan.isEmpty) await _loadWakePlan();
+    if (!mounted) return false;
+    final planId = wakePlan['plan_id'];
+    if (installingWake || c.busy || planId is! String || planId.isEmpty) {
+      setState(() => wakeError =
+          'The wake-word download could not be planned. Try again, or skip the wake word.');
+      return false;
+    }
+    setState(() {
+      installingWake = true;
+      wakeError = '';
+      wakeProgress = 0;
+    });
+    _startWakePolling();
+    try {
+      final result =
+          await c.call('voice-install', confirm: planId, parameters: {
+        'features': ['wake']
+      });
+      if (!mounted) return false;
+      final missing = result['missing'];
+      final ready =
+          result['verified'] == true && (missing is! List || missing.isEmpty);
+      if (!ready) {
+        setState(() => wakeError =
+            'The wake-word model could not be verified. ${result['manual_step'] ?? 'Try again.'}');
+        return false;
+      }
+      final paths = result['paths'];
+      final path = paths is Map && paths['wake_model'] is String
+          ? paths['wake_model'] as String
+          : '';
+      if (path.isEmpty) {
+        setState(() => wakeError =
+            'The wake-word model was not placed where the runtime reads it. Try again.');
+        return false;
+      }
+      setState(() {
+        wakeInstalled = true;
+        wakeModelPath = path;
+        wakeError = '';
+        wakeNotice =
+            'The wake-word model is installed. Its Python support is added to Odessy after the installation.';
+      });
+      _edit();
+      await _refreshWakeState();
+      return true;
+    } catch (failure) {
+      if (!mounted) return false;
+      setState(() => wakeError =
+          'The wake-word model did not finish installing: ${failure.toString().replaceFirst('Bad state: ', '')} '
+              'You can try again, or skip the wake word and keep everything else.');
+      return false;
+    } finally {
+      _wakePoll?.cancel();
+      _wakePoll = null;
+      if (mounted) setState(() => installingWake = false);
+    }
+  }
+
+  void _continueWithoutWake() {
+    setState(() {
+      wakeRequested = false;
+      wakeError = '';
+      wakeNotice = '';
+    });
+  }
+
   void _openManagement({bool reviewUninstall = false}) {
     final controller = InstalledManageController(c.backend,
         spec: {'root': c.root},
@@ -469,6 +675,7 @@ class _SetupApplicationState extends State<SetupApplication> {
   @override
   void dispose() {
     _voicePoll?.cancel();
+    _wakePoll?.cancel();
     lifecycle.dispose();
     controller.removeListener(_refresh);
     controller.dispose();
@@ -885,7 +1092,151 @@ class _SetupApplicationState extends State<SetupApplication> {
                     child: Text(_voiceReadinessCopy(voiceState))),
             ],
           ])),
+      _wakeSection(),
     ]);
+  }
+
+  /// The wake word is offered separately from speech in and out: a different
+  /// model, a different directory, and a licence a user must actively accept.
+  Widget _wakeSection() => SetupSection(
+      title: 'Wake word (optional)',
+      description:
+          'Say the phrase to start a request hands-free. This is a separate pretrained model, not part of the voice components.',
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        SwitchListTile(
+            key: const Key('setup-wake-download'),
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Install the wake-word model'),
+            subtitle: Text(wakePlan['total_bytes'] is int &&
+                    wakePlan['total_bytes'] > 0
+                ? 'Hey Jarvis · about ${_megabytes(wakePlan['total_bytes'] as int)} to download.'
+                : wakeInstalled
+                    ? 'Hey Jarvis · already installed.'
+                    : 'Hey Jarvis · openWakeWord. Choose this to see the download size.'),
+            value: wakeRequested,
+            onChanged: c.busy || installingWake
+                ? null
+                : (value) {
+                    setState(() => wakeRequested = value);
+                    if (value) unawaited(_loadWakePlan());
+                  }),
+        if (wakeRequested) ...[
+          // The licence difference is the reason this is a separate switch; it
+          // is stated before the download, not buried in a notice afterwards.
+          const SetupMessage(
+              text:
+                  'The pretrained wake-word model is licensed CC BY-NC-SA 4.0.',
+              details:
+                  'It may not be used commercially. Odessy itself remains Apache-2.0, and this choice only affects this model file.'),
+          if (wakePlanLoading)
+            const Padding(
+                padding: EdgeInsets.only(top: OdessyTokens.spaceCompact),
+                child: LinearProgressIndicator()),
+          if (wakePlan['requires_internet'] == true)
+            Padding(
+                padding: const EdgeInsets.only(top: OdessyTokens.spaceCompact),
+                child: Text(
+                    'An internet connection is required. Nothing is downloaded until you start it.',
+                    style: _theme.textTheme.bodySmall)),
+          if (wakePlan['space_warning'] is String &&
+              (wakePlan['space_warning'] as String).isNotEmpty)
+            Padding(
+                padding: const EdgeInsets.only(top: OdessyTokens.spaceCompact),
+                child: Text('Free space: ${wakePlan['space_warning']}',
+                    style: _theme.textTheme.bodySmall
+                        ?.copyWith(color: _theme.colorScheme.error))),
+          if (wakePlan['available'] is List &&
+              (wakePlan['available'] as List).isNotEmpty) ...[
+            const SizedBox(height: OdessyTokens.spaceCompact),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              for (final item in (wakePlan['available'] as List)
+                  .whereType<Map>()
+                  .where((item) => item['kind'] != 'wheel'))
+                Chip(
+                    label: Text(
+                        '${item['label']} · ${_megabytes((item['size_bytes'] as num?)?.toInt() ?? 0)} · ${item['license']}')),
+            ]),
+            const SizedBox(height: OdessyTokens.spaceCompact),
+            if (wakePlan['nothing_to_do'] == true)
+              Text(
+                  'The wake-word model is already installed in ${wakePlan['wake_root'] ?? 'the wake-word folder'}.',
+                  style: _theme.textTheme.bodySmall)
+            else
+              Align(
+                  alignment: Alignment.centerLeft,
+                  child: OutlinedButton.icon(
+                      onPressed: installingWake || c.busy ? null : _installWake,
+                      icon: const Icon(Icons.record_voice_over_outlined,
+                          size: 18),
+                      label: Text(wakeInstalled
+                          ? 'Install the wake-word model again'
+                          : 'Download and install the wake-word model'))),
+          ],
+          if (wakePlan['unavailable'] is List &&
+              (wakePlan['unavailable'] as List).isNotEmpty)
+            Padding(
+                padding: const EdgeInsets.only(top: OdessyTokens.spaceCompact),
+                child: Text(
+                    'Not offered in this build: ${(wakePlan['unavailable'] as List).whereType<Map>().map((item) => '${item['label']} — ${item['reason']}').join('; ')}. Odessy works without a wake word.',
+                    style: _theme.textTheme.bodySmall)),
+          if (installingWake) ...[
+            const SizedBox(height: OdessyTokens.spaceCompact),
+            LinearProgressIndicator(value: wakeProgress),
+            const SizedBox(height: OdessyTokens.spaceCompact),
+            Text(_wakeProgressCopy(wakeState['progress'])),
+          ],
+          if (wakeNotice.isNotEmpty)
+            Padding(
+                padding: const EdgeInsets.only(top: OdessyTokens.spaceCompact),
+                child: Text(wakeNotice, style: _theme.textTheme.bodySmall)),
+          if (wakeError.isNotEmpty)
+            Padding(
+                padding: const EdgeInsets.only(top: OdessyTokens.spaceCompact),
+                child: SetupMessage(
+                    error: true,
+                    text: wakeError,
+                    actionLabel: wakePlan.isEmpty ? 'Try again' : null,
+                    onAction: wakePlan.isEmpty ? _loadWakePlan : null)),
+          if (wakeError.isNotEmpty && !installingWake)
+            Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                    onPressed: _continueWithoutWake,
+                    child: const Text('Skip the wake word'))),
+          if (wakeNotice.isEmpty && wakeError.isEmpty && wakeInstalled)
+            Padding(
+                padding: const EdgeInsets.only(top: OdessyTokens.spaceCompact),
+                child: Text(_wakeReadinessCopy(),
+                    style: _theme.textTheme.bodySmall)),
+        ],
+      ]));
+
+  String _wakeProgressCopy(Object? progress) {
+    if (progress is! Map) return 'Downloading the wake-word model…';
+    final message = progress['message'] is String
+        ? progress['message'] as String
+        : 'Downloading the wake-word model…';
+    final done = (progress['downloaded_bytes'] as num?)?.toInt() ?? 0;
+    final total = (progress['total_bytes'] as num?)?.toInt() ?? 0;
+    return total > 0
+        ? '$message · ${_megabytes(done)} of ${_megabytes(total)}'
+        : message;
+  }
+
+  /// Wake-word readiness comes from the helper's own gate, never from the file
+  /// simply existing: it needs the model *and* the package that loads it.
+  String _wakeReadinessCopy() {
+    final wake = wakeState['wake'];
+    if (wake is Map && wake['ready'] == true) {
+      return 'Wake-word detection is ready. The microphone is checked when the session starts.';
+    }
+    final reason = wake is Map && wake['message'] is String
+        ? wake['message'] as String
+        : 'The wake-word model is not ready yet.';
+    final hint = wake is Map && wake['fix_hint'] is String
+        ? wake['fix_hint'] as String
+        : '';
+    return '$reason ${hint.isEmpty ? '' : '$hint '}The microphone is checked when the session starts.';
   }
 
   static String _megabytes(int bytes) => bytes <= 0
@@ -938,6 +1289,33 @@ class _SetupApplicationState extends State<SetupApplication> {
     return 'Voice still needs attention: $names. Microphone and audio devices are checked separately.';
   }
 
+  /// What the installation will fetch, named per feature so the two opt-ins are
+  /// never rolled into one unexplained number.
+  String _downloadsCopy() {
+    final wake = wakeRequested && !wakeInstalled
+        ? _megabytes((wakePlan['total_bytes'] as num?)?.toInt() ?? 0)
+        : '';
+    final voiceBytes =
+        _megabytes((voicePlan['total_bytes'] as num?)?.toInt() ?? 0);
+    if (voiceDownloadRequested && wake.isNotEmpty) {
+      return 'Voice components will be downloaded ($voiceBytes), '
+          'and the wake-word model ($wake).';
+    }
+    if (voiceDownloadRequested) {
+      return 'Voice components will be downloaded ($voiceBytes).';
+    }
+    if (wake.isNotEmpty) {
+      return 'The wake-word model will be downloaded ($wake).';
+    }
+    if (voiceDownloaded) {
+      return 'Voice components were downloaded and verified before this review.';
+    }
+    if (wakeInstalled) {
+      return 'The wake-word model was downloaded and verified before this review.';
+    }
+    return 'None. This is an offline package.';
+  }
+
   Widget _review() {
     final review = c.review;
     final components = review['components'];
@@ -966,16 +1344,18 @@ class _SetupApplicationState extends State<SetupApplication> {
                             ? 'Existing components'
                             : 'Text only'),
             _row(
-                'Downloads',
-                voiceDownloadRequested
-                    ? 'Voice components will be downloaded (${_megabytes((voicePlan['total_bytes'] as num?)?.toInt() ?? 0)}).'
-                    : voiceDownloaded
-                        ? 'Voice components were downloaded and verified before this review.'
-                        : 'None. This is an offline package.'),
+                'Wake word',
+                wakeInstalled
+                    ? 'Model installed'
+                    : wakeRequested
+                        ? 'Model will be installed with Odessy'
+                        : 'Not installed'),
+            _row('Downloads', _downloadsCopy()),
             _row('Service',
                 'Not created here; available later under Installation.'),
           ])),
       if (voiceError.isNotEmpty) SetupMessage(error: true, text: voiceError),
+      if (wakeError.isNotEmpty) SetupMessage(error: true, text: wakeError),
       if (review.isEmpty) ...[
         if (reviewing || c.busy)
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -1155,7 +1535,8 @@ class _SetupApplicationState extends State<SetupApplication> {
                   child: Text('${result['registration_error']}',
                       style: _theme.textTheme.bodySmall)),
           ])),
-      if (voice && _voiceComplete) _voiceDependenciesSection(),
+      if ((voice && _voiceComplete) || wakeInstalled)
+        _voiceDependenciesSection(),
       if (launchError.isNotEmpty)
         SetupMessage(
             text: launchError,
@@ -1172,30 +1553,43 @@ class _SetupApplicationState extends State<SetupApplication> {
     ]);
   }
 
-  /// The Python side of voice lives in the installed runtime, so it is reported
-  /// here, after the installation exists. Saying "ready" here without a passing
-  /// import check would be a claim the machine cannot back up.
+  /// The Python side of the speech features lives in the installed runtime, so
+  /// it is reported here, after the installation exists. Saying "ready" here
+  /// without a passing import check would be a claim the machine cannot back up.
   Widget _voiceDependenciesSection() {
+    final speech = voice && _voiceComplete;
+    // A wake-only installation is reported against the wake-word checks; there
+    // is no speech state to speak from in that case.
+    final state = speech ? voiceState : wakeState;
     final verified = voiceDependencies['verified'] == true;
-    final severity = voiceState['severity'];
+    final severity = state['severity'];
+    final wakeReady =
+        wakeState['wake'] is Map && (wakeState['wake'] as Map)['ready'] == true;
     return SetupSection(
-        title: 'Voice',
-        description:
-            'The speech packages are installed into this Odessy installation, not system-wide.',
+        title: speech ? 'Speech' : 'Wake word',
+        description: speech
+            ? 'The speech packages are installed into this Odessy installation, not system-wide.'
+            : 'The wake-word model needs its Python support installed into this Odessy installation, not system-wide.',
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           if (voiceDependenciesRunning) ...[
             const LinearProgressIndicator(),
             const SizedBox(height: OdessyTokens.spaceCompact),
-            Text('Installing Python voice dependencies…',
+            Text('Installing Python speech dependencies…',
                 style: _theme.textTheme.bodySmall),
           ] else if (verified && (severity == 'info' || severity == null))
-            const Text(
-                'Voice components and their Python dependencies are installed and importable. '
-                'Microphone and audio devices are checked separately in Settings.')
+            Text(speech
+                ? 'The speech components and their Python dependencies are installed and importable. '
+                    'Microphone and audio devices are checked separately in Settings.'
+                : 'The wake-word Python support is installed and importable. '
+                    'The microphone is checked when the session starts.')
           else ...[
             Text(severity == 'error'
-                ? 'Voice needs attention: a component or dependency did not check out.'
-                : 'Voice dependencies are not installed yet.'),
+                ? (speech
+                    ? 'A speech component or dependency did not check out.'
+                    : 'The wake-word model or its Python support did not check out.')
+                : (speech
+                    ? 'The speech dependencies are not installed yet.'
+                    : 'The Python wake-word support is not installed yet.')),
             if (voiceDependenciesError.isNotEmpty)
               Padding(
                   padding:
@@ -1210,11 +1604,28 @@ class _SetupApplicationState extends State<SetupApplication> {
                         : _installVoiceDependencies,
                     icon: const Icon(Icons.download_outlined, size: 18),
                     label: Text(verified
-                        ? 'Check voice again'
-                        : 'Install voice dependencies'))),
-            Text('Odessy runs without voice; text works either way.',
+                        ? (speech
+                            ? 'Check speech again'
+                            : 'Check the wake word again')
+                        : (speech
+                            ? 'Install speech dependencies'
+                            : 'Install wake-word support')))),
+            Text(
+                speech
+                    ? 'Odessy runs without speech; typing works either way.'
+                    : 'Odessy runs without a wake word; push-to-talk and typing still work.',
                 style: _theme.textTheme.bodySmall),
           ],
+          // With both features chosen, the speech answer is above and the wake
+          // word gets its own sentence rather than a shared "all good".
+          if (speech && wakeInstalled)
+            Padding(
+                padding: const EdgeInsets.only(top: OdessyTokens.spaceCompact),
+                child: Text(
+                    wakeReady
+                        ? 'Wake-word detection is ready: the model is verified and its Python support is importable. The microphone is checked when the session starts.'
+                        : _wakeReadinessCopy(),
+                    style: _theme.textTheme.bodySmall)),
         ]));
   }
 
@@ -1290,7 +1701,11 @@ class _SetupApplicationState extends State<SetupApplication> {
                 (!voicePlanLoading &&
                     voicePlan['installable'] == true &&
                     (voicePlan['unavailable'] is List &&
-                        (voicePlan['unavailable'] as List).isEmpty))),
+                        (voicePlan['unavailable'] as List).isEmpty))) &&
+            (!wakeRequested ||
+                wakeInstalled ||
+                (!wakePlanLoading &&
+                    (wakePlan.isEmpty || wakePlan['installable'] == true))),
         3 => c.review.isNotEmpty,
         _ => true,
       };
@@ -1298,6 +1713,9 @@ class _SetupApplicationState extends State<SetupApplication> {
   Future<void> _primary() async {
     if (step == 3) {
       setState(() => step = 4);
+      // Both downloads edit the selection, and an edit invalidates the reviewed
+      // plan; the review is therefore rebuilt once, after the last one.
+      var edited = false;
       if (voiceDownloadRequested) {
         final ok = await _installVoice();
         if (!mounted) return;
@@ -1305,6 +1723,21 @@ class _SetupApplicationState extends State<SetupApplication> {
           setState(() => step = 3);
           return;
         }
+        edited = true;
+      }
+      // The wake-word model is chosen on the same step and travels with the
+      // installation. A failure here returns to that step, where the retry and
+      // the skip live, instead of stranding the runtime half-claimed.
+      if (wakeRequested && !wakeInstalled) {
+        final installed = await _installWake();
+        if (!mounted) return;
+        if (!installed) {
+          setState(() => step = 2);
+          return;
+        }
+        edited = true;
+      }
+      if (edited) {
         await c.run('package-review');
         if (!mounted) return;
         if (c.review.isEmpty) {
@@ -1317,7 +1750,8 @@ class _SetupApplicationState extends State<SetupApplication> {
       if (c.installed) {
         await c.run('context');
         if (!mounted) return;
-        if (voiceDownloadRequested && voice && _voiceComplete) {
+        if ((voiceDownloadRequested && voice && _voiceComplete) ||
+            wakeInstalled) {
           await _installVoiceDependencies();
           if (!mounted) return;
         }

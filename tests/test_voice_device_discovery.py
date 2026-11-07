@@ -229,6 +229,19 @@ def test_configured_and_environment_wake_models_are_offered(tmp_path, monkeypatc
     assert str(from_environment) in result['candidates']['wake_model']
 
 
+def test_wake_discovery_excludes_support_models(tmp_path, monkeypatch):
+    from odessy.setup import voice_assets
+    monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path))
+    monkeypatch.delenv('ODESSY_WAKE_MODEL', raising=False)
+    wake = tmp_path / '.local/share/odessy/wake'
+    wake.mkdir(parents=True)
+    for name in ('hey_jarvis_v0.1.onnx', 'melspectrogram.onnx',
+                 'embedding_model.onnx', 'silero_vad.onnx'):
+        (wake / name).write_bytes(b'fixture')
+    result = voice_assets.discover_voice_assets({})
+    assert [Path(path).name for path in result['candidates']['wake_model']] == ['hey_jarvis_v0.1.onnx']
+
+
 def test_missing_required_assets_are_still_reported(tmp_path, monkeypatch):
     from odessy.setup.voice_assets import discover_voice_assets
     monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path))
@@ -238,13 +251,22 @@ def test_missing_required_assets_are_still_reported(tmp_path, monkeypatch):
     assert set(result['missing']) == {'whisper_bin', 'whisper_model', 'kokoro_model', 'kokoro_voices'}
 
 
-def test_wake_directory_matches_the_installer_default():
+def test_wake_directory_matches_the_installer_default(monkeypatch):
     from odessy.setup import voice_assets
     from odessy.voice import assets
+    monkeypatch.delenv('ODESSY_WAKE_MODEL', raising=False)
     # The installer constant is bound at import time, so compare its shape rather than
     # a patched HOME: this still catches the two drifting apart.
     assert voice_assets.wake_directory().parts[-4:] == assets.DEFAULT_WAKE_ASSET_DIR.parts[-4:]
     assert voice_assets.wake_directory().parts[-4:] == ('.local', 'share', 'odessy', 'wake')
+
+
+def test_the_installer_honours_a_relocated_wake_model(tmp_path, monkeypatch):
+    from odessy.setup import voice_assets
+    model = tmp_path / 'elsewhere' / 'hey_jarvis_v0.1.onnx'
+    monkeypatch.setenv('ODESSY_WAKE_MODEL', str(model))
+    # The installer must write where the runtime reads: the override's directory.
+    assert voice_assets.wake_directory() == model.parent
 
 
 def test_deadline_stops_the_scan_and_reports_partial(tmp_path, monkeypatch):

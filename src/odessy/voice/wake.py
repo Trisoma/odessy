@@ -101,7 +101,14 @@ class OpenWakeWordDetector:
         # inference_framework is passed through rather than guessed: the ONNX runtime
         # is already a dependency for Kokoro, and tflite is not. On macOS ARM64 the
         # onnx embedding model scores near zero, so the framework is a setting.
-        self._model = Model(wakeword_models=[model_path], inference_framework=inference_framework)
+        from pathlib import Path
+        resources = Path(model_path).parent
+        melspec = resources / "melspectrogram.onnx"
+        embedding = resources / "embedding_model.onnx"
+        options = {}
+        if melspec.is_file() and embedding.is_file() and inference_framework == "onnx":
+            options = {"melspec_model_path": str(melspec), "embedding_model_path": str(embedding)}
+        self._model = Model(wakeword_models=[model_path], inference_framework=inference_framework, **options)
 
     def score(self, pcm: bytes) -> float:
         frame = self._numpy.frombuffer(pcm, dtype=self._numpy.int16)

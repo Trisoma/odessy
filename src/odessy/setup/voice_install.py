@@ -35,17 +35,33 @@ import zipfile
 #: Windows is the first target. Other platforms keep their existing voice setup.
 SUPPORTED_PLATFORMS = ('windows',)
 
-#: Selection fields the four required components populate.
+#: Selection fields the required components populate.
 COMPONENT_FIELDS = {
     'whisper_bin': 'Whisper.cpp executable',
     'whisper_model': 'Whisper model',
     'kokoro_model': 'Kokoro model',
     'kokoro_voices': 'Kokoro voices',
+    'wake_model': 'Wake-word model',
+    'wake_melspectrogram': 'Wake audio features',
+    'wake_embedding': 'Wake audio embedding',
+    'wake_vad': 'Voice activity model',
 }
 
-#: Imported by the application when voice is enabled. Missing any of these means
-#: the Python side of voice is not installed, whatever the files on disk say.
-RUNTIME_MODULES = ('numpy', 'onnxruntime', 'soundfile', 'sounddevice', 'kokoro_onnx')
+#: Speech features the setup surface offers separately. They are separate
+#: because they have different licences (the wake model is non-commercial) and
+#: because a user may want one without the other.
+FEATURES = ('voice', 'wake')
+DEFAULT_FEATURES = ('voice',)
+
+#: Imported by the application for each feature. Missing any of these means the
+#: Python side of that feature is not installed, whatever the files on disk say.
+FEATURE_MODULES = {
+    'voice': ('numpy', 'onnxruntime', 'soundfile', 'sounddevice', 'kokoro_onnx'),
+    'wake': ('numpy', 'onnxruntime', 'openwakeword'),
+}
+
+#: Kept for callers that still ask for the voice module set by name.
+RUNTIME_MODULES = FEATURE_MODULES['voice']
 
 KINDS = ('file', 'archive', 'wheel')
 MAX_ARTIFACTS = 64
@@ -57,6 +73,13 @@ RECORD_NAME = 'voice-install.json'
 WHEEL_DIR = 'wheels'
 REQUIREMENTS_NAME = 'requirements-voice.txt'
 PIP_TIMEOUT = 900
+#: The wake detector's own asset manifest, in the format
+#: `odessy.voice.assets.load_manifest` reads.
+WAKE_MANIFEST_NAME = 'assets.json'
+#: Where the wake model goes: the directory the runtime already reads
+#: (`odessy.voice.assets.asset_dir`), never the voice root.
+WAKE_LOCATION = 'wake'
+VOICE_LOCATION = 'voice'
 
 #: Extra free space kept after a download (OpenClaw's disk-space doctor keeps
 #: headroom for writes that would otherwise fail later, quietly).
@@ -80,6 +103,22 @@ def default_root():
         base = os.environ.get('LOCALAPPDATA') or str(Path.home() / 'AppData' / 'Local')
         return Path(base) / 'Odessy' / 'Voice'
     return Path.home() / '.local' / 'share' / 'odessy' / 'voice'
+
+
+def wake_root():
+    """The wake-asset directory, computed at call time so HOME is honoured.
+
+    Mirrors `odessy.voice.assets.asset_dir`, which the detector, the doctor check
+    and `odessy voice --setup-wake` all read. `setup/voice_assets.wake_directory`
+    is the copy shipped in the installer payload; the two are asserted equal by
+    the tests so they cannot drift. `ODESSY_WAKE_ASSET_DIR` redirects the
+    installer only (a test or a portable install), never the runtime default.
+    """
+    override = os.environ.get('ODESSY_WAKE_ASSET_DIR', '').strip()
+    if override:
+        return Path(override).expanduser()
+    from .voice_assets import wake_directory
+    return wake_directory()
 
 
 def _platform():
@@ -167,7 +206,27 @@ def load_manifest(path=None):
                                      allow_empty=True),
             'platform': _require_text(item.get('platform'), 'platform', limit=32),
             'architecture': _require_text(item.get('architecture'), 'architecture', limit=32),
+            # Optional human-readable publisher version, recorded in the wake
+            # asset manifest so the runtime file says where it came from.
+            'version': _require_text(item.get('version', ''), 'version', limit=100,
+                                     allow_empty=True),
+            'location': VOICE_LOCATION,
         }
+        # Which opt-in feature(s) this artifact serves. A wheel may serve both
+        # (numpy and onnxruntime do): installing them twice is meaningless.
+        features = item.get('features', list(DEFAULT_FEATURES))
+        if (not isinstance(features, list) or not features
+                or any(not isinstance(name, str) or name not in FEATURES for name in features)
+                or len(set(features)) != len(features)):
+            raise ValueError('voice manifest names an unknown feature')
+        entry['features'] = tuple(features)
+        if item.get('location') is not None:
+            location = _require_text(item.get('location'), 'location', limit=16)
+            if location not in (VOICE_LOCATION, WAKE_LOCATION):
+                raise ValueError('voice manifest names an unknown location')
+            entry['location'] = location
+        if entry['location'] == WAKE_LOCATION and kind == 'wheel':
+            raise ValueError('voice manifest cannot put a wheel in the wake asset directory')
         size = entry['size_bytes']
         if type(size) is not int or size < 0 or size > MAX_ARTIFACT_BYTES:
             raise ValueError('voice manifest has an invalid size')
@@ -221,15 +280,22 @@ def _availability(entry, platform):
 
 # ------------------------------------------------------------------------- paths
 
+def _base(root, entry):
+    """The directory an artifact belongs in: the voice root, or the wake assets."""
+    if entry.get('location') == WAKE_LOCATION:
+        return wake_root()
+    return Path(root)
+
+
 def _target(root, entry):
-    """Where an artifact's bytes end up, relative to the voice root."""
+    """Where an artifact's bytes end up."""
     if entry['kind'] == 'wheel':
         return Path(root) / WHEEL_DIR / entry['file']
-    return Path(root) / entry['file']
+    return _base(root, entry) / entry['file']
 
 
 def _present(root, entry):
-    """True when every file this artifact produces already exists."""
+    """True when every file this artifact produces already exists and verifies."""
     root = Path(root)
     if entry['kind'] == 'archive':
         recorded = {item.get('path'): item.get('sha256')
@@ -241,18 +307,25 @@ def _present(root, entry):
                        for name in entry['members'])
         except OSError:
             return False
-    return _target(root, entry).is_file()
+    try:
+        target = _target(root, entry)
+        return target.is_file() and bool(entry['sha256']) and _digest_file(target)[0] == entry['sha256']
+    except OSError:
+        return False
 
 
 def paths(root, entries):
     """Selection fields to their paths, for the components that are usable."""
-    root = Path(root)
     out = {}
     for entry in entries:
-        if entry['kind'] == 'file' and (root / entry['file']).is_file():
-            out[entry['field']] = str(root / entry['file'])
-        elif entry['kind'] == 'archive' and (root / entry['executable']).is_file():
-            out[entry['field']] = str(root / entry['executable'])
+        if entry['kind'] == 'file':
+            target = _target(root, entry)
+        elif entry['kind'] == 'archive':
+            target = _base(root, entry) / entry['executable']
+        else:
+            continue
+        if target.is_file():
+            out[entry['field']] = str(target)
     return out
 
 
@@ -261,12 +334,38 @@ def _missing(root, entries, available_ids):
             if entry['id'] in available_ids and not _present(root, entry)]
 
 
+def _selected(entries, features):
+    """Entries serving any selected feature. None means every feature."""
+    if features is None:
+        return list(entries)
+    wanted = set(features)
+    return [entry for entry in entries if wanted.intersection(entry['features'])]
+
+
+def _feature_list(features):
+    if features is None:
+        return None
+    if isinstance(features, str):
+        features = [features]
+    if not isinstance(features, (list, tuple)) or not features:
+        raise ValueError('select at least one speech feature')
+    cleaned = []
+    for name in features:
+        if not isinstance(name, str) or name not in FEATURES:
+            raise ValueError('unsupported speech feature')
+        if name not in cleaned:
+            cleaned.append(name)
+    return tuple(cleaned)
+
+
 # -------------------------------------------------------------------------- plan
 
-def plan(payload=None, *, manifest=None, root=None):
-    """What voice installation would do, including the honest refusals."""
+def plan(payload=None, *, manifest=None, root=None, features=None):
+    """What installation would do for the selected features, with honest refusals."""
     platform, architecture = _platform()
     entries = manifest if manifest is not None else load_manifest(manifest_path(payload))
+    selected = _feature_list(features)
+    entries = _selected(entries, selected)
     voice_root = Path(root) if root is not None else default_root()
     available, unavailable = [], []
     for entry in entries:
@@ -275,7 +374,8 @@ def plan(payload=None, *, manifest=None, root=None):
         )
         reason = reason or _availability(entry, platform)
         if reason:
-            unavailable.append({'id': entry['id'], 'label': entry['label'], 'reason': reason})
+            unavailable.append({'id': entry['id'], 'label': entry['label'], 'reason': reason,
+                                'features': list(entry['features'])})
         else:
             available.append({
                 'id': entry['id'],
@@ -287,6 +387,8 @@ def plan(payload=None, *, manifest=None, root=None):
                 'license': entry['license'],
                 'url': entry['url'],
                 'sha256': entry['sha256'],
+                'features': list(entry['features']),
+                'location': entry['location'],
                 'installed': _present(voice_root, entry),
             })
     pending = [item for item in available if not item['installed']]
@@ -305,6 +407,8 @@ def plan(payload=None, *, manifest=None, root=None):
         'platform': platform,
         'architecture': architecture,
         'root': str(voice_root),
+        'wake_root': str(wake_root()),
+        'features': list(selected) if selected is not None else list(FEATURES),
         'available': available,
         'unavailable': unavailable,
         'pending': pending,
@@ -379,16 +483,19 @@ def _finding(check, severity, message, path='', fix_hint='', *, ready=False):
             'message': message, 'path': str(path), 'fix_hint': fix_hint}
 
 
-def status(payload=None, *, manifest=None, root=None, install_root=None):
-    """Report readiness as structured findings, one per component and one for Python.
+def status(payload=None, *, manifest=None, root=None, install_root=None, features=None,
+           runner=None):
+    """Report readiness as structured findings, one per component and per feature.
 
     Each finding carries a stable `check_id`, a severity and a remedy, so
     "voice needs attention" is auditable instead of a sentence. A missing
-    optional component is a warning; a file that does not match its recorded
-    digest is an error, because it will not be used.
+    optional component is a warning; a file that does not match its pin is an
+    error, because it will not be used.
     """
     platform, _ = _platform()
     entries = manifest if manifest is not None else load_manifest(manifest_path(payload))
+    selected = _feature_list(features)
+    entries = _selected(entries, selected)
     voice_root = Path(root) if root is not None else default_root()
     recorded = {item.get('path'): item.get('sha256')
                 for item in _record(voice_root).get('artifacts', [])
@@ -397,19 +504,25 @@ def status(payload=None, *, manifest=None, root=None, install_root=None):
     for entry in entries:
         if entry['kind'] == 'wheel':
             continue
+        base = _base(voice_root, entry)
         affected = entry['members'] if entry['kind'] == 'archive' else [entry['file']]
-        target = voice_root / (entry['executable'] if entry['kind'] == 'archive'
-                               else entry['file'])
-        present = all((voice_root / name).is_file() for name in affected)
+        target = base / (entry['executable'] if entry['kind'] == 'archive'
+                         else entry['file'])
+        present = all((base / name).is_file() for name in affected)
         verified = present
         for name in affected:
-            path = voice_root / name
-            pinned = recorded.get(str(path))
-            if pinned is None:
+            path = base / name
+            if entry['kind'] == 'file':
+                # A single pinned download can be checked against its pin, which
+                # is stronger than trusting the record of what was installed.
+                pin = entry['sha256']
+            else:
+                pin = recorded.get(str(path))
+            if not pin:
                 verified = False
                 continue
             try:
-                if _digest_file(path)[0] != pinned:
+                if _digest_file(path)[0] != pin:
                     verified = False
             except OSError:
                 verified = False
@@ -426,16 +539,24 @@ def status(payload=None, *, manifest=None, root=None, install_root=None):
         else:
             severity, message = 'warning', f'{entry["label"]} is missing.'
             hint = 'Download voice components, or select an existing file in setup.'
+        entry_features = list(entry['features'])
         components.append({'id': entry['id'], 'label': entry['label'],
                            'field': entry['field'], 'path': str(target), 'state': state,
                            'severity': severity, 'check_id': f'setup/voice/{check}',
-                           'message': message, 'fix_hint': hint})
+                           'message': message, 'fix_hint': hint,
+                           'features': entry_features})
         findings.append(_finding(check, severity, message, target, hint,
                                   ready=state == 'ready'))
         if state != 'ready':
             missing.append(entry['id'])
-    python = python_status(voice_root, install_root=install_root)
-    findings.append(python)
+    python_findings = []
+    for name in (selected or FEATURES):
+        python_findings.append(python_status(voice_root, install_root=install_root,
+                                            feature=name, runner=runner))
+    findings.extend(python_findings)
+    wake = _wake_session_finding(components, python_findings, selected, install_root, runner)
+    if wake:
+        findings.append(wake)
     progress = {}
     progress_file = voice_root / PROGRESS_NAME
     if progress_file.is_file():
@@ -446,15 +567,81 @@ def status(payload=None, *, manifest=None, root=None, install_root=None):
         except (OSError, json.JSONDecodeError):
             progress = {}
     severity = max((item['severity'] for item in findings), key=_severity_rank, default='info')
+    readiness = {}
+    for name in (selected or FEATURES):
+        feature_components = [item for item in components if name in item['features']]
+        feature_python = next((item for item in python_findings
+                               if item['check_id'] == f'setup/voice/python/{name}'), None)
+        readiness[name] = (bool(feature_components)
+                           and all(item['state'] == 'ready' for item in feature_components)
+                           and feature_python is not None and feature_python['ready'])
+    if wake is not None:
+        readiness['wake'] = wake['ready']
     return {
-        'platform': platform, 'root': str(voice_root), 'components': components,
+        'platform': platform, 'root': str(voice_root), 'wake_root': str(wake_root()),
+        'features': list(selected) if selected is not None else list(FEATURES),
+        'components': components,
         'missing': missing,
-        # Ready only when every component and the Python side are both usable.
-        'ready': not missing and python.get('ready') is True,
+        # Ready only when every selected component and its Python side are usable.
+        'ready': bool(readiness) and all(readiness.values()),
+        'readiness': readiness,
         'progress': progress, 'findings': findings, 'severity': severity,
-        'python': python,
+        'python': python_findings[0] if python_findings else None,
+        'wake': wake,
         'paths': {item['field']: item['path'] for item in components if item['state'] == 'ready'},
     }
+
+
+def _wake_session_finding(components, python_findings, selected, install_root=None, runner=None):
+    """One answer to "can wake-word detection run?", never inferred from parts.
+
+    The detector needs the model the runtime will load *and* the Python package
+    that loads it. A missing model is a warning (text mode still works); a
+    present model that fails its pin is an error.
+    """
+    if selected is not None and 'wake' not in selected:
+        return None
+    model = next((item for item in components
+                  if 'wake' in item['features'] and item['field'] == 'wake_model'), None)
+    python = next((item for item in python_findings
+                   if item['check_id'] == 'setup/voice/python/wake'), None)
+    model_ready = model is not None and model['state'] == 'ready'
+    python_ready = python is not None and python['ready']
+    wake_components = [item for item in components if 'wake' in item['features']]
+    all_ready = all(item['state'] == 'ready' for item in wake_components)
+    if model_ready and python_ready and all_ready:
+        interpreter = _runtime_python(install_root) if install_root else None
+        try:
+            result = (runner or _run)([str(interpreter), '-I', '-c',
+                'import sys; from odessy.voice.wake import OpenWakeWordDetector; '
+                'from openwakeword.vad import VAD; '
+                'from pathlib import Path; OpenWakeWordDetector(sys.argv[1]); '
+                'VAD(model_path=str(Path(sys.argv[1]).parent / "silero_vad.onnx"))',
+                model['path']], timeout=120)
+        except (OSError, subprocess.SubprocessError):
+            result = None
+        if result is None or result.returncode != 0:
+            return _finding('wake-session', 'warning',
+                'Wake-word detection is not ready: the detector could not load its models.',
+                model['path'], 'Repair or reinstall the wake-word components and try again.')
+        return _finding('wake-session', 'info',
+                        'Wake-word detection is ready: the verified models loaded successfully. '
+                        'Microphone access is checked when the '
+                        'session starts.', model['path'], '', ready=True)
+    if model is None:
+        reason, hint = ('No wake-word model is offered in this build.',
+                        'Select an existing model file, or skip the wake word.')
+    elif not model_ready:
+        reason, hint = (f'{model["message"]}', model['fix_hint'])
+    elif not all_ready:
+        failed = next(item for item in wake_components if item['state'] != 'ready')
+        reason, hint = failed['message'], failed['fix_hint']
+    else:
+        reason = python['message'] if python else 'The wake-word Python support is missing.'
+        hint = python['fix_hint'] if python else 'Install the wake-word dependencies.'
+    return _finding('wake-session', 'warning',
+                    'Wake-word detection is not ready: ' + reason, model['path'] if model else '',
+                    hint)
 
 
 def _wheel_files(voice_root):
@@ -462,42 +649,44 @@ def _wheel_files(voice_root):
     return sorted(directory.glob('*.whl')) if directory.is_dir() else []
 
 
-def python_status(voice_root, *, install_root=None, runner=None):
-    """Is the Python side of voice installed? Checked, never assumed.
+def python_status(voice_root, *, install_root=None, feature='voice', runner=None):
+    """Is the Python side of one feature installed? Checked, never assumed.
 
     Without an installation to inspect the answer is `info` with the wheels
     waiting: nothing has been installed into an application runtime yet, and
     that is a normal intermediate state, not a failure.
     """
+    modules = FEATURE_MODULES[feature]
+    label = 'voice' if feature == 'voice' else 'wake-word'
     cached = _wheel_files(voice_root)
     if not cached:
-        return _finding('python', 'warning',
-                        'The Python voice dependencies have not been downloaded.',
+        return _finding(f'python/{feature}', 'warning',
+                        f'The Python {label} dependencies have not been downloaded.',
                         Path(voice_root) / WHEEL_DIR,
-                        'Download voice components to fetch them.')
+                        'Download the speech components to fetch them.')
     interpreter = _runtime_python(install_root) if install_root else None
     if interpreter is None:
-        return _finding('python', 'info',
-                        f'{len(cached)} Python voice packages are downloaded and waiting for '
+        return _finding(f'python/{feature}', 'info',
+                        f'{len(cached)} Python speech packages are downloaded and waiting for '
                         'an installed Odessy runtime.', Path(voice_root) / WHEEL_DIR, '')
     run = runner or _run
     try:
         result = run([str(interpreter), '-I', '-c',
-                      'import ' + ', '.join(RUNTIME_MODULES) + ';print("ok")'], timeout=120)
+                      'import ' + ', '.join(modules) + ';print("ok")'], timeout=120)
     except (OSError, subprocess.SubprocessError):
         result = None
     if result is not None and result.returncode == 0:
-        return _finding('python', 'info',
-                        'The Python voice dependencies are installed and importable.',
+        return _finding(f'python/{feature}', 'info',
+                        f'The Python {label} dependencies are installed and importable.',
                         Path(voice_root) / WHEEL_DIR, '', ready=True)
     detail = ''
     if result is not None and (result.stderr or '').strip():
         detail = ' ' + (result.stderr or '').strip().splitlines()[-1]
-    return _finding('python', 'warning',
-                    'The Python voice dependencies are downloaded but not importable in the '
+    return _finding(f'python/{feature}', 'warning',
+                    f'The Python {label} dependencies are downloaded but not importable in the '
                     'installed runtime.' + detail,
                     Path(voice_root) / WHEEL_DIR,
-                    'Install voice dependencies for the installed Odessy runtime, or retry it.')
+                    'Install the speech dependencies for the installed Odessy runtime, or retry it.')
 
 
 # ---------------------------------------------------------------------- install
@@ -537,6 +726,22 @@ def install(plan_value, *, confirm, cancelled=lambda: False):
                   message=f'Only {max(0, free - needed)} bytes will remain free after this download.',
                   total=len(pending))
     by_id = {entry['id']: entry for entry in entries}
+    # Wake assets live on a different volume when the profile is redirected, so
+    # the free-space answer is asked per target rather than once for the voice root.
+    for item in pending:
+        entry = by_id.get(item['id'])
+        if entry is None:
+            continue
+        base = _base(root, entry)
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+            base_free = shutil.disk_usage(base).free
+        except OSError:
+            continue  # Unmeasurable: the download itself will report the failure.
+        if base_free < item['size_bytes']:
+            raise ValueError(
+                f'insufficient space in {base}: {item["size_bytes"]} bytes are required and '
+                f'{base_free} are free. Free space, then retry.')
     preserved, installed_files = [], []
     total = len(available)
     _progress(root, 'starting', message='Preparing voice components', total=total)
@@ -569,8 +774,12 @@ def install(plan_value, *, confirm, cancelled=lambda: False):
             installed_files.append({'id': item['id'], 'file': entry['file'],
                                     'path': produced['path']})
     existing = [item for item in _record(root).get('artifacts', []) if isinstance(item, dict)]
+    wake_written = []
     for produced in installed_files + preserved:
         entry = by_id[produced['id']]
+        if entry['location'] == WAKE_LOCATION:
+            wake_written.append(produced)
+            continue
         paths_to_record = ([root / name for name in entry['members']]
                            if entry['kind'] == 'archive' else [Path(produced['path'])])
         for path in paths_to_record:
@@ -584,10 +793,13 @@ def install(plan_value, *, confirm, cancelled=lambda: False):
         'root': str(root),
         'artifacts': existing,
     })
+    if wake_written:
+        _record_wake_assets(wake_written, by_id)
     missing = _missing(root, entries, {item['id'] for item in available})
     verified = not missing
+    label = _feature_label(plan_value.get('features'))
     _progress(root, 'ready' if verified else 'incomplete',
-              message='Voice components are ready' if verified else 'Voice needs attention',
+              message=f'{label} is ready' if verified else f'{label} needs attention',
               downloaded=total, total=total)
     return {'installed': installed_files, 'preserved': preserved, 'cancelled': False,
             'state': 'ready' if verified else 'incomplete', 'missing': missing,
@@ -596,8 +808,50 @@ def install(plan_value, *, confirm, cancelled=lambda: False):
             'verified': verified,
             'severity': 'info' if verified else 'warning',
             'wheel_count': len(_wheel_files(root)),
+            'features': list(plan_value.get('features') or FEATURES),
             'manual_step': '' if verified else
                 'Download the remaining components again, or select existing files.'}
+
+
+def _feature_label(features):
+    names = set(features or FEATURES)
+    if names == {'wake'}:
+        return 'Wake-word model'
+    if names == {'voice'}:
+        return 'Voice components'
+    return 'Speech components'
+
+
+def _record_wake_assets(written, by_id):
+    """Record the wake model in the format the runtime's asset loader reads.
+
+    `odessy voice --setup-wake` writes this file, so the installer must merge
+    rather than replace it: a user who installed a custom model keeps it.
+    """
+    directory = wake_root()
+    path = directory / WAKE_MANIFEST_NAME
+    records = []
+    try:
+        existing = json.loads(path.read_text(encoding='utf-8'))
+        if isinstance(existing, dict) and isinstance(existing.get('assets'), list):
+            records = [item for item in existing['assets'] if isinstance(item, dict)]
+    except (OSError, json.JSONDecodeError):
+        records = []
+    for produced in written:
+        entry = by_id[produced['id']]
+        target = directory / entry['file']
+        digest, _ = _digest_file(target)
+        records = [item for item in records if item.get('name') != entry['file']]
+        records.append({
+            'name': entry['file'],
+            'url': entry['url'],
+            'license': entry['license'],
+            'version': entry.get('version', ''),
+            'sha256': entry['sha256'],
+            'sha256_observed': digest,
+            'verified': digest == entry['sha256'],
+        })
+    _write_json(path, {'assets': records, 'code_license': 'Apache-2.0'})
 
 
 def _install_one(root, entry, *, cancelled):
@@ -752,23 +1006,25 @@ def requirements_text(entries):
 
 
 def python_install(install_root, voice_root, *, entries=None, payload=None,
-                   cancelled=lambda: False, runner=None):
+                   cancelled=lambda: False, runner=None, features=None):
     """Install the cached wheels into the installed application runtime.
 
     Offline and hash-locked: `--no-index --no-deps --require-hashes` with the
     wheel cache as the only source, so a compromised index cannot substitute a
     package. Readiness is only reported after the interpreter actually imports
-    the modules the application needs.
+    the modules the selected features need.
     """
     root = Path(voice_root)
+    selected = _feature_list(features)
     wheels = _wheel_files(root)
     if not wheels:
-        raise ValueError('voice components have not been downloaded yet')
+        raise ValueError('speech components have not been downloaded yet')
     interpreter = _runtime_python(install_root)
     if interpreter is None:
-        raise ValueError('no installed Odessy runtime was found to install voice into')
+        raise ValueError('no installed Odessy runtime was found to install speech into')
     all_entries = entries if entries is not None else load_manifest(manifest_path(payload))
-    wheel_entries = [entry for entry in all_entries if entry['kind'] == 'wheel']
+    wheel_entries = [entry for entry in _selected(all_entries, selected)
+                     if entry['kind'] == 'wheel']
     expected = {entry['file'] for entry in wheel_entries}
     if expected and not expected <= {path.name for path in wheels}:
         raise ValueError('the downloaded wheel set does not match the pinned manifest')
@@ -777,28 +1033,42 @@ def python_install(install_root, voice_root, *, entries=None, payload=None,
     requirement = root / WHEEL_DIR / REQUIREMENTS_NAME
     requirement.write_text(requirements_text(wheel_entries), encoding='utf-8')
     run = runner or _run
-    _progress(root, 'python', message='Installing Python voice dependencies', total=1)
+    _progress(root, 'python', message='Installing Python speech dependencies', total=1)
     result = run([str(interpreter), '-I', '-m', 'pip', 'install', '--no-index', '--no-deps',
                   '--disable-pip-version-check', '--find-links', str(root / WHEEL_DIR),
                   '--require-hashes', '-r', str(requirement)])
     log = [line for line in ((result.stdout or '') + (result.stderr or '')).splitlines() if line]
     if result.returncode != 0:
-        _progress(root, 'python-failed', message='Python voice dependencies failed to install')
+        _progress(root, 'python-failed', message='Python speech dependencies failed to install')
         return {'installed': False, 'verified': False, 'severity': 'error',
                 'python': str(interpreter), 'wheels': len(wheels), 'log': log[-25:],
+                'features': list(selected or FEATURES),
+                'imports': {},
                 'manual_step': 'Retry the dependency install, or continue with text only.'}
-    check = run([str(interpreter), '-I', '-c',
-                 'import ' + ', '.join(RUNTIME_MODULES) + ';print("ok")'])
-    verified = check.returncode == 0
+    imports = {}
+    for name in (selected or FEATURES):
+        modules = FEATURE_MODULES[name]
+        check = run([str(interpreter), '-I', '-c',
+                     'import ' + ', '.join(modules) + ';print("ok")'])
+        imports[name] = {'verified': check.returncode == 0,
+                         'stdout': (check.stdout or '').strip(),
+                         'error': (check.stderr or '').strip().splitlines()[-1]
+                         if (check.stderr or '').strip() else ''}
+    verified = all(item['verified'] for item in imports.values())
     _progress(root, 'ready' if verified else 'python-failed',
-              message=('Voice is ready' if verified else
-                       'Python voice dependencies installed but could not be imported'))
+              message=('Speech dependencies are ready' if verified else
+                       'Python speech dependencies installed but could not be imported'))
+    failed = [name for name, item in imports.items() if not item['verified']]
     return {'installed': True, 'verified': verified,
             'severity': 'info' if verified else 'error',
             'python': str(interpreter), 'wheels': len(wheels), 'log': log[-25:],
-            'imports': (check.stdout or '').strip(),
+            'features': list(selected or FEATURES),
+            'imports': {name: 'ok' if item['verified'] else item['error']
+                        for name, item in imports.items()},
+            'failed_features': failed,
             'manual_step': '' if verified else
-                'Retry the dependency install; the packages are installed but not importable.'}
+                ('Retry the dependency install; ' + ', '.join(failed)
+                 + ' could not be imported.')}
 
 
 def dispatch(parameters, *, cancelled=lambda: False):
@@ -807,16 +1077,17 @@ def dispatch(parameters, *, cancelled=lambda: False):
     payload = parameters.get('payload') or None
     root = default_root()
     entries = load_manifest(manifest_path(payload))
+    features = parameters.get('features')
     if action == 'voice-plan':
-        return plan(payload, manifest=entries, root=root)
+        return plan(payload, manifest=entries, root=root, features=features)
     if action == 'voice-status':
-        return status(payload, manifest=entries, root=root,
+        return status(payload, manifest=entries, root=root, features=features,
                       install_root=parameters.get('install_root') or None)
     if action == 'voice-install':
-        value = plan(payload, manifest=entries, root=root)
-        value['entries'] = entries
+        value = plan(payload, manifest=entries, root=root, features=features)
+        value['entries'] = _selected(entries, _feature_list(features))
         return install(value, confirm=parameters.get('confirm'), cancelled=cancelled)
     if action == 'voice-python-install':
         return python_install(parameters.get('install_root'), root, entries=entries,
-                              cancelled=cancelled)
+                              features=features, cancelled=cancelled)
     raise ValueError('unsupported voice operation')

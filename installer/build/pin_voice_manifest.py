@@ -82,9 +82,61 @@ RELEASES = [
 #: `pip download --only-binary=:all: --platform win_amd64 --python-version 312
 #: --implementation cp --abi cp312` produced this set; the licensing column
 #: records what ships inside each wheel.
+#: Which opt-in feature(s) each wheel serves. A wheel that both need is listed
+#: under both, so selecting either feature fetches exactly what it needs.
+WHEEL_FEATURES = {
+    'numpy': ['voice', 'wake'],
+    'onnxruntime': ['voice', 'wake'],
+    'joblib': ['voice', 'wake'],
+    'cloudpickle': ['voice', 'wake'],
+    'packaging': ['voice', 'wake'],
+    'attrs': ['voice', 'wake'],
+    'cffi': ['voice', 'wake'],
+    'pycparser': ['voice', 'wake'],
+    'protobuf': ['voice', 'wake'],
+    'flatbuffers': ['voice', 'wake'],
+    'typing-extensions': ['voice', 'wake'],
+    'openwakeword': ['wake'],
+    'scikit-learn': ['wake'],
+    'scipy': ['wake'],
+    'tqdm': ['wake'],
+    'requests': ['wake'],
+    'urllib3': ['wake'],
+    'certifi': ['wake'],
+    'idna': ['wake'],
+    'charset-normalizer': ['wake'],
+    'threadpoolctl': ['wake'],
+    'narwhals': ['wake'],
+    'colorama': ['wake'],
+    'soundfile': ['voice'],
+    'sounddevice': ['voice'],
+    'kokoro-onnx': ['voice'],
+    'phonemizer': ['voice'],
+    'espeakng-loader': ['voice'],
+    'dlinfo': ['voice'],
+}
+
+#: The wake model is not re-pinned here: `odessy.voice.assets` is the single
+#: source of truth the detector, the doctor check and `--setup-wake` all use,
+#: and the build refuses to emit an entry whose digest the release asset does
+#: not match.
+WAKE_ARTIFACT_ID = 'wake-model'
+
 WHEEL_LICENSES = {
     'numpy': 'BSD-3-Clause',
     'onnxruntime': 'MIT',
+    'openwakeword': 'Apache-2.0',
+    'scikit-learn': 'BSD-3-Clause',
+    'scipy': 'BSD-3-Clause',
+    'tqdm': 'MIT',
+    'requests': 'Apache-2.0',
+    'urllib3': 'MIT',
+    'certifi': 'MPL-2.0',
+    'idna': 'BSD-3-Clause',
+    'charset-normalizer': 'MIT',
+    'threadpoolctl': 'BSD-3-Clause',
+    'narwhals': 'MIT',
+    'colorama': 'BSD-3-Clause',
     'sounddevice': 'MIT',
     'soundfile': 'BSD-3-Clause',
     'cffi': 'MIT',
@@ -150,6 +202,9 @@ def wheel_entries(directory: Path) -> list:
         name, version = base[0], base[1]
         digest = sha256(path)
         candidate = pypi_row(name, version, path.name, path.stat().st_size, digest)
+        # Wheel file names use underscores where the project uses dashes
+        # (scikit_learn), so canonicalise before looking a feature or licence up.
+        key = name.replace('_', '-').lower()
         entries.append({
             'id': f'py-{name}',
             'label': f'{name} {version}',
@@ -158,10 +213,57 @@ def wheel_entries(directory: Path) -> list:
             'url': candidate['url'],
             'sha256': digest,
             'size_bytes': path.stat().st_size,
-            'license': WHEEL_LICENSES.get(name, ''),
+            'license': WHEEL_LICENSES.get(key, ''),
             'platform': 'windows',
             'architecture': 'x86_64',
+            'features': WHEEL_FEATURES.get(key, ['voice']),
             'provenance': 'pypi-digest',
+        })
+    return entries
+
+
+def wake_entries(cache: Path) -> list:
+    """The wake models, pinned by the runtime's own asset table.
+
+    `odessy.voice.assets` is what the detector and `--setup-wake` use, so the
+    manifest is derived from it rather than duplicated. The build still checks,
+    byte for byte, that the cached release asset matches that digest: a constant
+    nobody verified is not a pin.
+    """
+    import sys
+    sys.path.insert(0, str(REPO_ROOT / 'src'))
+    from odessy.voice.assets import WAKE_ASSETS
+
+    entries = []
+    for index, asset in enumerate(WAKE_ASSETS):
+        path = cache / asset.name
+        if not path.is_file():
+            raise SystemExit(f'missing {path}; download it first from {asset.url}')
+        digest = sha256(path)
+        if not asset.sha256:
+            raise SystemExit(f'{asset.name}: the runtime table has no pinned digest')
+        if digest != asset.sha256:
+            raise SystemExit(
+                f'{asset.name}: the release asset does not match the digest pinned in '
+                'odessy.voice.assets')
+        entries.append({
+            'id': WAKE_ARTIFACT_ID if index == 0 else f'{WAKE_ARTIFACT_ID}-{index}',
+            'label': f'Wake-word model ({asset.name})',
+            'kind': 'file',
+            'file': asset.name,
+            'field': {'melspectrogram.onnx': 'wake_melspectrogram',
+                      'embedding_model.onnx': 'wake_embedding',
+                      'silero_vad.onnx': 'wake_vad'}.get(asset.name, 'wake_model'),
+            'location': 'wake',
+            'features': ['wake'],
+            'url': asset.url,
+            'sha256': digest,
+            'size_bytes': path.stat().st_size,
+            'license': asset.license,
+            'version': asset.version,
+            'platform': 'windows',
+            'architecture': 'x86_64',
+            'provenance': 'runtime-pin-verified',
         })
     return entries
 
@@ -185,6 +287,7 @@ def build(cache: Path, wheels: Path) -> dict:
             'file': spec['target'] if spec['kind'] == 'file' else spec['cache'],
             'url': spec['url'], 'sha256': digest, 'size_bytes': path.stat().st_size,
             'license': spec['license'], 'platform': 'windows', 'architecture': 'x86_64',
+            'features': [spec.get('feature', 'voice')],
             'provenance': spec['provenance'],
         }
         if spec['kind'] == 'file':
@@ -196,6 +299,7 @@ def build(cache: Path, wheels: Path) -> dict:
             entry['field'] = 'whisper_bin'
         artifacts.append(entry)
     artifacts.extend(wheel_entries(wheels))
+    artifacts.extend(wake_entries(cache))
     return {'schema_version': 2, 'artifacts': artifacts}
 
 

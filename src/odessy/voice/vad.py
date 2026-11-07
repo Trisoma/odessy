@@ -71,7 +71,9 @@ class SileroSpeechDetector:
                 "speech detection needs openwakeword: pip install -e '.[wake]'"
             ) from error
         self._numpy = numpy
-        self._vad: Any = VAD()
+        from odessy.voice.assets import asset_dir
+        model = asset_dir() / 'silero_vad.onnx'
+        self._vad: Any = VAD(model_path=str(model)) if model.is_file() else VAD()
 
     def is_speech(self, pcm: bytes) -> bool:
         frame = self._numpy.frombuffer(pcm, dtype=self._numpy.int16)

@@ -57,12 +57,20 @@ def _packaged(parameters,*,cancelled=lambda:False):
         # (action/root/payload/selection) stays usable here. `install_root` is
         # the installation whose runtime receives the Python packages, and it is
         # normalised before use.
-        allowed={'action','payload','confirm'} if action=='voice-install' else {
-            'action','payload','install_root'}
+        allowed={'action','payload','confirm','features'} if action=='voice-install' else {
+            'action','payload','install_root','features'}
         data={key:value for key,value in parameters.items() if key in allowed}
         if 'install_root' in data:
             value=data.get('install_root')
             data['install_root']=str(guard(value)) if isinstance(value,str) and value.strip() else None
+        if 'features' in data:
+            # Narrowed here as well as in the helper: planning, installing and
+            # checking must not be able to disagree about what was chosen.
+            wanted=data.get('features')
+            if (not isinstance(wanted,list) or not wanted or len(wanted)>2
+                    or any(not isinstance(name,str) for name in wanted)):
+                raise ValueError('select at least one speech feature')
+            data['features']=wanted
         return voice(data,cancelled=cancelled)
     if action=='package-launch-pending':
         from .launch_receipts import pending

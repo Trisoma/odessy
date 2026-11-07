@@ -18,11 +18,17 @@ MAX_ENTRIES = 4000
 MAX_DEPTH = 3
 
 def wake_directory():
-    """Mirrors odessy.voice.assets.DEFAULT_WAKE_ASSET_DIR.
+    """Mirrors odessy.voice.assets.asset_dir(), including its override.
 
     Computed at call time, not module import, so a changed HOME is honoured. The
-    two are asserted equal by the tests to catch drift.
+    two are asserted equal by the tests to catch drift. `odessy.voice` is not
+    part of the packaged bootstrap, so the override is read here rather than
+    imported: a model placed anywhere else would be installed where the runtime
+    never looks for it.
     """
+    override = os.environ.get('ODESSY_WAKE_MODEL', '').strip()
+    if override:
+        return Path(override).expanduser().parent
     return Path.home() / '.local' / 'share' / 'odessy' / 'wake'
 
 
@@ -143,7 +149,9 @@ def discover_voice_assets(selection):
                 if file.startswith('voices') and file.endswith('.bin'): add('kokoro_voices', path)
                 # openWakeWord ships `hey_<phrase>_v<version>.onnx`. Anything already inside
                 # the wake asset directory is a wake model by construction.
-                if file.endswith('.onnx') and not file.startswith('kokoro'):
+                if (file.endswith('.onnx') and not file.startswith('kokoro')
+                        and file not in ('melspectrogram.onnx', 'embedding_model.onnx',
+                                         'silero_vad.onnx')):
                     if file.startswith('hey_') or _inside(path, wake_root): add('wake_model', path)
             if truncated: break
         if truncated: break

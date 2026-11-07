@@ -40,6 +40,15 @@ OdessySetup.exe
   requirement before anything starts. Continue to review, then Install runs the
   voice download and installs its dependencies with Odessy; see
   `docs/setup/voice-components.md`.
+- **Wake word.** Optional, on the same step as voice and deliberately separate
+  from it: one pretrained model (Hey Jarvis / openWakeWord) under CC BY-NC-SA
+  4.0, so its licence is stated when the option is chosen rather than afterwards.
+  Choosing it shows the exact size and then either downloads it immediately or
+  leaves it to the installation, which fetches it alongside the runtime and any
+  selected speech components. A failure keeps the user on this step with a retry
+  and a "Skip the wake word" escape, so nothing about the runtime is blocked by
+  it. Setup reports wake-word detection as ready only when the model is verified
+  **and** `openwakeword` imports in the installed runtime.
 - **Review.** A human-readable summary (role, location, model, voice, downloads,
   service) with expandable technical details. The review is generated when the
   step opens, and again whenever an option changes, so there is no separate
