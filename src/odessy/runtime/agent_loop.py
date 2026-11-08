@@ -1214,6 +1214,13 @@ class OdessyAgent:
             # overwrites anything of the same name, so the model can never set it.
             arguments.update(self._policy.execution_arguments(action, mode, decision))
             log.append(LogEntry('execution_mode_resolved', {'name': action.name, 'mode': mode}))
+        grants = getattr(self, '_delegation_grants', None)
+        if grants is not None:
+            from odessy.collaboration.context import APPROVAL_ARGUMENT, GRANTED_TOOLS
+            if action.name in GRANTED_TOOLS and decision.requires_confirmation:
+                # Issued only now, after the answer: the tool server refuses the call
+                # without it. The model never sets it (the contracts do not list it).
+                arguments[APPROVAL_ARGUMENT] = grants.issue(action.name)
         return _BoundArguments(arguments, revalidate)
 
     async def _authorize(self, action, decision, plan, answer: bool | None, log) -> None:

@@ -252,14 +252,10 @@ def _limitations_with(registry, posture, network: str) -> frozenset[str]:
     """The limitations the posture's backend reports for a policy that cuts the
     network and hides a path: what it can do, not what it does by default."""
 
-    from odessy.execution.contract import ExecutionPolicy
+    from odessy.execution.posture import limitations_when_asked
 
-    for provider in registry.providers():
-        if provider.provider_id == posture.provider_id and hasattr(provider, "limitations"):
-            policy = ExecutionPolicy(mode=posture.mode, workspace_root=str(Path.cwd()), network=network,
-                                     hidden_paths=(str(Path.home() / ".ssh"),))
-            return frozenset(provider.limitations(policy))
-    return frozenset({"cannot_restrict_network", "cannot_hide_paths"})
+    # Shared with the approval prompt (``cli._build_policy``), so the two agree.
+    return frozenset(limitations_when_asked(registry, posture, str(Path.cwd())))
 
 
 def _missing_program(program: str) -> bool:

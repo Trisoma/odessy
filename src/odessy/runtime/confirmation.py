@@ -32,6 +32,7 @@ from typing import Any
 
 from odessy.authority.workspace_authority import WorkspaceAuthority, WorkspaceAuthorityError
 from odessy.runtime.types import PolicyDecision, ToolRequest
+from odessy.tools.catalog import PROCESS_TOOLS
 from odessy.tools.external_tools import external_tool
 
 #: Lines of a write preview shown before it is cut short.
@@ -41,7 +42,7 @@ BATCH_PREVIEW_LINES = 12
 #: Existing files larger than this are summarized, not diffed.
 MAX_DIFF_BYTES = 1_000_000
 
-_COMMAND_TOOLS = frozenset({"terminal.run", "laptop.terminal.run"})
+_COMMAND_TOOLS = PROCESS_TOOLS
 
 
 def printable(text: str) -> str:

@@ -33,10 +33,9 @@ from odessy.config.sandbox import (
     SandboxConfigError,
     SandboxSettings,
     load_sandbox_settings,
-    sandbox_file,
 )
 from odessy.execution.contract import IsolationRequirement
-from odessy.execution.posture import host_posture, resolve_isolation
+from odessy.execution.posture import host_posture, limitations_when_asked, resolve_isolation
 from odessy.execution.providers import default_execution_providers
 from odessy.execution.registry import ProviderRegistry, with_unconfined_fallback
 from odessy.execution.escalation import ApprovalRequest, EscalationDeniedError, EscalationOutcome
@@ -58,8 +57,9 @@ from odessy.tools.node_mcp import NodeToolServerHttp, node_tool_server_dependenc
 from odessy.models.ollama_model import OllamaModel
 from odessy.authority.audit import AuditLogError, ExternalAuditLog, audit_scope
 from odessy.authority.policy import OdessyPolicy
-from odessy.config.commands import CommandsConfigError, commands_file, load_preapproved_commands
+from odessy.config.commands import CommandsConfigError, load_preapproved_commands
 from odessy.config.guard import ConfigGuard
+from odessy.config.protected import guarded_config_files, protected_config_paths
 from odessy.runtime.hooks import HookConfigError, load_hooks, protected_paths
 from odessy.runtime.confirmation import TerminalConfirmer, printable
 from odessy.runtime.types import PolicyDecision, ToolRequest
@@ -146,17 +146,19 @@ def _build_policy(workspace_root: Path, hooks) -> OdessyPolicy:
     except SandboxConfigError as error:
         raise SystemExit(str(error)) from error
     isolation, target_isolation = _sandbox_isolation(workspace_root, sandbox)
-    posture = host_posture(execution_registry(), str(workspace_root))
+    registry = execution_registry()
+    posture = host_posture(registry, str(workspace_root))
     return OdessyPolicy(
         workspace_root=workspace_root,
         isolation=isolation,
         target_isolation=target_isolation,
         sandbox=sandbox,
         posture={"local": {item.mode: (item.provider_id, item.enforcement) for item in posture}},
+        limitations={"local": {item.mode: limitations_when_asked(registry, item, str(workspace_root)) for item in posture}},
         preapproved_commands=preapproved,
         # Protected like hooks.toml, whether or not they exist yet. Each may be set
         # somewhere of its own, outside the folder the hooks file sits in.
-        protected_paths=(*protected_paths(hooks=hooks), sandbox_file(), sandbox_file().parent, commands_file()),
+        protected_paths=tuple(dict.fromkeys((*protected_paths(hooks=hooks), *protected_config_paths()))),
     )
 
 
@@ -177,7 +179,7 @@ def _build_agent(
         tool_concurrency=concurrency_from_env(),
         model=model,
         policy=_build_policy(workspace_root, hooks),
-        config_guard=ConfigGuard((sandbox_file(), commands_file())),
+        config_guard=ConfigGuard(guarded_config_files()),
         mcp_server=(
             mcp_servers
             if mcp_servers is not None
@@ -251,6 +253,8 @@ def _permissions_check(argv: list[str]) -> int:
         "rules_fired": fired,
         "hook_programs": programs,
     }
+    if plan.get("unenforced"):
+        report["not_enforced"] = list(plan["unenforced"])
     if options.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0

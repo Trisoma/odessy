@@ -246,8 +246,13 @@ class SessionController:
         from odessy.runtime.hooks import HookConfigError, load_hooks, screen_request
         from odessy.runtime.types import PolicyDecision
         # The job's own workspace: a rule limited to a workspace, or a path glob, means
-        # the one the job will change, not the one this process started in.
+        # the one the job will change, not the one this process started in. Callers
+        # pass the workspace the job manager resolved, never the request's own field.
+        # A remote job's folder is not on this machine; its rules apply as here, the
+        # same choice the post-job review makes.
         workspace = Path(arguments.get('workspace') or Path.cwd())
+        if not workspace.is_dir():
+            workspace = Path.cwd()
         try:
             hooks = load_hooks(workspace)
         except HookConfigError as error:
@@ -257,6 +262,22 @@ class SessionController:
         if screened.action == 'deny':
             raise PermissionError(f'{name} refused: {screened.reason}')
 
+    def _collaboration_rule(self, name, arguments):
+        """The policy's collaboration rule for a direct request, or None without config.
+
+        Whether the model may use collaboration on its own (``enabled``, ``automatic``)
+        is not asked here: a person asked for this work directly.
+        """
+        from collections.abc import Mapping
+        from odessy.authority.policy import collaboration_decision
+        jobs = getattr(self.runs, 'jobs', None) if name != 'agent.delegate' else None
+        participants = getattr(jobs or self.jobs, 'profiles', None)
+        if not isinstance(participants, Mapping):
+            return None
+        settings = getattr(getattr(self.collaboration, 'config', None), 'settings', None)
+        return collaboration_decision(ToolRequest(name, dict(arguments)), participants,
+                                      default_participant=getattr(settings, 'default_participant', None))
+
     async def confirm(self, decision, request):
         # Direct job/API callers do not have runtime's canonical approval plan.
         # Describe their actual request rather than accepting a generated summary.
@@ -265,7 +286,7 @@ class SessionController:
         name = request_value.get('name', 'unknown action')
         arguments = request_value.get('arguments', {})
         risk = decision_value.get('risk', 'high')
-        if name == 'agent.delegate':
+        if name == 'agent.delegate' and not hasattr(self.jobs, 'preflight_submission'):
             await self._screen_direct(name, arguments, risk)
         handoff = name in {'agent.run', 'agent.run_continue'} and self.runs is not None
         if handoff or (name == 'agent.delegate' and hasattr(self.jobs, 'preflight_submission')):
@@ -280,11 +301,24 @@ class SessionController:
                     return self.runs.preflight_continue(**arguments)
                 return self.jobs.preflight_submission(arguments.get('participant'), arguments.get('task'),
                     mode=arguments.get('mode', 'advice'), workspace=arguments.get('workspace'))
+            # The job manager's preflight first, for its specific messages; then the same
+            # rule the agent's policy applies to these calls, so a request from the
+            # desktop is held to exactly what a proposed one is.
             identity = target()
-            if handoff:
-                await self._screen_direct(name, {**arguments, 'workspace': identity['workspace']}, risk)
+            rule = self._collaboration_rule(name, arguments)
+            if rule is not None and rule.action == 'deny':
+                # A request the config cannot carry out, reported as before (400).
+                raise ValueError(f'{name} refused: {rule.reason}')
+            # Screen against the workspace the job will really use: without a
+            # `workspace` field a delegation runs in its participant's configured one.
+            await self._screen_direct(name, {**arguments, 'workspace': identity['workspace']}, risk)
             policy = OdessyPolicy(Path.cwd())
-            bound_decision = PolicyDecision('confirm', 'Delegate using configured child-agent permissions', risk)
+            if rule is not None:
+                order = {'low': 0, 'medium': 1, 'high': 2}
+                risk = max(risk, rule.risk, key=lambda value: order.get(value, 2))
+                bound_decision = PolicyDecision('confirm', rule.reason, risk, rule=rule.rule)
+            else:
+                bound_decision = PolicyDecision('confirm', 'Delegate using configured child-agent permissions', risk)
             bound_request = ToolRequest(name, arguments)
             plan = build_action_approval(bound_request, bound_decision, policy,
                 call_id=uuid.uuid4().hex, execution_target=identity)

@@ -69,6 +69,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from odessy.authority.command_rules import program_name
+from odessy.authority.environment import HOOK_ENV, inherit
 from odessy.authority.redaction import redact_text, redact_value
 from odessy.runtime.hook_rules import (
     Rule,
@@ -108,13 +109,10 @@ MAX_NOTE_CHARS = 2000
 #: Characters of the final answer a turn-end hook receives.
 MAX_FINAL_TEXT_CHARS = 2000
 
-#: The only variables a hook inherits. API keys and tokens live in the environment
-#: (never in odessy.env), so a hook gets an allowlist rather than a filtered copy.
-_INHERITED_ENV = (
-    "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "TEMP", "TMP",
-    "TMPDIR", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
-    "LANG", "LC_ALL", "LC_CTYPE", "TZ",
-)
+#: The only variables a hook inherits (``odessy.authority.environment``). API keys and
+#: tokens live in the environment (never in odessy.env), so a hook gets an allowlist
+#: rather than a filtered copy.
+_INHERITED_ENV = HOOK_ENV
 
 _STRICTNESS = {"allow": 0, "confirm": 1, "deny": 2}
 _RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
@@ -510,7 +508,7 @@ def confine_hook(argv: tuple[str, ...], workspace: Path, environ: Mapping[str, s
 
 
 def hook_environment(environ: Mapping[str, str], *, event: str, workspace: Path) -> dict[str, str]:
-    env = {name: environ[name] for name in _INHERITED_ENV if name in environ}
+    env = inherit(environ, _INHERITED_ENV)
     env.update(
         PYTHONIOENCODING="utf-8",
         PYTHONUTF8="1",

@@ -10,8 +10,9 @@ from dataclasses import dataclass, fields, is_dataclass
 from pathlib import PurePath
 from typing import Any
 
-from odessy.authority.redaction import redact_text
+from odessy.authority.redaction import looks_like_secret_name, redact_text
 from odessy.authority.workspace_authority import WorkspaceAuthorityError
+from odessy.tools.catalog import PATH_ARGUMENTS, PROCESS_TOOLS
 from odessy.tools.external_tools import external_tool
 
 
@@ -53,7 +54,8 @@ def _hash(value: str) -> str:
 
 def _display(value: Any) -> Any:
     if isinstance(value, dict):
-        return {key: ('[REDACTED]' if re.search(r'password|secret|token|credential|api[_-]?key', key, re.I) else _display(item)) for key, item in value.items()}
+        # The shared vocabulary (redaction.py) decides which field names hold secrets.
+        return {key: ('[REDACTED]' if looks_like_secret_name(key) or re.search(r'api[_-]?key', key, re.I) else _display(item)) for key, item in value.items()}
     if isinstance(value, list):
         return [_display(item) for item in value]
     if isinstance(value, str):
@@ -90,12 +92,21 @@ def _describe_execution(execution: Mapping[str, Any]) -> str:
 
     if execution['enforcement'] == 'none':
         return 'Runs with NO SANDBOX: nothing limits what it can read, change or send.'
-    network = 'network on' if execution['network'] == 'allow' else 'network off'
+    unenforced = execution.get('unenforced') or ()
+    if execution['network'] == 'allow':
+        network = 'network on'
+    elif 'network' in unenforced:
+        network = 'network asked off, but this sandbox cannot cut it'
+    else:
+        network = 'network off'
     if execution['enforcement'] is None:
         where = 'the sandbox is chosen on that machine'
     else:
         where = f"{execution['provider']} sandbox, {execution['enforcement']} enforcement"
-    return f"Runs {execution['mode']}, {network}, {where}."
+    text = f"Runs {execution['mode']}, {network}, {where}."
+    if 'hidden_paths' in unenforced:
+        text += ' Credential folders stay readable to it.'
+    return text
 
 
 def build_action_approval(request, decision, policy, *, call_id: str, execution_target) -> ActionApprovalPlan:
@@ -116,8 +127,7 @@ def build_action_approval(request, decision, policy, *, call_id: str, execution_
     # Only local workspace tools share this authority. Laptop execution and
     # third-party server paths must not be resolved against the controller FS.
     if not request.name.startswith('laptop.') and external is None:
-        path_keys = {'cwd', 'path', 'file'}
-        selected = {key: value for key, value in args.items() if key in path_keys and isinstance(value, str)}
+        selected = {key: value for key, value in args.items() if key in PATH_ARGUMENTS and isinstance(value, str)}
         if request.name == 'terminal.run':
             selected.setdefault('cwd', '.')
         for key, value in selected.items():
@@ -136,11 +146,11 @@ def build_action_approval(request, decision, policy, *, call_id: str, execution_
     canonical = _json({'call_id': call_id, 'operation': request.name, 'arguments': args, 'resolved_paths': paths, 'workspace': str(policy.authority.workspace_root), 'host': host, 'target_identity': target, 'decision': _plain(decision), 'policy': policy_data, 'scopes': scopes, 'allowed_channels': channels, 'execution': execution})
     fingerprint = _hash(canonical)
     prompt = f'Approve {request.name} on {host} for this action only. Risk: {decision.risk}.'
-    if request.name in {'terminal.run', 'laptop.terminal.run'} and isinstance(args.get('command'), str):
+    if request.name in PROCESS_TOOLS and isinstance(args.get('command'), str):
         prompt += f' Exact command: {_display(args["command"])}.'
     if request.name == 'agent.run_continue' and isinstance(target, dict):
         prompt += f' Hands {_display(target.get("artifact_kind"))} {_display(target.get("artifact_sha256"))} to {_display(target.get("to_participant"))}.'
-    display_paths = paths or {key: value for key, value in args.items() if key in {'cwd', 'path', 'file'} and isinstance(value, str)}
+    display_paths = paths or {key: value for key, value in args.items() if key in PATH_ARGUMENTS and isinstance(value, str)}
     for key, value in sorted(display_paths.items()):
         prompt += f' {key}: {_display(value)}.'
     prompt += ' Scopes: ' + (', '.join(scopes) if scopes else 'none') + '.'

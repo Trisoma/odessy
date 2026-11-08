@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from odessy.authority.environment import MCP_SERVER_ENV, inherit
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:  # pragma: no cover - exercised on 3.10 only
@@ -65,7 +67,7 @@ _SESSION_CLOSE_SECONDS = 5
 
 #: Environment variables every stdio server gets, so the command can start at all.
 #: Anything else must be listed in the server's `env`.
-_BASE_ENV = ("PATH", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "TEMP", "TMP", "HOME", "USERPROFILE", "LANG")
+_BASE_ENV = MCP_SERVER_ENV
 
 
 class ServerConfigError(ValueError):
@@ -112,10 +114,8 @@ class ServerConfig:
         from mcp.client.stdio import StdioServerParameters
 
         source = os.environ if environ is None else environ
-        allowed = {*_BASE_ENV, *self.env}
         # Matched case-insensitively: Windows environment names are.
-        upper = {name.upper() for name in allowed}
-        child_env = {key: value for key, value in source.items() if key.upper() in upper}
+        child_env = inherit(source, {*_BASE_ENV, *self.env})
         return StdioServerParameters(command=self.command[0], args=list(self.command[1:]), env=child_env)
 
 
