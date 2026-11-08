@@ -7,6 +7,7 @@ process) and the doctor (which prints the same answer), so the two cannot disagr
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from odessy.execution.contract import (
     CONFINED_MODES,
@@ -17,7 +18,7 @@ from odessy.execution.contract import (
 )
 from odessy.execution.registry import ProviderRegistry
 
-__all__ = ["ModePosture", "full_isolation_available", "host_posture", "resolve_isolation"]
+__all__ = ["ModePosture", "full_isolation_available", "host_posture", "limitations_when_asked", "resolve_isolation"]
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,23 @@ class ModePosture:
 
 def _select(registry: ProviderRegistry, mode: str, workspace: str, isolation: IsolationRequirement):
     return registry.select(Requirement(policy=ExecutionPolicy(mode=mode, workspace_root=workspace), isolation=isolation))
+
+
+def limitations_when_asked(registry: ProviderRegistry, posture: "ModePosture", workspace: str) -> tuple[str, ...]:
+    """What the posture's backend still cannot do for a policy that asks it to cut the
+    network and hide a path: what it is able to do, not what it does by default.
+
+    ``host_posture`` probes with the default policy (network allowed, nothing hidden),
+    so its limitations say ``cannot_restrict_network`` even for a backend that cuts the
+    network whenever a call asks. A backend this side cannot ask is assumed unable.
+    """
+
+    for provider in registry.providers():
+        if provider.provider_id == posture.provider_id and hasattr(provider, "limitations"):
+            policy = ExecutionPolicy(mode=posture.mode, workspace_root=workspace, network="deny",
+                                     hidden_paths=(str(Path.home() / ".ssh"),))
+            return tuple(sorted(provider.limitations(policy)))
+    return ("cannot_hide_paths", "cannot_restrict_network")
 
 
 def full_isolation_available(registry: ProviderRegistry, workspace: str) -> bool:

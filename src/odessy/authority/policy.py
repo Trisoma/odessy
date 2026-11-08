@@ -116,7 +116,8 @@ class OdessyPolicy:
     #: (``odessy.execution.posture``). A target missing here is one this side cannot
     #: probe, such as the paired laptop.
     posture: Mapping[str, Mapping[str, tuple[str, str]]] = field(default_factory=dict)
-    #: What that sandbox cannot do on each target: ``{target: {mode: limitations}}``,
+    #: What that sandbox cannot do on each target even when asked:
+    #: ``{target: {mode: limitations}}`` (``odessy.execution.posture.limitations_when_asked``),
     #: in the execution contract's vocabulary (``cannot_restrict_network``, ...). The
     #: approval prompt reads it so a setting the host cannot enforce is not shown as
     #: enforced.
@@ -190,7 +191,7 @@ class OdessyPolicy:
         unenforced = []
         if arguments["network"] == "deny" and "cannot_restrict_network" in gaps:
             unenforced.append("network")
-        if arguments["hidden_paths"] and {"cannot_hide_paths", "cannot_restrict_reads"} & set(gaps):
+        if arguments["hidden_paths"] and "cannot_hide_paths" in gaps:
             unenforced.append("hidden_paths")
         if unenforced:
             plan["unenforced"] = unenforced

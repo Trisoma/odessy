@@ -37,7 +37,7 @@ def test_the_prompt_does_not_promise_a_network_cut_the_host_cannot_make(tmp_path
     policy = OdessyPolicy(
         workspace_root=tmp_path,
         posture={"local": {"workspace-write": ("windows-acl", "partial")}},
-        limitations={"local": {"workspace-write": ("cannot_restrict_network", "cannot_restrict_reads")}},
+        limitations={"local": {"workspace-write": ("cannot_hide_paths", "cannot_restrict_network", "cannot_restrict_reads")}},
     )
     request = ToolRequest("terminal.run", {"command": "touch x"})
     decision = PolicyDecision("confirm", "may modify state", "medium", rule="command_write", network="deny")
@@ -49,11 +49,34 @@ def test_the_prompt_does_not_promise_a_network_cut_the_host_cannot_make(tmp_path
 
 
 def test_a_host_that_can_cut_the_network_says_so(tmp_path):
+    # bwrap reads the whole host but hides the credential folders and cuts the network.
     policy = OdessyPolicy(workspace_root=tmp_path, posture={"local": {"workspace-write": ("bwrap", "full")}},
-                          limitations={"local": {"workspace-write": ()}})
+                          limitations={"local": {"workspace-write": ("cannot_restrict_reads", "host_kernel_shared")}})
     request = ToolRequest("terminal.run", {"command": "touch x"})
     decision = PolicyDecision("confirm", "may modify state", "medium", rule="command_write", network="deny")
     assert "unenforced" not in policy.execution_plan(request, decision)
+
+
+def test_limitations_are_what_the_backend_cannot_do_when_asked(tmp_path):
+    from odessy.execution.posture import ModePosture, limitations_when_asked
+
+    class Backend:
+        provider_id = "fake"
+
+        def limitations(self, policy):
+            gaps = {"cannot_restrict_reads"}
+            if policy.network != "deny":
+                gaps.add("cannot_restrict_network")
+            return frozenset(gaps)
+
+    class Registry:
+        def providers(self):
+            return (Backend(),)
+
+    posture = ModePosture("workspace-write", "fake", "full", ("cannot_restrict_network",), True)
+    assert limitations_when_asked(Registry(), posture, str(tmp_path)) == ("cannot_restrict_reads",)
+    unknown = ModePosture("workspace-write", "other", "full", (), True)
+    assert "cannot_restrict_network" in limitations_when_asked(Registry(), unknown, str(tmp_path))
 
 
 def test_grants_are_one_use_named_and_expire():

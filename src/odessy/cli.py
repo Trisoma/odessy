@@ -35,7 +35,7 @@ from odessy.config.sandbox import (
     load_sandbox_settings,
 )
 from odessy.execution.contract import IsolationRequirement
-from odessy.execution.posture import host_posture, resolve_isolation
+from odessy.execution.posture import host_posture, limitations_when_asked, resolve_isolation
 from odessy.execution.providers import default_execution_providers
 from odessy.execution.registry import ProviderRegistry, with_unconfined_fallback
 from odessy.execution.escalation import ApprovalRequest, EscalationDeniedError, EscalationOutcome
@@ -146,14 +146,15 @@ def _build_policy(workspace_root: Path, hooks) -> OdessyPolicy:
     except SandboxConfigError as error:
         raise SystemExit(str(error)) from error
     isolation, target_isolation = _sandbox_isolation(workspace_root, sandbox)
-    posture = host_posture(execution_registry(), str(workspace_root))
+    registry = execution_registry()
+    posture = host_posture(registry, str(workspace_root))
     return OdessyPolicy(
         workspace_root=workspace_root,
         isolation=isolation,
         target_isolation=target_isolation,
         sandbox=sandbox,
         posture={"local": {item.mode: (item.provider_id, item.enforcement) for item in posture}},
-        limitations={"local": {item.mode: tuple(item.limitations) for item in posture}},
+        limitations={"local": {item.mode: limitations_when_asked(registry, item, str(workspace_root)) for item in posture}},
         preapproved_commands=preapproved,
         # Protected like hooks.toml, whether or not they exist yet. Each may be set
         # somewhere of its own, outside the folder the hooks file sits in.
