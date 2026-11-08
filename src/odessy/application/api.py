@@ -924,13 +924,14 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
 
     async def submit_admitted(data, sid=None):
         from odessy.runtime.types import ToolRequest
-        allowed = {'participant', 'task', 'mode', 'workspace', 'approved', 'session_id'}
+        allowed = {'participant', 'task', 'mode', 'workspace', 'session_id'}
+        if 'approved' in data:
+            # The session's approval decides; a client cannot approve its own job.
+            raise HTTPException(400, 'approved is not a job field; the session asks for approval')
         if set(data) - allowed:
             raise HTTPException(400, 'Unknown job fields')
         if not isinstance(data.get('participant'), str) or not isinstance(data.get('task'), str) or not data['task'].strip():
             raise HTTPException(400, 'participant and nonempty task are required')
-        if 'approved' in data and type(data['approved']) is not bool:
-            raise HTTPException(400, 'approved must be a boolean')
         if 'mode' in data and not isinstance(data['mode'], str):
             raise HTTPException(400, 'mode must be a string')
         if data.get('workspace') is not None and not isinstance(data['workspace'], str):
@@ -940,7 +941,7 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         if sid is not None and not isinstance(sid, str):
             raise HTTPException(400, 'session_id must be a string')
         selected = manager(sid)
-        values = {key: value for key, value in data.items() if key not in {'approved', 'session_id'}}
+        values = {key: value for key, value in data.items() if key != 'session_id'}
         mode = values.get('mode', 'advice')
         if sid is None:
             raise HTTPException(400, 'A session is required for controller approval')

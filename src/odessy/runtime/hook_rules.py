@@ -149,7 +149,9 @@ class Rule:
 
 
 def call_target(tool: str) -> str:
-    return "laptop" if tool.startswith("laptop.") else "local"
+    from odessy.tools.catalog import target_of
+
+    return target_of(tool)
 
 
 def path_matches(path: str, patterns: tuple[str, ...], workspace: Path) -> bool:

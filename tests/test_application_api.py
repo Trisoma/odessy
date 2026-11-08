@@ -202,7 +202,7 @@ def test_session_jobs_use_controller_manager_and_cannot_bypass_approval():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test', headers={'Authorization': 'Bearer secret'}) as client:
             sid = (await client.post('/v1/sessions')).json()['id']
             route = '/v1/sessions/' + sid
-            request = asyncio.create_task(client.post(route + '/jobs', json={'participant': 'coder', 'task': 'change file', 'mode': 'patch', 'approved': True}))
+            request = asyncio.create_task(client.post(route + '/jobs', json={'participant': 'coder', 'task': 'change file', 'mode': 'patch'}))
             for _ in range(20):
                 await asyncio.sleep(0)
                 approvals = app.state.sessions[sid].pending_approvals
@@ -229,7 +229,7 @@ def test_advice_delegation_requires_controller_approval_and_denial_blocks_submit
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test', headers={'Authorization': 'Bearer secret'}) as client:
             sid = (await client.post('/v1/sessions')).json()['id']
             route = '/v1/sessions/' + sid
-            request = asyncio.create_task(client.post(route + '/jobs', json={'participant': 'coder', 'task': 'review code', 'mode': 'advice', 'approved': True}))
+            request = asyncio.create_task(client.post(route + '/jobs', json={'participant': 'coder', 'task': 'review code', 'mode': 'advice'}))
             for _ in range(100):
                 await asyncio.sleep(0)
                 approvals = app.state.sessions[sid].pending_approvals

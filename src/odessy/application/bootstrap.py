@@ -144,6 +144,8 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
 
         jobs = JobManager(config.participants, remote_targets=authorized_remote_targets(servers), review=review_job)
         runs = RunManager(jobs)
+        from odessy.collaboration.context import ApprovalGrants
+        grants = ApprovalGrants()
         loop = asyncio.get_running_loop()
 
         def coding_advice(profile, question, context):
@@ -157,7 +159,7 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
         for adapter in ("codex", "claude_code", "custom_agent"):
             service.register_adapter(adapter, coding_advice)
         if config.settings.enabled:
-            servers = (*servers, ExecutionTarget(build_collaboration_server(service, jobs, runs)))
+            servers = (*servers, ExecutionTarget(build_collaboration_server(service, jobs, runs, grants=grants)))
         from odessy.interaction.tools import build_interaction_server
         servers = (*servers, ExecutionTarget(build_interaction_server(lambda: controller.interactions)))
         names = []
@@ -177,6 +179,7 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
             agent._confirm_action = controller.confirm_action
             agent._delegation_jobs = jobs
             agent._delegation_runs = runs
+            agent._delegation_grants = grants
             # Composed sessions authorize only through the shared broker. Legacy
             # direct OdessyAgent users retain their existing confirmation seam.
             agent._confirm = False

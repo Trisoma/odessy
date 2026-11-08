@@ -3,8 +3,22 @@ import asyncio
 from mcp.server import MCPServer
 
 
-def build_collaboration_server(service, jobs=None, runs=None):
+def build_collaboration_server(service, jobs=None, runs=None, *, grants=None):
+    """The collaboration tools.
+
+    With ``grants`` (the in-process server a session mounts), a tool that starts or
+    hands over work runs only with a one-use grant the agent issued after a person
+    approved that call. Without it (the stdio worker), the caller is the trusted
+    operator that launched the worker and approves its jobs itself.
+    """
     server = MCPServer("odessy-collaboration")
+
+    def approved(tool, approval):
+        if grants is None:
+            return True
+        if not grants.redeem(approval, tool):
+            raise PermissionError(f"{tool} was not approved through Odessy's approval path")
+        return True
 
     @server.tool(name="model.consult")
     async def consult(participant: str, question: str, context: str = "", reason: str = "") -> dict[str, object]:
@@ -27,10 +41,12 @@ def build_collaboration_server(service, jobs=None, runs=None):
 
     if jobs is not None:
         @server.tool(name="agent.delegate")
-        async def delegate(participant: str, task: str, mode: str = "advice", workspace: str = "") -> dict[str, object]:
-            # This server is an ExecutionTarget, and OdessyAgent has already asked
-            # its confirmation channel. The model cannot supply `approved`.
-            return await jobs.submit(participant, task, mode=mode, workspace=workspace or None, approved=True)
+        async def delegate(participant: str, task: str, mode: str = "advice", workspace: str = "",
+                           approval: str = "") -> dict[str, object]:
+            # OdessyAgent asked its confirmation channel and issued `approval`. The
+            # model cannot supply it: the tool contracts do not list the argument.
+            return await jobs.submit(participant, task, mode=mode, workspace=workspace or None,
+                                     approved=approved("agent.delegate", approval))
 
         @server.tool(name="agent.job_status")
         async def status(job_id: str) -> dict[str, object]:
@@ -43,14 +59,15 @@ def build_collaboration_server(service, jobs=None, runs=None):
     if runs is not None:
         @server.tool(name="agent.run")
         async def run(flow: str, from_participant: str, from_task: str, to_participant: str, to_task: str,
-                      workspace: str = "") -> dict[str, object]:
+                      workspace: str = "", approval: str = "") -> dict[str, object]:
             # Confirmed by OdessyAgent, like agent.delegate.
             return await runs.start(flow, from_participant, from_task, to_participant, to_task,
-                                    workspace=workspace or None, approved=True)
+                                    workspace=workspace or None, approved=approved("agent.run", approval))
 
         @server.tool(name="agent.run_continue")
-        async def run_continue(run_id: str = "", artifact_sha256: str = "") -> dict[str, object]:
-            return await runs.continue_run(run_id or None, artifact_sha256 or None, approved=True)
+        async def run_continue(run_id: str = "", artifact_sha256: str = "", approval: str = "") -> dict[str, object]:
+            return await runs.continue_run(run_id or None, artifact_sha256 or None,
+                                           approved=approved("agent.run_continue", approval))
 
         @server.tool(name="agent.run_status")
         async def run_status(run_id: str = "") -> dict[str, object]:

@@ -267,6 +267,10 @@ class JobManager:
                     if text.endswith(secret[:size]):
                         text = text[:-size] + '[REDACTED]'
                         break
+        # The shared rules first (secret-named assignments, known token shapes), then
+        # bearer headers and short assignments, which they leave alone.
+        from odessy.authority.redaction import redact_text
+        text = redact_text(text)
         return re.sub(r'(?i)(bearer\s+|(?:api[_-]?key|token|password)\s*[=:]\s*)[^\s,\}"\']+', r'\1[REDACTED]', text)
 
     def _emit(self, job, message=None):
@@ -448,12 +452,9 @@ class JobManager:
     def _environment(self, profile):
         # Authentication stored by each CLI in its home/config directory remains its
         # responsibility. Never forward unrelated API credentials from this process.
-        allowed = {'PATH', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP',
-                   'HOME', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'LANG', 'LC_ALL'}
+        from odessy.authority.environment import CODING_CLI_ENV, inherit
         credential = getattr(profile, 'credential_env', None)
-        if credential:
-            allowed.add(credential)
-        return {name: value for name, value in os.environ.items() if name.upper() in allowed or name == credential}
+        return inherit(os.environ, CODING_CLI_ENV | ({credential} if credential else set()))
 
     async def _remote_call(self, target, action, payload):
         result = target(action, payload)

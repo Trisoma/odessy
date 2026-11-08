@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -34,6 +35,15 @@ from odessy.authority.command_rules import (
 )
 from odessy.config.commands import matches_preapproved
 from odessy.config.sandbox import DEFAULT_SETTINGS, SandboxSettings
+from odessy.tools.catalog import (
+    BUILTIN_TOOLS,
+    COLLABORATION_INSPECT_TOOLS,
+    COLLABORATION_TOOLS,
+    PATH_ARGUMENTS,
+    PROCESS_TOOLS,
+    READ_ONLY_TOOLS,
+    target_of,
+)
 from odessy.tools.external_tools import ExternalTool, external_tool
 from odessy.runtime.types import PolicyDecision, ToolRequest
 from odessy.authority.workspace_authority import (
@@ -50,7 +60,7 @@ from odessy.authority.workspace_authority import (
 #: outside process execution carry their own requirement semantics: a managed-device
 #: write is not a process and is still a privileged capability, so it must bring its
 #: own answer rather than being waved through by the ``None`` this produces.
-_PROCESS_TOOL_NAMES = frozenset({"terminal.run", "laptop.terminal.run"})
+_PROCESS_TOOL_NAMES = PROCESS_TOOLS
 
 #: The two arguments that together ask for a wider sandbox mode. They travel as a
 #: pair; see :func:`validate_escalation_args`.
@@ -106,6 +116,11 @@ class OdessyPolicy:
     #: (``odessy.execution.posture``). A target missing here is one this side cannot
     #: probe, such as the paired laptop.
     posture: Mapping[str, Mapping[str, tuple[str, str]]] = field(default_factory=dict)
+    #: What that sandbox cannot do on each target: ``{target: {mode: limitations}}``,
+    #: in the execution contract's vocabulary (``cannot_restrict_network``, ...). The
+    #: approval prompt reads it so a setting the host cannot enforce is not shown as
+    #: enforced.
+    limitations: Mapping[str, Mapping[str, tuple[str, ...]]] = field(default_factory=dict)
 
     def identity(self) -> "OdessyPolicy":
         """What an approval binds to. A wrapper delegates this to the policy it wraps."""
@@ -161,14 +176,25 @@ class OdessyPolicy:
         if mode == "danger-full-access":
             forecast = ("unconfined", "none")
         provider, enforcement = forecast if forecast is not None else (None, None)
-        return {
+        arguments = self.execution_arguments(request, mode, decision)
+        plan: dict[str, Any] = {
             "target": host,
             "mode": mode,
             "isolation": self.isolation_for(request.name),
-            "network": self.execution_arguments(request, mode, decision)["network"],
+            "network": arguments["network"],
             "provider": provider,
             "enforcement": enforcement,
         }
+        # Asked for, but not something this host's sandbox can hold to.
+        gaps = () if mode == "danger-full-access" else self.limitations.get(host, {}).get(mode, ())
+        unenforced = []
+        if arguments["network"] == "deny" and "cannot_restrict_network" in gaps:
+            unenforced.append("network")
+        if arguments["hidden_paths"] and {"cannot_hide_paths", "cannot_restrict_reads"} & set(gaps):
+            unenforced.append("hidden_paths")
+        if unenforced:
+            plan["unenforced"] = unenforced
+        return plan
 
     @property
     def authority(self) -> WorkspaceAuthority:
@@ -178,26 +204,7 @@ class OdessyPolicy:
         external = external_tool(request.name)
         if external is not None:
             return self._evaluate_external(external, request)
-        allowed_tools = self.allowed_tools if self.allowed_tools is not None else {
-            "time.now",
-            "user.ask",
-            "terminal.run",
-            "laptop.terminal.run",
-            "calculator.eval",
-            "filesystem.read",
-            "filesystem.list",
-            "filesystem.write",
-            "log.append",
-            "project.find",
-            "project.grep",
-            "git.status",
-            "git.diff",
-            "git.changed_files",
-            "git.log",
-            "git.show",
-            "model.consult", "agent.delegate", "agent.job_status", "agent.cancel",
-            "agent.run", "agent.run_continue", "agent.run_status", "agent.run_cancel",
-        }
+        allowed_tools = self.allowed_tools if self.allowed_tools is not None else BUILTIN_TOOLS
         if request.name not in allowed_tools:
             return PolicyDecision(
                 action="deny",
@@ -212,43 +219,25 @@ class OdessyPolicy:
             if current_interactions() is None:
                 return PolicyDecision("deny", "No clarification interaction is available", "low", rule="no_interaction")
             return PolicyDecision("allow", "Ask for information; answers grant no authority", "low", rule="user_ask")
-        if request.name in {"model.consult", "agent.delegate", "agent.job_status", "agent.cancel",
-                            "agent.run", "agent.run_continue", "agent.run_status", "agent.run_cancel"}:
+        if request.name in COLLABORATION_TOOLS:
             if _ESCALATION_ARGUMENT_NAMES & set(request.arguments):
                 return PolicyDecision("deny", "Collaboration tools do not accept sandbox escalation arguments", "high", rule="sandbox_arguments")
             from odessy.collaboration.context import current_service
             service = current_service()
             if service is None or not service.config.settings.enabled:
                 return PolicyDecision("deny", "Collaboration is not enabled", "medium", rule="collaboration_off")
-            if request.name in {"agent.job_status", "agent.cancel", "agent.run_status", "agent.run_cancel"}:
+            if request.name in COLLABORATION_INSPECT_TOOLS:
                 return PolicyDecision("allow", "Inspect or cancel an authorized collaboration job", "low", rule="collaboration_job")
-            if request.name == "agent.run_continue":
-                return PolicyDecision("confirm", "Hand one agent's output to another agent", "high", rule="collaboration_handoff")
-            if request.name == "agent.run":
-                from odessy.collaboration.runs import FLOWS
-                modes = FLOWS.get(request.arguments.get("flow"))
-                if modes is None:
-                    return PolicyDecision("deny", "Unknown handoff flow", "medium", rule="collaboration_handoff")
-                for key, mode in zip(("from_participant", "to_participant"), modes):
-                    profile = service.config.participants.get(request.arguments.get(key))
-                    if profile is None or "delegate" not in profile.capabilities:
-                        return PolicyDecision("deny", "Participant or capability is not configured", "medium", rule="collaboration_participant")
-                    if mode not in profile.allowed_modes:
-                        return PolicyDecision("deny", "Delegation mode is not allowed for this participant", "high", rule="collaboration_mode")
-                return PolicyDecision("confirm", "Run a two-agent handoff using the configured child-agent permissions", "high", rule="collaboration_handoff")
-            participant = request.arguments.get("participant") or service.config.settings.default_participant
-            profile = service.config.participants.get(participant)
-            capability = "consult" if request.name == "model.consult" else "delegate"
-            if profile is None or capability not in profile.capabilities:
-                return PolicyDecision("deny", "Participant or capability is not configured", "medium", rule="collaboration_participant")
-            if capability == "consult":
+            if request.name == "model.consult":
+                participant = request.arguments.get("participant") or service.config.settings.default_participant
+                profile = service.config.participants.get(participant)
+                if profile is None or "consult" not in profile.capabilities:
+                    return PolicyDecision("deny", "Participant or capability is not configured", "medium", rule="collaboration_participant")
                 if not service.config.settings.automatic:
                     return PolicyDecision("deny", "Automatic consultation is disabled; request it explicitly", "medium", rule="collaboration_consult")
                 return PolicyDecision("allow", "Consultation enabled by user settings; advice only", "low", rule="collaboration_consult")
-            mode = request.arguments.get("mode", "advice")
-            if mode not in profile.allowed_modes:
-                return PolicyDecision("deny", "Delegation mode is not allowed for this participant", "high", rule="collaboration_mode")
-            return PolicyDecision("confirm", "Delegate work using the configured child-agent permissions", "medium" if mode == "advice" else "high", rule="collaboration_delegate")
+            return collaboration_decision(request, service.config.participants,
+                                          default_participant=service.config.settings.default_participant)
         if request.name not in _PROCESS_TOOL_NAMES:
             # A silent no-op would be worse than a refusal: a model that asks to widen
             # the sandbox on an action the sandbox does not govern would otherwise be
@@ -296,7 +285,7 @@ class OdessyPolicy:
             )
         if request.name in _READ_ONLY_TOOL_NAMES:
             return self._evaluate_read_only_tool(request)
-        if request.name in {"terminal.run", "laptop.terminal.run"}:
+        if request.name in PROCESS_TOOLS:
             return self._evaluate_terminal_run(request)
         if request.name == "filesystem.write":
             return self._evaluate_filesystem_write(request)
@@ -674,7 +663,7 @@ class OdessyPolicy:
 
     def _evaluate_read_only_tool(self, request: ToolRequest) -> PolicyDecision:
         for key, value in request.arguments.items():
-            if key in {"path", "file", "cwd"} and isinstance(value, str):
+            if key in PATH_ARGUMENTS and isinstance(value, str):
                 path_decision = self._check_workspace_path(value, request.name)
                 if path_decision is not None:
                     return path_decision
@@ -762,12 +751,49 @@ class OdessyPolicy:
             rule="internal_log",
         )
 
-def _target(tool_name: str) -> str:
-    return "laptop" if tool_name.startswith("laptop.") else "local"
+_target = target_of
+
+
+def collaboration_decision(request: ToolRequest, participants: Mapping[str, Any], *,
+                           default_participant: str | None = None) -> PolicyDecision:
+    """The decision for a collaboration call that starts or hands over work.
+
+    One rule for both ways such a call arrives: proposed by the model (``evaluate``,
+    after its own checks that collaboration is on) and asked for directly by the
+    desktop (``SessionController.confirm``). It checks what the participants' config
+    allows; it never allows on its own, since starting work always needs a yes.
+    """
+
+    name = request.name
+    arguments = request.arguments
+    if name == "agent.run_continue":
+        return PolicyDecision("confirm", "Hand one agent's output to another agent", "high", rule="collaboration_handoff")
+    if name == "agent.run":
+        from odessy.collaboration.runs import FLOWS
+        modes = FLOWS.get(arguments.get("flow"))
+        if modes is None:
+            return PolicyDecision("deny", "Unknown handoff flow", "medium", rule="collaboration_handoff")
+        for key, mode in zip(("from_participant", "to_participant"), modes):
+            profile = participants.get(arguments.get(key))
+            if profile is None or "delegate" not in profile.capabilities:
+                return PolicyDecision("deny", "Participant or capability is not configured", "medium", rule="collaboration_participant")
+            if mode not in profile.allowed_modes:
+                return PolicyDecision("deny", "Delegation mode is not allowed for this participant", "high", rule="collaboration_mode")
+        return PolicyDecision("confirm", "Run a two-agent handoff using the configured child-agent permissions", "high", rule="collaboration_handoff")
+    if name == "agent.delegate":
+        profile = participants.get(arguments.get("participant") or default_participant)
+        if profile is None or "delegate" not in profile.capabilities:
+            return PolicyDecision("deny", "Participant or capability is not configured", "medium", rule="collaboration_participant")
+        mode = arguments.get("mode", "advice")
+        if mode not in profile.allowed_modes:
+            return PolicyDecision("deny", "Delegation mode is not allowed for this participant", "high", rule="collaboration_mode")
+        return PolicyDecision("confirm", "Delegate work using the configured child-agent permissions",
+                              "medium" if mode == "advice" else "high", rule="collaboration_delegate")
+    return PolicyDecision("deny", f"No collaboration rule covers {name}", "high", rule="tool_without_rule")
 
 
 #: Files named on their own in a command are matched by name as well as by path.
-_CONFIG_NAMES = frozenset({"hooks.toml", "sandbox.toml", "commands.toml"})
+_CONFIG_NAMES = frozenset({"hooks.toml", "sandbox.toml", "commands.toml", "servers.toml"})
 
 
 @functools.lru_cache(maxsize=32)
@@ -841,28 +867,28 @@ def _is_protected_path(workspace_root: Path, candidate: str, paths: tuple[Path, 
     try:
         target = target.resolve()
     except OSError:
-        return False
+        # A guard that cannot tell must refuse: treat the path as protected.
+        return True
+    key = _path_key(target)
     for path in paths:
+        protected = Path(path).expanduser()
         try:
-            protected = Path(path).expanduser().resolve()
+            protected = protected.resolve()
         except OSError:
-            continue
-        if target == protected or protected in target.parents:
+            protected = protected.absolute()
+        guarded = _path_key(protected)
+        if key == guarded or key.startswith(guarded.rstrip("/") + "/"):
             return True
     return False
 
 
-_READ_ONLY_TOOL_NAMES = {
-    "filesystem.read",
-    "filesystem.list",
-    "project.find",
-    "project.grep",
-    "git.status",
-    "git.diff",
-    "git.changed_files",
-    "git.log",
-    "git.show",
-}
+def _path_key(path: Path) -> str:
+    """A path compared the way the file system does: case-folded where it is (Windows)."""
+
+    return os.path.normcase(str(path)).replace("\\", "/")
+
+
+_READ_ONLY_TOOL_NAMES = READ_ONLY_TOOLS
 
 
 def decline_leaves_turn_open(decision: PolicyDecision) -> bool:

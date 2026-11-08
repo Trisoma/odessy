@@ -23,6 +23,7 @@ from odessy.execution.providers import UnconfinedProvider
 from odessy.execution.registry import ProviderRegistry
 from odessy.execution.diagnostics import matches_signature
 from odessy.execution.roots import extra_writable_roots, hidden_roots
+from odessy.authority.environment import SANDBOX_COMMAND_ENV
 from odessy.authority.output_retention import TextRetainer, format_retention_notice
 from odessy.authority.redaction import looks_like_secret_name, redact_text
 from odessy.authority.spill import SpillStore
@@ -427,25 +428,7 @@ def _shell_command(command: str) -> list[str]:
 
 
 def build_sanitized_environment(source: os._Environ[str]) -> dict[str, str]:
-    allowed = {
-        "COMSPEC",
-        "LANG",
-        "LC_ALL",
-        "PATH",
-        "PATHEXT",
-        # Preserve an explicitly configured module search path. Reconstructing it
-        # in a stripped environment can trigger unrelated installed-module scans.
-        "PSMODULEPATH",
-        # Let the host choose a writable module-analysis cache. Cache reuse alone
-        # does not bound module discovery; preserve PSMODULEPATH above as well.
-        "PSMODULEANALYSISCACHEPATH",
-        "SYSTEMROOT",
-        "TEMP",
-        "TERM",
-        "TMP",
-        "TMPDIR",
-        "WINDIR",
-    }
+    allowed = SANDBOX_COMMAND_ENV
     result: dict[str, str] = {}
     for key, value in source.items():
         upper = key.upper()
