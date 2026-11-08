@@ -1,0 +1,112 @@
+{
+  "schema": 1,
+  "recorded": "2026-11-08",
+  "status": "spike pin only - not a product dependency, not installed by the Odessy installer",
+  "upstream": {
+    "repository": "https://github.com/deepseek-ai/deepseek-harness",
+    "source_tag": "dsh-v0.2.1-rc.2",
+    "source_commit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+    "declared_version": "0.2.1-rc.2",
+    "license": "MIT",
+    "note": "The tag is used to read source symbols. The wheel contains no tag metadata; the Python SDK files were byte-compared against the tag (see source_cross_check). The bundled executable's JavaScript internals were not byte-compared."
+  },
+  "source_cross_check": {
+    "method": "sha256 over LF-normalised bytes, installed site-packages vs raw text at the tag",
+    "files": {
+      "api.py": "7ff562d094f04390",
+      "client.py": "bc9eef92d7a2da4b",
+      "models.py": "c8cba1cdf7701750",
+      "errors.py": "0d380a8947c7cc64",
+      "__init__.py": "0511648a19b7f0e6"
+    },
+    "result": "5/5 identical"
+  },
+  "python": {
+    "requires_python": ">=3.10",
+    "installed_with": "3.11.9 (isolated venv, no checkout on sys.path)",
+    "wheels": {
+      "deepseek_harness_sdk-0.2.1rc2-py3-none-any.whl": {
+        "package": "deepseek-harness-sdk",
+        "version": "0.2.1rc2",
+        "bytes": 18112,
+        "sha256": "30fc72c67f20ff4b46c6952087ea596fc70c2692001aa372185a24f9866bdc46"
+      },
+      "deepseek_harness_runtime_bin-0.2.1rc2-py3-none-win_amd64.whl": {
+        "package": "deepseek-harness-runtime-bin",
+        "version": "0.2.1rc2",
+        "target": "win-x64",
+        "bytes": 83860784,
+        "sha256": "d38c18f5117859feedaaa791a0eea37b8644bc187118e7e6f3afa231a5381cb7"
+      },
+      "deepseek_harness_runtime_bin-0.2.1rc2-py3-none-manylinux_2_28_aarch64.whl": {
+        "package": "deepseek-harness-runtime-bin",
+        "version": "0.2.1rc2",
+        "target": "linux-arm64 (Jetson candidate)",
+        "bytes": 96833408,
+        "sha256": "71ed869e3e9a0e3ea398521730889d2d7e154767834165f1553755818e3f2a78"
+      }
+    },
+    "resolved_dependencies": {
+      "pydantic-2.14.3-py3-none-any.whl": "3f7b347782ab7e4cf4c798496ae3a82787d9f21ec12676a9c564355eeef8daa8",
+      "pydantic_core-2.50.4-cp311-cp311-win_amd64.whl": "15bece43a02ad543c621c8305e67dedb5f27d378c5ba741e5a2c36523f8ef37f",
+      "annotated_types-0.8.0-py3-none-any.whl": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0",
+      "typing_extensions-4.16.0-py3-none-any.whl": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+      "typing_inspection-0.4.5-py3-none-any.whl": "bc210535442b39e1bf2805e0c7a17dfd6a4ace760c84c7f7d16245d23a6b1c39"
+    }
+  },
+  "executable": {
+    "win-x64": {
+      "installed_path": "<venv>/Lib/site-packages/deepseek_harness_runtime/runtime/deepseek-harness-sdk-runtime-win-x64.exe",
+      "bytes": 273157120,
+      "sha256": "f9ed01f241df37c50c702d81b6c226d576210b8f3947699735ca90285ea13365",
+      "reported_version": "0.2.1-rc.2"
+    }
+  },
+  "profiles": {
+    "selected": "acp",
+    "also_exercised": ["sdk"],
+    "shipped_by_wheel": ["acp", "sdk", "sdk-minimal", "web", "headless"]
+  },
+  "launch": {
+    "command": "deepseek-harness-sdk-runtime-win-x64.exe --profile acp [--patch <overlay.yml>]",
+    "environment": {
+      "DSH_HOME": "absolute isolated directory (required, non-empty; never ~/.dsh)",
+      "DEEPSEEK_BASE_URL": "provider base URL; the fixture used http://127.0.0.1:<port>",
+      "DEEPSEEK_API_KEY": "fixture value only in the spike",
+      "DSH_PERMISSION_MODE": "optional; default workspace-write"
+    }
+  },
+  "spike_constants": {
+    "permission_mode": "workspace-write (default)",
+    "approval_policy": "ask (from the dumped profile)",
+    "session_workspace": "<work>/ws, a throwaway directory"
+  },
+  "spike_plugin": {
+    "name": "@odessy/dsh-stream-bridge",
+    "version": "0.0.1",
+    "source": "experiments/restructure/harness_compatibility/plugin/odessy-stream-bridge",
+    "install": "dsh plugin --profile acp add file:<abs bundle dir>",
+    "installed_into": "<DSH_HOME>/profiles/acp (recorded in dsh.profile.bundles)",
+    "manifest_key": "dsh.bundle.patch",
+    "env_per_launch": ["ODESSY_BRIDGE_PORT", "ODESSY_BRIDGE_TOKEN"],
+    "forwarded": ["agent/assistant-stream: start", "chunk(text-delta|reasoning-delta)", "end"],
+    "not_a_product_dependency": true
+  },
+  "dev_toolchain": {
+    "purpose": "dsh plugin add shells out to pnpm; this toolchain satisfies it on the build/developer machine only",
+    "node": "22.19.0 (nodejs.org win-x64 zip, unpacked in the workspace)",
+    "pnpm": "11.7.0 (npm pack pnpm@11.7.0, unpacked; bin/pnpm.cmd shim)",
+    "network_needed": "only to fetch node/pnpm and the pinned wheels",
+    "user_requirement": "none - the composed profile ships"
+  },
+  "upgrade_policy": {
+    "automatic_adoption": "never",
+    "procedure": [
+      "Propose a new SDK and runtime-bin pair and record both wheel hashes.",
+      "Re-run experiments/restructure/harness_compatibility/smoke_acp.py and smoke_sdk.py.",
+      "Re-diff the released SDK sources against the new tag.",
+      "Re-check every observed shape in docs/restructure/harness-integration-contract.md.",
+      "Re-run the installed qualification in prompts 14 and 16 before any default change."
+    ]
+  }
+}

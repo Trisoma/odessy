@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from .session import public
 from odessy.interaction.broker import InteractionError
 from odessy.models.cloud_model import CloudModelConfigError
+from odessy.runtime_backends import RuntimeSelectionError, RuntimeUnavailable
 
 _DIAGNOSTIC = r'''<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Odessy diagnostics</title>
@@ -200,13 +201,7 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         return sessions[sid]
 
     def snapshot(controller):
-        return {'id': controller.id, 'selected_profile': controller.selected_profile,
-                'available_profiles': list(controller.profiles),
-                'active_profile': controller.active_profile, 'running': controller.running,
-                'history': public(controller.memory.turns),
-                'pending_approvals': controller.pending_approvals,
-                'pending_questions': controller.pending_questions,
-                'events': controller.events}
+        return controller.public_snapshot()
 
     async def make_controller():
         nonlocal pending_admissions
@@ -219,6 +214,12 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                     controller = await controller
             except CloudModelConfigError as exc:
                 raise HTTPException(503, public(str(exc))) from exc
+            except RuntimeUnavailable as exc:
+                # A selected engine that is not in this build is unavailable, never a
+                # reason to construct the legacy engine behind the caller's back.
+                raise HTTPException(503, public(str(exc))) from exc
+            except RuntimeSelectionError as exc:
+                raise HTTPException(400, public(str(exc))) from exc
             except SystemExit as exc:
                 # The shared CLI model builder wraps configuration failures.
                 # Translate only that known cause; unrelated exits stay errors.

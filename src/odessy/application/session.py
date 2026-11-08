@@ -15,6 +15,8 @@ from typing import Any
 from odessy.authority.redaction import redact_text, looks_like_secret_name
 from odessy.runtime.hooks import public_event
 from odessy.runtime.types import ToolObservation, ToolRequest
+from odessy.runtime_backends import normalize_engine, resolve_and_build
+from odessy.runtime_backends.contracts import RuntimeEngineLocked
 from odessy.voice.memory import ConversationMemory
 from odessy.collaboration.context import collaboration_scope
 from odessy.interaction.broker import InteractionBroker
@@ -60,7 +62,8 @@ def parse_session_command(text, profiles):
 class SessionController:
     def __init__(self, *, model_factory, agent_factory, profiles, selected_profile=None,
                  collaboration=None, jobs=None, config=None, memory=None,
-                 event_limit=256, subscriber_limit=64, max_subscribers=16):
+                 event_limit=256, subscriber_limit=64, max_subscribers=16,
+                 runtime_selection=None):
         if not profiles or min(event_limit, subscriber_limit, max_subscribers) < 1:
             raise ValueError('Profiles and positive event bounds are required')
         self.id = uuid.uuid4().hex
@@ -89,6 +92,40 @@ class SessionController:
         self._closed = False
         self.monitoring_sink = None
         self._model = self._validate_model(self.selected_profile)
+        # The engine is decided once, here, and never afterwards. ``resolve_and_build``
+        # raises for an unknown or unavailable engine instead of falling back.
+        self.runtime_selection, self.runtime = resolve_and_build(self, runtime_selection)
+
+    @property
+    def engine(self):
+        """The engine bound to this session. Immutable for the session's lifetime."""
+        return self.runtime_selection.engine
+
+    def select_engine(self, name):
+        """Reject any attempt to move an existing session to another engine.
+
+        Selecting the current engine is a no-op, so idempotent callers keep working.
+        """
+        if self._closed:
+            raise RuntimeError('Session is closed')
+        requested = normalize_engine(name)
+        if requested != self.engine:
+            raise RuntimeEngineLocked(self.engine, requested)
+        return self.engine
+
+    def public_snapshot(self):
+        """The transport-neutral session snapshot; the API and the runtime share one shape.
+
+        Events go through the runtime envelope, so a different engine cannot change the
+        envelope a client receives.
+        """
+        return {'id': self.id, 'selected_profile': self.selected_profile,
+                'available_profiles': list(self.profiles),
+                'active_profile': self.active_profile, 'running': self.running,
+                'history': public(self.memory.turns),
+                'pending_approvals': self.pending_approvals,
+                'pending_questions': self.pending_questions,
+                'events': [event.public() for event in self.runtime.events()]}
 
     def _validate_model(self, name):
         if name not in self.profiles:

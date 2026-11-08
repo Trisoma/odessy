@@ -1,0 +1,9 @@
+# Adds the spike bridge row. Port and token come from the child environment so the
+# same bundle can be installed once and pointed at different runs.
+- insert:
+    - id: odessy-stream-bridge
+      name: '@odessy/dsh-stream-bridge'
+      config:
+        host: '127.0.0.1'
+        port: !!js Number(process.env.ODESSY_BRIDGE_PORT)
+        token: !!js process.env.ODESSY_BRIDGE_TOKEN
