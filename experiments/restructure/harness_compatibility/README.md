@@ -44,6 +44,9 @@ consecutive runs passed.
 | `smoke_sdk.py` | Same pin over the Python SDK: notification census, delta check, method probes, resume |
 | `verify_no_tools.py` | Boots the pin with one or more overlays and reads the tool roster the provider received; exits 1 unless the roster is empty. Used to design `odessy_narrow.patch.yml` |
 | `smoke_p03.py` | Drives the **production** `HarnessRuntime` (`from_environment` → `start`/`run_turn`/`close`) against the pinned binary: version identity, allowlisted environment, no tools, settled text, no orphan |
+| `probe_providers.py` | Prints the model catalogue the pin advertises and what it does with pairs it does not offer |
+| `probe_piai_route.py` | Declares one `llm-pi-ai` route and reports whether it appears, is selectable, and reaches the endpoint (both wire apis) |
+| `smoke_p04.py` | Model routes end to end against the pin: missing key refused, declared route used, context usage recorded, model switched in the same process |
 
 ## Prerequisites
 

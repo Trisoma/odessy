@@ -73,6 +73,46 @@ class RuntimeEngineLocked(RuntimeSelectionFailure):
         )
 
 
+class ModelRouteError(RuntimeSelectionFailure):
+    """The selected model profile has no faithful expression on this engine.
+
+    Raised instead of substituting a different provider or model: the caller sees a named
+    refusal it can show the user, and no turn runs on a route nobody chose.
+    """
+
+    code = "model_route_invalid"
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(message)
+
+    def public(self) -> dict[str, str]:
+        return {"message": self.message}
+
+
+class ModelRouteLocked(RuntimeSelectionFailure):
+    """A session cannot move to a different provider without being relaunched.
+
+    The child process receives exactly one provider credential, fixed at launch, so a
+    provider change is a new process (and, once resume exists, a resumed session) — not a
+    silent switch inside a running one. Changing the *model* within the launched provider
+    is allowed and in-place.
+    """
+
+    code = "model_route_locked"
+
+    def __init__(self, current: str, requested: str):
+        self.current = current
+        self.requested = requested
+        super().__init__(
+            f"This session was launched with the {current!r} provider; {requested!r} needs a "
+            "new session (the provider credential is fixed when the engine starts)"
+        )
+
+    def public(self) -> dict[str, str]:
+        return {"current": self.current, "requested": self.requested}
+
+
 class RuntimeCapabilityUnavailable(RuntimeSelectionFailure):
     """A caller asked an engine for something it has not implemented yet.
 

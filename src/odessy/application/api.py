@@ -19,6 +19,8 @@ from .session import public
 from odessy.interaction.broker import InteractionError
 from odessy.models.cloud_model import CloudModelConfigError
 from odessy.runtime_backends import (
+    ModelRouteError,
+    ModelRouteLocked,
     RuntimeCapabilityUnavailable,
     RuntimeSelectionError,
     RuntimeUnavailable,
@@ -222,6 +224,10 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                 # A selected engine that is not in this build is unavailable, never a
                 # reason to construct the legacy engine behind the caller's back.
                 raise HTTPException(503, public(str(exc))) from exc
+            except ModelRouteError as exc:
+                # The chosen model profile has no faithful route on this engine: refuse it
+                # visibly instead of running a different provider.
+                raise HTTPException(400, public(exc.message)) from exc
             except RuntimeSelectionError as exc:
                 raise HTTPException(400, public(str(exc))) from exc
             except SystemExit as exc:
@@ -743,6 +749,12 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             find(sid).select_model(data['profile'])
         except RuntimeCapabilityUnavailable as exc:
             raise HTTPException(501, public(exc.public())) from exc
+        except ModelRouteLocked as exc:
+            # The provider credential is fixed when the engine starts; another provider
+            # is a new session, not a silent switch inside this one.
+            raise HTTPException(409, public(str(exc))) from exc
+        except ModelRouteError as exc:
+            raise HTTPException(400, public(exc.message)) from exc
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(400, str(exc))
         return snapshot(find(sid))

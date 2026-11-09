@@ -115,9 +115,16 @@ class HarnessConfig:
     #: Extra overlays. They are applied *before* ``narrow_patch`` and may not name a tool
     #: row (:func:`assert_extras_leave_tools_alone`), so they cannot widen the surface.
     patches: tuple[Path, ...] = ()
+    #: The selected model route, as the one-row ``llm-pi-ai`` overlay for this session.
+    #: Emitted after extras and before the narrow overlay: it configures a provider, never
+    #: a tool row.
+    route_patch: Path | None = None
     #: The reviewed narrow overlay. Its position is a field, not a convention: it is always
     #: emitted last, so no extra overlay can re-enable what it disabled.
     narrow_patch: Path | None = None
+    #: Variables the session adds to the child's allowlist (a credential for the selected
+    #: route). Values are never logged; :meth:`describe` reports names only.
+    extra_env: Mapping[str, str] = field(default_factory=dict, repr=False, compare=False)
     expected_version: str = PINNED_VERSION
     startup_timeout: float = DEFAULT_STARTUP_TIMEOUT
     turn_timeout: float = DEFAULT_TURN_TIMEOUT
@@ -140,8 +147,15 @@ class HarnessConfig:
         return argv
 
     def ordered_patches(self) -> list[Path]:
-        """Extras first, the narrow overlay last, so it wins every row conflict."""
-        ordered = [p for p in self.patches if p != self.narrow_patch]
+        """Extras, then the model route, then the narrow overlay last.
+
+        The narrow overlay stays last so no extra overlay can re-enable a tool row; the
+        route overlay only names the provider row (``llm-pi-ai``) and therefore never
+        competes with it.
+        """
+        ordered = [p for p in self.patches if p not in (self.narrow_patch, self.route_patch)]
+        if self.route_patch is not None:
+            ordered.append(self.route_patch)
         if self.narrow_patch is not None:
             ordered.append(self.narrow_patch)
         return ordered
@@ -153,6 +167,8 @@ class HarnessConfig:
         for name in self.passthrough:
             if name in parent:
                 env[name] = parent[name]
+        for name, value in self.extra_env.items():
+            env[name] = value
         env["DSH_HOME"] = str(self.home)
         return env
 
@@ -163,7 +179,10 @@ class HarnessConfig:
             "profile": self.profile,
             "patches": [str(p) for p in self.ordered_patches()],
             "home": str(self.home),
+            "route_patch": str(self.route_patch) if self.route_patch else "",
             "narrow_patch": str(self.narrow_patch) if self.narrow_patch else "",
+            # Names only: a credential value never enters a diagnostic record.
+            "extra_env": sorted(self.extra_env),
             "workspace": str(self.workspace),
             "expected_version": self.expected_version,
             "startup_timeout": self.startup_timeout,

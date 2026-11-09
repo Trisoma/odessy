@@ -95,10 +95,17 @@ class SessionController:
         self._stop = asyncio.Event()
         self._closed = False
         self.monitoring_sink = None
-        self._model = self._validate_model(self.selected_profile)
         # The engine is decided once, here, and never afterwards. ``resolve_and_build``
         # raises for an unknown or unavailable engine instead of falling back.
         self.runtime_selection, self.runtime = resolve_and_build(self, runtime_selection)
+        if self.engine == 'legacy':
+            self._model = self._validate_model(self.selected_profile)
+        else:
+            # A non-legacy engine owns its own model: building a legacy adapter here would
+            # demand a key for a model the engine never uses, and would be a second source
+            # of truth for the selected route.
+            self._validate_profile_name(self.selected_profile)
+            self._model = None
 
     @property
     def engine(self):
@@ -131,10 +138,36 @@ class SessionController:
                 'pending_questions': self.pending_questions,
                 'events': [event.public() for event in self.runtime.events()]}
 
-    def _validate_model(self, name):
+    def _validate_profile_name(self, name):
         if name not in self.profiles:
             raise ValueError(f'Unknown model profile: {name}')
+        return name
+
+    def _validate_model(self, name):
+        self._validate_profile_name(name)
         return self.model_factory(name)
+
+    @property
+    def model_profile(self):
+        """The selected profile's settings, as the engine sees them.
+
+        Only plain data is returned: the engine must not depend on a legacy adapter or on
+        this controller's internals to know which provider and model the user chose.
+        """
+        self._validate_profile_name(self.selected_profile)
+        return self._plain_profile(self.profiles[self.selected_profile])
+
+    @property
+    def model_profiles(self):
+        """Every configured profile as plain data, so the engine can declare the models
+        a session may switch to without being relaunched."""
+        return [self._plain_profile(value) for value in self.profiles.values()]
+
+    @staticmethod
+    def _plain_profile(value):
+        if hasattr(value, 'public_dict'):
+            value = value.public_dict()
+        return dict(value) if isinstance(value, dict) else {}
 
     @property
     def events(self):
@@ -264,9 +297,19 @@ class SessionController:
         if self._closed:
             raise RuntimeError('Session is closed')
         if self.engine != 'legacy':
-            # The engine chooses its model inside its own profile; a model the Odessy
-            # profile does not route must not appear to be selected.
-            raise RuntimeCapabilityUnavailable('model_selection', gate='04')
+            # The engine applies the change to *future* turns through its own protocol
+            # (set_config_option) and refuses what it cannot apply; this controller only
+            # records the new selection once the engine accepted it.
+            self._validate_profile_name(profile)
+            value = self.profiles[profile]
+            if hasattr(value, 'public_dict'):
+                value = value.public_dict()
+            self.runtime.select_route(dict(value) if isinstance(value, dict) else {},
+                                      profile_name=profile)
+            self.selected_profile = profile
+            self.emit('selection', {'profile': profile, 'engine': self.engine,
+                                    'reason': 'User selection; applies to next turn'})
+            return profile
         model = self._validate_model(profile)
         self.selected_profile, self._model = profile, model
         self.emit('selection', {'profile': profile, 'reason': 'User selection; applies to next turn'})

@@ -47,6 +47,11 @@ class FakeController:
     def __init__(self):
         self.id = "smoke-p03"
         self._events: list[dict] = []
+        #: Prompt 04: every Harness session declares a model route. This one is the local
+        #: deterministic fixture, expressed as an OpenAI-compatible provider.
+        self.model_profile = {"name": "smoke", "adapter": "cloud", "provider": "custom",
+                              "model": "mock-model"}
+        self.model_profiles = [self.model_profile]
 
     @property
     def events(self):
@@ -96,6 +101,10 @@ def main() -> int:
         "ODESSY_HARNESS_PASS_ENV": "DEEPSEEK_BASE_URL,DEEPSEEK_API_KEY",
         "DEEPSEEK_BASE_URL": f"http://127.0.0.1:{port}",
         "DEEPSEEK_API_KEY": "mock-key-not-a-secret",
+        # The declared route for this session is the local fixture (prompt 04).
+        "ODESSY_CLOUD_BASE_URL": f"http://127.0.0.1:{port}/v1",
+        "ODESSY_CLOUD_API_KEY": "mock-key-not-a-secret",
+        "ODESSY_CLOUD_MODEL": "mock-model",
         "PATH": os.environ.get("PATH", ""),
         "SYSTEMROOT": os.environ.get("SYSTEMROOT", ""),
         "TEMP": os.environ.get("TEMP", ""),

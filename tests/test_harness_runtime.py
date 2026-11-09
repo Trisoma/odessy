@@ -73,6 +73,25 @@ if MODE == "child":
         handle.write(str(child.pid))
 
 
+MODELS = ["mock-model", "mock-model-2"]
+ROUTE = os.environ.get("FAKE_ROUTE", "odessy-deepseek")
+SELECTED = {"value": json.dumps([ROUTE, MODELS[0]], separators=(",", ":"))}
+
+
+def model_options():
+    return [{
+        "id": "model", "type": "select", "currentValue": SELECTED["value"],
+        "options": [{
+            "group": ROUTE, "name": "Odessy " + ROUTE,
+            "options": [{"value": json.dumps([ROUTE, name], separators=(",", ":"))}
+                        for name in MODELS],
+        }],
+    }, {
+        "id": "reasoning_effort", "type": "select", "currentValue": "high",
+        "options": [{"value": value} for value in ("off", "low", "high", "max")],
+    }]
+
+
 def answer(message):
     method = message.get("method")
     request_id = message.get("id")
@@ -93,7 +112,21 @@ def answer(message):
         emit({"jsonrpc": "2.0", "id": request_id, "result": {"protocolVersion": 1}})
         return
     if method == "session/new":
-        emit({"jsonrpc": "2.0", "id": request_id, "result": {"sessionId": "acp-1"}})
+        emit({"jsonrpc": "2.0", "id": request_id,
+              "result": {"sessionId": "acp-1", "configOptions": model_options()}})
+        return
+    if method == "session/set_config_option":
+        params = message.get("params") or {}
+        declared = [entry["value"] for group in model_options()[0]["options"]
+                    for entry in group["options"]]
+        if params.get("configId") != "model" or params.get("value") not in declared:
+            emit({"jsonrpc": "2.0", "id": request_id,
+                  "error": {"code": -32602,
+                            "message": "unknown model option: " + str(params.get("value"))}})
+            return
+        SELECTED["value"] = params["value"]
+        emit({"jsonrpc": "2.0", "id": request_id,
+              "result": {"configOptions": model_options()}})
         return
     if method == "session/prompt":
         session_id = (message.get("params") or {}).get("sessionId")
@@ -110,7 +143,13 @@ def answer(message):
                   "params": {"sessionId": session_id,
                              "update": {"sessionUpdate": "agent_message_chunk",
                                         "content": {"type": "text", "text": chunk}}}})
-        emit({"jsonrpc": "2.0", "id": request_id, "result": {"stopReason": "end_turn"}})
+        if MODE != "no-usage":
+            emit({"jsonrpc": "2.0", "method": "session/update",
+                  "params": {"sessionId": session_id,
+                             "update": {"sessionUpdate": "usage_update",
+                                        "used": 1234, "size": 32768}}})
+        emit({"jsonrpc": "2.0", "id": request_id,
+              "result": {"stopReason": "end_turn"}})
         return
     emit({"jsonrpc": "2.0", "id": request_id,
           "error": {"code": -32601, "message": "unknown method " + str(method)}})
@@ -133,9 +172,16 @@ for line in sys.stdin:
 class FakeSession:
     """The parts of SessionController a runtime is allowed to touch."""
 
-    def __init__(self):
+    def __init__(self, profile=None):
         self.id = "sess-1"
         self._events = []
+        #: What ``SessionController.model_profile`` returns for the selected profile.
+        self.model_profile = dict(profile) if profile is not None else {
+            "name": "local", "adapter": "cloud", "provider": "deepseek",
+            "model": "mock-model",
+        }
+        #: What ``SessionController.model_profiles`` returns for every profile.
+        self.model_profiles = [self.model_profile]
 
     def events(self):
         return list(self._events)
@@ -158,6 +204,12 @@ def fake(tmp_path):
     script = tmp_path / "fake_runtime.py"
     script.write_text(FAKE_RUNTIME, encoding="utf-8")
     return (sys.executable, str(script))
+
+
+@pytest.fixture(autouse=True)
+def _cloud_credential_for_routes(monkeypatch):
+    """Every runtime needs a resolvable model route; this one is a literal, not a secret."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "k-test-not-a-real-key")
 
 
 def make_config(tmp_path, fake, **overrides):
@@ -704,10 +756,10 @@ class _Model:
 
 
 def controller(**kwargs):
+    kwargs.setdefault("profiles", {"local": {}})
     return SessionController(
         model_factory=lambda name: _Model(),
         agent_factory=lambda *args, **kwargs: None,
-        profiles={"local": {}},
         **kwargs,
     )
 
@@ -716,15 +768,18 @@ def test_a_harness_session_runs_its_turn_through_the_engine(monkeypatch, tmp_pat
     config = make_config(tmp_path, fake)
     monkeypatch.setitem(selection_module._BACKENDS, "harness",
                         lambda session: HarnessRuntime(session, config=config))
-    session = controller(runtime_selection="harness")
+    session = controller(runtime_selection="harness",
+                         profiles={"local": {"adapter": "cloud", "provider": "deepseek",
+                                              "model": "mock-model"}})
 
     async def flow():
         try:
             result = await session.run_turn("hello")
             types = [event_type.type for event_type in session.runtime.events()]
             snapshot = session.public_snapshot()
-            with pytest.raises(RuntimeCapabilityUnavailable):
-                session.select_model("local")
+            # 04: the engine accepts a model selection it can apply, and still refuses
+            # what it has not implemented (cancellation is prompt 06).
+            assert session.select_model("local") == "local"
             with pytest.raises(RuntimeCapabilityUnavailable):
                 await session.stop()
             return result, types, snapshot
@@ -733,8 +788,8 @@ def test_a_harness_session_runs_its_turn_through_the_engine(monkeypatch, tmp_pat
 
     result, types, snapshot = run(flow())
     assert result.final_text == "Hello there"
-    assert types[:2] == ["transcript", "selection"]
+    assert types[0] == "transcript"
     assert types[-3:] == ["usage", "cost", "result"]
+    assert [kind for kind in types if kind == "selection"]
     assert snapshot["history"][-1]["assistant"] == "Hello there"
-    assert snapshot["events"][1]["type"] == "selection"
     assert snapshot["events"][1]["data"]["engine"] == "harness"
