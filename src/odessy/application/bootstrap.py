@@ -189,7 +189,7 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
 
         controller = ManagedController(resources=resources, turn_lock=turn_lock, model_factory=model_factory,
             agent_factory=agent_factory, profiles=profiles, selected_profile=selected_profile or "current",
-            collaboration=service, jobs=jobs, config=config)
+            collaboration=service, jobs=jobs, config=config, audit=audit)
         if interactive:
             from odessy.interaction.terminal import TerminalInteractionHandler, TerminalUnavailable
             keyboard = TerminalInteractionHandler(controller.interactions, stop_turn=controller.stop)

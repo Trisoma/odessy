@@ -285,7 +285,12 @@ def test_capability_reports_are_distinct_and_frozen():
     assert CAPABILITIES["harness"].live_text_deltas is False
     # Implemented in prompt 06: ACP session/cancel on this session's own child.
     assert CAPABILITIES["harness"].per_session_cancel is True
-    assert CAPABILITIES["harness"].approvals is False
+    # Implemented in prompt 07: a permission request is bound to the session's broker.
+    assert CAPABILITIES["harness"].approvals is True
+    # The static record is the no-bridge baseline. A session whose packaged plugin
+    # announces the question feature reports `questions=True`; there is no ACP question
+    # channel, so the baseline stays False.
+    assert CAPABILITIES["harness"].questions is False
     assert HARNESS_TARGET_CAPABILITIES.live_text_deltas is True
     with pytest.raises(FrozenInstanceError):
         CAPABILITIES["legacy"].approvals = False

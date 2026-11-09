@@ -1,8 +1,8 @@
 {
   "name": "@odessy/dsh-stream-bridge",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
-  "description": "Spike-only plugin: forward agent/assistant-stream frames to a token-authenticated loopback socket.",
+  "description": "Odessy bridge: forward agent/assistant-stream frames and answer the user-questions seam over one token-authenticated loopback socket.",
   "type": "module",
   "main": "lib/index.js",
   "files": [

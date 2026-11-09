@@ -13,9 +13,13 @@ Protocol recovery rules:
   :class:`HarnessProtocolError`;
 - losing the stream (EOF, crash) fails every pending call with
   :class:`HarnessTransportError` carrying the exit code;
-- a server-initiated request is **refused** with ``-32601``. At this stage Odessy
-  implements no permission, tool or child-agent surface, and a refusal is visible in
-  the diagnostics instead of being silently ignored.
+- a server-initiated request is handed to the owner's ``on_request`` callback, which
+  must answer it exactly once through :meth:`HarnessProcess.respond`. Without a
+  callback — or for a request the callback cannot own — it is **refused** with
+  ``-32601`` and the refusal is visible in the diagnostics.
+
+The reader thread must never wait for a person: a callback that needs an answer from
+somewhere else schedules that work and returns, so protocol traffic keeps flowing.
 """
 
 from __future__ import annotations
@@ -41,6 +45,9 @@ _MAX_FRAME_CHARS = 400
 #: Internal marker: a pending call must fail with the transport error, not parse
 #: this as a protocol reply. Never sent to or received from the child.
 _TRANSPORT_FAILURE = "__odessy_transport_failure__"
+#: The ACP contract's fail-closed permission answer. Used only when a caller's response
+#: guard refuses or itself fails; it is the same literal ``approvals`` writes.
+_FAIL_CLOSED_ANSWER: dict[str, Any] = {"result": {"outcome": {"outcome": "cancelled"}}}
 
 
 class HarnessProcessError(RuntimeError):
@@ -76,14 +83,21 @@ def _clip(text: str) -> str:
 class HarnessProcess:
     """One supervised child. Not reusable: construct a new instance per session."""
 
-    def __init__(self, config: HarnessConfig):
+    def __init__(self, config: HarnessConfig, *,
+                 on_request: Callable[[Any, str, Mapping[str, Any]], None] | None = None,
+                 on_notification: Callable[[Mapping[str, Any]], None] | None = None):
         self.config = config
+        self._on_request = on_request
+        self._on_notification = on_notification
         self._process: subprocess.Popen[str] | None = None
         self._reader: threading.Thread | None = None
         self._stderr_reader: threading.Thread | None = None
         self._pending: dict[int, queue.Queue[dict[str, Any]]] = {}
         self._notifications: list[dict[str, Any]] = []
         self._refused: list[dict[str, Any]] = []
+        #: Server-request ids already answered or refused. A second answer is a bug in the
+        #: caller, and writing it would be a second decision for one ask.
+        self._answered: collections.OrderedDict[Any, None] = collections.OrderedDict()
         self._malformed = 0
         self._diagnostics: collections.deque[str] = collections.deque(
             maxlen=config.diagnostic_lines
@@ -132,6 +146,74 @@ class HarnessProcess:
     def refused_requests(self) -> list[dict[str, Any]]:
         with self._state_lock:
             return list(self._refused)
+
+    def answered_requests(self) -> list[Any]:
+        """Ids this process answered, in order. Evidence, never authority."""
+        with self._state_lock:
+            return list(self._answered)
+
+    # ------------------------------------------------------------ server requests
+
+    def respond(self, request_id: Any, payload: Mapping[str, Any], *,
+                guard: Callable[[Mapping[str, Any]], Mapping[str, Any] | None] | None = None
+                ) -> bool:
+        """Write the one response for a server request. False if it was already answered.
+
+        Thread-safe and non-raising on a closed child: a response that can no longer be
+        delivered is reported by a diagnostic, not by failing the turn that raised it.
+
+        ``guard`` runs after acquiring the write lock, before serialization, and may replace the
+        payload, or return ``None`` to fail closed. It exists because the caller's own
+        check can be arbitrarily stale by then (a blocked pipe, a paused thread): an
+        answer that grants authority must be re-validated at the wire, not only when it
+        was decided.
+        """
+        with self._state_lock:
+            if self._closing or self._dead is not None:
+                return False
+            if request_id in self._answered:
+                self._add_diagnostic(f"ignored a second response for request id={request_id}")
+                return False
+            self._answered[request_id] = None
+            while len(self._answered) > 128:
+                self._answered.popitem(last=False)
+        message = {"jsonrpc": "2.0", "id": request_id}
+        message.update(dict(payload))
+
+        def prepare_response() -> Mapping[str, Any]:
+            # This executes only after _write acquired its lock. An allow may have
+            # become stale while another writer occupied that lock.
+            try:
+                checked = guard(dict(payload))
+            except Exception as exc:  # noqa: BLE001 - a failed guard must never authorize
+                self._add_diagnostic(f"response guard failed: {type(exc).__name__}")
+                checked = None
+            guarded = {"jsonrpc": "2.0", "id": request_id}
+            guarded.update(dict(_FAIL_CLOSED_ANSWER if checked is None else checked))
+            return guarded
+
+        try:
+            if guard is None:
+                self._write(message)
+            else:
+                self._write(message, prepare=prepare_response)
+        except HarnessProcessError as exc:
+            self._add_diagnostic(
+                f"could not answer server request id={request_id}: {type(exc).__name__}")
+            return False
+        return True
+
+    def refuse(self, request_id: Any, method: str) -> bool:
+        """Refuse a server request this build does not implement (never a silent ignore)."""
+        with self._state_lock:
+            self._refused.append({"method": method, "id": request_id})
+        self._add_diagnostic(f"refused server request {method}")
+        return self.respond(request_id, {
+            "error": {
+                "code": -32601,
+                "message": f"Odessy does not handle {method} at this stage",
+            }
+        })
 
     # ---------------------------------------------------------------------- start
 
@@ -236,12 +318,15 @@ class HarnessProcess:
             payload["params"] = dict(params)
         self._write(payload)
 
-    def _write(self, payload: Mapping[str, Any]) -> None:
+    def _write(self, payload: Mapping[str, Any], *,
+               prepare: Callable[[], Mapping[str, Any]] | None = None) -> None:
         process = self._process
         if process is None or process.stdin is None:
             raise HarnessTransportError("the Harness process is not running")
-        line = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
         with self._write_lock:
+            if prepare is not None:
+                payload = prepare()
+            line = json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
             try:
                 process.stdin.write(line)
                 process.stdin.flush()
@@ -289,10 +374,12 @@ class HarnessProcess:
     def _dispatch(self, message: dict[str, Any]) -> None:
         if "method" in message:
             if "id" in message:
-                self._refuse(message)
+                self._on_server_request(message.get("id"), str(message.get("method")),
+                                        message.get("params") or {})
             else:
                 with self._state_lock:
                     self._notifications.append(message)
+                self._observe(message)
                 return
         if "id" not in message:
             return
@@ -312,23 +399,29 @@ class HarnessProcess:
             return
         waiter.put(message)
 
-    def _refuse(self, message: dict[str, Any]) -> None:
-        method = str(message.get("method"))
-        request_id = message.get("id")
-        with self._state_lock:
-            self._refused.append({"method": method, "id": request_id})
-        self._add_diagnostic(f"refused server request {method}")
+    def _on_server_request(self, request_id: Any, method: str,
+                           params: Mapping[str, Any]) -> None:
+        """Hand a server request to the owner, or refuse it. Never blocks the reader."""
+        handler = self._on_request
+        if handler is None or self._closing:
+            self.refuse(request_id, method)
+            return
         try:
-            self._write({
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {
-                    "code": -32601,
-                    "message": f"Odessy does not handle {method} at this stage",
-                },
-            })
-        except HarnessProcessError:
-            pass
+            handler(request_id, method, params)
+        except Exception as exc:  # noqa: BLE001 - a broken handler is a refusal, not a crash
+            self._add_diagnostic(
+                f"server request handler failed for {method}: {type(exc).__name__}")
+            self.refuse(request_id, method)
+
+    def _observe(self, message: Mapping[str, Any]) -> None:
+        """Feed a notification to the owner live; the queued copy still serves the turn."""
+        handler = self._on_notification
+        if handler is None:
+            return
+        try:
+            handler(message)
+        except Exception as exc:  # noqa: BLE001 - an observer must never kill the reader
+            self._add_diagnostic(f"notification observer failed: {type(exc).__name__}")
 
     def _on_stream_end(self, which: str) -> None:
         process = self._process

@@ -40,6 +40,9 @@ ESCALATION_TARGET: str | None = None
 def _tool_results(messages: list) -> int:
     count = 0
     for message in messages:
+        if message.get("role") == "tool":
+            count += 1
+            continue
         content = message.get("content")
         if isinstance(content, list):
             count += sum(1 for part in content if isinstance(part, dict) and part.get("type") == "tool_result")
@@ -135,9 +138,23 @@ class Handler(BaseHTTPRequestHandler):
         messages = payload.get("messages") or []
         prompt = prompt_of(messages)
         chunks, delay_ms, tool_call = _chunks_for(prompt)
+        if prompt.startswith("question"):
+            # Prompt 07: the model asks a structured clarification. The first request has
+            # no tool result and asks; after the tool returns, the same turn continues.
+            if _tool_results(messages) == 0:
+                chunks, delay_ms, tool_call = ([], 0, {"name": "ask_user_question", "arguments": {
+                    "questions": [{
+                        "id": "cleanup",
+                        "question": "Proceed with the cleanup?",
+                        "header": "Confirm",
+                        "options": [{"label": "Yes"}, {"label": "No"}],
+                    }],
+                }})
+            else:
+                chunks, delay_ms, tool_call = (["Answer received; continuing."], 10, None)
         # Escalate exactly once: after the first tool result. A rejected approval
         # returns another result, and asking again would loop forever.
-        if _tool_results(messages) == 1:
+        elif _tool_results(messages) == 1:
             target = ESCALATION_TARGET or "spike-outside.txt"
             command = "Set-Content -LiteralPath '" + target + "' -Value spike"
             chunks, delay_ms = ["Retrying with the wider mode."], 10

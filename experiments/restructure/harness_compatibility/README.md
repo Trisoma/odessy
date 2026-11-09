@@ -39,16 +39,17 @@ consecutive runs passed.
 | `mock_provider.py` | Deterministic local provider (Anthropic Messages + OpenAI chat SSE), request log, escalation trigger. `prompt_of()` skips the runtime's own user-role context snapshot, so a marker in the request ("slow", "tool …") selects the scenario |
 | `mcp_echo_server.py` | Three-call MCP stdio server used only to prove external tool invocation |
 | `install_plugin.py` | Installs the spike bundle into an isolated profile using a workspace-local toolchain |
-| `plugin/odessy-stream-bridge/` | The bundle: `package.json`, `cordis.patch.yml`, `lib/index.js` |
+| `plugin/odessy-stream-bridge/` | The bundle: `package.json`, `cordis.patch.yml`, `lib/index.js`. It forwards live frames **and** answers the runtime's `user-questions` seam over the same authenticated socket; its patch also mounts the upstream `tool-ask-user` row |
 | `smoke_acceptance.py` | **The gate.** C0–C6 with assertions and non-zero exit |
 | `smoke_sdk.py` | Same pin over the Python SDK: notification census, delta check, method probes, resume |
-| `verify_no_tools.py` | Boots the pin with one or more overlays and reads the tool roster the provider received; exits 1 unless the roster is empty. Used to design `odessy_narrow.patch.yml` |
-| `smoke_p03.py` | Drives the **production** `HarnessRuntime` (`from_environment` → `start`/`run_turn`/`close`) against the pinned binary: version identity, allowlisted environment, no tools, settled text, no orphan |
+| `verify_no_tools.py` | Boots the pin with one or more overlays and reads the tool roster the provider received. Exits 1 unless the roster is within `--allow` (prompt 07 passes `--allow ask_user_question`). Used to design `odessy_narrow.patch.yml` |
+| `smoke_p03.py` | Drives the **production** `HarnessRuntime` (`from_environment` → `start`/`run_turn`/`close`) against the pinned binary: version identity, allowlisted environment, only the clarification tool, settled text, no orphan |
 | `probe_providers.py` | Prints the model catalogue the pin advertises and what it does with pairs it does not offer |
 | `probe_piai_route.py` | Declares one `llm-pi-ai` route and reports whether it appears, is selectable, and reaches the endpoint (both wire apis) |
 | `smoke_p04.py` | Model routes end to end against the pin: missing key refused, declared route used, context usage recorded, model switched in the same process |
 | `smoke_p05.py` | Live event translation end to end against the pin with the real plugin: bridge attached, deltas before settlement, deltas join to the committed answer, no loss, no orphan |
 | `smoke_p06.py` | Per-session Stop against the pin: two sessions generating, one cancelled (prompt settles `cancelled`), the other completes, the stopped session runs another turn, no orphan |
+| `smoke_p07.py` | Clarification end to end against the pin with the real bundle: the runtime's `ask_user_question` executes, the question reaches the production broker, the answer returns, the same turn continues, and a Stop while waiting settles with no orphan |
 | `plugin_backpressure.mjs` | The plugin alone, loaded with a stub context: a client that stops reading loses frames, the loss is reported, the connection survives |
 
 ## Prerequisites

@@ -49,9 +49,12 @@ def main() -> int:
 
     command = [args.exe, "plugin", "--profile", args.profile, "add", f"file:{PLUGIN}"]
     print("+ " + " ".join(command))
-    result = subprocess.run(command, env=env, text=True, capture_output=True)
-    sys.stdout.write(result.stdout)
-    sys.stderr.write(result.stderr)
+    # pnpm writes UTF-8 regardless of the Windows console code page; decode explicitly so
+    # a non-ASCII status line cannot fail the install.
+    result = subprocess.run(command, env=env, capture_output=True, text=True,
+                            encoding="utf-8", errors="replace")
+    sys.stdout.write(result.stdout or "")
+    sys.stderr.write(result.stderr or "")
     return result.returncode
 
 

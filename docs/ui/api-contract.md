@@ -109,6 +109,24 @@ cards render the backend request and exact arguments. Pending IDs, expiry and
 allowed UI channels gate response controls; backend validation remains authoritative.
 HTTP 404/409/410 are stale/unavailable outcomes, never success.
 
+A Harness-originated approval uses the same `approvals/{id}` route and the same
+boolean answer, so no client shape changes. Its entry adds `operation`,
+`arguments`, `resolved_paths`, `workspace`, `requested_authority` (`allow_once`
+only), `risk`, `scopes`, `fingerprint`, plus `runtime_identity`
+(`runtime`, `version`, `artifact`), `session_identity` (`acp_session`,
+`odessy_session`) and `request_identity` (`request_id`, `method`,
+`tool_call_id`, `turn`). The runtime request is bound to the operation the card
+shows; an answer that no longer matches that operation is not authorization.
+
+A Harness clarification uses the existing `questions/{id}` route and a string
+answer. Its entry carries `prompt`, `choices` and, when the runtime supplied
+them, `header` and `detail`; `choices` may be empty for a free-text question. A
+choice label answered exactly appears in the model's tool result as `selected`;
+any other text appears as `custom`. Multi-select questions are refused by the
+runtime side rather than answered partially. A question is information, never
+authorization: it cannot resolve an approval, and an approval cannot resolve a
+question.
+
 The runtime inventory requires authentication and reports the server instance ID,
 registry metadata and whether each process-environment variable is nonempty. It
 returns no configuration values, including for non-secret fields, and supports no

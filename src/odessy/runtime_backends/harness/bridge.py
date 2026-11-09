@@ -33,6 +33,9 @@ from typing import Any
 MAX_LINE_BYTES = 64 * 1024
 #: Frames queued for the pump. Bounded on purpose: see the module docstring.
 MAX_QUEUED_FRAMES = 2048
+#: Outbound messages queued for the writer. An answer or a cancel is small and rare; this
+#: is far more than one turn can produce, so overflow means the plugin stopped reading.
+MAX_QUEUED_SENDS = 64
 #: Protocol version the plugin announces. A different one is refused, not guessed at.
 PROTOCOL = 1
 #: Queued in place of a line that arrived but was not a JSON object. The translator counts
@@ -57,12 +60,16 @@ class LiveBridge:
         self.host, self.port = host, int(port)
         self._queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=max(1, queue_size))
         self.dropped = 0
+        #: Lines received / queued, for diagnostics only. Never carries content.
+        self.lines_read = 0
+        self.lines_queued = 0
         self._closed = threading.Event()
+        self._pending_bytes = b""
         self._sock = self._connect(connect_timeout)
         try:
             self._sock.settimeout(None)
             self._sock.sendall((json.dumps({"token": token}) + "\n").encode("utf-8"))
-            self.hello = self._read_line_blocking(timeout=5.0)
+            self.hello, self._pending_bytes = self._read_line_blocking(timeout=5.0)
             if self.hello.get("type") != "hello":
                 raise BridgeError(f"the bridge did not greet: {self.hello!r}"[:200])
             if int(self.hello.get("protocol") or 0) != PROTOCOL:
@@ -74,6 +81,16 @@ class LiveBridge:
         self._reader = threading.Thread(target=self._read_loop, name="harness-bridge",
                                         daemon=True)
         self._reader.start()
+        #: What the installed plugin says it implements. Capabilities gate on this, so an
+        #: older plugin cannot make the engine claim a channel it does not have.
+        self.features = tuple(str(item) for item in (self.hello.get("features") or ())
+                              if isinstance(item, str))
+        self.dropped_sends = 0
+        self._send_queue: queue.Queue[dict[str, Any] | None] = queue.Queue(
+            maxsize=MAX_QUEUED_SENDS)
+        self._writer = threading.Thread(target=self._write_loop, name="harness-bridge-write",
+                                        daemon=True)
+        self._writer.start()
 
     # ------------------------------------------------------------------ connect/read
 
@@ -88,7 +105,13 @@ class LiveBridge:
                 time.sleep(0.05)
         raise BridgeError(f"no bridge listening on {self.host}:{self.port} ({last})")
 
-    def _read_line_blocking(self, *, timeout: float | None = None) -> dict[str, Any]:
+    def _read_line_blocking(self, *, timeout: float | None = None
+                            ) -> tuple[dict[str, Any], bytes]:
+        """Read the greeting and keep whatever was read after its newline.
+
+        A greeting and the plugin's first real frame can arrive in one TCP read. Dropping
+        the remainder would lose that frame, so it is returned and seeds the reader thread.
+        """
         if timeout is not None:
             self._sock.settimeout(timeout)
         try:
@@ -102,64 +125,73 @@ class LiveBridge:
                     raise BridgeError("the bridge sent an oversized greeting")
         finally:
             self._sock.settimeout(None)
-        line = buffer.split(b"\n", 1)[0]
+        line, remainder = buffer.split(b"\n", 1)
         try:
             message = json.loads(line)
         except ValueError as exc:
             raise BridgeError("the bridge greeting is not JSON") from exc
         if not isinstance(message, dict):
             raise BridgeError("the bridge greeting is not an object")
-        return message
+        return message, remainder
 
     def _read_loop(self) -> None:
-        buffer = b""
+        # Bytes read together with the greeting are parsed before the first blocking read;
+        # otherwise they would wait for a later frame (or be lost when the peer closes).
+        buffer = self._pending_bytes
+        self._pending_bytes = b""
         discarding = False
         while not self._closed.is_set():
+            buffer, discarding = self._consume(buffer, discarding)
             try:
                 chunk = self._sock.recv(65536)
             except OSError:
                 return
             if not chunk:
+                self._consume(buffer + b"\n", discarding)
                 return
             buffer += chunk
-            if discarding:
-                # Still inside an oversized line: drop through its newline, once.
-                newline = buffer.find(b"\n")
-                if newline < 0:
-                    buffer = b""
-                    continue
-                buffer = buffer[newline + 1:]
-                discarding = False
-            while b"\n" in buffer:
-                line, buffer = buffer.split(b"\n", 1)
-                if not line.strip():
-                    continue
-                if len(line) > MAX_LINE_BYTES:
-                    # Over the bound we refuse to look at it at all, so it is a transport
-                    # loss rather than an unparseable frame.
-                    self.dropped += 1
-                    continue
-                try:
-                    message = json.loads(line)
-                except ValueError:
-                    self._note_unparseable()
-                    continue
-                if not isinstance(message, dict):
-                    self._note_unparseable()
-                    continue
-                try:
-                    self._queue.put_nowait(message)
-                except queue.Full:
-                    # Slow consumer: drop the oldest transient frame and report the loss.
-                    try:
-                        self._queue.get_nowait()
-                    except queue.Empty:
-                        pass
-                    self.dropped += 1
-            if len(buffer) > MAX_LINE_BYTES:
-                discarding = True
+
+    def _consume(self, buffer: bytes, discarding: bool) -> tuple[bytes, bool]:
+        """Parse every complete line in ``buffer``; return what is left and the discard flag."""
+        if discarding:
+            # Still inside an oversized line: drop through its newline, once.
+            newline = buffer.find(b"\n")
+            if newline < 0:
+                return b"", True
+            buffer = buffer[newline + 1:]
+            discarding = False
+        while b"\n" in buffer:
+            line, buffer = buffer.split(b"\n", 1)
+            if not line.strip():
+                continue
+            self.lines_read += 1
+            if len(line) > MAX_LINE_BYTES:
+                # Over the bound we refuse to look at it at all, so it is a transport
+                # loss rather than an unparseable frame.
                 self.dropped += 1
-                buffer = b""
+                continue
+            try:
+                message = json.loads(line)
+            except ValueError:
+                self._note_unparseable()
+                continue
+            if not isinstance(message, dict):
+                self._note_unparseable()
+                continue
+            try:
+                self._queue.put_nowait(message)
+                self.lines_queued += 1
+            except queue.Full:
+                # Slow consumer: drop the oldest transient frame and report the loss.
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    pass
+                self.dropped += 1
+        if len(buffer) > MAX_LINE_BYTES:
+            self.dropped += 1
+            return b"", True
+        return buffer, discarding
 
     def _note_unparseable(self) -> None:
         """Hand the consumer the fact of a bad line without the bad line itself."""
@@ -167,6 +199,40 @@ class LiveBridge:
             self._queue.put_nowait(dict(UNPARSEABLE))
         except queue.Full:
             self.dropped += 1
+
+    # ------------------------------------------------------------------------ send
+
+    def send(self, message: dict[str, Any]) -> bool:
+        """Queue one client-to-plugin message. Never blocks the caller.
+
+        The socket is also read by this client's reader thread, so writes go through one
+        writer thread: a blocked plugin must not stall the session loop, and must not race
+        a send timeout against the reader's blocking ``recv``.
+        """
+        if self._closed.is_set():
+            return False
+        try:
+            self._send_queue.put_nowait(dict(message))
+        except queue.Full:
+            # The plugin is not draining. Losing an answer is a loss, not a grant: the
+            # waiter settles by timeout or cancellation, and nothing is invented.
+            self.dropped_sends += 1
+            return False
+        return True
+
+    def _write_loop(self) -> None:
+        while not self._closed.is_set():
+            try:
+                message = self._send_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            if message is None:
+                return
+            line = json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n"
+            try:
+                self._sock.sendall(line.encode("utf-8"))
+            except OSError:
+                return
 
     # ---------------------------------------------------------------------- consume
 
@@ -183,6 +249,12 @@ class LiveBridge:
 
     def close(self) -> None:
         self._closed.set()
+        writer = getattr(self, "_writer", None)
+        if writer is not None:
+            try:
+                self._send_queue.put_nowait(None)
+            except queue.Full:
+                pass
         try:
             self._sock.shutdown(socket.SHUT_RDWR)
         except OSError:
@@ -194,6 +266,8 @@ class LiveBridge:
         reader = getattr(self, "_reader", None)
         if reader is not None and reader is not threading.current_thread():
             reader.join(timeout=2.0)
+        if writer is not None and writer is not threading.current_thread():
+            writer.join(timeout=2.0)
 
 
 def free_port(host: str = "127.0.0.1") -> int:

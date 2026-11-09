@@ -18,6 +18,11 @@ The bundle of what the child is allowed to be is small and reviewed:
 
 from __future__ import annotations
 
+from odessy.runtime_backends.harness.approvals import (
+    ApprovalBindError,
+    HarnessApprovalBridge,
+    PERMISSION_METHOD,
+)
 from odessy.runtime_backends.harness.bridge import BridgeError, LiveBridge
 from odessy.runtime_backends.harness.config import (
     HarnessConfig,
@@ -35,6 +40,7 @@ from odessy.runtime_backends.harness.profile import (
     NARROW_PATCH_TEXT,
     materialize_narrow_patch,
 )
+from odessy.runtime_backends.harness.questions import HarnessQuestionBridge
 from odessy.runtime_backends.harness.runtime import HarnessRuntime
 from odessy.runtime_backends.harness.stream import (
     Delta,
@@ -44,17 +50,21 @@ from odessy.runtime_backends.harness.stream import (
 )
 
 __all__ = [
+    "ApprovalBindError",
     "BridgeError",
     "Delta",
+    "HarnessApprovalBridge",
     "HarnessConfig",
     "HarnessProcess",
     "HarnessProcessError",
     "HarnessProtocolError",
+    "HarnessQuestionBridge",
     "HarnessRuntime",
     "HarnessTransportError",
     "LiveBridge",
     "NARROW_PATCH_NAME",
     "NARROW_PATCH_TEXT",
+    "PERMISSION_METHOD",
     "Settlement",
     "ToolProgress",
     "TurnStream",

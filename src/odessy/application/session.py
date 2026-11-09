@@ -69,12 +69,16 @@ class SessionController:
     def __init__(self, *, model_factory, agent_factory, profiles, selected_profile=None,
                  collaboration=None, jobs=None, config=None, memory=None,
                  event_limit=256, subscriber_limit=64, max_subscribers=16,
-                 runtime_selection=None):
+                 runtime_selection=None, audit=None):
         if not profiles or min(event_limit, subscriber_limit, max_subscribers) < 1:
             raise ValueError('Profiles and positive event bounds are required')
         self.id = uuid.uuid4().hex
         self.model_factory, self.agent_factory = model_factory, agent_factory
         self.profiles, self.collaboration, self.jobs, self.config = profiles, collaboration, jobs, config
+        #: The process audit log, when one is open. A non-legacy engine does not run the
+        #: agent loop that establishes ``audit_scope``, so its approval broker is handed
+        #: this log explicitly; without one, nothing is recorded (never a fake record).
+        self.audit = audit
         self.runs = None
         self.memory = memory if memory is not None else ConversationMemory()
         self.selected_profile = selected_profile or next(iter(profiles))

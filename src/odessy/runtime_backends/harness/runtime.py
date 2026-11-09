@@ -32,6 +32,13 @@ from odessy.runtime_backends.contracts import (
     TurnCancelled,
 )
 from odessy.runtime_backends.harness import pin
+from odessy.runtime_backends.harness.approvals import (
+    ApprovalBindError,
+    CANCELLED_RESPONSE,
+    HarnessApprovalBridge,
+    PERMISSION_METHOD,
+    unsupported_response,
+)
 from odessy.runtime_backends.harness.config import HarnessConfig, from_environment
 from odessy.runtime_backends.harness.process import (
     HarnessProcess,
@@ -40,6 +47,7 @@ from odessy.runtime_backends.harness.process import (
     HarnessTransportError,
 )
 from odessy.runtime_backends.harness.bridge import BridgeError, LiveBridge, free_port
+from odessy.runtime_backends.harness.questions import HarnessQuestionBridge
 from odessy.runtime_backends.harness.routes import HarnessRoute, resolve_route
 from odessy.runtime_backends.harness.stream import Delta, Settlement, TurnStream
 from odessy.runtime.types import AgentTurnResult
@@ -48,9 +56,15 @@ ENGINE = "harness"
 _CLIENT_INFO = {"name": "odessy", "version": "0.5.0"}
 #: The ACP ``stopReason`` that means the runtime itself cancelled the turn.
 CANCEL_STOP_REASON = "cancelled"
+#: The one model-facing tool this engine may execute: the runtime's own clarification tool.
+#: It asks a human and returns the answer as a tool result; it has no filesystem, process or
+#: network effect. Every other tool call still fails the turn closed.
+CLARIFICATION_TOOL = "ask_user_question"
 #: What this engine can do once the packaged bridge is attached: text arrives before the
-#: answer is committed. Without the bridge the record stays as it was in prompt 03.
+#: answer is committed, and (when the plugin also announces the question feature) a
+#: clarification round trip is available. Without the bridge the record stays as in 03.
 _LIVE_CAPABILITIES = replace(HARNESS_CAPABILITIES, live_text_deltas=True)
+_QUESTION_CAPABILITIES = replace(_LIVE_CAPABILITIES, questions=True)
 
 
 def _sibling_models(session: Any, selected: Any) -> tuple[str, ...]:
@@ -98,8 +112,11 @@ class HarnessRuntime:
 
     @property
     def capabilities(self) -> Any:
-        """What this *session* can do: live deltas only once the bridge is attached."""
-        return _LIVE_CAPABILITIES if self._live else HARNESS_CAPABILITIES
+        """What this *session* can do: live deltas only once the bridge is attached, and
+        clarification only when that plugin also announced the question feature."""
+        if not self._live:
+            return HARNESS_CAPABILITIES
+        return _QUESTION_CAPABILITIES if self._questions_ready else _LIVE_CAPABILITIES
 
     def __init__(self, session: Any, config: HarnessConfig | None = None,
                  route: HarnessRoute | None = None):
@@ -143,6 +160,37 @@ class HarnessRuntime:
         self._config.validate()
         self._session = session
         self.session_id = str(getattr(session, "id", "") or "")
+        self._audit = getattr(session, "audit", None)
+        #: One bridge per session: it owns the turn's tool-call identity, binds a
+        #: permission request to the session's own approval broker, and answers the ACP
+        #: request exactly once. It never decides anything itself.
+        self._approvals = HarnessApprovalBridge(
+            workspace=self._config.workspace,
+            identity=self._approval_identity,
+            approver=self._ask_human,
+            epoch=lambda: int(getattr(session, "stop_epoch", 0) or 0),
+            is_closed=lambda: self._closed,
+        )
+        #: Approval tasks awaiting a person, so close() can stop waiting on them.
+        self._approval_tasks: set[asyncio.Task[Any]] = set()
+        #: Clarification round trips over the same bridge socket. The human wait runs on
+        #: the session loop and answers the exact tool invocation that is waiting.
+        self._questions = HarnessQuestionBridge(
+            send=self._send_to_bridge,
+            asker=self._ask_human_question,
+            loop=lambda: self._loop,
+            epoch=lambda: int(getattr(session, "stop_epoch", 0) or 0),
+            is_closed=lambda: self._closed,
+        )
+        #: True only once the attached plugin announced the question feature.
+        self._questions_ready = False
+        #: Tool-call ids this turn allowed: exactly the clarification tool's own calls.
+        self._allowed_calls: set[str] = set()
+        #: The loop the session's turns run on; server requests are scheduled here.
+        self._loop: asyncio.AbstractEventLoop | None = None
+        #: Turn number, starting at 1. A permission request is bound to the turn it
+        #: arrived in, not to whichever turn happens to be running later.
+        self._turn_number = 0
         self._process: HarnessProcess | None = None
         self._identity: dict[str, object] = {}
         self._acp_session: str | None = None
@@ -229,6 +277,15 @@ class HarnessRuntime:
     def diagnostics(self) -> list[str]:
         return [] if self._process is None else self._process.diagnostics()
 
+    @property
+    def approvals(self) -> HarnessApprovalBridge:
+        """The session's approval bridge, for tests and diagnostics."""
+        return self._approvals
+
+    def _approval_identity(self) -> dict[str, Any]:
+        """Who is asking: the runtime identity captured at readiness, plus this session."""
+        return {**self._identity, "odessy_session": self.session_id}
+
     def _bridge_environment(self) -> dict[str, str]:
         if not self._bridge_enabled:
             return {}
@@ -243,6 +300,9 @@ class HarnessRuntime:
             raise RuntimeUnavailable(ENGINE, "the session is closed")
         if self._ready:
             return dict(self._identity)
+        # Captured before the worker starts: the child can raise a server request as
+        # soon as it has a session, and the answer must be scheduled on this loop.
+        self._loop = asyncio.get_running_loop()
         try:
             await asyncio.to_thread(self._start_blocking)
         except asyncio.CancelledError:
@@ -270,7 +330,9 @@ class HarnessRuntime:
                                  if self._config.verify_artifact else None),
                 timeout=self._config.startup_timeout,
             )
-            process = HarnessProcess(self._config)
+            process = HarnessProcess(self._config,
+                                     on_request=self._on_server_request,
+                                     on_notification=self._approvals.observe)
             try:
                 process.start()
                 handshake = process.call("initialize", {
@@ -358,11 +420,16 @@ class HarnessRuntime:
             self._bridge = LiveBridge(self._bridge_port, self._bridge_token,
                                       connect_timeout=min(5.0, self._config.startup_timeout))
             self._live = True
+            # Truthful capability: only a plugin that announced the question feature can
+            # answer `ask_user_question`, so only then is `questions` advertised.
+            self._questions_ready = "questions" in self._bridge.features
             process.note("live text: bridge attached "
                          f"(protocol {self._bridge.hello.get('protocol')}, "
+                         f"features {list(self._bridge.features) or 'none'}, "
                          f"port {self._bridge_port})")
         except BridgeError as exc:
             self._live = False
+            self._questions_ready = False
             self._bridge = None
             missing = self._config.missing_for_network()
             # A child that cannot reach its own socket stack looks identical to a plugin
@@ -464,6 +531,11 @@ class HarnessRuntime:
                 return
             self._closed = True
             self._ready = False
+            # Nobody may keep waiting on a human for a session that is closing, and an
+            # answer that arrives afterwards must not be written as consent.
+            self._abandon_approvals()
+            self._abandon_questions()
+            self._questions_ready = False
             self._stop_pump()
             bridge, self._bridge = self._bridge, None
             if bridge is not None:
@@ -472,6 +544,7 @@ class HarnessRuntime:
             process = self._process
             if process is not None:
                 process.close()
+            self._loop = None
 
     # ----------------------------------------------------------------- interface
 
@@ -553,6 +626,123 @@ class HarnessRuntime:
             except Exception:  # noqa: BLE001 - a diagnostic must never fail a caller
                 pass
 
+    # ------------------------------------------------------------------ approvals
+
+    def _on_server_request(self, request_id: Any, method: str,
+                           params: dict[str, Any]) -> None:
+        """Reader thread: classify, bind, and hand the human wait to the session loop.
+
+        Only a structurally bindable ``session/request_permission`` is scheduled. Every
+        other request — and any permission request whose session, tool call or options
+        cannot be tied to one exact operation — is answered ``cancelled`` or refused
+        right here, so the runtime never waits on an answer this build cannot own.
+        """
+        process = self._process
+        bridge = self._approvals
+        if method != PERMISSION_METHOD:
+            bridge.note_unsupported(method)
+            response = unsupported_response(method)
+            if process is not None:
+                process.respond(request_id, response)
+            return
+        try:
+            bound = bridge.bind(request_id, params)
+        except ApprovalBindError as exc:
+            # No arguments in the diagnostic: the reason names the shape, not the data.
+            self._note(f"approval refused: {exc.reason}")
+            bridge.note_unbindable(exc.reason)
+            if process is not None:
+                process.respond(request_id, CANCELLED_RESPONSE)
+            return
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            bridge.note_unbindable("the application loop is not available")
+            if process is not None:
+                process.respond(request_id, CANCELLED_RESPONSE)
+            return
+        try:
+            loop.call_soon_threadsafe(self._start_approval_task, bound)
+        except RuntimeError:
+            bridge.note_unbindable("the application loop is closed")
+            if process is not None:
+                process.respond(request_id, CANCELLED_RESPONSE)
+
+    def _start_approval_task(self, bound: Any) -> None:
+        """Loop thread: own the wait for a person as one cancellable task."""
+        task = asyncio.create_task(self._answer_approval(bound))
+        self._approval_tasks.add(task)
+        task.add_done_callback(self._approval_tasks.discard)
+
+    async def _answer_approval(self, bound: Any) -> None:
+        process = self._process
+        response = await self._approvals.answer(bound)
+        if process is None:
+            return
+        # The write can block on a full pipe; it must not block the loop the session runs on.
+        # The guard is re-evaluated inside the writer, immediately before the bytes go out:
+        # a Stop (or a turn that ended) while this call was waiting must not be overtaken by
+        # the allow it already produced.
+        await asyncio.to_thread(
+            process.respond, bound.request_id, response,
+            guard=lambda payload: self._approvals.guard_response(bound, payload))
+
+    async def _ask_human(self, details: dict[str, Any]) -> tuple[bool, str]:
+        """The session's own broker decides; this engine only carries the ask."""
+        interactions = getattr(self._session, "interactions", None)
+        if interactions is None:
+            return False, "no_channel"
+        return await interactions.request_approval(
+            details, with_reason=True, audit=self._audit)
+
+    def _cancel_approvals(self) -> None:
+        """Loop thread: stop waiting for people once the session is closing."""
+        for task in tuple(self._approval_tasks):
+            task.cancel()
+
+    def _abandon_approvals(self) -> None:
+        self._approvals.close()
+        loop = self._loop
+        if loop is not None and not loop.is_closed():
+            try:
+                loop.call_soon_threadsafe(self._cancel_approvals)
+            except RuntimeError:
+                pass
+
+    def _abandon_questions(self) -> None:
+        """Withdraw pending clarifications before the socket goes away."""
+        self._questions.close()
+        loop = self._loop
+        if loop is not None and not loop.is_closed():
+            try:
+                loop.call_soon_threadsafe(self._questions.cancel_all, "session closed")
+            except RuntimeError:
+                pass
+
+    # ------------------------------------------------------------------ questions
+
+    def _send_to_bridge(self, message: dict[str, Any]) -> bool:
+        """Queue one client-to-plugin message (answer or cancel). Never blocks."""
+        bridge = self._bridge
+        if bridge is None:
+            return False
+        try:
+            return bridge.send(message)
+        except Exception:  # noqa: BLE001 - a lost socket must not fail the caller
+            return False
+
+    async def _ask_human_question(self, question: Any) -> dict[str, Any]:
+        """Ask through the session's existing clarification broker and route.
+
+        The answer is information, not authority: this path cannot approve anything. The
+        asker's own header/detail travel with the question so the person sees them.
+        """
+        interactions = getattr(self._session, "interactions", None)
+        if interactions is None:
+            return {"status": "cancelled", "reason": "no_channel"}
+        return await interactions.ask(
+            question.text, list(question.choices) or None, True,
+            detail=question.detail, header=question.header)
+
     def _prompt_blocking(self, text: str) -> AgentTurnResult:
         process = self._process
         if process is None:
@@ -562,6 +752,16 @@ class HarnessRuntime:
         dropped_before = self._bridge.dropped if self._bridge is not None else 0
         #: Report from *this* turn only: a stop must not read a previous turn's reason.
         self._last_stop_reason = None
+        #: A permission request belongs to the turn it arrived in: the identity it binds
+        #: is this turn's observed tool call, and it cannot be reused by a later one.
+        self._turn_number += 1
+        self._approvals.take_failures()  # a late failure from the previous turn is not this one
+        self._approvals.begin_turn(self._turn_number, session_id=self._acp_session or "")
+        #: Only the clarification tool's own calls are executable this turn; the set is
+        #: filled from the runtime's committed `tool_call` updates as they arrive.
+        self._allowed_calls = set()
+        self._questions.begin_turn(self._turn_number, session_id=self._acp_session or "",
+                                   turn_floor=self._turn_floor or 0)
         # One translator per turn: it owns ordering, bounds and the single outcome.
         stream = TurnStream(self._acp_session or "",
                             stream_id=f"{self.session_id}:{uuid.uuid4().hex[:12]}",
@@ -619,6 +819,12 @@ class HarnessRuntime:
             self._stream = None
             if settlement.first_delta_ms is None and self._live:
                 process.note("live text: attached but no delta arrived for this turn")
+            # The turn is over: no further permission request can bind to it, and an
+            # answer that has not been written yet can no longer become an allow.
+            self._approvals.end_turn()
+            # A pending clarification belongs to this turn too: withdraw it so the tool
+            # errors instead of resuming a turn that has ended.
+            self._questions.end_turn()
             # The prompt is over, whatever the outcome: a Stop waiting on this may report.
             if self._turn_done is done:
                 self._turn_done = None
@@ -642,10 +848,19 @@ class HarnessRuntime:
         if bridge is None:
             return
         stale = 0
-        while bridge.next_frame(0) is not None:
+        while (message := bridge.next_frame(0)) is not None:
+            if self._route_question(message):
+                continue
             stale += 1
         if stale:
             stream.note_late(stale)
+
+    def _route_question(self, message: dict[str, Any]) -> bool:
+        """Hand a question frame to the question bridge; True if it was one."""
+        if message.get("type") != "question":
+            return False
+        self._questions.observe(message)
+        return True
 
     def _start_pump(self, stream: TurnStream) -> None:
         """Drain bridge frames on their own thread, so deltas never wait for the prompt."""
@@ -659,6 +874,8 @@ class HarnessRuntime:
             while not stop.is_set():
                 message = bridge.next_frame(0.05)
                 if message is None:
+                    continue
+                if self._route_question(message):
                     continue
                 for event in stream.feed(message):
                     if isinstance(event, Delta):
@@ -678,6 +895,8 @@ class HarnessRuntime:
         if stream is None or bridge is None:
             return
         while (message := bridge.next_frame(0)) is not None:
+            if self._route_question(message):
+                continue
             for event in stream.feed(message):
                 if isinstance(event, Delta):
                     self._emit_event("delta", event.public())
@@ -713,6 +932,18 @@ class HarnessRuntime:
     def _refuse_unimplemented(self, updates: list[dict[str, Any]],
                               refusals_before: int) -> None:
         """A turn may not quietly use a surface this prompt has not implemented."""
+        process = self._process
+        # What went wrong with *this turn's* consent traffic is more specific than "a tool
+        # surface exists", so it is reported first: a question is named as a question, and
+        # a permission ask that could not be bound is named as the refusal it was. Both
+        # fail the turn closed; neither was ever answered allow.
+        for kind, detail in self._approvals.take_failures():
+            if kind == "question":
+                raise RuntimeCapabilityUnavailable("questions", gate="07")
+            if kind == "unbindable":
+                raise RuntimeCapabilityUnavailable(
+                    f"server request: {PERMISSION_METHOD} ({detail})", gate="07")
+            raise RuntimeCapabilityUnavailable(f"server request: {detail}", gate="08")
         for notification in updates:
             params = notification.get("params") or {}
             if notification.get("method") != "session/update":
@@ -720,8 +951,19 @@ class HarnessRuntime:
             update = params.get("update") or {}
             kind = update.get("sessionUpdate")
             if kind in {"tool_call", "tool_call_update"} or "toolCall" in update:
+                call = update.get("toolCall") if isinstance(update.get("toolCall"), dict) else {}
+                call_id = update.get("toolCallId") or call.get("toolCallId")
+                title = update.get("title") or call.get("title") or call.get("name")
+                if kind == "tool_call" and title == CLARIFICATION_TOOL \
+                        and isinstance(call_id, str) and call_id:
+                    # The one model-facing tool this engine may run: it asks a human and
+                    # returns the answer as a tool result. Nothing else may execute.
+                    self._allowed_calls.add(call_id)
+                    continue
+                if kind != "tool_call" and isinstance(call_id, str) \
+                        and call_id in self._allowed_calls:
+                    continue
                 raise RuntimeCapabilityUnavailable("tools", gate="07-10")
-        process = self._process
         refused = process.refused_requests()[refusals_before:] if process else []
         if refused:
             methods = ", ".join(sorted({str(item.get("method")) for item in refused}))
@@ -775,6 +1017,9 @@ class HarnessRuntime:
             return StopOutcome(False, "idle", "complete", None, "the session is closed")
         if process is None or not self._ready or not acp_session:
             return StopOutcome(False, "idle", "complete", None, "no runtime process")
+        # A clarification waiting for a person belongs to the turn being stopped: withdraw
+        # it first so the tool errs rather than resuming after the Stop.
+        self._questions.cancel_all("stopped")
         bound = self._config.shutdown_timeout if timeout is None else timeout
         done = self._turn_done
         if done is None:

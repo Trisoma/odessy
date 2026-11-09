@@ -1,5 +1,10 @@
 # Adds the spike bridge row. Port and token come from the child environment so the
 # same bundle can be installed once and pointed at different runs.
+#
+# It also mounts the runtime's own model-facing clarification tool. That tool only asks a
+# human and returns the answer as an ordinary tool result; it has no filesystem, process or
+# network effect. Every other model-facing tool row stays disabled by Odessy's narrow
+# overlay, which is applied after this layer.
 - insert:
     - id: odessy-stream-bridge
       name: '@odessy/dsh-stream-bridge'
@@ -7,3 +12,6 @@
         host: '127.0.0.1'
         port: !!js Number(process.env.ODESSY_BRIDGE_PORT)
         token: !!js process.env.ODESSY_BRIDGE_TOKEN
+        questionTimeoutMs: !!js Number(process.env.ODESSY_QUESTION_TIMEOUT_MS || 300000)
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
