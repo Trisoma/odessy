@@ -18,6 +18,8 @@ from .contracts import (
     RuntimeSelectionFailure,
     RuntimeSession,
     RuntimeUnavailable,
+    StopOutcome,
+    TurnCancelled,
 )
 from .legacy import LegacyRuntime
 from .selection import (
@@ -51,6 +53,8 @@ __all__ = [
     "RuntimeSelectionFailure",
     "RuntimeSession",
     "RuntimeUnavailable",
+    "StopOutcome",
+    "TurnCancelled",
     "available_engines",
     "build_runtime",
     "normalize_engine",

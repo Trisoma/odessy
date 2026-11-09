@@ -1,6 +1,6 @@
 /**
- * Spike-only: forward the runtime's existing live assistant frames to a loopback
- * socket so a non-Node client can render text before settlement.
+ * Forward the runtime's existing live assistant frames to a loopback socket so a
+ * non-Node client can render text before settlement.
  *
  * This plugin adds NO inference, NO loop and NO cancellation logic. It subscribes
  * the documented `agent/assistant-stream` event (process-local `start` / `chunk` /
@@ -11,9 +11,15 @@
  * Wire format, one JSON object per line:
  *   {"type":"hello","pid":123,"protocol":1}
  *   {"type":"frame","sessionId":"…","frame":{"type":"start"|"chunk"|"end", …},"t":1730000000000}
+ *   {"type":"dropped","protocol":1,"frames":3}
  *
  * The client must send {"token":"…"} as its first line. The socket binds the
  * configured host only, accepts one client, and is closed when the plugin unloads.
+ *
+ * Frames are transient: the answer itself reaches the client over ACP. So when the
+ * client stops reading, this side drops frames instead of buffering without limit, and
+ * reports the loss as a `dropped` notice as soon as the socket drains again. Deltas may
+ * be lost; the committed answer may not.
  */
 
 import net from 'node:net'
@@ -23,6 +29,12 @@ export const name = 'odessy-stream-bridge'
 
 /** No services are injected: listening for an event needs none. */
 export const inject = []
+
+/**
+ * Cap on bytes queued for one client but not yet accepted by the kernel. A consumer that
+ * stops reading keeps at most this much in this process, plus the frame in flight.
+ */
+const MAX_QUEUED_BYTES = 1 << 20
 
 /**
  * @param {import('@deepseek-ai/cordis').Context} ctx
@@ -40,10 +52,21 @@ export function apply(ctx, config) {
   /** @type {import('node:net').Socket | undefined} */
   let client
   let authenticated = false
+  /** Frames dropped since the last notice, because the client was not reading. */
+  let dropped = 0
 
   const send = (value) => {
     if (!client || !authenticated || client.destroyed) return
+    if (client.writableLength > MAX_QUEUED_BYTES) {
+      dropped += 1
+      return
+    }
     try {
+      if (dropped > 0) {
+        const lost = dropped
+        dropped = 0
+        client.write(JSON.stringify({ type: 'dropped', protocol: 1, frames: lost }) + '\n')
+      }
       client.write(JSON.stringify(value) + '\n')
     } catch {
       client.destroy()

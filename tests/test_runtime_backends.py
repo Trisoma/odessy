@@ -283,7 +283,9 @@ def test_capability_reports_are_distinct_and_frozen():
     assert CAPABILITIES["harness"].questions is False
     # Not implemented yet: the record says so, and the runtime raises for each flag.
     assert CAPABILITIES["harness"].live_text_deltas is False
-    assert CAPABILITIES["harness"].per_session_cancel is False
+    # Implemented in prompt 06: ACP session/cancel on this session's own child.
+    assert CAPABILITIES["harness"].per_session_cancel is True
+    assert CAPABILITIES["harness"].approvals is False
     assert HARNESS_TARGET_CAPABILITIES.live_text_deltas is True
     with pytest.raises(FrozenInstanceError):
         CAPABILITIES["legacy"].approvals = False

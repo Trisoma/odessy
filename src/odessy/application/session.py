@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import os
 import re
@@ -17,10 +18,11 @@ from odessy.runtime.hooks import public_event
 from odessy.runtime.types import ToolObservation, ToolRequest
 from odessy.runtime_backends import (
     RuntimeCapabilityUnavailable,
+    TurnCancelled,
     normalize_engine,
     resolve_and_build,
 )
-from odessy.runtime_backends.contracts import RuntimeEngineLocked
+from odessy.runtime_backends.contracts import RuntimeEngineLocked, StopOutcome
 from odessy.voice.memory import ConversationMemory
 from odessy.collaboration.context import collaboration_scope
 from odessy.interaction.broker import InteractionBroker
@@ -93,6 +95,12 @@ class SessionController:
         self._pending = self.interactions._pending
         self._task = None
         self._stop = asyncio.Event()
+        #: Incremented by every Stop. A turn admitted before the increment must not reach
+        #: the engine afterwards, which is what makes Stop safe before generation.
+        self._stop_epoch = 0
+        #: ``(task, outcome)`` for the last Stop that addressed a running turn. A local
+        #: cancellation of that task reports *this* outcome rather than inventing "stopped".
+        self._last_stop: tuple[Any, dict] | None = None
         self._closed = False
         self.monitoring_sink = None
         # The engine is decided once, here, and never afterwards. ``resolve_and_build``
@@ -175,7 +183,16 @@ class SessionController:
 
     @property
     def running(self):
-        return self._task is not None
+        if self._task is not None:
+            return True
+        # A turn the caller abandoned never ended: the engine still owns it, so the session
+        # is busy and must not admit another turn behind it.
+        return bool(getattr(self.runtime, 'orphaned_turn', False))
+
+    @property
+    def stop_epoch(self):
+        """Changes with every Stop; capture it at admission to detect a late arrival."""
+        return self._stop_epoch
 
     @property
     def pending_approvals(self):
@@ -238,6 +255,15 @@ class SessionController:
                 queue.get_nowait()
             queue.put_nowait(event)
         return event
+
+    def emit_from_worker(self, event_type, data=None):
+        """Thread-safe emit for an engine's worker threads (deltas, tool progress).
+
+        The loop delivers the event in order; the caller never touches the replay deque or
+        an asyncio queue from another thread. This is the only entry point an engine has
+        for transient events, so a runtime without it simply stays settlement-only.
+        """
+        self._emit_from_thread(event_type, data)
 
     def _emit_from_thread(self, event_type, data=None, *, loop=None):
         """Queue an event raised off the loop thread.
@@ -430,9 +456,18 @@ class SessionController:
         return self.interactions.resolve_question(question_id, answer, channel=channel)
 
     async def run_turn(self, text, participant=None, *, context=None, stop_event=None,
-                       status_callback=None, remember=True, turn_id=None):
+                       status_callback=None, remember=True, turn_id=None,
+                       admitted_epoch=None):
         if self._closed or self.running:
             raise RuntimeError('Session is closed or a turn is already running')
+        if admitted_epoch is not None and admitted_epoch != self._stop_epoch:
+            # A Stop arrived between admission and this call: nothing has reached the engine
+            # and nothing may. This is the only way a queued turn is refused without ever
+            # generating, so the cancellation cannot be overtaken by its own work.
+            outcome = StopOutcome(True, "stopped", "complete", None,
+                                  "stopped before generation")
+            self.emit('stopped', {'reason': 'cancelled', **outcome.public()})
+            raise TurnCancelled(outcome.public())
         if self.engine != 'legacy':
             # Not a fallback: a harness session runs the harness, and refuses whatever
             # that engine has not implemented rather than running the legacy loop.
@@ -550,6 +585,9 @@ class SessionController:
             raise RuntimeCapabilityUnavailable('collaboration', gate='10')
         self.interactions.start_turn(turn_id)
         self._task = asyncio.current_task()
+        # Deltas arrive from the engine's worker threads; the loop must be capturable so
+        # they are delivered live rather than held until the turn ends.
+        self._loop = asyncio.get_running_loop()
         self.active_profile = self.selected_profile
         self._active_model = self._model
         self.emit('transcript', {'role': 'user', 'text': text})
@@ -560,6 +598,9 @@ class SessionController:
             ledger = process_ledger()
             ledger.start_turn()
             result = await self.runtime.run_turn(text)
+            # Transient deltas were queued while the turn ran. Deliver them before the
+            # committed message so a consumer never sees text after the answer.
+            self._flush_thread_events()
             if remember:
                 self.memory.add(self._public(text), self._public(result.final_text))
             self.emit('transcript', {'role': 'assistant', 'text': result.final_text})
@@ -567,39 +608,101 @@ class SessionController:
             self.emit('cost', ledger.report())
             self.emit('result', result)
             return result
+        except TurnCancelled as exc:
+            # The engine confirmed the cancellation: its partial text is not the answer, and
+            # the event carries what was actually established (never a rollback claim).
+            self._flush_thread_events()
+            self.emit('stopped', {'reason': 'cancelled', **exc.public()})
+            raise
         except asyncio.CancelledError:
-            self.emit('stopped')
+            self._flush_thread_events()
+            # The local await was abandoned. That is not an engine confirmation, so the event
+            # says what is actually known: the Stop that caused it, or `unconfirmed`.
+            self.emit('stopped', {'reason': 'local-cancel', **self._local_cancel_outcome()})
             raise
         except Exception as exc:
+            self._flush_thread_events()
             self.emit('error', {'message': str(exc), 'error_type': type(exc).__name__})
             raise
         finally:
             self._flush_thread_events()
+            self._loop = None
             self.interactions.end_turn()
             self.active_profile = None
             self._active_model = None
             self._task = None
+            self._last_stop = None
+
+    def _local_cancel_outcome(self):
+        """What a cancelled local await may claim: the Stop that caused it, or unknown."""
+        task = asyncio.current_task()
+        recorded = self._last_stop
+        if recorded is not None and recorded[0] is task:
+            return dict(recorded[1])
+        return StopOutcome(False, 'unconfirmed', 'pending', None,
+                           'the local await was cancelled; engine-side termination is not '
+                           'confirmed').public()
 
     async def stop(self):
-        if self.engine != 'legacy':
-            # Cancellation is prompt 06. Refusing is the honest answer: pretending to
-            # stop, or cancelling the local await while the child keeps working, would
-            # both be worse than a named error.
-            raise RuntimeCapabilityUnavailable('per_session_cancel', gate='06')
-        self._stop.set()
+        """Stop the running turn. Idempotent; returns what was established, not a guess."""
+        # Every Stop belongs to the turn it interrupted: a turn still queued for admission is
+        # refused by the epoch, and the next admitted turn captures a new one.
+        self._stop_epoch += 1
+        if self.engine == 'legacy':
+            running = self._task is not None
+            target = self._task
+            self._stop.set()
+            self.interactions.cancel_pending('stopped')
+            if target is not None:
+                self._last_stop = (target, {'requested': True, 'execution': 'stopped',
+                                            'cleanup': 'complete', 'stop_reason': None,
+                                            'confirmed': True, 'detail': ''})
+            if self._task is not None and self._task is not asyncio.current_task():
+                self._task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._task
+            # Stop belongs to the cancelled turn, not to future standalone job approvals.
+            self._stop = asyncio.Event()
+            return {'status': 'stopped' if running else 'idle', 'requested': running,
+                    'execution': 'stopped' if running else 'idle', 'cleanup': 'complete',
+                    'stop_reason': None, 'confirmed': running,
+                    'detail': 'the local engine stopped the turn; provider-side work is not '
+                              'confirmed by this call'}
+        # The Harness engine cancels per session through its own ACP channel, so the child -
+        # and every other session - keeps running. Pending human waits are released first:
+        # nothing may keep waiting on a turn that is being stopped.
         self.interactions.cancel_pending('stopped')
-        if self._task is not None and self._task is not asyncio.current_task():
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-        # Stop belongs to the cancelled turn, not to future standalone job approvals.
-        self._stop = asyncio.Event()
+        target = self._task
+        outcome = await self.runtime.stop()
+        # Whichever local cancellation follows must report this outcome, not an empty
+        # "stopped": an unconfirmed Stop leaves the child possibly still working.
+        if target is not None:
+            self._last_stop = (target, outcome.public())
+        if not outcome.confirmed:
+            # The engine did not confirm the end. Stop waiting for it locally, bounded, and
+            # report that: this is not a rollback, and text already produced stays produced.
+            if target is not None and target is not asyncio.current_task() and not target.done():
+                target.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.wait({target}, timeout=1.0)
+        return {'status': outcome.execution, **outcome.public()}
 
     async def close(self):
         if self.engine == 'legacy':
             await self.stop()
+        else:
+            # Tear down in the order that keeps the engine honest: cancel its turn first
+            # (bounded, and never claimed as more than it is), then let the engine close
+            # the child it owns. Killing the child first would report the turn as an error
+            # rather than the cancellation it actually was.
+            with contextlib.suppress(Exception):
+                await self.runtime.stop()
+            task = self._task
+            if task is not None and task is not asyncio.current_task():
+                if not task.done():
+                    task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.wait({task}, timeout=2.0)
         self._closed = True
         if self.engine != 'legacy':
             # The engine owns a child process; closing the session must end it.

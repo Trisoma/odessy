@@ -34,14 +34,27 @@ from odessy.runtime_backends.harness.process import (
 )
 
 FAKE_RUNTIME = r'''
-import json, os, subprocess, sys, time
+import json, os, subprocess, sys, threading, time
 
 MODE = os.environ.get("FAKE_MODE", "normal")
+BRIDGE_MODE = os.environ.get("FAKE_BRIDGE", "")
+BRIDGE_SESSION = os.environ.get("FAKE_SESSION_ID", "acp-1")
+REPLY_DELAY = float(os.environ.get("FAKE_DELAY_MS", "0")) / 1000.0
+#: How long a cancelling prompt may block before it gives up waiting for a cancel.
+HOLD = float(os.environ.get("FAKE_HOLD", "30"))
+#: How many prompts in this process behave like a long-running turn.
+HOLD_TURNS = int(os.environ.get("FAKE_HOLD_TURNS", "1"))
+#: Set when the client sends ``session/cancel``; the prompt thread reacts to it.
+CANCEL = threading.Event()
+#: Set when this fake stops reading stdin on purpose (the ``wedged`` mode).
+WEDGED = threading.Event()
+_EMIT_LOCK = threading.Lock()
 
 
 def emit(obj):
-    sys.stdout.write(json.dumps(obj) + "\n")
-    sys.stdout.flush()
+    with _EMIT_LOCK:
+        sys.stdout.write(json.dumps(obj) + "\n")
+        sys.stdout.flush()
 
 
 if "--version" in sys.argv:
@@ -78,6 +91,93 @@ ROUTE = os.environ.get("FAKE_ROUTE", "odessy-deepseek")
 SELECTED = {"value": json.dumps([ROUTE, MODELS[0]], separators=(",", ":"))}
 
 
+def bridge_frames(mode, turn=1):
+    """Frames the packaged plugin would forward, expressed exactly as it sends them."""
+    def chunk(text, session=BRIDGE_SESSION, number=turn):
+        return {"type": "frame", "sessionId": session, "turn": number, "step": 0,
+                "chunk": {"type": "text-delta", "text": text}, "t": int(time.time() * 1000)}
+
+    def life(kind, attempt=1, session=BRIDGE_SESSION, number=turn):
+        return {"type": "frame", "sessionId": session, "frame": {"type": kind,
+                "attempt": attempt, "turn": number}, "t": int(time.time() * 1000)}
+
+    if mode == "normal" or mode == "stale":
+        return [(0, life("start")), (0.12, chunk("Hello")), (0.12, chunk(" there")),
+                (0.02, life("end"))]
+    if mode == "foreign":
+        return [(0, life("start", session="someone-else")),
+                (0.05, chunk("leak", session="someone-else")),
+                (0.02, life("end", session="someone-else"))]
+    if mode == "malformed":
+        return [(0, "this is not json"),
+                (0.02, {"type": "frame", "chunk": {"type": "text-delta", "text": "no session"}}),
+                (0.02, {"type": "frame", "sessionId": BRIDGE_SESSION,
+                        "chunk": {"type": "text-delta", "text": 5}}),
+                (0.02, chunk("ok"))]
+    if mode == "late":
+        return [(0.9, chunk("late text"))]
+    if mode == "retry":
+        return [(0, life("start")), (0.05, chunk("par")), (0.05, life("start", attempt=2)),
+                (0.05, chunk("tial")), (0.02, life("end", attempt=2))]
+    return []
+
+
+BRIDGE = {"sock": None}
+#: The runtime numbers its own turns; the fake does the same so a frame can be attributed
+#: to the turn it came from rather than to "whatever is running now".
+TURN = {"n": 0}
+
+
+def bridge_server():
+    """Listen and greet, exactly as the packaged plugin's socket does."""
+    import socket
+
+    port = os.environ.get("ODESSY_BRIDGE_PORT")
+    token = os.environ.get("ODESSY_BRIDGE_TOKEN")
+    if not port or not token:
+        return
+    server = socket.socket()
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        server.bind(("127.0.0.1", int(port)))
+        server.listen(1)
+        conn, _ = server.accept()
+    except OSError:
+        return
+    line = b""
+    while b"\n" not in line:
+        chunk = conn.recv(4096)
+        if not chunk:
+            conn.close()
+            return
+        line += chunk
+    try:
+        hello = json.loads(line.split(b"\n", 1)[0])
+    except ValueError:
+        conn.close()
+        return
+    if hello.get("token") != token:
+        conn.close()
+        return
+    conn.sendall((json.dumps({"type": "hello", "pid": os.getpid(),
+                              "protocol": 1}) + "\n").encode())
+    BRIDGE["sock"] = conn
+
+
+def send_bridge(frames):
+    """Forward frames the way the plugin forwards ``agent/assistant-stream``."""
+    sock = BRIDGE["sock"]
+    for delay, payload in frames:
+        time.sleep(delay)
+        if sock is None:
+            continue
+        line = payload if isinstance(payload, str) else json.dumps(payload)
+        try:
+            sock.sendall((line + "\n").encode())
+        except OSError:
+            return
+
+
 def model_options():
     return [{
         "id": "model", "type": "select", "currentValue": SELECTED["value"],
@@ -90,6 +190,60 @@ def model_options():
         "id": "reasoning_effort", "type": "select", "currentValue": "high",
         "options": [{"value": value} for value in ("off", "low", "high", "max")],
     }]
+
+
+def _slow_prompt(request_id, session_id, turn):
+    """A turn that is still generating: blocks until it is cancelled, or gives up."""
+    marker = os.environ.get("FAKE_PROMPT_FILE")
+    if marker:
+        # Proves to the test that the prompt reached the child, without consuming the
+        # notifications the turn itself is about to use.
+        with open(marker, "w", encoding="utf-8") as handle:
+            handle.write(str(turn))
+    for chunk in ("Hello", " there"):
+        emit({"jsonrpc": "2.0", "method": "session/update",
+              "params": {"sessionId": session_id,
+                         "update": {"sessionUpdate": "agent_message_chunk",
+                                    "content": {"type": "text", "text": chunk}}}})
+    if MODE == "crash-on-cancel":
+        # The runtime dies while the turn is being cancelled: nothing confirms an outcome.
+        while not CANCEL.wait(0.05):
+            pass
+        os._exit(9)
+    if MODE == "ignore-cancel":
+        # A wedged runtime: the cancel arrives and is never acted on before the test's bound.
+        time.sleep(HOLD)
+        emit({"jsonrpc": "2.0", "id": request_id, "result": {"stopReason": "end_turn"}})
+        return
+    cancelled = CANCEL.wait(HOLD)
+    emit({"jsonrpc": "2.0", "id": request_id,
+          "result": {"stopReason": "cancelled" if cancelled else "end_turn"}})
+
+
+def _wedged_prompt(request_id, session_id):
+    """A turn whose runtime never reads the cancel: it finishes on its own schedule."""
+    marker = os.environ.get("FAKE_PROMPT_FILE")
+    if marker:
+        with open(marker, "w", encoding="utf-8") as handle:
+            handle.write("wedged")
+    for chunk in ("Hello", " there"):
+        emit({"jsonrpc": "2.0", "method": "session/update",
+              "params": {"sessionId": session_id,
+                         "update": {"sessionUpdate": "agent_message_chunk",
+                                    "content": {"type": "text", "text": chunk}}}})
+    time.sleep(HOLD)
+    emit({"jsonrpc": "2.0", "id": request_id, "result": {"stopReason": "end_turn"}})
+
+
+def answer_notification(message):
+    """Notifications have no id; ``session/cancel`` is the one this fake understands."""
+    if message.get("method") != "session/cancel":
+        return
+    marker = os.environ.get("FAKE_CANCEL_FILE")
+    if marker:
+        with open(marker, "a", encoding="utf-8") as handle:
+            handle.write(str(time.time()) + "\n")
+    CANCEL.set()
 
 
 def answer(message):
@@ -130,6 +284,40 @@ def answer(message):
         return
     if method == "session/prompt":
         session_id = (message.get("params") or {}).get("sessionId")
+        TURN["n"] += 1
+        turn = TURN["n"]
+        if MODE in ("hold", "ignore-cancel", "crash-on-cancel", "wedged") and turn <= HOLD_TURNS:
+            # A long turn: the loop must keep reading so a cancel can arrive while this is
+            # generating. That is the whole point of these modes.
+            CANCEL.clear()
+            if MODE == "wedged":
+                # The child stops reading stdin before the cancel could arrive, and finishes
+                # the turn on its own schedule: the cancel is never seen.
+                WEDGED.set()
+                threading.Thread(target=_wedged_prompt, args=(request_id, session_id),
+                                 daemon=True).start()
+                return
+            threading.Thread(target=_slow_prompt, args=(request_id, session_id, turn),
+                             daemon=True).start()
+            return
+        if BRIDGE_MODE == "late":
+            # Post-settlement on purpose: the frame goes out from a thread while the
+            # committed reply is written below, so it can only arrive after the answer.
+            threading.Thread(target=send_bridge, args=(bridge_frames("late", turn),),
+                             daemon=True).start()
+        elif BRIDGE_MODE == "stale":
+            # A chunk from the turn that just settled, arriving while this one runs: the
+            # drain at turn start cannot catch it, so attribution must.
+            if turn > 1:
+                send_bridge([(0.05, {"type": "frame", "sessionId": BRIDGE_SESSION,
+                                     "turn": turn - 1, "step": 0,
+                                     "chunk": {"type": "text-delta",
+                                               "text": "straggler"}, "t": 0})])
+            send_bridge(bridge_frames("stale", turn))
+        elif BRIDGE_MODE:
+            # Transient frames go out first, then the committed reply: that is the order
+            # the real plugin produces, and what makes "delta before settlement" provable.
+            send_bridge(bridge_frames(BRIDGE_MODE, turn))
         if MODE == "serverrequest":
             emit({"jsonrpc": "2.0", "id": "srv-1", "method": "session/request_permission",
                   "params": {"sessionId": session_id}})
@@ -148,6 +336,8 @@ def answer(message):
                   "params": {"sessionId": session_id,
                              "update": {"sessionUpdate": "usage_update",
                                         "used": 1234, "size": 32768}}})
+        if REPLY_DELAY:
+            time.sleep(REPLY_DELAY)
         emit({"jsonrpc": "2.0", "id": request_id,
               "result": {"stopReason": "end_turn"}})
         return
@@ -155,7 +345,16 @@ def answer(message):
           "error": {"code": -32601, "message": "unknown method " + str(method)}})
 
 
+if BRIDGE_MODE:
+    # The packaged plugin listens from profile load; the fake does the same once its
+    # handlers exist, so the engine's readiness handshake finds the socket.
+    threading.Thread(target=bridge_server, daemon=True).start()
+
 for line in sys.stdin:
+    if WEDGED.is_set():
+        # Deliberately stop reading stdin: whatever the client writes now sits in the pipe.
+        while True:
+            time.sleep(1)
     line = line.strip()
     if not line:
         continue
@@ -163,7 +362,11 @@ for line in sys.stdin:
         message = json.loads(line)
     except ValueError:
         continue
-    if "method" not in message or "id" not in message:
+    if "method" not in message:
+        continue
+    if "id" not in message:
+        # A notification: the client's own cancellation arrives this way, mid-turn.
+        answer_notification(message)
         continue
     answer(message)
 '''
@@ -189,6 +392,11 @@ class FakeSession:
     def emit(self, event_type, data=None):
         self._events.append({"id": len(self._events) + 1, "type": event_type,
                              "time": time.time(), "data": data or {}})
+
+    #: An engine emits transient events (deltas) from a worker thread; list.append is
+    #: safe under the GIL, and this mirrors ``SessionController.emit_from_worker``.
+    def emit_from_worker(self, event_type, data=None):
+        self.emit(event_type, data)
 
     def public_snapshot(self):
         return {"id": self.id}
@@ -656,18 +864,17 @@ def test_a_cancelled_start_leaves_no_process(monkeypatch, tmp_path, fake):
 
 # -- honest capabilities -----------------------------------------------------
 
-def test_stop_is_refused_until_prompt_06(tmp_path, fake):
+def test_stop_is_implemented_through_the_runtimes_own_cancellation(tmp_path, fake):
+    """Prompt 06 replaced the refusal with ACP ``session/cancel`` (see test_harness_stop)."""
     runtime = HarnessRuntime(FakeSession(), config=make_config(tmp_path, fake))
+    assert runtime.capabilities.per_session_cancel is True
 
     async def flow():
-        with pytest.raises(RuntimeCapabilityUnavailable) as caught:
-            await runtime.stop()
-        return caught.value
+        return await runtime.stop()  # not started: nothing to cancel, and no refusal
 
-    exc = run(flow())
-    assert exc.capability == "per_session_cancel"
-    assert exc.gate == "06"
-    assert exc.code == "runtime_capability_unavailable"
+    outcome = run(flow())
+    assert outcome.execution == "idle"
+    assert outcome.requested is False
 
 
 def test_a_turn_returns_settled_text_and_claims_no_streaming(tmp_path, fake):
@@ -777,11 +984,13 @@ def test_a_harness_session_runs_its_turn_through_the_engine(monkeypatch, tmp_pat
             result = await session.run_turn("hello")
             types = [event_type.type for event_type in session.runtime.events()]
             snapshot = session.public_snapshot()
-            # 04: the engine accepts a model selection it can apply, and still refuses
-            # what it has not implemented (cancellation is prompt 06).
+            # 04: the engine accepts a model selection it can apply.
             assert session.select_model("local") == "local"
-            with pytest.raises(RuntimeCapabilityUnavailable):
-                await session.stop()
+            # 06: Stop is implemented through the engine's own cancellation. With no turn
+            # running it reports idle, and the completed turn is untouched by it.
+            outcome = await session.stop()
+            assert outcome["execution"] == "idle"
+            assert outcome["requested"] is False
             return result, types, snapshot
         finally:
             await session.close()

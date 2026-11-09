@@ -29,7 +29,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from odessy.authority.redaction import redact_text
 from odessy.runtime_backends.harness.config import HarnessConfig
@@ -172,8 +172,13 @@ class HarnessProcess:
     # ----------------------------------------------------------------------- calls
 
     def call(self, method: str, params: Mapping[str, Any] | None = None, *,
-             timeout: float) -> dict[str, Any]:
-        """Send one request and wait for its reply. Blocking: call from a worker."""
+             timeout: float, on_sent: Callable[[], None] | None = None) -> dict[str, Any]:
+        """Send one request and wait for its reply. Blocking: call from a worker.
+
+        ``on_sent`` runs once the request has been written to the child, before the reply is
+        awaited. A caller that must not act before the child has the request (a cancellation
+        sent before its prompt would be dropped) can use it instead of guessing.
+        """
         dead = self._dead
         if dead is not None:
             raise dead
@@ -193,6 +198,13 @@ class HarnessProcess:
             with self._state_lock:
                 self._pending.pop(message_id, None)
             raise
+        if on_sent is not None:
+            # The request is in the child's pipe now. A failure here is the caller's problem
+            # to report, not a reason to abandon a request that is already in flight.
+            try:
+                on_sent()
+            except Exception:  # noqa: BLE001 - never fails a sent request
+                pass
         try:
             reply = waiter.get(timeout=timeout)
         except queue.Empty:

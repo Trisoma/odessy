@@ -47,6 +47,13 @@ def _base_env_names() -> tuple[str, ...]:
     return _WINDOWS_BASE_ENV if sys.platform == "win32" else _POSIX_BASE_ENV
 
 
+#: What a child needs to bind or connect a socket, beyond what it needs to start. On
+#: Windows a missing ``SystemRoot`` fails ``socket()`` with WSAEPROVIDERFAILEDINIT; the
+#: packaged bridge plugin listens, so this would read as "live text is unavailable"
+#: without saying why.
+_NETWORK_ENV = ("SYSTEMROOT",) if sys.platform == "win32" else ()
+
+
 def default_home(environ: Mapping[str, str] | None = None) -> Path:
     """The per-user Harness home Odessy owns when the operator does not name one."""
     environ = os.environ if environ is None else environ
@@ -171,6 +178,17 @@ class HarnessConfig:
             env[name] = value
         env["DSH_HOME"] = str(self.home)
         return env
+
+    def missing_for_network(self, parent: Mapping[str, str] | None = None) -> tuple[str, ...]:
+        """Which inherited names the child lacks to open the live-text socket.
+
+        Winsock initialisation reads ``SystemRoot``; without it ``socket()`` fails with
+        ``WSAEPROVIDERFAILEDINIT``, which surfaces only as "no bridge listening". An
+        explicit (partial) ``source_env`` is a legitimate way to launch hermetically, so
+        this is reported rather than silently repaired from the process environment.
+        """
+        env = self.child_env(parent)
+        return tuple(name for name in _NETWORK_ENV if name not in env)
 
     def describe(self) -> dict[str, object]:
         """Diagnostic summary. Deliberately omits the environment."""

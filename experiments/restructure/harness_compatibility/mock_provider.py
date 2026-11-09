@@ -72,6 +72,37 @@ def _chunks_for(prompt: str) -> tuple[list[str], int, dict | None]:
     return (["Hello", " from", " the", " deterministic", " fixture."], 120, None)
 
 
+def _text_of(message: dict) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(part.get("text", "") for part in content if isinstance(part, dict))
+    return ""
+
+
+#: The runtime appends its own user-role context snapshot *after* the caller's prompt, so
+#: "the last user message" is that snapshot. Skipping it by its documented prefix is what
+#: makes the fixture react to the request rather than to the runtime's bookkeeping.
+CONTEXT_PREFIX = "Current runtime context."
+
+
+def prompt_of(messages: list) -> str:
+    """The caller's request: the newest user message that is not a context snapshot.
+
+    Reading the conversation's older user messages was wrong too: a second turn would be
+    replayed with the first turn's scenario. Only the newest request counts.
+    """
+    for message in reversed(messages):
+        if message.get("role") != "user":
+            continue
+        text = _text_of(message)
+        if text.startswith(CONTEXT_PREFIX):
+            continue
+        return text
+    return ""
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     log_dir: Path
@@ -102,15 +133,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             payload = {}
         messages = payload.get("messages") or []
-        prompt = ""
-        for message in reversed(messages):
-            if message.get("role") == "user":
-                content = message.get("content")
-                if isinstance(content, str):
-                    prompt = content
-                elif isinstance(content, list):
-                    prompt = " ".join(part.get("text", "") for part in content if isinstance(part, dict))
-                break
+        prompt = prompt_of(messages)
         chunks, delay_ms, tool_call = _chunks_for(prompt)
         # Escalate exactly once: after the first tool result. A rejected approval
         # returns another result, and asking again would loop forever.

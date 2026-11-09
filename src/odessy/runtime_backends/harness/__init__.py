@@ -10,11 +10,15 @@ The bundle of what the child is allowed to be is small and reviewed:
 - ``process`` — stdio framing, failure classification, owned process-tree cleanup;
 - ``runtime`` — the ``RuntimeSession`` implementation for one Odessy session;
 - ``profile`` — the reviewed overlay text that disables every model-facing tool, written
-  into the owned Harness home at launch.
+  into the owned Harness home at launch;
+- ``bridge`` — the bounded client for the live-stream plugin (loopback, token, one session);
+- ``stream`` — the per-turn translator that turns those frames into ``delta`` events and one
+  frozen settlement. Deltas are transient; the committed answer still comes from ACP only.
 """
 
 from __future__ import annotations
 
+from odessy.runtime_backends.harness.bridge import BridgeError, LiveBridge
 from odessy.runtime_backends.harness.config import (
     HarnessConfig,
     default_home,
@@ -32,16 +36,28 @@ from odessy.runtime_backends.harness.profile import (
     materialize_narrow_patch,
 )
 from odessy.runtime_backends.harness.runtime import HarnessRuntime
+from odessy.runtime_backends.harness.stream import (
+    Delta,
+    Settlement,
+    ToolProgress,
+    TurnStream,
+)
 
 __all__ = [
+    "BridgeError",
+    "Delta",
     "HarnessConfig",
     "HarnessProcess",
     "HarnessProcessError",
     "HarnessProtocolError",
     "HarnessRuntime",
     "HarnessTransportError",
+    "LiveBridge",
     "NARROW_PATCH_NAME",
     "NARROW_PATCH_TEXT",
+    "Settlement",
+    "ToolProgress",
+    "TurnStream",
     "default_home",
     "from_environment",
     "materialize_narrow_patch",

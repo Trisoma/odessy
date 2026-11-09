@@ -179,6 +179,48 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         restart_reservation = None
         return {'status':'resumed'}
 
+    @app.post('/v1/lifecycle/stop-all')
+    async def stop_all(request: Request):
+        """The explicit process-wide stop. Not the per-session Stop, and it says what it did.
+
+        Every session is asked to stop its own turn through its engine; nothing is killed,
+        and the response names each session with its outcome so a caller can see which ones
+        confirmed. Sessions stay open and usable afterwards; ending one (and the child it
+        owns) is ``DELETE /v1/sessions/{sid}``.
+        """
+        data = await body(request)
+        if set(data) - {'service_instance_id', 'reason', 'confirm'}:
+            raise HTTPException(400, 'Unknown lifecycle fields')
+        if data.get('confirm') is not True:
+            raise HTTPException(400, 'The emergency stop requires "confirm": true')
+        if not isinstance(data.get('reason'), str) or not data['reason'].strip():
+            raise HTTPException(400, 'A reason is required for the emergency stop')
+        if data.get('service_instance_id') != app.state.service_instance_id:
+            raise HTTPException(409, 'Service changed; nothing was stopped')
+        affected = []
+        for sid, controller in list(sessions.items()):
+            try:
+                outcome = await controller.stop()
+            except RuntimeCapabilityUnavailable as exc:
+                outcome = {'execution': 'unconfirmed', 'cleanup': 'pending',
+                           'requested': False, 'confirmed': False,
+                           'detail': str(exc)}
+            except Exception as exc:  # noqa: BLE001 - one session must not hide the rest
+                outcome = {'execution': 'unconfirmed', 'cleanup': 'pending',
+                           'requested': False, 'confirmed': False,
+                           'detail': type(exc).__name__}
+            task = tasks.get(sid)
+            if task is not None and not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.wait({task}, timeout=2.0)
+            affected.append({'session_id': sid, 'engine': controller.engine,
+                             'reason': data['reason'].strip()[:200], **outcome})
+        return {'affected': affected,
+                'unconfirmed': [entry['session_id'] for entry in affected
+                                if entry.get('execution') == 'unconfirmed'],
+                'service_instance_id': app.state.service_instance_id}
+
     def verified(request):
         value = request.headers.get('authorization', '')
         supplied = value[7:] if value.startswith('Bearer ') else ''
@@ -778,9 +820,10 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         if controller.running or sid in tasks:
             raise HTTPException(409, 'A turn is already running')
         turn_id = secrets.token_hex(16)
+        epoch = controller.stop_epoch
         async def run():
             try:
-                result=await controller.run_turn(data['text'], participant=data.get('participant'), turn_id=turn_id)
+                result=await controller.run_turn(data['text'], participant=data.get('participant'), turn_id=turn_id, admitted_epoch=epoch)
                 if spoken and desktop_voice is not None:
                     await desktop_voice.speak(controller,result.final_text)
                 return result.final_text
@@ -847,17 +890,21 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
 
     @app.post('/v1/sessions/{sid}/stop')
     async def stop(sid: str):
-        if desktop_voice is not None and desktop_voice.owner==sid:await desktop_voice.cancel(find(sid))
+        controller = find(sid)
+        if desktop_voice is not None and desktop_voice.owner==sid:await desktop_voice.cancel(controller)
         try:
-            await find(sid).stop()
+            outcome = await controller.stop()
         except RuntimeCapabilityUnavailable as exc:
             raise HTTPException(501, public(exc.public())) from exc
         task = tasks.get(sid)
-        if task is not None:
+        if task is not None and outcome.get('execution') != 'stopped':
+            # The engine did not confirm the end, so stop waiting for it here as well - and
+            # bound that too: a handler that waits for an unconfirmed turn would hang the
+            # very request that is meant to report it.
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await task
-        return {'status': 'stopped'}
+                await asyncio.wait({task}, timeout=2.0)
+        return outcome
 
     @app.post('/v1/sessions/{sid}/approvals/{approval_id}')
     async def answer(sid: str, approval_id: str, request: Request):

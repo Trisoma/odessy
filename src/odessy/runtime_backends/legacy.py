@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .contracts import LEGACY_CAPABILITIES, RuntimeCapabilities, RuntimeEvent
+from .contracts import LEGACY_CAPABILITIES, RuntimeCapabilities, RuntimeEvent, StopOutcome
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from odessy.application.session import SessionController
@@ -42,8 +42,19 @@ class LegacyRuntime:
     async def run_turn(self, text: str, *args: Any, **kwargs: Any):
         return await self._session.run_turn(text, *args, **kwargs)
 
-    async def stop(self) -> None:
-        await self._session.stop()
+    async def stop(self, *, timeout: float | None = None) -> StopOutcome:
+        """Delegate to the controller's own stop and report what it established."""
+        outcome = await self._session.stop()
+        if isinstance(outcome, StopOutcome):
+            return outcome
+        outcome = outcome if isinstance(outcome, dict) else {}
+        return StopOutcome(
+            requested=bool(outcome.get("requested")),
+            execution=str(outcome.get("execution") or "idle"),
+            cleanup=str(outcome.get("cleanup") or "complete"),
+            stop_reason=outcome.get("stop_reason"),
+            detail=str(outcome.get("detail") or ""),
+        )
 
     async def close(self) -> None:
         await self._session.close()

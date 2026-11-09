@@ -204,6 +204,52 @@ def test_an_explicit_credential_reference_is_honoured(credentials):
     assert route.api_key == "mine"
 
 
+def test_a_session_credential_from_the_desktop_envelope_wins(credentials, tmp_path, fake):
+    """The client's own wire format, through the server's own reader.
+
+    ``apps/desktop/lib/app/setup/session_model_credentials.dart`` keeps app-owned keys in
+    memory and sends them as ``{"session_credentials": [...], "credential_revision": N}`` on
+    the coordinator's private stdin; ``application/serve.py`` reads every envelope with
+    ``credentials.acknowledge_startup``. The entries are exactly the shape produced by
+    ``privateStdinValues``, so this test covers the real path rather than a shortcut.
+    """
+    import io
+
+    envelope = json.dumps({
+        "session_credentials": [{
+            "provider": "deepseek",
+            "endpoint": "",
+            "credential_env": "",
+            "value": "from-the-desktop-session",
+        }],
+        "credential_revision": 3,
+    }) + "\n"
+    stdout = io.StringIO()
+    assert credentials.acknowledge_startup(io.BytesIO(envelope.encode()), stdout) is None
+    assert json.loads(stdout.getvalue()) == {"credential_revision": 3}
+
+    # An environment key is present and different: the session value must still win.
+    route = resolve_route(cloud_profile(), environ={"DEEPSEEK_API_KEY": "from-env"})
+    assert route.api_key == "from-the-desktop-session"
+    from odessy.runtime_backends.harness.runtime import attach_route
+
+    attached = attach_route(make_config(tmp_path, fake), route)
+    assert attached.child_env({"PATH": "C:/bin", "DEEPSEEK_API_KEY": "from-env"})[KEY_ENV] \
+        == "from-the-desktop-session"
+
+
+def test_an_envelope_saved_for_another_endpoint_is_not_used(credentials):
+    """Scope identity includes the endpoint, exactly as the legacy engine expects."""
+    credentials.load_sessions([{
+        "provider": "deepseek",
+        "endpoint": "https://other.example/v1",
+        "credential_env": "",
+        "value": "saved-for-another-endpoint",
+    }])
+    route = resolve_route(cloud_profile(), environ={"DEEPSEEK_API_KEY": "from-env"})
+    assert route.api_key == "from-env"
+
+
 def test_an_invalid_endpoint_is_refused_with_the_existing_validation(credentials):
     for endpoint in ("ftp://api.example/v1", "https://user:pass@api.example/v1",
                      "https://api.example/v1?x=1"):

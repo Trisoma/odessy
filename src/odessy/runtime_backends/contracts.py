@@ -17,7 +17,7 @@ Ownership:
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Literal, Mapping, Protocol, runtime_checkable
+from typing import Any, ClassVar, Literal, Mapping, Protocol, runtime_checkable
 
 from odessy.runtime.types import AgentTurnResult
 
@@ -189,11 +189,11 @@ LEGACY_CAPABILITIES = RuntimeCapabilities(
 HARNESS_CAPABILITIES = RuntimeCapabilities(
     engine="harness",
     live_text_deltas=False,      # prompt 05 (bridge proven in 01, not wired here)
-    per_session_cancel=False,    # prompt 06 (ACP session/cancel)
+    per_session_cancel=True,     # prompt 06: ACP session/cancel, one session per child
     approvals=False,             # prompt 08 (ACP session/request_permission)
     questions=False,             # no ACP channel at the pin
     durable_history=False,       # prompt 05/06 (Harness session log not yet replayed)
-    resume=False,                # prompt 06
+    resume=False,                # prompt 10
     mcp_tools=False,             # prompts 07-09
 )
 
@@ -291,6 +291,65 @@ class RuntimeEvent:
                 "data": _copy_payload(self.data)}
 
 
+@dataclass(frozen=True)
+class StopOutcome:
+    """What a Stop request actually established, in the four states callers need.
+
+    - ``requested`` — a cancellation was sent to the engine.
+    - ``execution`` — ``idle`` (nothing was running), ``stopped`` (the engine confirmed the
+      turn ended) or ``unconfirmed`` (the bound elapsed: the turn may still be running).
+    - ``cleanup`` — ``complete`` when everything this side owned was joined, ``pending``
+      when something could not be confirmed within the bound.
+    - ``stop_reason`` — the engine's own reason when it reported one.
+
+    ``unconfirmed`` is never a softer word for ``stopped``: it means the outcome is unknown,
+    which is also why no Stop ever claims a rollback of work that already happened.
+    """
+
+    requested: bool
+    execution: str
+    cleanup: str
+    stop_reason: str | None = None
+    detail: str = ""
+
+    #: The only accepted values. A caller can branch on these without string guessing.
+    EXECUTIONS: ClassVar[tuple[str, ...]] = ("idle", "stopped", "unconfirmed")
+    CLEANUPS: ClassVar[tuple[str, ...]] = ("complete", "pending")
+
+    def __post_init__(self) -> None:
+        if self.execution not in self.EXECUTIONS:
+            raise ValueError(f"unknown stop execution: {self.execution!r}")
+        if self.cleanup not in self.CLEANUPS:
+            raise ValueError(f"unknown stop cleanup: {self.cleanup!r}")
+
+    @property
+    def confirmed(self) -> bool:
+        """True only when the engine said the turn ended."""
+        return self.execution == "stopped"
+
+    def public(self) -> dict[str, Any]:
+        return {"requested": self.requested, "execution": self.execution,
+                "cleanup": self.cleanup, "stop_reason": self.stop_reason,
+                "confirmed": self.confirmed, "detail": self.detail}
+
+
+class TurnCancelled(Exception):
+    """The engine confirmed a cancellation; the turn's text is not the answer.
+
+    Raised instead of returning an ``AgentTurnResult`` so no caller can commit a cancelled
+    turn's partial answer by accident. ``outcome`` is the same shape as
+    :meth:`StopOutcome.public` so an event can carry it unchanged.
+    """
+
+    def __init__(self, outcome: Mapping[str, Any] | None = None, *, detail: str = ""):
+        self.outcome = dict(outcome or {})
+        self.detail = detail or str(self.outcome.get("detail") or "")
+        super().__init__("the turn was cancelled" + (f": {self.detail}" if self.detail else ""))
+
+    def public(self) -> dict[str, Any]:
+        return dict(self.outcome)
+
+
 @runtime_checkable
 class RuntimeSession(Protocol):
     """The minimum an engine exposes for one session.
@@ -311,8 +370,12 @@ class RuntimeSession(Protocol):
     async def run_turn(self, text: str, *args: Any, **kwargs: Any) -> AgentTurnResult:
         """Run one turn. Signature matches the existing controller's turn entry."""
 
-    async def stop(self) -> None:
-        """Stop the running turn. Idempotent."""
+    async def stop(self, *, timeout: float | None = None) -> "StopOutcome":
+        """Stop the running turn and report what was established. Idempotent.
+
+        An engine that cannot confirm the end returns ``execution="unconfirmed"`` rather
+        than pretending. ``timeout`` bounds the join; it is not a promise of rollback.
+        """
 
     async def close(self) -> None:
         """Release the session. Idempotent; later turns must fail."""
