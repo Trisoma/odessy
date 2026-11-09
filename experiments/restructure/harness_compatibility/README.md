@@ -42,6 +42,8 @@ consecutive runs passed.
 | `plugin/odessy-stream-bridge/` | The bundle: `package.json`, `cordis.patch.yml`, `lib/index.js` |
 | `smoke_acceptance.py` | **The gate.** C0–C6 with assertions and non-zero exit |
 | `smoke_sdk.py` | Same pin over the Python SDK: notification census, delta check, method probes, resume |
+| `verify_no_tools.py` | Boots the pin with one or more overlays and reads the tool roster the provider received; exits 1 unless the roster is empty. Used to design `odessy_narrow.patch.yml` |
+| `smoke_p03.py` | Drives the **production** `HarnessRuntime` (`from_environment` → `start`/`run_turn`/`close`) against the pinned binary: version identity, allowlisted environment, no tools, settled text, no orphan |
 
 ## Prerequisites
 

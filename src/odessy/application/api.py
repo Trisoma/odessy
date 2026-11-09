@@ -18,7 +18,11 @@ from contextlib import asynccontextmanager
 from .session import public
 from odessy.interaction.broker import InteractionError
 from odessy.models.cloud_model import CloudModelConfigError
-from odessy.runtime_backends import RuntimeSelectionError, RuntimeUnavailable
+from odessy.runtime_backends import (
+    RuntimeCapabilityUnavailable,
+    RuntimeSelectionError,
+    RuntimeUnavailable,
+)
 
 _DIAGNOSTIC = r'''<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Odessy diagnostics</title>
@@ -737,6 +741,8 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             raise HTTPException(400, 'profile is required')
         try:
             find(sid).select_model(data['profile'])
+        except RuntimeCapabilityUnavailable as exc:
+            raise HTTPException(501, public(exc.public())) from exc
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(400, str(exc))
         return snapshot(find(sid))
@@ -830,7 +836,10 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     @app.post('/v1/sessions/{sid}/stop')
     async def stop(sid: str):
         if desktop_voice is not None and desktop_voice.owner==sid:await desktop_voice.cancel(find(sid))
-        await find(sid).stop()
+        try:
+            await find(sid).stop()
+        except RuntimeCapabilityUnavailable as exc:
+            raise HTTPException(501, public(exc.public())) from exc
         task = tasks.get(sid)
         if task is not None:
             task.cancel()

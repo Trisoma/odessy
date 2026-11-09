@@ -8,8 +8,10 @@ Rules enforced here, and tested in ``tests/test_runtime_backends.py``:
   (:class:`RuntimeUnavailable`). It is **never** replaced by the legacy engine.
 - A backend is built once per session. Nothing swaps an engine afterwards.
 
-The registry is a plain dict of builders, not a plugin framework: prompt 03 registers the
-Harness builder here when that engine exists in the build.
+The registry is a plain dict of builders, not a plugin framework. ``harness`` is
+registered in this build, but its dependencies (a pinned executable, a Harness home, a
+profile overlay) are configuration: choosing it without them fails session creation with
+:class:`RuntimeUnavailable` instead of falling back to ``legacy``.
 """
 
 from __future__ import annotations
@@ -36,9 +38,20 @@ def _legacy_builder(session: Any) -> RuntimeSession:
     return LegacyRuntime(session)
 
 
+def _harness_builder(session: Any) -> RuntimeSession:
+    # Imported here, not at module import: the harness package owns subprocess and
+    # threading machinery that a legacy-only deployment never needs.
+    from .harness import HarnessRuntime
+
+    return HarnessRuntime(session)
+
+
 #: Registered engines. A name in ``ENGINES`` that is absent here is *known but
 #: unavailable* — the distinction matters, because only one of the two is a typo.
-_BACKENDS: dict[str, BackendBuilder] = {"legacy": _legacy_builder}
+_BACKENDS: dict[str, BackendBuilder] = {
+    "legacy": _legacy_builder,
+    "harness": _harness_builder,
+}
 
 
 def register_backend(engine: str, builder: BackendBuilder) -> None:
@@ -145,3 +158,4 @@ def _reset_registry_for_tests() -> None:  # pragma: no cover - test helper
     """Restore the built-in registry (used by tests that register a fake engine)."""
     _BACKENDS.clear()
     _BACKENDS["legacy"] = _legacy_builder
+    _BACKENDS["harness"] = _harness_builder

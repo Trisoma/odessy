@@ -73,6 +73,29 @@ class RuntimeEngineLocked(RuntimeSelectionFailure):
         )
 
 
+class RuntimeCapabilityUnavailable(RuntimeSelectionFailure):
+    """A caller asked an engine for something it has not implemented yet.
+
+    This is the runtime half of an honest capability record: the flag is ``False`` and
+    the operation raises instead of degrading to a different engine or to a silent
+    no-op. ``gate`` names the migration prompt that will implement it.
+    """
+
+    code = "runtime_capability_unavailable"
+
+    def __init__(self, capability: str, *, engine: str = "harness", gate: str = ""):
+        self.capability = capability
+        self.engine = engine
+        self.gate = gate
+        message = f"Runtime engine {engine!r} does not implement {capability!r} yet"
+        if gate:
+            message = f"{message} (arrives with prompt {gate})"
+        super().__init__(message)
+
+    def public(self) -> dict[str, str]:
+        return {"engine": self.engine, "capability": self.capability, "gate": self.gate}
+
+
 @dataclass(frozen=True)
 class RuntimeCapabilities:
     """What one engine can do, as a value the application may display or branch on.
@@ -119,16 +142,32 @@ LEGACY_CAPABILITIES = RuntimeCapabilities(
     mcp_tools=True,
 )
 
-#: Target for the Harness engine. Recorded from prompt 01; not an availability claim.
+#: What the Harness engine implements **today**, prompt by prompt. Every flag is a
+#: claim about running code: a ``False`` flag also makes the operation raise
+#: :class:`RuntimeCapabilityUnavailable`, so a caller cannot discover the gap by
+#: finding out that nothing happened.
 HARNESS_CAPABILITIES = RuntimeCapabilities(
     engine="harness",
-    live_text_deltas=True,       # via the packaged bridge plugin (contract §8)
-    per_session_cancel=True,     # ACP session/cancel
-    approvals=True,              # ACP session/request_permission
+    live_text_deltas=False,      # prompt 05 (bridge proven in 01, not wired here)
+    per_session_cancel=False,    # prompt 06 (ACP session/cancel)
+    approvals=False,             # prompt 08 (ACP session/request_permission)
     questions=False,             # no ACP channel at the pin
-    durable_history=True,        # Harness session log
-    resume=True,                 # ACP session/resume
-    mcp_tools=True,              # ACP mcpServers
+    durable_history=False,       # prompt 05/06 (Harness session log not yet replayed)
+    resume=False,                # prompt 06
+    mcp_tools=False,             # prompts 07-09
+)
+
+#: What prompt 01 proved the pinned runtime *can* do. Kept for the migration contract
+#: and for the prompts that will flip each flag; never used for gating today.
+HARNESS_TARGET_CAPABILITIES = RuntimeCapabilities(
+    engine="harness",
+    live_text_deltas=True,
+    per_session_cancel=True,
+    approvals=True,
+    questions=False,
+    durable_history=True,
+    resume=True,
+    mcp_tools=True,
 )
 
 CAPABILITIES: dict[str, RuntimeCapabilities] = {

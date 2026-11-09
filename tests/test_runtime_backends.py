@@ -1,8 +1,9 @@
 """Focused tests for the engine seam introduced in prompt 02.
 
 They assert the seam's own rules (selection, availability, locking, event envelope) and
-that wrapping the existing engine changes nothing observable. They deliberately do not
-test any Harness behaviour: that engine has no backend in this build.
+that wrapping the existing engine changes nothing observable. Harness *behaviour* is
+tested in ``tests/test_harness_runtime.py``; here ``harness`` only appears as a
+registered engine whose configuration decides whether it is available.
 """
 
 import asyncio
@@ -65,15 +66,20 @@ def test_unknown_engine_is_a_malformed_selection_not_an_unavailable_one():
     assert "expected one of" in str(caught.value)
 
 
-def test_harness_is_known_but_unavailable_in_this_build():
+def test_harness_is_registered_and_availability_is_configuration(monkeypatch):
+    # A registered engine and an available engine are different questions. Harness has
+    # a backend in this build; without its configuration, building it still fails.
+    monkeypatch.delenv("ODESSY_HARNESS_EXE", raising=False)
     selection = resolve_selection("harness", environ={})
     assert selection.engine == "harness"
-    assert available_engines() == ("legacy",)
+    assert available_engines() == ("harness", "legacy")
+    require_available(selection)  # registered, so this passes
     with pytest.raises(RuntimeUnavailable) as caught:
-        require_available(selection)
+        from odessy.runtime_backends import build_runtime
+        build_runtime(object(), selection)
     assert caught.value.code == "runtime_unavailable"
     assert caught.value.engine == "harness"
-    assert caught.value.public()["reason"] == "no backend is registered in this build"
+    assert caught.value.public()["reason"].startswith("not configured")
 
 
 def test_preconstructed_selection_is_validated_not_treated_as_unavailable():
@@ -93,24 +99,26 @@ def test_preconstructed_selection_is_validated_not_treated_as_unavailable():
     assert resolve_selection(normalized).source == "explicit"
 
 
-def test_a_registered_backend_becomes_available_and_cannot_be_overwritten():
+def test_a_registered_backend_becomes_available_and_cannot_be_overwritten(monkeypatch):
     calls = []
 
     def builder(session):
         calls.append(session)
         return "runtime-for-" + session
 
-    register_backend("harness", builder)
-    try:
-        assert "harness" in available_engines()
-        require_available(RuntimeSelection("harness", "explicit"))
-        with pytest.raises(RuntimeSelectionError):
-            register_backend("harness", builder)
-        with pytest.raises(RuntimeSelectionError):
-            register_backend("not-an-engine", builder)
-    finally:
-        selection_module._reset_registry_for_tests()
+    # Start from a registry with no harness backend, so registration is observable.
+    monkeypatch.setattr(selection_module, "_BACKENDS",
+                        {"legacy": selection_module._legacy_builder})
     assert available_engines() == ("legacy",)
+    with pytest.raises(RuntimeUnavailable):
+        require_available(RuntimeSelection("harness", "explicit"))
+    register_backend("harness", builder)
+    assert "harness" in available_engines()
+    require_available(RuntimeSelection("harness", "explicit"))
+    with pytest.raises(RuntimeSelectionError):
+        register_backend("harness", builder)
+    with pytest.raises(RuntimeSelectionError):
+        register_backend("not-an-engine", builder)
     assert calls == []
 
 
@@ -138,7 +146,8 @@ def test_session_binds_legacy_at_creation():
         asyncio.run(session.close())
 
 
-def test_session_with_unavailable_engine_is_not_created_at_all():
+def test_session_with_unconfigured_engine_is_not_created_at_all(monkeypatch):
+    monkeypatch.delenv("ODESSY_HARNESS_EXE", raising=False)
     with pytest.raises(RuntimeUnavailable):
         controller(runtime_selection="harness")
 
@@ -268,16 +277,22 @@ def test_legacy_runtime_runs_the_existing_turn_unchanged():
 def test_capability_reports_are_distinct_and_frozen():
     from dataclasses import FrozenInstanceError
 
+    from odessy.runtime_backends import HARNESS_TARGET_CAPABILITIES
+
     assert CAPABILITIES["legacy"] is LEGACY_CAPABILITIES
     assert CAPABILITIES["harness"].questions is False
-    assert CAPABILITIES["harness"].live_text_deltas is True
+    # Not implemented yet: the record says so, and the runtime raises for each flag.
+    assert CAPABILITIES["harness"].live_text_deltas is False
+    assert CAPABILITIES["harness"].per_session_cancel is False
+    assert HARNESS_TARGET_CAPABILITIES.live_text_deltas is True
     with pytest.raises(FrozenInstanceError):
         CAPABILITIES["legacy"].approvals = False
 
 
 def test_capability_flags_are_checked_by_name_and_unknown_names_raise():
     assert CAPABILITIES["legacy"].supports("live_text_deltas") is False
-    assert CAPABILITIES["harness"].supports("live_text_deltas") is True
+    assert CAPABILITIES["legacy"].supports("per_session_cancel") is True
+    assert CAPABILITIES["harness"].supports("live_text_deltas") is False
     with pytest.raises(KeyError):
         CAPABILITIES["legacy"].supports("telepathy")
 

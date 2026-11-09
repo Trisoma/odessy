@@ -15,7 +15,11 @@ from typing import Any
 from odessy.authority.redaction import redact_text, looks_like_secret_name
 from odessy.runtime.hooks import public_event
 from odessy.runtime.types import ToolObservation, ToolRequest
-from odessy.runtime_backends import normalize_engine, resolve_and_build
+from odessy.runtime_backends import (
+    RuntimeCapabilityUnavailable,
+    normalize_engine,
+    resolve_and_build,
+)
 from odessy.runtime_backends.contracts import RuntimeEngineLocked
 from odessy.voice.memory import ConversationMemory
 from odessy.collaboration.context import collaboration_scope
@@ -259,6 +263,10 @@ class SessionController:
     def select_model(self, profile):
         if self._closed:
             raise RuntimeError('Session is closed')
+        if self.engine != 'legacy':
+            # The engine chooses its model inside its own profile; a model the Odessy
+            # profile does not route must not appear to be selected.
+            raise RuntimeCapabilityUnavailable('model_selection', gate='04')
         model = self._validate_model(profile)
         self.selected_profile, self._model = profile, model
         self.emit('selection', {'profile': profile, 'reason': 'User selection; applies to next turn'})
@@ -382,6 +390,11 @@ class SessionController:
                        status_callback=None, remember=True, turn_id=None):
         if self._closed or self.running:
             raise RuntimeError('Session is closed or a turn is already running')
+        if self.engine != 'legacy':
+            # Not a fallback: a harness session runs the harness, and refuses whatever
+            # that engine has not implemented rather than running the legacy loop.
+            return await self._run_engine_turn(text, participant=participant,
+                                               remember=remember, turn_id=turn_id)
         self.interactions.start_turn(turn_id)
         self._task = asyncio.current_task()
         self._stop = stop_event if stop_event is not None else asyncio.Event()
@@ -483,7 +496,53 @@ class SessionController:
             self._active_model = None
             self._task = None
 
+    async def _run_engine_turn(self, text, *, participant=None, remember=True, turn_id=None):
+        """One turn on a non-legacy engine.
+
+        The session keeps ownership of the turn's bookkeeping (pinning, history, usage,
+        cost, closing events); the engine only produces the result. That way a client
+        cannot tell which engine ran a turn from the event stream alone.
+        """
+        if participant is not None:
+            raise RuntimeCapabilityUnavailable('collaboration', gate='10')
+        self.interactions.start_turn(turn_id)
+        self._task = asyncio.current_task()
+        self.active_profile = self.selected_profile
+        self._active_model = self._model
+        self.emit('transcript', {'role': 'user', 'text': text})
+        self.emit('selection', {'profile': self.active_profile, 'reason': 'Pinned for this turn',
+                                'engine': self.engine})
+        try:
+            from odessy.models.usage import process_ledger
+            ledger = process_ledger()
+            ledger.start_turn()
+            result = await self.runtime.run_turn(text)
+            if remember:
+                self.memory.add(self._public(text), self._public(result.final_text))
+            self.emit('transcript', {'role': 'assistant', 'text': result.final_text})
+            self.emit('usage', getattr(result, 'metrics', {}))
+            self.emit('cost', ledger.report())
+            self.emit('result', result)
+            return result
+        except asyncio.CancelledError:
+            self.emit('stopped')
+            raise
+        except Exception as exc:
+            self.emit('error', {'message': str(exc), 'error_type': type(exc).__name__})
+            raise
+        finally:
+            self._flush_thread_events()
+            self.interactions.end_turn()
+            self.active_profile = None
+            self._active_model = None
+            self._task = None
+
     async def stop(self):
+        if self.engine != 'legacy':
+            # Cancellation is prompt 06. Refusing is the honest answer: pretending to
+            # stop, or cancelling the local await while the child keeps working, would
+            # both be worse than a named error.
+            raise RuntimeCapabilityUnavailable('per_session_cancel', gate='06')
         self._stop.set()
         self.interactions.cancel_pending('stopped')
         if self._task is not None and self._task is not asyncio.current_task():
@@ -496,8 +555,12 @@ class SessionController:
         self._stop = asyncio.Event()
 
     async def close(self):
-        await self.stop()
+        if self.engine == 'legacy':
+            await self.stop()
         self._closed = True
+        if self.engine != 'legacy':
+            # The engine owns a child process; closing the session must end it.
+            await self.runtime.close()
         self.interactions.close()
         self.memory.clear()
         # A worker thread that outlives the session can still raise an event; with the
