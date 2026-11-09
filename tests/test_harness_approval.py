@@ -78,7 +78,7 @@ def prompt(request_id):
                     "sessionUpdate": "tool_call", "toolCallId": "call-1",
                     "title": "pwsh", "kind": "other", "status": "in_progress",
                     "rawInput": {"command": "echo hi",
-                                 "sandbox_permissions": "danger-full-access",
+                                 "sandbox_permissions": "workspace-write",
                                  "justification": "the model needs the network"}}}})
         if MODE == "permission" or MODE == "durable":
             options = permission_options()
@@ -228,7 +228,7 @@ def observe_call(bridge, *, call="call-1", name="pwsh", arguments=None, status="
         "update": {"sessionUpdate": "tool_call", "toolCallId": call, "title": name,
                    "kind": "other", "status": status,
                    "rawInput": arguments if arguments is not None else {
-                       "command": "echo hi", "sandbox_permissions": "danger-full-access",
+                       "command": "echo hi", "sandbox_permissions": "workspace-write",
                        "justification": "needs the network"}}}})
 
 
@@ -274,7 +274,7 @@ def test_the_bound_operation_is_the_full_odessy_projection(tmp_path):
     assert details["fingerprint"] == request.plan.fingerprint
     assert request.plan.matches(
         ToolRequest("pwsh", {"command": "echo hi",
-                             "sandbox_permissions": "danger-full-access",
+                             "sandbox_permissions": "workspace-write",
                              "justification": "needs the network"}),
         PolicyDecision("confirm", "needs the network", "high", rule="harness_permission"),
         OdessyPolicy(tmp_path), execution_target=request.target)

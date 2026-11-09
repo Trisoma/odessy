@@ -25,6 +25,11 @@ from odessy.runtime_backends.harness.profile import (
     NARROW_PATCH_NAME,
     materialize_narrow_patch,
 )
+from odessy.runtime_backends.harness.sandbox import (
+    SandboxPlan,
+    materialize_sandbox_patch,
+    plan_for_session,
+)
 
 ENGINE = "harness"
 
@@ -69,11 +74,15 @@ def default_home(environ: Mapping[str, str] | None = None) -> Path:
 #: Row ids the packaged overlay disables. An extra overlay that names one of these (or any
 #: ``tool-`` / ``mcp-`` row, or ``plan-mode``) is refused: patch layers apply in argv
 #: order, so a later layer could otherwise re-enable a tool that prompt 03 must not expose.
+#: The confinement rows are protected for the same reason: an overlay that widened
+#: ``sandbox-policy``, ``approval`` or the ``permission`` presets would be a silent
+#: authority increase dressed as configuration (prompt 08).
 PROTECTED_ROWS = frozenset({
     "tool-pwsh", "tool-bash", "tool-fs", "tool-fs-search", "tool-web", "tool-skill",
     "tool-subagent", "tool-subagent-control", "tool-subagent-list-agents",
     "tool-subagent-fork", "tool-workflow", "tool-todo", "tool-goal", "tool-jobs",
     "tool-working-directory", "plan-mode", "mcp-resources",
+    "sandbox", "sandbox-policy", "approval", "permission", "fs-sandbox",
 })
 _PROTECTED_PREFIXES = ("tool-", "mcp-", "subagent", "plan-mode")
 _ROW_ID = re.compile(r"^\s*-?\s*id:\s*['\"]?([A-Za-z0-9_.:/-]+)", re.MULTILINE)
@@ -129,6 +138,23 @@ class HarnessConfig:
     #: The reviewed narrow overlay. Its position is a field, not a convention: it is always
     #: emitted last, so no extra overlay can re-enable what it disabled.
     narrow_patch: Path | None = None
+    #: The resolved confinement for this session (prompt 08): the two fields the pinned
+    #: runtime accepts, plus what stays with an Odessy provider because it has no
+    #: vocabulary there. ``None`` means "resolve from configuration" — an injected config
+    #: still gets a host-derived plan rather than inheriting the pin's own default.
+    sandbox: SandboxPlan | None = None
+    #: The overlay that pins ``sandbox-policy`` and ``approval`` explicitly.
+    sandbox_patch: Path | None = None
+    #: Whether this session attaches Odessy's own tool server (prompt 09). Off unless the
+    #: operator turns it on: the packaged profile ships no model-facing execution until a
+    #: release qualifies it, and an implicit tool surface is exactly what prompts 03–08
+    #: spent their time removing.
+    tools_enabled: bool = False
+    #: The interpreter that serves the tool surface. It defaults to this process's own, so
+    #: the tool server is the same installation as the application; an explicit path exists
+    #: for environments whose launcher shadows ``sys.executable`` (and for the spike, which
+    #: imports the checkout rather than an installed package).
+    tools_python: str = ""
     #: Variables the session adds to the child's allowlist (a credential for the selected
     #: route). Values are never logged; :meth:`describe` reports names only.
     extra_env: Mapping[str, str] = field(default_factory=dict, repr=False, compare=False)
@@ -154,18 +180,57 @@ class HarnessConfig:
         return argv
 
     def ordered_patches(self) -> list[Path]:
-        """Extras, then the model route, then the narrow overlay last.
+        """Extras, then the model route, then the narrow overlay, then the sandbox pin.
 
-        The narrow overlay stays last so no extra overlay can re-enable a tool row; the
-        route overlay only names the provider row (``llm-pi-ai``) and therefore never
-        competes with it.
+        The narrow overlay stays last among the layers that decide the tool surface; the
+        route overlay only names the provider row (``llm-pi-ai``). The sandbox overlay is
+        emitted after both, so nothing an operator can pass can decide the confinement
+        mode: that is Odessy's authority, not configuration.
         """
         ordered = [p for p in self.patches if p not in (self.narrow_patch, self.route_patch)]
         if self.route_patch is not None:
             ordered.append(self.route_patch)
         if self.narrow_patch is not None:
             ordered.append(self.narrow_patch)
+        if self.sandbox_patch is not None:
+            ordered.append(self.sandbox_patch)
         return ordered
+
+    def sandbox_plan(self) -> SandboxPlan:
+        """The session's confinement, resolved once and used by launch, env and gates.
+
+        An injected configuration that names no plan gets the host-derived one rather than
+        the pin's own default, so "unset" can never mean "workspace-write by accident".
+        """
+
+        if self.sandbox is not None:
+            return self.sandbox
+        return plan_for_session(workspace=self.workspace, environ=self.source_env or None)
+
+    def mcp_servers(self) -> list[dict[str, object]]:
+        """The tool pipeline for this session, or nothing.
+
+        Odessy's reviewed tool server, spawned by the runtime as a stdio MCP child of *this*
+        session (the pin's own facility — no second scheduler). Its confinement is fixed by
+        argv from the resolved plan, so the call cannot choose it, and the server's authority
+        gate refuses anything the policy would not allow outright.
+        """
+
+        if not self.tools_enabled:
+            return []
+        plan = self.sandbox_plan()
+        plan.require_launchable()
+        argv = ["-m", "odessy.tools.stdio_server",
+                "--workspace", plan.workspace_root,
+                "--mode", plan.mode,
+                "--isolation", plan.isolation,
+                "--network", plan.network]
+        for hidden in plan.hidden_paths:
+            argv += ["--hidden", hidden]
+        for extra in plan.extra_writable:
+            argv += ["--extra-writable", extra]
+        return [{"name": "odessy", "command": self.tools_python or sys.executable,
+                 "args": argv, "env": []}]
 
     def child_env(self, parent: Mapping[str, str] | None = None) -> dict[str, str]:
         if parent is None:
@@ -177,6 +242,10 @@ class HarnessConfig:
         for name, value in self.extra_env.items():
             env[name] = value
         env["DSH_HOME"] = str(self.home)
+        # Applied last: neither a passthrough name nor a session variable may decide the
+        # mode. The pin derives its own ``approval.policy`` from this variable, so it must
+        # be the plan's value, not whatever the operator environment happened to hold.
+        env.update(self.sandbox_plan().environment())
         return env
 
     def missing_for_network(self, parent: Mapping[str, str] | None = None) -> tuple[str, ...]:
@@ -199,6 +268,9 @@ class HarnessConfig:
             "home": str(self.home),
             "route_patch": str(self.route_patch) if self.route_patch else "",
             "narrow_patch": str(self.narrow_patch) if self.narrow_patch else "",
+            "sandbox_patch": str(self.sandbox_patch) if self.sandbox_patch else "",
+            "sandbox": self.sandbox_plan().describe(),
+            "tools": "odessy" if self.tools_enabled else "none",
             # Names only: a credential value never enters a diagnostic record.
             "extra_env": sorted(self.extra_env),
             "workspace": str(self.workspace),
@@ -243,6 +315,17 @@ class HarnessConfig:
             )
         if self.startup_timeout <= 0 or self.turn_timeout <= 0 or self.shutdown_timeout <= 0:
             raise RuntimeUnavailable(ENGINE, "timeouts must be positive")
+        # The confinement is validated here, not at the first tool call: a session whose
+        # policy requires a boundary this host cannot provide must fail when it is created
+        # rather than run a turn under a weaker boundary. ``required`` refuses; ``preferred``
+        # records what is unenforced (``SandboxPlan.unenforced``) instead of claiming it.
+        plan = self.sandbox_plan()
+        plan.require_launchable()
+        if plan.workspace_root != str(Path(self.workspace).expanduser().resolve()):
+            raise RuntimeUnavailable(
+                ENGINE, "the sandbox plan's workspace root is not this session's workspace",
+                detail=f"plan={plan.workspace_root} workspace={self.workspace}",
+            )
 
 
 def _split_paths(value: str) -> tuple[Path, ...]:
@@ -292,13 +375,21 @@ def from_environment(
     # the packaged one legitimately names every tool row.
     extras = _split_paths(environ.get("ODESSY_HARNESS_PATCH") or "")
     assert_extras_leave_tools_alone(extras)
+    narrow = materialize_narrow_patch(home)
+    # The confinement is resolved from configuration here — the same ``sandbox.toml`` and
+    # ``ODESSY_ISOLATION`` the Python execution path reads — and pinned as an overlay, so
+    # the launch states its mode instead of inheriting the pin's ``workspace-write`` default.
+    plan = plan_for_session(workspace=workspace_path, environ=environ)
+    sandbox_overlay = materialize_sandbox_patch(home, plan)
     config = HarnessConfig(
         command=(executable,),
         home=home,
         workspace=workspace_path,
         profile=(environ.get("ODESSY_HARNESS_PROFILE") or "").strip() or PINNED_PROFILE,
         patches=extras,
-        narrow_patch=materialize_narrow_patch(home),
+        narrow_patch=narrow,
+        sandbox=plan,
+        sandbox_patch=sandbox_overlay,
         expected_version=(environ.get("ODESSY_HARNESS_VERSION") or "").strip()
         or PINNED_VERSION,
         startup_timeout=_seconds(environ, "ODESSY_HARNESS_STARTUP_TIMEOUT",
@@ -307,6 +398,9 @@ def from_environment(
         shutdown_timeout=_seconds(environ, "ODESSY_HARNESS_SHUTDOWN_TIMEOUT",
                                   DEFAULT_SHUTDOWN_TIMEOUT),
         passthrough=_split_names(environ.get("ODESSY_HARNESS_PASS_ENV") or ""),
+        tools_enabled=(environ.get("ODESSY_HARNESS_TOOLS") or "").strip().lower()
+        in {"1", "on", "true", "yes"},
+        tools_python=(environ.get("ODESSY_HARNESS_TOOL_PYTHON") or "").strip(),
         source_env=dict(environ),
     )
     config.validate()

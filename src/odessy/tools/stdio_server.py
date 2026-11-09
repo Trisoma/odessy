@@ -1,0 +1,158 @@
+"""Serve Odessy's tool surface over stdio for the Harness runtime (prompt 09).
+
+The Harness spawns this process as the tool pipeline for one session
+(``session/new`` → ``mcpServers``), so this is where a Harness-initiated tool call arrives.
+Everything below that arrives here runs through **Odessy's** authority policy and
+**Odessy's** `CommandBridge`: the same decision code and the same confinement providers the
+legacy agent loop uses. Nothing about the tool surface is re-implemented for the Harness.
+
+Two rules make this a boundary rather than a pass-through:
+
+* the confinement is fixed at launch from the session's resolved ``SandboxPlan`` and is not a
+  tool argument — there is no agent loop on this path to strip what a model supplied, so a
+  call that tries to set it is refused outright rather than quietly ignored;
+* every call is put to the authority policy first. An `allow` runs; anything else is refused
+  with the reason in the result, because this transport has no channel back to a person
+  (consent for a Harness turn is prompt 07's `session/request_permission`, and a confirmed
+  operation must not become an allowed one just because it arrived here).
+
+Usage (built from a ``SandboxPlan``; not intended to be typed by hand)::
+
+    python -m odessy.tools.stdio_server --workspace <dir> --mode workspace-write \
+        --isolation required --network deny --hidden <path> [--hidden <path>]...
+
+Exit is stdin EOF: the Harness closes the pipe when the session ends, and the server then
+returns instead of outliving its session.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import os
+import sys
+from collections.abc import Mapping, MutableMapping, Sequence
+from pathlib import Path
+from typing import Any
+
+from odessy.authority.policy import OdessyPolicy
+from odessy.authority.redaction import looks_like_secret_name
+from odessy.config.sandbox import SandboxSettings
+from odessy.execution.registry import host_registry
+from odessy.tools.mcp_server import SessionPolicy, build_odessy_mcp_server
+from odessy.runtime.types import PolicyDecision, ToolRequest
+
+__all__ = ["authorize", "main", "scrub_environment", "session_settings"]
+
+#: A route's credential variable is named by the profile (``apiKeyEnv``), so it is not one of
+#: the well-known names: a suffix rule catches every spelling without listing them.
+_SECRET_SUFFIXES = (
+    "_KEY", "_APIKEY", "_API_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_PASSWD",
+    "_CREDENTIAL", "_CREDENTIALS",
+)
+
+
+def session_settings(*, network: str, hidden_paths: Sequence[str],
+                     extra_writable: Sequence[str] = ()) -> SandboxSettings:
+    """The ``sandbox.toml`` view the policy and the bridge both read.
+
+    Built from the resolved plan rather than read from disk: the launch already made that
+    decision, and a second read could disagree with it if the file changed mid-session.
+    """
+
+    return SandboxSettings(
+        isolation=None,
+        network_read_only=network,  # type: ignore[arg-type]
+        network_workspace_write=network,  # type: ignore[arg-type]
+        hidden_paths=tuple(hidden_paths),
+        extra_writable=tuple(extra_writable),
+        limits=None,
+    )
+
+
+def scrub_environment(environ: MutableMapping[str, str] | None = None) -> tuple[str, ...]:
+    """Drop secrets this process inherited, and return the names dropped.
+
+    The Harness spawns this server as a child, so it starts with whatever the runtime's
+    environment holds — including the live-text bridge token and the selected route's model
+    credential. This process is a tool pipeline: it needs neither, and a command it spawns
+    must never be able to read them from its own environment either. Names only are returned,
+    never values.
+    """
+
+    source = os.environ if environ is None else environ
+    dropped = tuple(sorted(
+        name for name in list(source)
+        if looks_like_secret_name(name)
+        or name.upper().endswith(_SECRET_SUFFIXES)
+        or name.startswith("ODESSY_BRIDGE")
+    ))
+    for name in dropped:
+        source.pop(name, None)
+    return dropped
+
+
+def authorize(policy: OdessyPolicy, name: str, arguments: Mapping[str, Any]) -> str | None:
+    """``None`` when the policy allows this call outright, else the refusal reason.
+
+    `allow` executes. `confirm` would need a person, and this transport cannot ask one, so it
+    is refused rather than downgraded: an operation that needs consent must not run because it
+    arrived over a channel that cannot request consent. `deny` is refused with its rule.
+    """
+
+    decision: PolicyDecision = policy.evaluate(ToolRequest(name, dict(arguments)))
+    if decision.action == "allow":
+        return None
+    if decision.action == "confirm":
+        return (
+            "this operation requires confirmation, and the Harness tool transport has no "
+            "consent channel; refusing instead of running it unconfirmed "
+            f"(rule={decision.rule})"
+        )
+    return f"refused by policy ({decision.rule}): {decision.reason}"
+
+
+def build_server(*, workspace: Path, policy: OdessyPolicy, session: SessionPolicy):
+    """The reviewed Odessy tool surface, guarded and confined for one session."""
+
+    return build_odessy_mcp_server(
+        workspace_root=workspace,
+        registry=host_registry(),
+        policy=None,
+        include_terminal=True,
+        session_policy=session,
+        authorize=lambda name, arguments: authorize(policy, name, arguments),
+    )
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="odessy.tools.stdio_server")
+    parser.add_argument("--workspace", required=True)
+    parser.add_argument("--mode", default="read-only")
+    parser.add_argument("--isolation", default="preferred")
+    parser.add_argument("--network", default="allow")
+    parser.add_argument("--hidden", action="append", default=[])
+    parser.add_argument("--extra-writable", action="append", default=[])
+    args = parser.parse_args(list(argv) if argv is not None else None)
+
+    workspace = Path(args.workspace).resolve()
+    if not workspace.is_dir():
+        print(f"odessy-stdio: workspace is not a directory: {workspace}", file=sys.stderr)
+        return 2
+    # Before anything else can start a child: this process is a tool pipeline, not a client.
+    dropped = scrub_environment()
+    if dropped:
+        print(f"odessy-stdio: dropped inherited secrets: {', '.join(dropped)}", file=sys.stderr)
+    settings = session_settings(network=args.network, hidden_paths=args.hidden,
+                                extra_writable=args.extra_writable)
+    policy = OdessyPolicy(workspace, sandbox=settings, isolation=args.isolation)
+    session = SessionPolicy(mode=args.mode, isolation=args.isolation, network=args.network,
+                            hidden_paths=tuple(args.hidden),
+                            extra_writable=tuple(args.extra_writable))
+    server = build_server(workspace=workspace, policy=policy, session=session)
+    asyncio.run(server.run_stdio_async())
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - process entry point
+    raise SystemExit(main())

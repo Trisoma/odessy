@@ -50,6 +50,9 @@ consecutive runs passed.
 | `smoke_p05.py` | Live event translation end to end against the pin with the real plugin: bridge attached, deltas before settlement, deltas join to the committed answer, no loss, no orphan |
 | `smoke_p06.py` | Per-session Stop against the pin: two sessions generating, one cancelled (prompt settles `cancelled`), the other completes, the stopped session runs another turn, no orphan |
 | `smoke_p07.py` | Clarification end to end against the pin with the real bundle: the runtime's `ask_user_question` executes, the question reaches the production broker, the answer returns, the same turn continues, and a Stop while waiting settles with no orphan |
+| `probe_sandbox_vocabulary.py` | Asks the pin what sandbox vocabulary it exposes: composed `sandbox*` rows from `--dump-config`, accepted fields from `--dump-config-schema`, and every `session/new` config option (plus whether a set is accepted). This is where §22's "the pin accepts only `mode` and `workspaceRoot`" comes from |
+| `verify_enforcement.py` | Runs real commands through every backend this host offers under a `network=deny` + hidden-path policy and prints what happened, with exit codes and the denial signatures. Reports a backend that fails its own control as **unusable**, not strict |
+| `smoke_p08.py` | Pinned evidence for prompt 08: the pin composes Odessy's `sandbox-policy` (mode + workspace root), a widening overlay applied earlier loses, a real `SessionController` reports the plan it launched with and hands the child `DSH_PERMISSION_MODE`, a `required` policy refuses by name, and `close()` leaves no orphan |
 | `plugin_backpressure.mjs` | The plugin alone, loaded with a stub context: a client that stops reading loses frames, the loss is reported, the connection survives |
 
 ## Prerequisites
@@ -122,3 +125,4 @@ $SPIKE\venv\Scripts\python.exe experiments\restructure\harness_compatibility\smo
   production *client* for it lives in `src/odessy/runtime_backends/harness/bridge.py` (prompt 05),
   and both ends of the socket are bounded — see
   [`../../../../restructure/doc/reports/05.md`](../../../../restructure/doc/reports/05.md).
+| `smoke_p09.py` | The guarded tool pipeline on the pin: the model is offered Odessy's own MCP server and no built-in execution row, an allowed command really runs and its result names the confining provider, an unapproved write is refused and leaves no file, and a call that tries to choose its sandbox mode is refused |

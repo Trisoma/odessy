@@ -153,8 +153,9 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 chunks, delay_ms, tool_call = (["Answer received; continuing."], 10, None)
         # Escalate exactly once: after the first tool result. A rejected approval
-        # returns another result, and asking again would loop forever.
-        elif _tool_results(messages) == 1:
+        # returns another result, and asking again would loop forever. Guarded on the
+        # scenario, so an ordinary tool scenario is not hijacked into an escalation.
+        elif prompt.startswith("escalate") and _tool_results(messages) == 1:
             target = ESCALATION_TARGET or "spike-outside.txt"
             command = "Set-Content -LiteralPath '" + target + "' -Value spike"
             chunks, delay_ms = ["Retrying with the wider mode."], 10
@@ -183,6 +184,10 @@ class Handler(BaseHTTPRequestHandler):
             "last_user": prompt[:200],
             "tools": [tool_name(t) for t in tools][:60],
             "tool_schemas": schemas,
+            # What the model was actually shown after a tool ran. Without it a fixture can
+            # prove a call was *made* but not that the caller saw its result.
+            "tool_results": [_text_of(m)[:2000] for m in messages
+                             if m.get("role") == "tool"],
             "t": time.time(),
         })
 

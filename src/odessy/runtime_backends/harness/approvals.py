@@ -151,9 +151,34 @@ class ApprovalStats:
     #: An allow the human gave that was downgraded to ``cancelled`` at the wire because the
     #: session was stopped or the operation ended before the write could be delivered.
     retracted: int = 0
+    #: A request that asked to widen the sandbox. Never bound: the pinned runtime decides
+    #: its mode per process, so an escalation cannot be carried here (prompt 08).
+    escalation_refused: int = 0
 
     def public(self) -> dict[str, int]:
         return dict(self.__dict__)
+
+
+#: The argument a widening request carries. ``odessy.authority.policy`` validates the same
+#: name for the Python side; here it marks a request this bridge must not answer as an
+#: ordinary approval.
+ESCALATION_ARGUMENT = "sandbox_permissions"
+
+
+def escalation_target(arguments: Mapping[str, Any]) -> str | None:
+    """The mode a permission request is asking to widen to, when it asks at all.
+
+    A request that names ``sandbox_permissions`` is not an ordinary approval: it asks to
+    re-run the call outside the confinement the session launched with. Returning the target
+    lets the caller refuse it explicitly instead of binding it as a normal allow.
+    """
+
+    if ESCALATION_ARGUMENT not in arguments:
+        return None
+    value = arguments.get(ESCALATION_ARGUMENT)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return "<malformed>"
 
 
 def _once_options(options: Any) -> tuple[str, str]:
@@ -196,12 +221,21 @@ class HarnessApprovalBridge:
     def __init__(self, *, workspace: Path, identity: Callable[[], Mapping[str, Any]],
                  approver: Callable[[dict[str, Any]], Any],
                  epoch: Callable[[], int] | None = None,
-                 is_closed: Callable[[], bool] | None = None):
+                 is_closed: Callable[[], bool] | None = None,
+                 escalation: str = "ask",
+                 sandbox_mode: str = "workspace-write"):
         self.workspace = Path(workspace)
         self._identity = identity
         self._approver = approver
         self._epoch = epoch or (lambda: 0)
         self._is_closed = is_closed or (lambda: False)
+        #: ``sandbox.toml``'s escalation setting for this target. ``never`` means a widening
+        #: request is refused without asking a person.
+        self._escalation = escalation
+        #: The mode the session launched with. A request that asks for that mode or a
+        #: narrower one is an ordinary approval (it grants nothing new); a request that asks
+        #: for a wider one cannot be honoured here and is refused.
+        self._sandbox_mode = sandbox_mode
         self._lock = threading.RLock()
         self._turn: int | None = None
         self._session_id = ""
@@ -316,6 +350,12 @@ class HarnessApprovalBridge:
             # A faithful review view of an unparseable argument blob is not something a
             # person can approve: bind only structured arguments.
             raise ApprovalBindError("the observed tool call carried non-object arguments")
+        widening = escalation_target(raw_arguments)
+        if widening is not None:
+            refusal = self._escalation_refusal(widening)
+            if refusal is not None:
+                self.stats.escalation_refused += 1
+                raise ApprovalBindError(refusal)
 
         identity = dict(self._identity() or {})
         target = {
@@ -383,6 +423,37 @@ class HarnessApprovalBridge:
         return bound
 
     # -------------------------------------------------------------------- answer
+
+    def _escalation_refusal(self, target: str) -> str | None:
+        """Why a widening request cannot be answered here, or None when it is not widening.
+
+        A request that names ``sandbox_permissions`` at or below the session's own mode asks
+        for nothing new, so it is an ordinary one-shot approval. A request for a *wider* mode
+        cannot be honoured: the pinned runtime resolves ``sandbox-policy.mode`` once per
+        process and offers no session option for it (``probe_sandbox_vocabulary.py``:
+        ``session/new`` returns only ``model`` and ``reasoning_effort``). Answering
+        ``allow_once`` there would be a false statement about the boundary.
+        """
+
+        rank = {"read-only": 0, "workspace-write": 1, "danger-full-access": 2}
+        wanted = rank.get(target)
+        if wanted is None:
+            return (
+                f"the request named an unknown sandbox mode {target!r}; a widening request "
+                "cannot be reviewed when its target cannot be ranked"
+            )
+        if wanted <= rank.get(self._sandbox_mode, 1):
+            return None
+        if self._escalation == "never":
+            return (
+                "the escalation setting for this target is 'never', so a widening request is "
+                "refused rather than shown to a person"
+            )
+        return (
+            f"an escalation to {target!r} cannot be carried by this bridge: the pinned "
+            "runtime resolves the sandbox mode once per process, so an approval could not "
+            "be honoured"
+        )
 
     async def answer(self, bound: BoundRequest) -> dict[str, Any]:
         """Ask a person and translate the outcome into an ACP response payload.

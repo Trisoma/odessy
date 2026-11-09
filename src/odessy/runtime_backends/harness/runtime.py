@@ -158,6 +158,11 @@ class HarnessRuntime:
         # The environment path validates inside ``from_environment``; an injected config
         # (integration smoke, tests) must clear the same bar rather than bypass it.
         self._config.validate()
+        #: The session's confinement (prompt 08). ``validate`` already refused a policy this
+        #: host cannot honour, so this plan is launchable; it is kept here because the
+        #: identity record, the approval bridge and the diagnostics all quote *this* plan
+        #: rather than re-resolving one that could disagree.
+        self._sandbox = self._config.sandbox_plan()
         self._session = session
         self.session_id = str(getattr(session, "id", "") or "")
         self._audit = getattr(session, "audit", None)
@@ -170,6 +175,10 @@ class HarnessRuntime:
             approver=self._ask_human,
             epoch=lambda: int(getattr(session, "stop_epoch", 0) or 0),
             is_closed=lambda: self._closed,
+            # A widening request is refused with this reason; the pinned runtime fixes the
+            # sandbox mode per process, so an approved escalation could not be honoured.
+            escalation=self._sandbox.escalation,
+            sandbox_mode=self._sandbox.mode,
         )
         #: Approval tasks awaiting a person, so close() can stop waiting on them.
         self._approval_tasks: set[asyncio.Task[Any]] = set()
@@ -282,6 +291,31 @@ class HarnessRuntime:
         """The session's approval bridge, for tests and diagnostics."""
         return self._approvals
 
+    @property
+    def sandbox(self) -> Any:
+        """The confinement this session launched with, as resolved (prompt 08)."""
+        return self._sandbox
+
+    def _tool_server_name(self) -> str | None:
+        """The one tool server this session may call, if any (prompt 09)."""
+
+        servers = self._config.mcp_servers()
+        return str(servers[0]["name"]) if servers else None
+
+    def _is_our_tool_call(self, title: Any) -> bool:
+        """Whether a tool title names a tool of this session's own MCP server.
+
+        The runtime prefixes an MCP tool as ``mcp__<server>__<tool>``. Only that prefix is
+        admitted: a built-in tool row (``bash``, ``pwsh``, ``fs`` …) has no such name and
+        stays refused, which is what keeps a disabled row from becoming reachable through a
+        name that merely looked close enough.
+        """
+
+        name = self._tool_server_name()
+        if not name or not isinstance(title, str):
+            return False
+        return title.startswith(f"mcp__{name}__") and len(title) > len(f"mcp__{name}__")
+
     def _approval_identity(self) -> dict[str, Any]:
         """Who is asking: the runtime identity captured at readiness, plus this session."""
         return {**self._identity, "odessy_session": self.session_id}
@@ -353,7 +387,11 @@ class HarnessRuntime:
                     )
                 opened = process.call("session/new", {
                     "cwd": str(self._config.workspace),
-                    "mcpServers": [],
+                    # Odessy's reviewed tool server, spawned and supervised by the runtime as
+                    # this session's stdio MCP child (prompt 09). Empty unless the operator
+                    # opted in, so a package that has not qualified a tool surface still has
+                    # none. Its confinement is fixed by argv from the resolved plan.
+                    "mcpServers": self._config.mcp_servers(),
                 }, timeout=self._config.startup_timeout)
                 session_id = opened.get("sessionId")
                 if not isinstance(session_id, str) or not session_id:
@@ -398,13 +436,16 @@ class HarnessRuntime:
             self._connect_bridge(process)
             self._process = process
             self._acp_session = session_id
-            self._identity = dict(identity)
+            self._identity = {**dict(identity), "sandbox": self._sandbox.describe(),
+                              "tools": self._tool_server_name() or "none"}
             self._ready = True
             process.note(
                 f"ready: version={identity.get('version')} "
                 f"artifact={identity.get('artifact')} protocolVersion={negotiated} "
                 f"route={self._route.route} model={self._route.model} "
-                f"api={self._route.api} acp_session={session_id}"
+                f"api={self._route.api} acp_session={session_id} "
+                f"sandbox={self._sandbox.mode}/{self._sandbox.provider} "
+                f"unenforced={list(self._sandbox.unenforced)}"
             )
 
     def _connect_bridge(self, process: HarnessProcess) -> None:
@@ -958,6 +999,14 @@ class HarnessRuntime:
                         and isinstance(call_id, str) and call_id:
                     # The one model-facing tool this engine may run: it asks a human and
                     # returns the answer as a tool result. Nothing else may execute.
+                    self._allowed_calls.add(call_id)
+                    continue
+                if kind == "tool_call" and self._is_our_tool_call(title) \
+                        and isinstance(call_id, str) and call_id:
+                    # A call into Odessy's own tool server (prompt 09). It is admitted because
+                    # that server is the boundary: it applies Odessy's authority policy and
+                    # confines the command with Odessy's providers, so the depth of this call
+                    # is decided there, not here. Any other tool title still fails the turn.
                     self._allowed_calls.add(call_id)
                     continue
                 if kind != "tool_call" and isinstance(call_id, str) \
