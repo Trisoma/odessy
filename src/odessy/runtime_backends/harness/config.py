@@ -55,6 +55,11 @@ DEFAULT_DIAGNOSTIC_LINES = 200
 #: composition. A frozen config may still override ``startup_timeout`` directly.
 EXTRA_SERVER_STARTUP_SECONDS = 10.0
 
+#: Tool-roster verification policies (prompt 10). See ``HarnessConfig.tool_roster``.
+TOOL_ROSTER_PREFERRED = "preferred"
+TOOL_ROSTER_REQUIRED = "required"
+TOOL_ROSTER_MODES = (TOOL_ROSTER_PREFERRED, TOOL_ROSTER_REQUIRED)
+
 #: Inherited so the runtime can start and find its own temporary directory. Nothing
 #: here identifies a user session, a project or a credential.
 _POSIX_BASE_ENV = ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "SHELL")
@@ -184,6 +189,10 @@ class HarnessConfig:
     #: route). Values are never logged; :meth:`describe` reports names only.
     extra_env: Mapping[str, str] = field(default_factory=dict, repr=False, compare=False)
     expected_version: str = PINNED_VERSION
+    #: New-session roster policy: ``preferred`` records uncertainty, ``required`` refuses it.
+    #: Restores always require a verified roster, regardless of this setting. An observed
+    #: missing tool is always refused.
+    tool_roster: str = TOOL_ROSTER_PREFERRED
     startup_timeout: float = DEFAULT_STARTUP_TIMEOUT
     turn_timeout: float = DEFAULT_TURN_TIMEOUT
     shutdown_timeout: float = DEFAULT_SHUTDOWN_TIMEOUT
@@ -363,6 +372,7 @@ class HarnessConfig:
             "extra_env": sorted(self.extra_env),
             "workspace": str(self.workspace),
             "expected_version": self.expected_version,
+            "tool_roster": self.tool_roster,
             "startup_timeout": self.startup_timeout,
             "turn_timeout": self.turn_timeout,
         }
@@ -370,6 +380,11 @@ class HarnessConfig:
     def validate(self) -> None:
         if not self.command:
             raise RuntimeUnavailable(ENGINE, "no runtime executable is configured")
+        if self.tool_roster not in TOOL_ROSTER_MODES:
+            # Not silently coerced: a typo must not decide how strictly a restore is checked.
+            raise RuntimeUnavailable(
+                ENGINE, "unknown tool-roster policy",
+                detail=f"{self.tool_roster!r}; expected one of {', '.join(TOOL_ROSTER_MODES)}")
         executable = Path(self.command[0])
         if not executable.is_absolute():
             raise RuntimeUnavailable(
@@ -522,6 +537,8 @@ def from_environment(
         passthrough=_split_names(environ.get("ODESSY_HARNESS_PASS_ENV") or ""),
         tools_enabled=_flag(environ, "ODESSY_HARNESS_TOOLS"),
         tools_python=(environ.get("ODESSY_HARNESS_TOOL_PYTHON") or "").strip(),
+        tool_roster=(environ.get("ODESSY_HARNESS_TOOL_ROSTER") or "").strip().lower()
+        or TOOL_ROSTER_PREFERRED,
         node_tools=node_tools,
         external_tools=external_tools,
         servers_file=servers_file,

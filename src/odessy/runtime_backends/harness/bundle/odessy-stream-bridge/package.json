@@ -1,8 +1,8 @@
 {
   "name": "@odessy/dsh-stream-bridge",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
-  "description": "Odessy bridge: forward agent/assistant-stream frames and answer the user-questions seam over one token-authenticated loopback socket.",
+  "description": "Odessy bridge: forward agent/assistant-stream frames, answer the user-questions seam, and report the runtime read-only tool roster, over one token-authenticated loopback socket.",
   "type": "module",
   "main": "lib/index.js",
   "files": [

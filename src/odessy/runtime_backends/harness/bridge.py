@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import queue
+import secrets
 import socket
 import threading
 import time
@@ -38,6 +39,12 @@ MAX_QUEUED_FRAMES = 2048
 MAX_QUEUED_SENDS = 64
 #: Protocol version the plugin announces. A different one is refused, not guessed at.
 PROTOCOL = 1
+#: The greeting feature that means "this plugin can report the runtime's tool roster".
+FEATURE_TOOLS = "tools"
+#: Roster bounds, enforced on both ends: a hostile or wedged plugin cannot make this process
+#: allocate an unbounded name list.
+MAX_TOOL_NAMES = 512
+MAX_TOOL_NAME = 200
 #: Queued in place of a line that arrived but was not a JSON object. The translator counts
 #: it as malformed input; the transport does not invent channel semantics, and no
 #: unparsed content is passed along.
@@ -46,6 +53,35 @@ UNPARSEABLE = {"type": "malformed"}
 
 class BridgeError(RuntimeError):
     """The bridge is absent, refused the token, or spoke a different protocol."""
+
+
+def _checked_roster(message: dict[str, Any]) -> dict[str, Any]:
+    """Validate one roster reply. Shapes are checked, not assumed."""
+
+    available = message.get("available")
+    if not isinstance(available, bool):
+        raise BridgeError("the roster reply did not say whether it was available")
+    if not available:
+        reason = message.get("reason")
+        return {"available": False,
+                "reason": str(reason)[:300] if isinstance(reason, str) else "unavailable",
+                "tools": [], "agents": 0, "global": 0}
+    raw = message.get("tools")
+    if not isinstance(raw, list):
+        raise BridgeError("the roster reply carried no tool list")
+    names: list[str] = []
+    for item in raw:
+        if not isinstance(item, str) or not item or len(item) > MAX_TOOL_NAME:
+            raise BridgeError("the roster reply carried a malformed tool name")
+        if item not in names:
+            names.append(item)
+        if len(names) > MAX_TOOL_NAMES:
+            raise BridgeError("the roster reply was larger than this client accepts")
+    counts = {}
+    for field in ("agents", "global"):
+        value = message.get(field)
+        counts[field] = value if isinstance(value, int) and not isinstance(value, bool) else 0
+    return {"available": True, "reason": "", "tools": names, **counts}
 
 
 class LiveBridge:
@@ -65,6 +101,11 @@ class LiveBridge:
         self.lines_queued = 0
         self._closed = threading.Event()
         self._pending_bytes = b""
+        #: Roster replies awaiting their requester, by request id. The reader thread routes
+        #: them here instead of the frame queue, so a control reply can never be mistaken for
+        #: a transient frame (and vice versa).
+        self._replies: dict[str, queue.Queue[dict[str, Any]]] = {}
+        self._replies_lock = threading.Lock()
         self._sock = self._connect(connect_timeout)
         try:
             self._sock.settimeout(None)
@@ -178,6 +219,8 @@ class LiveBridge:
             if not isinstance(message, dict):
                 self._note_unparseable()
                 continue
+            if self._route_reply(message):
+                continue
             try:
                 self._queue.put_nowait(message)
                 self.lines_queued += 1
@@ -199,6 +242,51 @@ class LiveBridge:
             self._queue.put_nowait(dict(UNPARSEABLE))
         except queue.Full:
             self.dropped += 1
+
+    def _route_reply(self, message: dict[str, Any]) -> bool:
+        """Deliver a control reply to its waiter. Returns whether the message was one."""
+
+        if message.get("type") != "tools":
+            return False
+        request_id = message.get("requestId")
+        if not isinstance(request_id, str):
+            return True  # ours by type, but unusable: never a frame for the pump
+        with self._replies_lock:
+            waiter = self._replies.get(request_id)
+        if waiter is not None:
+            try:
+                waiter.put_nowait(message)
+            except queue.Full:
+                pass
+        return True
+
+    # --------------------------------------------------------------------- request
+
+    def request_tools(self, timeout: float = 10.0) -> dict[str, Any]:
+        """Ask the plugin for the tool names the runtime actually attached.
+
+        Names only: this is the read-only view (`ctx.tools.schemas`), not a tool definition and
+        certainly not an execution path. An unavailable registry is reported as such — an empty
+        list would read as "this session has no tools", a different and unverified claim.
+        """
+
+        if FEATURE_TOOLS not in self.features:
+            raise BridgeError("the installed plugin does not report a tool roster")
+        request_id = f"tools-{secrets.token_hex(8)}"
+        waiter: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1)
+        with self._replies_lock:
+            self._replies[request_id] = waiter
+        try:
+            if not self.send({"type": "tools", "requestId": request_id}):
+                raise BridgeError("the roster request could not be queued")
+            try:
+                message = waiter.get(timeout=max(0.1, timeout))
+            except queue.Empty:
+                raise BridgeError("the plugin did not answer the roster request") from None
+        finally:
+            with self._replies_lock:
+                self._replies.pop(request_id, None)
+        return _checked_roster(message)
 
     # ------------------------------------------------------------------------ send
 

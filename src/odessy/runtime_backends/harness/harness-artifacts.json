@@ -73,13 +73,13 @@
     "bundles": [
       {
         "name": "@odessy/dsh-stream-bridge",
-        "version": "0.0.2",
+        "version": "0.0.3",
         "path": "bundle/odessy-stream-bridge",
         "license": "Apache-2.0",
         "license_source": "repository LICENSE (Odessy)",
         "origin": "odessy",
         "published": false,
-        "purpose": "Forwards the pin's existing `agent/assistant-stream` frames and answers its existing `user-questions` seam over one token-authenticated loopback socket. No inference, no agent loop, no transcript.",
+        "purpose": "Forwards the pin's existing `agent/assistant-stream` frames, answers its existing `user-questions` seam, and reports the tools the runtime actually attached (read-only `ctx.tools.schemas` names), all over one token-authenticated loopback socket. No inference, no agent loop, no transcript, no tool registration.",
         "manifest_key": "dsh.bundle.patch",
         "patch": "cordis.patch.yml",
         "entry": "lib/index.js",
@@ -89,8 +89,8 @@
         "files": [
           {
             "file": "package.json",
-            "bytes": 511,
-            "sha256": "0fd351b24a10ba7a9d35aff8bf57f62625e6c4776c8076985dc81d9cfc3b3a25"
+            "bytes": 555,
+            "sha256": "0b5db83151f40fe2435b160054bb117ecca509f5fa45ce402786a2489d51b552"
           },
           {
             "file": "cordis.patch.yml",
@@ -99,8 +99,8 @@
           },
           {
             "file": "lib/index.js",
-            "bytes": 15402,
-            "sha256": "b6ccfa8327d0eccc9e86e10926a2f07049bb045ccf96cb120bdb7905d4310a4f"
+            "bytes": 19528,
+            "sha256": "6300c4f6abd277b878e02fe161bf66166e0ba2a8b718ab3a9aebad85d7ecc646"
           }
         ]
       }

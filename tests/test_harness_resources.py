@@ -107,7 +107,7 @@ def test_the_shipped_bundle_matches_its_declaration():
     status = resources.bundle_status()
     assert status["problems"] == []
     assert status["present"] is True
-    assert status["version"] == "0.0.2"
+    assert status["version"] == "0.0.3"
     assert [entry["file"] for entry in status["files"]] == [
         "package.json", "cordis.patch.yml", "lib/index.js",
     ]
@@ -230,4 +230,4 @@ def test_the_wheel_ships_the_inventory_and_the_bundle(tmp_path):
     reported = json.loads(completed.stdout.strip().splitlines()[-1])
     assert Path(reported["inventory"]).is_relative_to(payload)
     assert reported["problems"] == []
-    assert reported["version"] == "0.0.2"
+    assert reported["version"] == "0.0.3"

@@ -16,6 +16,7 @@ import time
 from contextlib import asynccontextmanager
 
 from .session import public
+from odessy.application.durable import RuntimeSessionUnavailable
 from odessy.interaction.broker import InteractionError
 from odessy.models.cloud_model import CloudModelConfigError
 from odessy.runtime_backends import (
@@ -56,6 +57,21 @@ $('send').onclick=async()=>{const text=$('text').value.trim();if(!text)return;tr
 $('stop').onclick=async()=>{try{await api(route('/stop'),'POST');$('approvals').replaceChildren();$('questions').replaceChildren();status('Stopped');}catch(error){status(error.message);}};
 window.addEventListener('pagehide',()=>streamAbort?.abort());
 </script></html>'''
+
+
+def _factory_takes_restore(factory):
+    """Whether a controller factory accepts a ``restore`` session id.
+
+    Compositions predating durable sessions take no arguments; asking one for a restore and
+    quietly creating a new session instead would be the exact substitution this build refuses.
+    """
+    try:
+        parameters = inspect.signature(factory).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(parameter.name == "restore"
+               or parameter.kind == inspect.Parameter.VAR_KEYWORD
+               for parameter in parameters)
 
 
 def create_app(controller_factory, *, config=None, settings=None, jobs=None, token=None,
@@ -251,15 +267,31 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     def snapshot(controller):
         return controller.public_snapshot()
 
-    async def make_controller():
+    async def make_controller(restore=None):
         nonlocal pending_admissions
         admission_open()
         pending_admissions += 1
         try:
             try:
-                controller = controller_factory()
+                if restore is not None:
+                    if not _factory_takes_restore(controller_factory):
+                        # Asking for a restore and creating a fresh session instead is the exact
+                        # substitution this build refuses to make silently.
+                        raise HTTPException(501, 'This build cannot restore durable sessions')
+                    controller = controller_factory(restore=restore)
+                else:
+                    controller = controller_factory()
                 if inspect.isawaitable(controller):
                     controller = await controller
+                if restore is not None:
+                    # An explicit restore is answered now: either the runtime still has this
+                    # conversation, or the caller is told it does not.
+                    await controller.prepare()
+            except RuntimeSessionUnavailable as exc:
+                # A durable session exists under this identity and cannot be continued. The
+                # caller asked to continue it; beginning a fresh one instead would lose the
+                # conversation without anyone choosing that.
+                raise HTTPException(409, public(exc.public())) from exc
             except CloudModelConfigError as exc:
                 raise HTTPException(503, public(str(exc))) from exc
             except RuntimeUnavailable as exc:
@@ -765,10 +797,51 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                     'profiles': editable_profiles()}
 
     @app.post('/v1/sessions', status_code=201)
-    async def new_session():
-        controller = await make_controller()
+    async def new_session(request: Request):
+        """Create a session, or explicitly continue a durable one.
+
+        The body is optional. ``{"restore": "<session id>"}`` continues the durable session
+        with that id: same application identity, same runtime session, settled content
+        reconstructed from the bounded projection. Nothing is replayed to the engine, so the
+        last prompt is never resubmitted by a reconnection.
+        """
+        data = {}
+        raw = await request.body()
+        if raw.strip():
+            try:
+                data = json.loads(raw)
+            except (ValueError, UnicodeDecodeError):
+                raise HTTPException(400, 'Expected a JSON object')
+            if not isinstance(data, dict):
+                raise HTTPException(400, 'Expected a JSON object')
+            if set(data) - {'restore'}:
+                raise HTTPException(400, 'Unknown session fields')
+        restore = data.get('restore')
+        if restore is not None:
+            if not isinstance(restore, str) or not re.fullmatch(r'[0-9a-f]{32}', restore):
+                raise HTTPException(400, 'restore must be a session id')
+            if restore in sessions:
+                # One live owner per durable session: a second controller would compete with the
+                # first for the same history (the runtime refuses a second resume anyway, and
+                # this answers with the useful reason instead of an opaque engine error).
+                raise HTTPException(409, 'Session is already open')
+        controller = await make_controller(restore=restore)
         sessions[controller.id] = controller
         return snapshot(controller)
+
+    @app.get('/v1/durable/sessions')
+    async def list_durable_sessions():
+        """Durable sessions this machine could continue, newest first.
+
+        Metadata and cursors only: a listing must not leak stored text, so the projection is
+        counted rather than returned.
+        """
+        from odessy.application.durable import default_store
+        try:
+            return {'sessions': default_store().list_records(),
+                    'open': sorted(sessions)}
+        except (OSError, ValueError) as exc:
+            raise HTTPException(503, f'Durable sessions are unavailable: {exc}') from exc
 
     @app.get('/v1/sessions/{sid}')
     async def get_session(sid: str):
@@ -821,6 +894,11 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             raise HTTPException(409, 'A turn is already running')
         turn_id = secrets.token_hex(16)
         epoch = controller.stop_epoch
+        # Written before the task starts: a crash between acceptance and execution then leaves a
+        # turn that a restore reports as "never sent" instead of silently forgetting the input.
+        record_queued = getattr(controller, 'record_queued_turn', None)
+        if record_queued is not None:
+            record_queued(turn_id, data['text'])
         async def run():
             try:
                 result=await controller.run_turn(data['text'], participant=data.get('participant'), turn_id=turn_id, admitted_epoch=epoch)

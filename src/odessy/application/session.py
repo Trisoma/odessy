@@ -13,6 +13,17 @@ from collections import deque
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
+from odessy.application.durable import (
+    ADMITTED,
+    DURABLE_EVENTS,
+    FAILED,
+    QUEUED,
+    SCHEMA,
+    SETTLED,
+    STOPPED,
+    RuntimeSessionUnavailable,
+    restore_state,
+)
 from odessy.authority.redaction import redact_text, looks_like_secret_name
 from odessy.runtime.hooks import public_event
 from odessy.runtime.types import ToolObservation, ToolRequest
@@ -69,10 +80,32 @@ class SessionController:
     def __init__(self, *, model_factory, agent_factory, profiles, selected_profile=None,
                  collaboration=None, jobs=None, config=None, memory=None,
                  event_limit=256, subscriber_limit=64, max_subscribers=16,
-                 runtime_selection=None, audit=None):
+                 runtime_selection=None, audit=None, durable=None, session_id=None,
+                 resume=None):
         if not profiles or min(event_limit, subscriber_limit, max_subscribers) < 1:
             raise ValueError('Profiles and positive event bounds are required')
-        self.id = uuid.uuid4().hex
+        #: The application's own durable record. It holds identity and a bounded projection of
+        #: *settled* events; the engine owns the model's history. ``None`` means this session
+        #: is not durable (the legacy engine today), and every persistence call becomes a no-op
+        #: rather than an error, so nothing above has to branch on the engine.
+        self.durable = durable
+        self.record = None
+        self._durable_error = ''
+        #: Restore verdict reported to a reconnecting client: what was incomplete, and where the
+        #: event cursor resumes. Empty for a new session.
+        self._restore = {}
+        #: An explicit restore carries the runtime session this application session belongs to.
+        #: It is handed to the engine builder *before* the engine is built, and the engine
+        #: refuses to start if it cannot honour it: a fresh runtime session under an existing
+        #: identity would silently detach the durable history. A record with no runtime session
+        #: yet (the process died before the first turn) has nothing to detach, so the engine is
+        #: not asked to resume and the restore says so.
+        self.runtime_resume = (dict(resume) if resume and resume.get('runtime_session') else None)
+        self.id = str(session_id or uuid.uuid4().hex)
+        #: Which engine was asked for, kept so the record's engine can be compared *before* an
+        #: engine is built (constructing one resolves credentials and materialises a route patch).
+        self._selection = runtime_selection
+        self._preloaded = self._preflight(resume)
         self.model_factory, self.agent_factory = model_factory, agent_factory
         self.profiles, self.collaboration, self.jobs, self.config = profiles, collaboration, jobs, config
         #: The process audit log, when one is open. A non-legacy engine does not run the
@@ -118,11 +151,224 @@ class SessionController:
             # of truth for the selected route.
             self._validate_profile_name(self.selected_profile)
             self._model = None
+        if self.engine == 'legacy':
+            if resume is not None:
+                raise RuntimeSessionUnavailable(
+                    'unsupported_engine',
+                    'the legacy engine keeps no durable history, so there is nothing to '
+                    'continue')
+            # No durable record for an engine that keeps no durable history: writing identity
+            # for it would promise a restore this build cannot perform.
+            self.durable = None
+        self._open_record(resume)
 
     @property
     def engine(self):
         """The engine bound to this session. Immutable for the session's lifetime."""
         return self.runtime_selection.engine
+
+    # ---------------------------------------------------------------- durability
+
+    def _preflight(self, resume):
+        """Read the record and refuse an unusable restore before any engine exists.
+
+        Nothing has been spawned by this point, so a refusal cannot leave a runtime session, a
+        route patch or a child behind — and it cannot be mistaken for "restore the identity but
+        start over", which is the behaviour this whole seam exists to prevent.
+        """
+        if self.durable is None or resume is None:
+            return None
+        from odessy.runtime_backends.selection import resolve_selection
+        # The engine first: "this build cannot keep durable history at all" is a more
+        # fundamental refusal than "this particular record is missing".
+        selected = resolve_selection(self._selection).engine
+        if selected == 'legacy':
+            raise RuntimeSessionUnavailable(
+                'unsupported_engine',
+                'the legacy engine keeps no durable history, so there is nothing to continue')
+        loaded = self.durable.load(self.id)
+        if not loaded.usable:
+            raise RuntimeSessionUnavailable(loaded.verdict, loaded.reason)
+        recorded = str((loaded.record.get('engine') or {}).get('name') or '')
+        if recorded and recorded != selected:
+            raise RuntimeSessionUnavailable(
+                'engine_mismatch',
+                f'the record belongs to the {recorded!r} engine, not {selected!r}')
+        return loaded.record
+
+    def _open_record(self, resume):
+        """Load (restore) or create this session's record, and seed the event cursor from it.
+
+        Restoring never creates a record: a request to continue an identity this build cannot
+        read is reported, because a fresh record under an existing id is how a reconnection
+        loses history without anyone noticing.
+        """
+        if self.durable is None:
+            return
+        if resume is not None:
+            record = self._preloaded
+            if record is None:  # defensive: preflight already refused anything unusable
+                raise RuntimeSessionUnavailable('missing', 'no record for this session')
+            self.record = record
+            self._restored_events(record)
+            self._restore = restore_state(record)
+            if not self.runtime_resume:
+                # Honest about what was and was not continued: the application identity is the
+                # same, but no runtime session had ever been created for it.
+                self._restore['runtime'] = 'absent'
+                self._restore['reason'] = ('no runtime session was ever started for this '
+                                           'record; the conversation begins here')
+            return
+        workspace = str(getattr(getattr(self.runtime, 'config', None), 'workspace', '')
+                        or os.getcwd())
+        existing = self.durable.load(self.id)
+        if existing.verdict != 'missing':
+            # Creating under an identity that already exists is how a lost conversation would
+            # be papered over with an empty record. It is either a restore (with ``resume``) or
+            # a new id.
+            raise RuntimeSessionUnavailable(
+                'identity_exists',
+                'a durable record already exists for this session; restore it instead of '
+                'creating a new one')
+        self.record = self.durable.new_record(self.id, engine=self.engine, workspace=workspace)
+        self.record['profile'] = self.selected_profile
+        # Written now, not at the first turn: an identity that exists only in memory cannot be
+        # found again after a crash, and the runtime session id is added once the engine is up.
+        self._persist()
+
+    def _restored_events(self, record):
+        """Seed the replay buffer and the cursor from the bounded projection.
+
+        Event ids continue where the previous process stopped, so a client that reconnects with
+        its last seen id keeps appending without a reset. Content beyond the projection's first
+        cursor is gone, and ``subscribe`` says so instead of looking like the start of history.
+        """
+        events = record.get('events') or []
+        for event in events:
+            if not isinstance(event, dict) or not isinstance(event.get('id'), int):
+                continue
+            self._events.append({'id': event['id'], 'type': str(event.get('type') or ''),
+                                 'time': event.get('time'), 'data': event.get('data') or {}})
+            self._sequence = max(self._sequence, event['id'])
+        cursor = record.get('cursor') or {}
+        if isinstance(cursor.get('last'), int):
+            self._sequence = max(self._sequence, cursor['last'])
+
+    def _persist(self):
+        """Write the record, reporting the first failure once instead of every turn.
+
+        A record that cannot be written must not fail the turn: the engine still owns the
+        conversation. It is reported so it is not a silent loss of durability.
+        """
+        if self.durable is None or self.record is None:
+            return
+        try:
+            self.durable.save(self.record)
+        except Exception as exc:  # noqa: BLE001 - a durable-write failure is reported, not raised
+            if not self._durable_error:
+                self._durable_error = f'{type(exc).__name__}: {exc}'
+                event = {'id': self._sequence + 1, 'type': 'durability', 'time': time.time(),
+                         'data': {'state': 'unavailable',
+                                  'message': 'this session could not be written to disk; '
+                                             'a reconnection will not restore it',
+                                  'detail': self._public(self._durable_error)}}
+                self._sequence = event['id']
+                self._events.append(event)
+                for queue in tuple(self._subscribers):
+                    if queue.full():
+                        queue.get_nowait()
+                    queue.put_nowait(event)
+
+    def record_queued_turn(self, turn_id, text=''):
+        """Note that a turn was accepted before it is handed to the engine.
+
+        This is what lets a restored session tell an input that never ran apart from work that
+        was interrupted mid-flight. It is written before the turn starts, so a crash between
+        acceptance and execution leaves a record rather than nothing.
+        """
+        if self.durable is None or self.record is None or not turn_id:
+            return
+        self.durable.add_turn(self.record, str(turn_id), QUEUED, text=str(text or ''))
+        self._persist()
+
+    def _begin_turn(self, turn_id):
+        turn = str(turn_id or uuid.uuid4().hex)
+        if self.durable is not None and self.record is not None:
+            self.durable.add_turn(self.record, turn, ADMITTED)
+            self._persist()
+        return turn
+
+    def _finish_turn(self, turn, status):
+        if self.durable is None or self.record is None or not turn:
+            return
+        self.durable.add_turn(self.record, str(turn), status)
+        self._persist()
+
+    def note_engine(self, identity=None, runtime_session=None):
+        """Record who is running this session and which runtime session it is.
+
+        Called once the engine is ready: before that there is no runtime session to name, and
+        inventing one would make an unrestorable record look restorable.
+        """
+        if self.record is None:
+            return
+        engine = self.record.setdefault('engine', {'name': self.engine, 'identity': {}})
+        engine['name'] = self.engine
+        if identity:
+            engine['identity'] = dict(identity)
+        runtime = self.record.setdefault('runtime', {})
+        if runtime_session:
+            runtime['session_id'] = str(runtime_session)
+        if identity and identity.get('protocol') is not None:
+            runtime['protocol'] = identity['protocol']
+        if identity and isinstance(identity.get('tool_roster'), list):
+            # The tools the runtime actually attached, as read back from its own registry. A
+            # restore compares against this, so "the servers were asked for" is never mistaken
+            # for "the tools exist". Names only; no definitions, no results.
+            runtime['tools'] = [str(name) for name in identity['tool_roster']][:512]
+        if identity and identity.get('tool_surface') is not None:
+            runtime['tool_surface'] = str(identity['tool_surface'])
+        config = getattr(self.runtime, 'config', None)
+        workspace = getattr(config, 'workspace', '')
+        if workspace:
+            runtime['workspace'] = str(workspace)
+        elif not runtime.get('workspace'):
+            runtime['workspace'] = str(os.getcwd())
+        self.record['profile'] = self.selected_profile
+        self._persist()
+
+    async def prepare(self):
+        """Ready the engine now instead of at the first turn.
+
+        A new session may stay lazy: starting late costs nothing. A *restore* is different — the
+        caller asked to continue one specific conversation, and whether the runtime still has it
+        is knowable right now. Failing here means a reconnection that cannot be honoured is
+        reported to whoever asked, rather than surfacing as a mysterious first prompt.
+        """
+        start = getattr(self.runtime, 'start', None)
+        if start is not None:
+            await start()
+        self.note_engine(getattr(self.runtime, 'identity', None),
+                         getattr(self.runtime, 'acp_session_id', None))
+        return self.public_snapshot()
+
+    def durability(self):
+        """The durable-identity block of the snapshot, for a client deciding whether to reconnect."""
+        if self.record is None:
+            return {'enabled': False}
+        runtime = self.record.get('runtime') or {}
+        surface = getattr(self.runtime, 'tool_surface', None)
+        return {'enabled': True, 'schema': SCHEMA, 'session': self.id,
+                'engine': self.engine,
+                'runtime_session': runtime.get('session_id') or '',
+                'workspace': runtime.get('workspace') or '',
+                'closed': bool(self.record.get('closed')),
+                'resumed': bool(self.runtime_resume),
+                # Whether the session's tools were verified against the runtime's own registry,
+                # and what was missing if they were not.
+                'tool_surface': dict(surface) if isinstance(surface, dict) else
+                {'state': 'unchecked'},
+                'error': self._durable_error}
 
     def select_engine(self, name):
         """Reject any attempt to move an existing session to another engine.
@@ -142,12 +388,17 @@ class SessionController:
         Events go through the runtime envelope, so a different engine cannot change the
         envelope a client receives.
         """
+        restored = dict(self._restore) if self._restore else {}
         return {'id': self.id, 'selected_profile': self.selected_profile,
                 'available_profiles': list(self.profiles),
                 'active_profile': self.active_profile, 'running': self.running,
+                # The model's history belongs to the engine; this is the bounded projection a
+                # client was actually shown, and it is empty when nothing was restored.
                 'history': public(self.memory.turns),
                 'pending_approvals': self.pending_approvals,
                 'pending_questions': self.pending_questions,
+                'durability': self.durability(),
+                'restore': restored,
                 'events': [event.public() for event in self.runtime.events()]}
 
     def _validate_profile_name(self, name):
@@ -254,6 +505,11 @@ class SessionController:
         self._sequence += 1
         event = {'id': self._sequence, 'type': event_type, 'time': time.time(), 'data': self._public(data or {})}
         self._events.append(event)
+        if event_type in DURABLE_EVENTS and self.record is not None:
+            # Settlement only: a delta is not a fact about the turn, and persisting one would
+            # make an interrupted turn look more complete than it is.
+            self.durable.append_event(self.record, event)
+            self._persist()
         for queue in tuple(self._subscribers):
             if queue.full():
                 queue.get_nowait()
@@ -303,12 +559,36 @@ class SessionController:
                 event_type, data = self._thread_events.popleft()
             self.emit(event_type, data)
 
+    def _cursor_gap(self, after_id):
+        """A report for a subscriber whose cursor predates what this session still holds.
+
+        Only a restored session can be missing history, and the gap is stated once, at the
+        position just before the oldest retained event, so the client resumes at a cursor that
+        exists rather than silently believing it has the whole transcript.
+        """
+        events = self.events
+        if not events or not self._restore:
+            return None
+        if int(self._restore.get('dropped') or 0) <= 0:
+            return None
+        first = int(self._restore.get('first_cursor') or events[0]['id'])
+        if after_id >= first - 1:
+            return None
+        return {'id': first - 1, 'type': 'cursor_gap', 'time': time.time(),
+                'data': {'first_available': first, 'dropped': int(self._restore.get('dropped') or 0),
+                         'reason': 'earlier events are not retained by this session; '
+                                   'settled text before this cursor is no longer available'}}
+
     async def subscribe(self, after_id=0):
         if len(self._subscribers) >= self.max_subscribers:
             raise RuntimeError('Session subscriber limit reached')
         queue = asyncio.Queue(maxsize=self._subscriber_limit)
         self._subscribers.add(queue)
         try:
+            gap = self._cursor_gap(after_id)
+            if gap is not None:
+                after_id = gap['id']
+                yield gap
             for event in self.events:
                 if event['id'] > after_id:
                     after_id = event['id']
@@ -477,7 +757,8 @@ class SessionController:
             # that engine has not implemented rather than running the legacy loop.
             return await self._run_engine_turn(text, participant=participant,
                                                remember=remember, turn_id=turn_id)
-        self.interactions.start_turn(turn_id)
+        turn = self._begin_turn(turn_id)
+        self.interactions.start_turn(turn)
         self._task = asyncio.current_task()
         self._stop = stop_event if stop_event is not None else asyncio.Event()
         self.active_profile = self.selected_profile
@@ -559,12 +840,15 @@ class SessionController:
             self.emit('usage', getattr(result, 'metrics', {}))
             self.emit('cost', ledger.report())
             self.emit('result', result)
+            self._finish_turn(turn, SETTLED)
             return result
         except asyncio.CancelledError:
             self.emit('stopped')
+            self._finish_turn(turn, STOPPED)
             raise
         except Exception as exc:
             self.emit('error', {'message': str(exc), 'error_type': type(exc).__name__})
+            self._finish_turn(turn, FAILED)
             raise
         finally:
             self._flush_thread_events()
@@ -587,7 +871,8 @@ class SessionController:
         """
         if participant is not None:
             raise RuntimeCapabilityUnavailable('collaboration', gate='10')
-        self.interactions.start_turn(turn_id)
+        turn = self._begin_turn(turn_id)
+        self.interactions.start_turn(turn)
         self._task = asyncio.current_task()
         # Deltas arrive from the engine's worker threads; the loop must be capturable so
         # they are delivered live rather than held until the turn ends.
@@ -601,6 +886,13 @@ class SessionController:
             from odessy.models.usage import process_ledger
             ledger = process_ledger()
             ledger.start_turn()
+            # Ready the engine and record who is running this session *before* the turn, so a
+            # crash mid-turn leaves identity + the admitted turn for a restore to report.
+            start = getattr(self.runtime, 'start', None)
+            if start is not None:
+                await start()
+            self.note_engine(getattr(self.runtime, 'identity', None),
+                             getattr(self.runtime, 'acp_session_id', None))
             result = await self.runtime.run_turn(text)
             # Transient deltas were queued while the turn ran. Deliver them before the
             # committed message so a consumer never sees text after the answer.
@@ -611,22 +903,26 @@ class SessionController:
             self.emit('usage', getattr(result, 'metrics', {}))
             self.emit('cost', ledger.report())
             self.emit('result', result)
+            self._finish_turn(turn, SETTLED)
             return result
         except TurnCancelled as exc:
             # The engine confirmed the cancellation: its partial text is not the answer, and
             # the event carries what was actually established (never a rollback claim).
             self._flush_thread_events()
             self.emit('stopped', {'reason': 'cancelled', **exc.public()})
+            self._finish_turn(turn, STOPPED)
             raise
         except asyncio.CancelledError:
             self._flush_thread_events()
             # The local await was abandoned. That is not an engine confirmation, so the event
             # says what is actually known: the Stop that caused it, or `unconfirmed`.
             self.emit('stopped', {'reason': 'local-cancel', **self._local_cancel_outcome()})
+            self._finish_turn(turn, STOPPED)
             raise
         except Exception as exc:
             self._flush_thread_events()
             self.emit('error', {'message': str(exc), 'error_type': type(exc).__name__})
+            self._finish_turn(turn, FAILED)
             raise
         finally:
             self._flush_thread_events()
@@ -708,6 +1004,11 @@ class SessionController:
                 with contextlib.suppress(asyncio.CancelledError):
                     await asyncio.wait({task}, timeout=2.0)
         self._closed = True
+        if self.record is not None:
+            # The record stays, marked closed: its history is what a later restore would need,
+            # and only an explicit delete retires it.
+            self.record['closed'] = True
+            self._persist()
         if self.engine != 'legacy':
             # The engine owns a child process; closing the session must end it.
             await self.runtime.close()

@@ -16,11 +16,13 @@ from __future__ import annotations
 from odessy.authority.tool_control import ToolControl
 
 import asyncio
+import re
 import secrets
 import threading
 import time
 import uuid
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from odessy.runtime_backends.contracts import (
@@ -41,14 +43,23 @@ from odessy.runtime_backends.harness.approvals import (
     PERMISSION_METHOD,
     unsupported_response,
 )
-from odessy.runtime_backends.harness.config import HarnessConfig, from_environment
+from odessy.runtime_backends.harness.config import (
+    TOOL_ROSTER_REQUIRED,
+    HarnessConfig,
+    from_environment,
+)
 from odessy.runtime_backends.harness.process import (
     HarnessProcess,
     HarnessProcessError,
     HarnessProtocolError,
     HarnessTransportError,
 )
-from odessy.runtime_backends.harness.bridge import BridgeError, LiveBridge, free_port
+from odessy.runtime_backends.harness.bridge import (
+    BridgeError,
+    FEATURE_TOOLS,
+    LiveBridge,
+    free_port,
+)
 from odessy.runtime_backends.harness.questions import HarnessQuestionBridge
 from odessy.runtime_backends.harness.routes import HarnessRoute, resolve_route
 from odessy.runtime_backends.harness.stream import Delta, Settlement, TurnStream
@@ -57,6 +68,9 @@ from odessy.runtime.types import AgentTurnResult
 
 ENGINE = "harness"
 _CLIENT_INFO = {"name": "odessy", "version": "0.5.0"}
+#: What a runtime session id may look like. The pin issues UUIDs; the shape is checked only so
+#: that a corrupt record cannot smuggle a path, a newline or an empty string into a request.
+_SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 #: The ACP ``stopReason`` that means the runtime itself cancelled the turn.
 CANCEL_STOP_REASON = "cancelled"
 #: The one model-facing tool this engine may execute: the runtime's own clarification tool.
@@ -91,6 +105,22 @@ def _sibling_models(session: Any, selected: Any) -> tuple[str, ...]:
         if isinstance(model, str) and model.strip():
             models.append(model.strip())
     return tuple(models)
+
+
+def _resume_hint(session: Any) -> dict[str, Any] | None:
+    """The durable session this engine was asked to continue, if any.
+
+    Read from the session object rather than passed to the backend builder, because the
+    selection layer builds every engine from the session alone (``selection.resolve_and_build``).
+    A hint that is not a mapping is not silently ignored: it is a caller bug that would
+    otherwise look like "no restore requested" and start a fresh session.
+    """
+    hint = getattr(session, "runtime_resume", None)
+    if hint is None:
+        return None
+    if not isinstance(hint, dict):
+        raise RuntimeUnavailable(ENGINE, "a restore hint must be a mapping")
+    return dict(hint)
 
 
 def attach_route(config: HarnessConfig, route: HarnessRoute, *,
@@ -148,6 +178,12 @@ class HarnessRuntime:
         self._bridge_token = secrets.token_hex(16) if self._bridge_enabled else ""
         self._bridge: LiveBridge | None = None
         self._live = False
+        #: What was observed about the session's tool surface (prompt 10): whether the roster
+        #: was read, what the record expected, and what was missing. Never a claim that the
+        #: servers were asked for — that is not the same thing as their tools existing.
+        self._tool_surface: dict[str, Any] = {
+            "state": "unchecked", "expected": None, "observed": None,
+            "missing": [], "reason": "the session has not started"}
         #: The tool server's approval/cancel channel (prompt 09). Created at start() once the
         #: session loop exists; None until then, and for a session with no tool server.
         self._stream: TurnStream | None = None
@@ -170,6 +206,12 @@ class HarnessRuntime:
         self._sandbox = self._config.sandbox_plan()
         self._session = session
         self.session_id = str(getattr(session, "id", "") or "")
+        #: The durable session this engine was asked to continue (prompt 10), or ``None`` for a
+        #: fresh one. Handed in by the controller before the engine is built, so a restore that
+        #: cannot be honoured fails session creation instead of detaching the history.
+        self._resume = _resume_hint(session)
+        #: Which ACP method actually opened the session, for the identity record and notes.
+        self._opened_with = "session/new"
         self._audit = getattr(session, "audit", None)
         #: One bridge per session: it owns the turn's tool-call identity, binds a
         #: permission request to the session's own approval broker, and answers the ACP
@@ -281,6 +323,11 @@ class HarnessRuntime:
     def stream_settlement(self) -> Settlement | None:
         """Counters and timings for the last turn (never the text)."""
         return self._last_settlement
+
+    @property
+    def tool_surface(self) -> dict[str, Any]:
+        """What was established about the attached tool roster, and how."""
+        return dict(self._tool_surface)
 
     @property
     def orphaned_turn(self) -> bool:
@@ -401,6 +448,10 @@ class HarnessRuntime:
                                  if self._config.verify_artifact else None),
                 timeout=self._config.startup_timeout,
             )
+            if self._resume is not None:
+                # Before a child exists: a restore this build cannot honour costs a version
+                # probe, not a spawned runtime that then has to be torn down.
+                self._check_resume(identity)
             process = HarnessProcess(self._config,
                                      on_request=self._on_server_request,
                                      on_notification=self._approvals.observe)
@@ -425,18 +476,11 @@ class HarnessRuntime:
                 servers = self._config.mcp_servers(
                     self._control.address if self._control else None)
                 self._server_names = tuple(str(entry["name"]) for entry in servers)
-                opened = process.call("session/new", {
-                    "cwd": str(self._config.workspace),
-                    # Odessy's reviewed tool server, spawned and supervised by the runtime as
-                    # this session's stdio MCP child (prompt 09), plus one guarded gateway per
-                    # upstream (prompt 09a). Empty unless the operator opted in, so a package
-                    # that has not qualified a tool surface still has none. Every entry's
-                    # confinement is fixed by argv from the resolved plan.
-                    "mcpServers": servers,
-                }, timeout=self._config.session_timeout())
+                opened = self._open_session(process, servers)
                 session_id = opened.get("sessionId")
                 if not isinstance(session_id, str) or not session_id:
-                    raise HarnessProtocolError("session/new returned no sessionId")
+                    raise HarnessProtocolError(
+                        f"{self._opened_with} returned no sessionId")
                 self._read_model_options(opened.get("configOptions") or [])
                 wanted = self._route.option_value()
                 if self._declared and wanted not in self._declared:
@@ -463,6 +507,11 @@ class HarnessRuntime:
                 self._discard(process)
                 raise RuntimeUnavailable(ENGINE, "the runtime failed to start",
                                          detail=self._detail(exc)) from exc
+            except RuntimeUnavailable:
+                # A refused restore already carries the runtime's own words; the child that
+                # was opened to attempt it must still be torn down.
+                self._discard(process)
+                raise
             except OSError as exc:
                 self._discard(process)
                 raise RuntimeUnavailable(ENGINE, "the runtime executable could not be launched",
@@ -474,13 +523,29 @@ class HarnessRuntime:
                 raise RuntimeUnavailable(
                     ENGINE, "startup was abandoned before it completed"
                 )
-            self._connect_bridge(process)
+            try:
+                self._connect_bridge(process)
+                # Before the session is accepted: the runtime may have silently dropped a
+                # server whose command no longer starts, and re-sending `mcpServers` proves
+                # nothing. A refusal here is still inside startup, so the child it opened is
+                # torn down instead of being left running behind a rejected restore.
+                self._verify_tool_surface(process)
+            except BaseException:
+                self._discard(process)
+                raise
             self._process = process
             self._acp_session = session_id
             self._identity = {**dict(identity), "sandbox": self._sandbox.describe(),
                               "tools": self._tool_server_name() or "none",
                               "servers": list(self._server_names),
-                              "upstreams": self._config.upstream_activation()}
+                              "upstreams": self._config.upstream_activation(),
+                              # The negotiated protocol and which ACP method opened the session;
+                              # a restore compares the first and records the second.
+                              "protocol": negotiated,
+                              "resumed": self._resume is not None,
+                              "opened_with": self._opened_with,
+                              "tool_roster": self._tool_surface.get("tools"),
+                              "tool_surface": self._tool_surface.get("state")}
             self._ready = True
             process.note(
                 f"ready: version={identity.get('version')} "
@@ -490,6 +555,258 @@ class HarnessRuntime:
                 f"sandbox={self._sandbox.mode}/{self._sandbox.provider} "
                 f"unenforced={list(self._sandbox.unenforced)}"
             )
+
+    def _open_session(self, process: HarnessProcess,
+                      servers: list[dict[str, Any]]) -> dict[str, Any]:
+        """Create a new ACP session, or restore the durable one this engine was given.
+
+        A restore is never silently downgraded to a new session. Every way the runtime can
+        refuse one — history missing, history of a format this pin cannot read, a workspace that
+        does not match, another process already holding it — is raised as
+        :class:`RuntimeUnavailable` with what was actually observed, because a fresh session
+        under the same application identity is indistinguishable from a lost conversation.
+
+        The reviewed tool surface is re-passed: ``session/resume`` does not restore the servers
+        the session was created with (measured, not assumed), and a server whose command no
+        longer exists is dropped by the runtime without an error, so the same plan is attached
+        again and the record keeps saying what was intended.
+        """
+
+        if self._resume is None:
+            self._opened_with = "session/new"
+            return process.call("session/new", {
+                "cwd": str(self._config.workspace),
+                # Odessy's reviewed tool server, spawned and supervised by the runtime as
+                # this session's stdio MCP child (prompt 09), plus one guarded gateway per
+                # upstream (prompt 09a). Empty unless the operator opted in, so a package
+                # that has not qualified a tool surface still has none. Every entry's
+                # confinement is fixed by argv from the resolved plan.
+                "mcpServers": servers,
+            }, timeout=self._config.session_timeout())
+        # Validation happened in ``_check_resume`` before this child existed.
+        self._opened_with = "session/resume"
+        session = str(self._resume.get("runtime_session") or "")
+        try:
+            result = process.call("session/resume", {
+                "sessionId": session,
+                "cwd": str(self._config.workspace),
+                "mcpServers": servers,
+            }, timeout=self._config.session_timeout())
+        except HarnessProtocolError as exc:
+            raise self._resume_refusal(exc, session) from exc
+        opened = dict(result or {})
+        opened.setdefault("sessionId", session)
+        process.note(f"restored durable session {session} "
+                     f"({len(self._server_names)} tool server(s) re-attached)")
+        return opened
+
+    #: Identity fields that decide whether a persisted log can be continued. The record must
+    #: carry every one of them, and each must equal what *this* launch observed: a field that
+    #: cannot be checked is a refusal, because "probably the same runtime" is how a log written
+    #: by another build gets read as if it were this one's.
+    _COMPATIBILITY_FIELDS = ("version", "source_tag", "sha256", "protocol")
+
+    def _check_resume(self, identity: dict[str, object]) -> None:
+        """Refuse a restore this build cannot honour, before a child is even asked.
+
+        Runs after the version probe and *before* a child process exists, so a refusal costs a
+        probe rather than a spawned runtime that has to be torn down.
+        """
+
+        hint = self._resume or {}
+        session = hint.get("runtime_session")
+        if not isinstance(session, str) or not session.strip():
+            raise RuntimeUnavailable(ENGINE, "a restore was requested without a runtime session")
+        if len(session) > 128 or not _SESSION_ID_PATTERN.match(session):
+            raise RuntimeUnavailable(
+                ENGINE, "the durable record names a malformed runtime session",
+                detail=f"session id {session!r} is not a runtime session id")
+        workspace = hint.get("workspace")
+        if not isinstance(workspace, str) or not workspace.strip():
+            raise RuntimeUnavailable(
+                ENGINE, "the durable record does not say which workspace it belongs to",
+                detail="a restore needs the recorded workspace to compare with this launch")
+        try:
+            recorded_workspace = Path(workspace).resolve()
+        except (OSError, ValueError) as exc:
+            raise RuntimeUnavailable(
+                ENGINE, "the durable record's workspace is malformed",
+                detail=f"{workspace!r}: {exc}") from exc
+        if not Path(workspace).is_absolute():
+            raise RuntimeUnavailable(
+                ENGINE, "the durable record's workspace is not an absolute path",
+                detail=workspace)
+        if recorded_workspace != Path(self._config.workspace).resolve():
+            raise RuntimeUnavailable(
+                ENGINE, "the durable session belongs to a different workspace",
+                detail=f"recorded {workspace}, this launch is {self._config.workspace}")
+
+        recorded = hint.get("identity")
+        if not isinstance(recorded, dict) or not recorded:
+            raise RuntimeUnavailable(
+                ENGINE, "the durable record carries no runtime identity",
+                detail="a record without identity evidence cannot be established compatible")
+        for field_name in self._COMPATIBILITY_FIELDS:
+            value = recorded.get(field_name)
+            if value is None or (isinstance(value, str) and not value.strip()):
+                raise RuntimeUnavailable(
+                    ENGINE, "the durable record's runtime identity is incomplete",
+                    detail=f"the record does not carry {field_name!r}")
+            if not isinstance(value, (str, int)) or isinstance(value, bool):
+                raise RuntimeUnavailable(
+                    ENGINE, "the durable record's runtime identity is malformed",
+                    detail=f"{field_name}={value!r} is not a string or integer")
+
+        # Compare against what this launch actually observed, not against a constant: the
+        # probe ran, so a value it did not produce (an unverified digest, for instance) is a
+        # field the record cannot be checked on.
+        for field_name in ("version", "source_tag", "sha256"):
+            expected = identity.get(field_name)
+            if expected is None or expected == "":
+                raise RuntimeUnavailable(
+                    ENGINE, "this launch cannot establish the runtime identity a restore needs",
+                    detail=f"the version probe produced no {field_name!r}")
+            if str(recorded[field_name]) != str(expected):
+                raise RuntimeUnavailable(
+                    ENGINE, "the durable session was written by a different runtime",
+                    detail=f"recorded {field_name}={recorded[field_name]}, "
+                           f"this launch reports {expected}")
+        written = int(recorded["protocol"]) if str(recorded["protocol"]).isdigit() else None
+        if written is None:
+            raise RuntimeUnavailable(
+                ENGINE, "the durable record's ACP protocol is malformed",
+                detail=f"protocol={recorded['protocol']!r}")
+        if written != int(pin.ACP_PROTOCOL_VERSION):
+            raise RuntimeUnavailable(
+                ENGINE, "the durable session was written under another ACP protocol",
+                detail=f"recorded {written}, this build speaks {pin.ACP_PROTOCOL_VERSION}")
+
+    def _resume_refusal(self, exc: HarnessProtocolError, session: str) -> RuntimeUnavailable:
+        """Translate the runtime's refusal into what it means, keeping its own words."""
+
+        detail = exc.remote_detail or str(exc)
+        lowered = detail.lower()
+        if exc.rpc_code == -32602 and "not resumable" in lowered:
+            reason = "the runtime has no history for this session"
+        elif exc.rpc_code == -32602 and "cwd" in lowered:
+            reason = "the runtime holds this session for a different workspace"
+        elif exc.rpc_code == -32603:
+            # Opaque by design at this pin: a corrupt log, a log written by a newer runtime and
+            # a session another process already holds all report this way.
+            reason = ("the runtime could not open the persisted history (unreadable, from "
+                      "another version, or already open elsewhere)")
+        else:
+            reason = "the runtime refused to restore this session"
+        return RuntimeUnavailable(ENGINE, reason,
+                                  detail=f"session/resume({session}) said: {detail}")
+
+    def _verify_tool_surface(self, process: HarnessProcess) -> None:
+        """Check the tools the runtime actually attached, and refuse an observed gap.
+
+        Re-passing ``mcpServers`` only says what was *asked for*. The pin drops a server whose
+        command no longer starts without reporting an error, so a restored session can look
+        healthy while the tools it had are gone. The roster comes from the runtime's own
+        read-only ``tools.schemas`` view through the packaged plugin — names only, no tool
+        definition, no execution, and never the private session log.
+
+        Policy (``ODESSY_HARNESS_TOOL_ROSTER``):
+
+        * Restores always require a verified roster, regardless of this setting.
+        * ``preferred`` permits an unverifiable roster only for new sessions.
+        * ``required`` also refuses unverifiable new sessions.
+
+        A refusal raises :class:`RuntimeUnavailable` from inside startup, so the child this
+        restore opened is discarded and no replacement session is created.
+        """
+
+        expected: list[str] | None = None
+        restoring = self._resume is not None
+        if restoring:
+            recorded = self._resume.get("tools")
+            if isinstance(recorded, list) and recorded:
+                expected = [str(name) for name in recorded if str(name)]
+        reply: dict[str, Any] | None = None
+        reason = ""
+        if self._bridge is None:
+            reason = ("the packaged bridge plugin is not attached, so the tool roster "
+                      "cannot be read")
+        elif FEATURE_TOOLS not in self._bridge.features:
+            reason = "the installed bridge plugin does not report a tool roster"
+        else:
+            reply, reason = self._read_roster(process, expected)
+        observed = reply["tools"] if reply and reply.get("available") else None
+        if observed is None and not reason:
+            reason = "the runtime reported no tool roster"
+        missing = [name for name in (expected or []) if name not in (observed or [])]
+        counts = {"agents": int(reply.get("agents") or 0) if reply else 0,
+                  "global": int(reply.get("global") or 0) if reply else 0}
+        if observed is None:
+            state = {"state": "unverified", "expected": expected, "tools": None,
+                     "missing": [], "reason": reason, **counts}
+        elif missing:
+            state = {"state": "incomplete", "expected": expected, "tools": list(observed),
+                     "missing": missing, "reason": "the runtime attached fewer tools than this "
+                                                   "session had", **counts}
+        elif restoring and expected is None:
+            # The runtime can be read, but the record has nothing to compare it with: the
+            # session's own surface was never recorded, so "verified" would be a guess.
+            state = {"state": "unverified", "expected": None, "tools": list(observed),
+                     "missing": [],
+                     "reason": "the record carries no tool roster to verify against", **counts}
+        elif restoring:
+            state = {"state": "verified", "expected": expected, "tools": list(observed),
+                     "missing": [], "reason": "", **counts}
+        else:
+            # A new session records its surface so a later restore has something to check.
+            state = {"state": "recorded", "expected": None, "tools": list(observed),
+                     "missing": [], "reason": "", **counts}
+        state["observed"] = None if observed is None else len(observed)
+        self._tool_surface = state
+        process.note(
+            f"tool surface: {state['state']}"
+            f" expected={'-' if expected is None else len(expected)}"
+            f" observed={'-' if observed is None else len(observed)}"
+            f" agents={state['agents']} global={state['global']}"
+            + (f" missing={state['missing'][:5]}" if state["missing"] else "")
+            + (f" reason={state['reason']}" if state["reason"] else ""))
+        if state["state"] == "incomplete":
+            raise RuntimeUnavailable(
+                ENGINE, "the restored session's tool surface is incomplete",
+                detail=f"{len(state['missing'])} tool(s) this session had are no longer "
+                       f"attached: {', '.join(state['missing'][:8])}")
+        if state["state"] == "unverified" and (
+                restoring or self._config.tool_roster == TOOL_ROSTER_REQUIRED):
+            raise RuntimeUnavailable(
+                ENGINE, "the session's tool surface could not be verified",
+                detail=reason or "no roster was reported")
+    def _read_roster(self, process: HarnessProcess,
+                     expected: list[str] | None) -> tuple[dict[str, Any] | None, str]:
+        """Ask the plugin for the roster, re-reading once while slow servers finish starting.
+
+        A second look only happens when the first answer was *available* but short: an
+        unavailable registry is not a timing problem, and a gap that survives a second look is
+        real.
+        """
+
+        timeout = min(10.0, max(2.0, self._config.startup_timeout))
+        first: dict[str, Any] | None = None
+        for attempt in range(2):
+            try:
+                reply = self._bridge.request_tools(timeout=timeout) if self._bridge else None
+            except BridgeError as exc:
+                return first, str(exc)
+            if reply is None:
+                return None, "the bridge is not attached"
+            if not reply["available"]:
+                return None, str(reply.get("reason") or "the roster is unavailable")
+            first = reply
+            if not expected or not [name for name in expected if name not in reply["tools"]]:
+                return reply, ""
+            if attempt == 0:
+                process.note("tool surface: short roster, re-reading once while the "
+                             "servers finish starting")
+                time.sleep(1.0)
+        return first, ""
 
     def _connect_bridge(self, process: HarnessProcess) -> None:
         """Attach to the packaged live-text plugin, or record why not.

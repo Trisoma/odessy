@@ -70,9 +70,20 @@ class HarnessTransportError(HarnessProcessError):
 
 
 class HarnessProtocolError(HarnessProcessError):
-    """A well-formed transport carried an unusable message."""
+    """A well-formed transport carried an unusable message.
+
+    ``rpc_code`` and ``remote_detail`` carry what the runtime actually said when it *refused*
+    a request, so a caller can classify the refusal (a missing session is not a corrupt one)
+    without parsing prose.
+    """
 
     code = "runtime_protocol_error"
+
+    def __init__(self, message: str, *, rpc_code: int | None = None,
+                 remote_detail: str = ""):
+        self.rpc_code = rpc_code
+        self.remote_detail = remote_detail
+        super().__init__(message)
 
 
 def _clip(text: str) -> str:
@@ -304,7 +315,9 @@ class HarnessProcess:
             error = reply.get("error")
             detail = error.get("message") if isinstance(error, Mapping) else str(error)
             code = error.get("code") if isinstance(error, Mapping) else None
-            raise HarnessProtocolError(f"{method} was refused ({code}): {detail}")
+            raise HarnessProtocolError(f"{method} was refused ({code}): {detail}",
+                                       rpc_code=code if isinstance(code, int) else None,
+                                       remote_detail=detail)
         result = reply.get("result")
         if not isinstance(result, dict):
             raise HarnessProtocolError(

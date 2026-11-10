@@ -1,8 +1,9 @@
 /**
- * Forward the runtime's existing live assistant frames to a loopback socket, and answer
- * the runtime's existing `user-questions` seam over the same authenticated connection.
+ * Forward the runtime's existing live assistant frames to a loopback socket, answer the
+ * runtime's existing `user-questions` seam over the same authenticated connection, and report
+ * the tool surface the runtime actually attached.
  *
- * This plugin adds NO inference, NO agent loop and NO new question model. It uses two
+ * This plugin adds NO inference, NO agent loop and NO new question model. It uses three
  * documented extension points of the pinned runtime:
  *
  * - `agent/assistant-stream` (process-local start / chunk / end frames) is forwarded so a
@@ -11,15 +12,22 @@
  *   resolves the exact waiting tool invocation with the human's answer. The model-facing
  *   `ask_user_question` tool is the runtime's own `@deepseek-ai/dsh-tool-ask-user`, mounted
  *   by this bundle's patch; this plugin only supplies the answerer.
+ * - `ctx.tools.schemas(scope)` — the runtime's documented, read-only view of the tools a scope
+ *   can see — is read on request, so a reconnecting client can check that the tool servers it
+ *   relies on are really attached instead of trusting that it asked for them. The plugin never
+ *   registers, replaces or executes a tool.
  *
  * Wire format, one JSON object per line. Plugin -> client:
- *   {"type":"hello","pid":123,"protocol":1,"features":["questions"]}
+ *   {"type":"hello","pid":123,"protocol":1,"features":["questions","tools"]}
  *   {"type":"frame", …}                         live assistant frames (transient)
  *   {"type":"dropped","protocol":1,"frames":N}  frames lost to a slow reader
  *   {"type":"question","sessionId":"…","turn":1,"requestId":"…","questions":[…],"t":…}
+ *   {"type":"tools","requestId":"…","available":true,"tools":["…"],"agents":1,"global":N,"t":…}
+ *   {"type":"tools","requestId":"…","available":false,"reason":"…","t":…}
  * Client -> plugin (after the token line):
  *   {"type":"answer","requestId":"…","answers":[{"id":"q1","selected":["yes"],"custom":"…"}]}
  *   {"type":"cancel","requestId":"…","reason":"stopped"}
+ *   {"type":"tools","requestId":"…"}
  *
  * The client must send {"token":"…"} as its first line. The socket binds the configured
  * host only, accepts one client, and is closed when the plugin unloads.
@@ -31,6 +39,9 @@
  * - an answer can only select labels the asker offered (custom text is passed through);
  * - cancellation, socket loss, disposal and timeout settle the waiter as an error — no
  *   answer is ever invented;
+ * - the tool roster is read-only metadata (names only, never definitions or results), is only
+ *   sent to the authenticated client, and an unavailable registry is reported as unavailable
+ *   rather than as an empty roster;
  * - frames are transient: when the client stops reading, frames are dropped and counted,
  *   never buffered without limit.
  */
@@ -41,11 +52,15 @@ import { randomUUID } from 'node:crypto'
 /** Stable Cordis plugin name. */
 export const name = 'odessy-stream-bridge'
 
-/** No services are injected: listening for events needs none. */
+/**
+ * No services are *required*: forwarding frames and answering questions need none, so a
+ * runtime without the tools registry still loads this plugin. The registry is read
+ * opportunistically (`ctx.get`) when a roster is requested.
+ */
 export const inject = []
 
 /** Features announced in the greeting; the Python client gates capabilities on these. */
-const FEATURES = ['questions']
+const FEATURES = ['questions', 'tools']
 
 /**
  * Cap on bytes queued for one client but not yet accepted by the kernel. A consumer that
@@ -62,6 +77,9 @@ const MAX_LABEL = 1024
 const MAX_PENDING = 4
 /** Backstop when the client is gone but its socket has not been noticed yet. */
 const DEFAULT_WAIT_MS = 300_000
+/** Roster bounds: the union is de-duplicated, clipped and capped before it leaves this process. */
+const MAX_TOOL_NAMES = 512
+const MAX_TOOL_NAME = 200
 
 const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value)
 
@@ -227,6 +245,91 @@ export function apply(ctx, config) {
     )))
   }
 
+  /**
+   * Read a service without requiring it. Cordis exposes services on the context and through
+   * `ctx.get`; both are tried, and any failure means "this runtime does not offer it".
+   */
+  const service = (serviceName) => {
+    try {
+      const viaGet = typeof ctx.get === 'function' ? ctx.get(serviceName) : undefined
+      if (viaGet !== undefined && viaGet !== null) return viaGet
+    } catch {
+      // A context that refuses the lookup is the same as an absent service here.
+    }
+    try {
+      return ctx[serviceName]
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * The tool surface this runtime actually attached: names only, from the documented
+   * `tools.schemas(scope)` view, unioned across every live agent scope and the global view.
+   * Nothing is inferred beyond names, and an absent registry is reported as unavailable —
+   * an empty list would read as "this session has no tools", which is a different claim.
+   */
+  const toolRoster = () => {
+    const tools = service('tools')
+    if (tools === undefined || typeof tools.schemas !== 'function') {
+      return { available: false, reason: 'the runtime exposes no read-only tools registry' }
+    }
+    const seen = new Set()
+    let scopes = 0
+    const add = (schemas) => {
+      if (!Array.isArray(schemas)) return
+      for (const schema of schemas) {
+        const name = isRecord(schema) ? schema.name : undefined
+        if (typeof name !== 'string' || !name || name.length > MAX_TOOL_NAME) continue
+        seen.add(name)
+        if (seen.size >= MAX_TOOL_NAMES) return
+      }
+    }
+    const agents = service('agents')
+    let handles = []
+    try {
+      const listed = typeof agents?.list === 'function' ? agents.list() : []
+      if (Array.isArray(listed)) handles = listed
+    } catch {
+      handles = []
+    }
+    for (const agent of handles) {
+      try {
+        add(tools.schemas(agent))
+        scopes += 1
+      } catch {
+        // One unreadable scope must not hide the others.
+      }
+      if (seen.size >= MAX_TOOL_NAMES) break
+    }
+    let global = 0
+    try {
+      const all = tools.schemas()
+      global = Array.isArray(all) ? all.length : 0
+      add(all)
+    } catch {
+      global = 0
+    }
+    return {
+      available: true,
+      tools: [...seen].slice(0, MAX_TOOL_NAMES),
+      agents: scopes,
+      global,
+    }
+  }
+
+  const reportTools = (message) => {
+    const requestId = message.requestId
+    if (typeof requestId !== 'string' || !requestId || requestId.length > 128) return
+    let payload
+    try {
+      payload = toolRoster()
+    } catch (error) {
+      payload = { available: false, reason: clip(error?.message ?? 'the roster could not be read', 300) }
+    }
+    send({ type: 'tools', requestId, ...payload, t: Date.now() })
+  }
+
   const receive = (line) => {
     let message
     try {
@@ -237,6 +340,7 @@ export function apply(ctx, config) {
     if (!isRecord(message)) return
     if (message.type === 'answer') answer(message)
     else if (message.type === 'cancel') cancel(message)
+    else if (message.type === 'tools') reportTools(message)
     // Anything else is not part of this protocol; ignoring it cannot grant authority.
   }
 

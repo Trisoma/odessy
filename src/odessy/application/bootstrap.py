@@ -72,9 +72,49 @@ class ManagedController(SessionController):
 
 
 async def create_controller(*, workspace=None, model=None, backend=None, use_fake_model=False,
-                            selected_profile=None, interactive=False, turn_lock=None, mode="text"):
+                            selected_profile=None, interactive=False, turn_lock=None,
+                            mode="text", durable=True, restore=None):
     """``mode`` sets the per-turn model-call default: ``voice`` for spoken turns,
-    ``text`` (the default) for typed turns and the session API."""
+    ``text`` (the default) for typed turns and the session API.
+
+    ``durable`` enables the application's own session records (a :class:`SessionStore`, a
+    directory, ``True`` for the default location, or ``False``). ``restore`` continues an
+    existing record by id: the engine is asked to resume the runtime session that record names,
+    and a record that cannot be read or cannot be resumed is refused rather than replaced by a
+    fresh session under the same identity.
+    """
+    from odessy.application.durable import (
+        RuntimeSessionUnavailable,
+        SessionStore,
+        default_store,
+    )
+    store = None
+    if durable not in (None, False):
+        store = durable if isinstance(durable, SessionStore) else default_store()
+    restore_request, restored_id = None, None
+    if restore is not None:
+        if store is None:
+            raise RuntimeSessionUnavailable('disabled',
+                                            'durable sessions are disabled in this process')
+        try:
+            loaded = store.load(str(restore))
+        except ValueError as error:
+            raise RuntimeSessionUnavailable('invalid_id', str(error)) from error
+        if not loaded.usable:
+            raise RuntimeSessionUnavailable(loaded.verdict, loaded.reason)
+        record = loaded.record
+        runtime = record.get('runtime') or {}
+        restored_id = loaded.session
+        restore_request = {'runtime_session': runtime.get('session_id') or '',
+                           'workspace': runtime.get('workspace') or '',
+                           'identity': dict((record.get('engine') or {}).get('identity') or {}),
+                           # The tools this session actually had, verified at creation. A
+                           # restore refuses an observed gap rather than trusting that the
+                           # same servers were asked for again.
+                           'tools': runtime.get('tools')}
+        recorded_profile = record.get('profile')
+        if isinstance(recorded_profile, str) and recorded_profile in profiles:
+            selected_profile = recorded_profile
     from odessy import cli
     workspace = Path(workspace or Path.cwd()).resolve()
     config = load_config()
@@ -189,7 +229,8 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
 
         controller = ManagedController(resources=resources, turn_lock=turn_lock, model_factory=model_factory,
             agent_factory=agent_factory, profiles=profiles, selected_profile=selected_profile or "current",
-            collaboration=service, jobs=jobs, config=config, audit=audit)
+            collaboration=service, jobs=jobs, config=config, audit=audit,
+            durable=store, session_id=restored_id, resume=restore_request)
         if interactive:
             from odessy.interaction.terminal import TerminalInteractionHandler, TerminalUnavailable
             keyboard = TerminalInteractionHandler(controller.interactions, stop_turn=controller.stop)

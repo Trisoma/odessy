@@ -245,7 +245,12 @@ def test_runtime_events_are_filtered_by_id_and_share_the_snapshot():
         assert set(session.public_snapshot()) == {
             "id", "selected_profile", "available_profiles", "active_profile", "running",
             "history", "pending_approvals", "pending_questions", "events",
+            # Prompt 10: durable identity and what a restore would report. This session was
+            # built without a store, so it says so rather than pretending to be durable.
+            "durability", "restore",
         }
+        assert session.public_snapshot()["durability"] == {"enabled": False}
+        assert session.public_snapshot()["restore"] == {}
     finally:
         asyncio.run(session.close())
 
