@@ -208,6 +208,10 @@ class HarnessRuntime:
         self._turn_number = 0
         self._process: HarnessProcess | None = None
         self._identity: dict[str, object] = {}
+        #: The MCP servers this session attached, in launch order. The first is Odessy's own
+        #: tool server; any others are upstream gateways (prompt 09a). Admission is checked
+        #: against these names only, so nothing else can become reachable by title.
+        self._server_names: tuple[str, ...] = ()
         self._acp_session: str | None = None
         self._ready = False
         self._closed = False
@@ -303,24 +307,42 @@ class HarnessRuntime:
         return self._sandbox
 
     def _tool_server_name(self) -> str | None:
-        """The one tool server this session may call, if any (prompt 09)."""
+        """The first tool server this session attached, if any (prompt 09)."""
 
-        servers = self._config.mcp_servers()
-        return str(servers[0]["name"]) if servers else None
+        return self._server_names[0] if self._server_names else None
 
-    def _is_our_tool_call(self, title: Any) -> bool:
-        """Whether a tool title names a tool of this session's own MCP server.
+    def _attached_server_names(self) -> tuple[str, ...]:
+        """The servers this session attached; before ``start``, the ones it will attach.
 
-        The runtime prefixes an MCP tool as ``mcp__<server>__<tool>``. Only that prefix is
-        admitted: a built-in tool row (``bash``, ``pwsh``, ``fs`` …) has no such name and
-        stays refused, which is what keeps a disabled row from becoming reachable through a
-        name that merely looked close enough.
+        ``session/new`` attaches exactly what :meth:`HarnessConfig.mcp_servers` returns, so the
+        planned list and the attached list are the same list. A plan that cannot be built
+        admits nothing, which is the same answer a failed start gives.
         """
 
-        name = self._tool_server_name()
-        if not name or not isinstance(title, str):
+        if self._server_names:
+            return self._server_names
+        try:
+            return tuple(str(entry["name"]) for entry in self._config.mcp_servers())
+        except Exception:  # noqa: BLE001 - an unusable tool plan admits no tool
+            return ()
+
+    def _is_our_tool_call(self, title: Any) -> bool:
+        """Whether a tool title names a tool of a server *this session* attached.
+
+        The runtime prefixes an MCP tool as ``mcp__<server>__<tool>``. Only the prefixes of
+        the servers this session attached are admitted: a built-in tool row (``bash``,
+        ``pwsh``, ``fs`` …) has no such name and stays refused, and so does another
+        session's server or a server that was refused activation — which is what keeps a
+        disabled surface from becoming reachable through a name that merely looked close.
+        """
+
+        if not isinstance(title, str):
             return False
-        return title.startswith(f"mcp__{name}__") and len(title) > len(f"mcp__{name}__")
+        for name in self._attached_server_names():
+            prefix = f"mcp__{name}__"
+            if title.startswith(prefix) and len(title) > len(prefix):
+                return True
+        return False
 
     def _approval_identity(self) -> dict[str, Any]:
         """Who is asking: the runtime identity captured at readiness, plus this session."""
@@ -400,14 +422,18 @@ class HarnessRuntime:
                         "initialize reported protocolVersion="
                         f"{negotiated!r}; this build speaks ACP v{pin.ACP_PROTOCOL_VERSION}"
                     )
+                servers = self._config.mcp_servers(
+                    self._control.address if self._control else None)
+                self._server_names = tuple(str(entry["name"]) for entry in servers)
                 opened = process.call("session/new", {
                     "cwd": str(self._config.workspace),
                     # Odessy's reviewed tool server, spawned and supervised by the runtime as
-                    # this session's stdio MCP child (prompt 09). Empty unless the operator
-                    # opted in, so a package that has not qualified a tool surface still has
-                    # none. Its confinement is fixed by argv from the resolved plan.
-                    "mcpServers": self._config.mcp_servers(self._control.address if self._control else None),
-                }, timeout=self._config.startup_timeout)
+                    # this session's stdio MCP child (prompt 09), plus one guarded gateway per
+                    # upstream (prompt 09a). Empty unless the operator opted in, so a package
+                    # that has not qualified a tool surface still has none. Every entry's
+                    # confinement is fixed by argv from the resolved plan.
+                    "mcpServers": servers,
+                }, timeout=self._config.session_timeout())
                 session_id = opened.get("sessionId")
                 if not isinstance(session_id, str) or not session_id:
                     raise HarnessProtocolError("session/new returned no sessionId")
@@ -452,7 +478,9 @@ class HarnessRuntime:
             self._process = process
             self._acp_session = session_id
             self._identity = {**dict(identity), "sandbox": self._sandbox.describe(),
-                              "tools": self._tool_server_name() or "none"}
+                              "tools": self._tool_server_name() or "none",
+                              "servers": list(self._server_names),
+                              "upstreams": self._config.upstream_activation()}
             self._ready = True
             process.note(
                 f"ready: version={identity.get('version')} "

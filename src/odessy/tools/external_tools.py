@@ -131,13 +131,16 @@ class NamespacedServer:
     #: Sessions kept open for the run. Without it (or for an http server) each listing
     #: and call opens its own connection.
     sessions: ExternalSessions | None = field(default=None, compare=False, repr=False)
+    #: Private per-server credentials captured before a gateway scrubs its environment.
+    #: Existing callers retain normal environment resolution when this is None.
+    environ: Mapping[str, str] | None = field(default=None, compare=False, repr=False)
 
     @property
     def prefix(self) -> str:
         return self.config.name
 
     def connection(self) -> Any:
-        return self.config.connection()
+        return self.config.connection(self.environ)
 
     @property
     def _pooled(self) -> bool:

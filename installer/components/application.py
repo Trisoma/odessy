@@ -24,6 +24,30 @@ def text_hash(data: bytes) -> str:
     return hashlib.sha256(data.replace(b'\r\n',b'\n')).hexdigest()
 
 
+# Reviewed asset kinds for application source. Everything else is refused rather than
+# copied, so an unreviewed file cannot ride into a payload.
+SOURCE_SUFFIXES={'.py','.json','.toml','.txt','.md'}
+# The Harness plugin closure is the one place under `src/odessy` that legitimately carries
+# a bundler-less ES module and the Cordis profile patch it declares. The allowance is
+# path-scoped and extension-scoped on purpose: `.js` or `.yml` anywhere else is still
+# refused, and every declared file also has a digest in
+# `src/odessy/runtime_backends/harness/harness-artifacts.json`.
+BUNDLE_DIRECTORY=('src','odessy','runtime_backends','harness','bundle')
+BUNDLE_SUFFIXES={'.js','.yml'}
+
+
+def reviewed_source_asset(repo: Path, path: Path) -> bool:
+    if path.suffix in SOURCE_SUFFIXES:
+        return True
+    if path.suffix not in BUNDLE_SUFFIXES:
+        return False
+    try:
+        parts=path.relative_to(repo).parts
+    except ValueError:
+        return False
+    return parts[:len(BUNDLE_DIRECTORY)]==BUNDLE_DIRECTORY
+
+
 def source_snapshot(repo: Path) -> dict[str,bytes]:
     paths=[repo/name for name in ('pyproject.toml','README.md','LICENSE','THIRD-PARTY-NOTICES.md','config/odessy.env')]
     for folder in ('src/odessy','policy','THIRD-PARTY-LICENSES'):
@@ -33,7 +57,7 @@ def source_snapshot(repo: Path) -> dict[str,bytes]:
             if path.is_symlink():
                 raise ValueError('Application source contains a file link.')
             if path.is_file():
-                if folder=='src/odessy' and path.suffix not in {'.py','.json','.toml','.txt','.md'}:
+                if folder=='src/odessy' and not reviewed_source_asset(repo,path):
                     raise ValueError('Unreviewed source asset type: '+str(path))
                 paths.append(path)
     if not (repo/'src'/'odessy'/'__main__.py').is_file():

@@ -40,12 +40,14 @@ import mock_provider  # noqa: E402
 
 from odessy.application.session import SessionController  # noqa: E402
 from odessy.runtime_backends import TurnCancelled  # noqa: E402
+from odessy.runtime_backends.harness.resources import bundle_root  # noqa: E402
 
 MODEL = "mock-model"
 PROMPT = "question please"           # the fixture asks, then continues
 STOP_PROMPT = "question stop"        # the fixture asks, and the runner Stops
 CONTINUED = "Answer received; continuing."
-PLUGIN = HERE / "plugin" / "odessy-stream-bridge"
+# The packaged bundle, not a copy under this experiment: one production source.
+PLUGIN = bundle_root()
 PLATFORM = ("PATH", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT",
             "TEMP", "TMP", "USERPROFILE", "APPDATA", "LOCALAPPDATA")
 

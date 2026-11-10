@@ -38,8 +38,8 @@ consecutive runs passed.
 | `stream_bridge.py` | Client for the bridge plugin (token auth, frame collection with receive times) |
 | `mock_provider.py` | Deterministic local provider (Anthropic Messages + OpenAI chat SSE), request log, escalation trigger. `prompt_of()` skips the runtime's own user-role context snapshot, so a marker in the request ("slow", "tool …") selects the scenario |
 | `mcp_echo_server.py` | Three-call MCP stdio server used only to prove external tool invocation |
-| `install_plugin.py` | Installs the spike bundle into an isolated profile using a workspace-local toolchain |
-| `plugin/odessy-stream-bridge/` | The bundle: `package.json`, `cordis.patch.yml`, `lib/index.js`. It forwards live frames **and** answers the runtime's `user-questions` seam over the same authenticated socket; its patch also mounts the upstream `tool-ask-user` row |
+| `install_plugin.py` | Installs the packaged bundle into an isolated profile using a workspace-local toolchain; it resolves the bundle from `odessy.runtime_backends.harness.resources`, so nothing is copied here |
+| `src/odessy/runtime_backends/harness/bundle/odessy-stream-bridge/` | **The** bundle (`package.json`, `cordis.patch.yml`, `lib/index.js`), owned by the product package and declared in `harness-artifacts.json` with a digest per file. It forwards live frames **and** answers the runtime's `user-questions` seam over the same authenticated socket; its patch also mounts the upstream `tool-ask-user` row |
 | `smoke_acceptance.py` | **The gate.** C0–C6 with assertions and non-zero exit |
 | `smoke_sdk.py` | Same pin over the Python SDK: notification census, delta check, method probes, resume |
 | `verify_no_tools.py` | Boots the pin with one or more overlays and reads the tool roster the provider received. Exits 1 unless the roster is within `--allow` (prompt 07 passes `--allow ask_user_question`). Used to design `odessy_narrow.patch.yml` |
@@ -121,7 +121,8 @@ $SPIKE\venv\Scripts\python.exe experiments\restructure\harness_compatibility\smo
   asserts the marker file does not exist.
 - The deterministic provider is a fixture. A green run proves transport behaviour, not
   model quality, latency or provider compatibility. No real-provider evidence is claimed.
-- The bridge plugin is still installed by hand (`install_plugin.py`) and is not packaged; the
+- The bridge plugin is installed by hand (`install_plugin.py`) and its composed profile is not
+  packaged yet; the production source of the bundle itself is the `odessy` package, and the
   production *client* for it lives in `src/odessy/runtime_backends/harness/bridge.py` (prompt 05),
   and both ends of the socket are bounded — see
   [`../../../../restructure/doc/reports/05.md`](../../../../restructure/doc/reports/05.md).

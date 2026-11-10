@@ -72,3 +72,14 @@ build-backend = "setuptools.build_meta"
 # reads it by path at install time, and an installed application reads it when
 # reporting voice readiness.
 "odessy.setup" = ["voice-artifacts.json"]
+# The Harness engine's production inputs. `harness-artifacts.json` is the one
+# declaration of the tested runtime distribution and its digests (`pin.py` derives
+# its enforced constants from it), and `bundle/` is the plugin closure the engine
+# composes. Both must be in the wheel or an installed application would resolve a
+# different set from the checkout that was tested.
+"odessy.runtime_backends.harness" = [
+  "harness-artifacts.json",
+  "bundle/odessy-stream-bridge/package.json",
+  "bundle/odessy-stream-bridge/cordis.patch.yml",
+  "bundle/odessy-stream-bridge/lib/index.js",
+]

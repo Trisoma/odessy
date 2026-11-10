@@ -13,7 +13,9 @@ The bundle of what the child is allowed to be is small and reviewed:
   into the owned Harness home at launch;
 - ``bridge`` — the bounded client for the live-stream plugin (loopback, token, one session);
 - ``stream`` — the per-turn translator that turns those frames into ``delta`` events and one
-  frozen settlement. Deltas are transient; the committed answer still comes from ACP only.
+  frozen settlement. Deltas are transient; the committed answer still comes from ACP only;
+- ``resources`` — the production inputs that are not code: the declared artifact inventory
+  (``harness-artifacts.json``) and the plugin bundle that ships in ``bundle/``.
 """
 
 from __future__ import annotations
@@ -41,6 +43,11 @@ from odessy.runtime_backends.harness.profile import (
     materialize_narrow_patch,
 )
 from odessy.runtime_backends.harness.questions import HarnessQuestionBridge
+from odessy.runtime_backends.harness.resources import (
+    artifact_inventory,
+    bundle_root,
+    bundle_status,
+)
 from odessy.runtime_backends.harness.runtime import HarnessRuntime
 from odessy.runtime_backends.harness.stream import (
     Delta,
@@ -68,6 +75,9 @@ __all__ = [
     "Settlement",
     "ToolProgress",
     "TurnStream",
+    "artifact_inventory",
+    "bundle_root",
+    "bundle_status",
     "default_home",
     "from_environment",
     "materialize_narrow_patch",

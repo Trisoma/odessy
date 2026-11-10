@@ -5,9 +5,12 @@ site-packages neighbour: :func:`odessy.runtime_backends.harness.config.from_envi
 accepts exactly one executable path, and :func:`verify_version` refuses to continue when
 the executable at that path is not the pinned build.
 
-Updating the pin is a reviewed change: bump :data:`PINNED_VERSION` together with the
-artifact digest, rerun the acceptance gate in ``experiments/restructure``, and record the
-result in the integration contract (§13).
+The values below are read from :mod:`odessy.runtime_backends.harness.resources`'
+``harness-artifacts.json``, which ships inside this package. That file is the single
+declaration: the digest a launch enforces and the digest an installer reads are the same
+fact, and a build that shipped the two apart could not disagree silently. Updating the pin
+is a reviewed change to that file plus a re-run of the acceptance gate in
+``experiments/restructure``.
 """
 
 from __future__ import annotations
@@ -16,27 +19,53 @@ import hashlib
 import re
 import subprocess
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from odessy.runtime_backends.contracts import RuntimeUnavailable
+from odessy.runtime_backends.harness.resources import artifact_inventory
+
+
+def _declared(mapping: Mapping[str, Any], name: str, where: str) -> Any:
+    """A required value from the inventory, refused by name rather than by ``KeyError``."""
+
+    if name not in mapping or mapping[name] in (None, ""):
+        raise RuntimeUnavailable(
+            "harness", "the artifact inventory does not declare a required value",
+            detail=f"harness-artifacts.json: {where}.{name}",
+        )
+    return mapping[name]
+
+
+_RUNTIME = artifact_inventory()["runtime"]
+_EXECUTABLES = _RUNTIME.get("executables") or {}
+_WINDOWS = _EXECUTABLES.get("win-x64") or {}
+if not _WINDOWS:
+    raise RuntimeUnavailable(
+        "harness", "the artifact inventory declares no win-x64 executable",
+        detail="harness-artifacts.json: runtime.executables['win-x64']",
+    )
 
 #: Harness release the migration targets (``deepseek-harness-*`` 0.2.1rc2).
-PINNED_VERSION = "0.2.1-rc.2"
-PINNED_SOURCE_TAG = "dsh-v0.2.1-rc.2"
-PINNED_SOURCE_COMMIT = "687f282e8625c6b8d11ff58211a90524be2e4317"
+PINNED_VERSION = str(_declared(_RUNTIME, "declared_version", "runtime"))
+PINNED_SOURCE_TAG = str(_declared(_RUNTIME, "source_tag", "runtime"))
+PINNED_SOURCE_COMMIT = str(_declared(_RUNTIME, "source_commit", "runtime"))
 
 #: Distribution artifacts verified while selecting the pin (wheel platform tag -> sha256).
 PINNED_WHEEL_SHA256: dict[str, str] = {
-    "win_amd64": "d38c18f5117859feedaaa791a0eea37b8644bc187118e7e6f3afa231a5381cb7",
-    "manylinux_2_28_aarch64": "71ed869e3e9a0e3ea398521730889d2d7e154767834165f1553755818e3f2a78",
+    str(tag): str(declared.get("sha256") or "")
+    for tag, declared in (_RUNTIME.get("wheels") or {}).items()
+    if isinstance(declared, dict)
 }
 
 #: The unpacked executable shipped inside the ``win_amd64`` wheel.
-PINNED_EXECUTABLE_SHA256 = "f9ed01f241df37c50c702d81b6c226d576210b8f3947699735ca90285ea13365"
-PINNED_EXECUTABLE_SIZE = 273_157_120
+PINNED_EXECUTABLE_SHA256 = str(_declared(_WINDOWS, "sha256", "runtime.executables['win-x64']"))
+PINNED_EXECUTABLE_SIZE = int(_declared(_WINDOWS, "bytes", "runtime.executables['win-x64']"))
+#: Where that executable sits inside an installed runtime-bin wheel.
+PINNED_EXECUTABLE_PATH = str(_declared(
+    _WINDOWS, "path_in_wheel", "runtime.executables['win-x64']"))
 
 #: Launch contract: the ACP profile speaks JSON-RPC over stdio (contract §3).
-PINNED_PROFILE = "acp"
+PINNED_PROFILE = str(_RUNTIME.get("profile") or "acp")
 ACP_PROTOCOL_VERSION = 1
 
 _VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.\-]+)?")

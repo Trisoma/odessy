@@ -42,10 +42,11 @@ from odessy.authority.redaction import looks_like_secret_name
 from odessy.authority.action_approval import build_action_approval
 from odessy.config.sandbox import SandboxSettings
 from odessy.execution.registry import host_registry
+from odessy.tools.catalog import target_of as _target
 from odessy.tools.mcp_server import SessionPolicy, build_odessy_mcp_server
 from odessy.runtime.types import PolicyDecision, ToolRequest
 
-__all__ = ["authorize", "main", "scrub_environment", "session_settings"]
+__all__ = ["authorize", "main", "review", "scrub_environment", "session_settings"]
 
 #: A route's credential variable is named by the profile (``apiKeyEnv``), so it is not one of
 #: the well-known names: a suffix rule catches every spelling without listing them.
@@ -95,6 +96,27 @@ def scrub_environment(environ: MutableMapping[str, str] | None = None) -> tuple[
     return dropped
 
 
+def review(policy: OdessyPolicy, name: str, arguments: Mapping[str, Any]):
+    """The policy decision, and what the caller must do about it.
+
+    Returns ``(decision, verdict)`` where ``verdict`` is ``None`` to run, a string refusal, or
+    ``("confirm", details)`` — the same approval projection every other Odessy approval uses.
+    ``authorize`` is this function's verdict alone; the upstream gateway also needs the
+    decision itself, so that an audit record can name the rule that produced it.
+    """
+
+    request = ToolRequest(name, dict(arguments))
+    decision: PolicyDecision = policy.evaluate(request)
+    if decision.action == "allow":
+        return decision, None
+    if decision.action == "confirm":
+        plan = build_action_approval(request, decision, policy, call_id="mcp-tool-call",
+                                     execution_target={"host": _target(name),
+                                                       "runtime": "harness"})
+        return decision, ("confirm", plan.public_dict())
+    return decision, f"refused by policy ({decision.rule}): {decision.reason}"
+
+
 def authorize(policy: OdessyPolicy, name: str, arguments: Mapping[str, Any]):
     """``None`` to run, ``("confirm", details)`` to ask, or a refusal reason.
 
@@ -103,15 +125,7 @@ def authorize(policy: OdessyPolicy, name: str, arguments: Mapping[str, Any]):
     without a consent channel it does not run. `deny` is refused with its rule.
     """
 
-    request = ToolRequest(name, dict(arguments))
-    decision: PolicyDecision = policy.evaluate(request)
-    if decision.action == "allow":
-        return None
-    if decision.action == "confirm":
-        plan = build_action_approval(request, decision, policy, call_id="mcp-tool-call",
-                                     execution_target={"host": "local", "runtime": "harness"})
-        return ("confirm", plan.public_dict())
-    return f"refused by policy ({decision.rule}): {decision.reason}"
+    return review(policy, name, arguments)[1]
 
 
 def build_server(*, workspace: Path, policy: OdessyPolicy, session: SessionPolicy,

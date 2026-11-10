@@ -1,4 +1,10 @@
-"""Install the spike plugin bundle into an isolated Harness profile.
+"""Install the packaged plugin bundle into an isolated Harness profile.
+
+The bundle is **not** copied here: it lives in the `odessy` package
+(`src/odessy/runtime_backends/harness/bundle/odessy-stream-bridge/`) and is resolved through
+`odessy.runtime_backends.harness.resources`, so this script installs exactly the files an
+installed Odessy would ship. A missing or edited bundle is reported by
+`resources.bundle_status()` before anything is installed.
 
 `dsh plugin add` shells out to `pnpm`, which the packaged runtime does not bundle.
 This script points that call at a **workspace-local** toolchain (portable Node +
@@ -22,7 +28,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-PLUGIN = Path(__file__).resolve().parent / "plugin" / "odessy-stream-bridge"
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parents[2] / "src"))
+
+from odessy.runtime_backends.harness.resources import bundle_root, bundle_status  # noqa: E402
+
+PLUGIN = bundle_root()
 
 
 def main() -> int:
@@ -32,6 +43,12 @@ def main() -> int:
     parser.add_argument("--toolchain", required=True)
     parser.add_argument("--profile", default="acp")
     args = parser.parse_args()
+
+    status = bundle_status()
+    if status["problems"]:
+        print("the packaged bundle does not match its declaration: "
+              + "; ".join(status["problems"]), file=sys.stderr)
+        return 2
 
     toolchain = Path(args.toolchain).resolve()
     node_dirs = sorted(toolchain.glob("node-v*-win-x64"))
