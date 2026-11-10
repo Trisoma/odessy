@@ -319,6 +319,24 @@ class SessionController:
         finally:
             self._subscribers.discard(queue)
 
+    async def select_model_async(self, profile):
+        """Apply Harness protocol changes off-loop; publish the selection on the app loop."""
+        if self.engine == 'legacy':
+            return self.select_model(profile)
+        if self._closed:
+            raise RuntimeError('Session is closed')
+        self._validate_profile_name(profile)
+        value = self.profiles[profile]
+        if hasattr(value, 'public_dict'):
+            value = value.public_dict()
+        await asyncio.to_thread(self.runtime.select_route,
+                                dict(value) if isinstance(value, dict) else {},
+                                profile_name=profile)
+        self.selected_profile = profile
+        self.emit('selection', {'profile': profile, 'engine': self.engine,
+                               'reason': 'User selection; applies to next turn'})
+        return profile
+
     def select_model(self, profile):
         if self._closed:
             raise RuntimeError('Session is closed')

@@ -84,6 +84,7 @@ class AcpClient:
         self._turns: dict[str, TurnHandle] = {}
         self._stderr: list[str] = []
         self._next_id = 0
+        self._id_lock = threading.Lock()
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
         self._err_reader = threading.Thread(target=self._err_loop, daemon=True)
@@ -148,8 +149,9 @@ class AcpClient:
             self._proc.stdin.flush()
 
     def call(self, method: str, params: Any, timeout: float = 120.0) -> Any:
-        self._next_id += 1
-        request_id = f"spike-{self._next_id}"
+        with self._id_lock:
+            self._next_id += 1
+            request_id = f"spike-{self._next_id}"
         waiter: queue.Queue = queue.Queue(maxsize=1)
         self._responses[request_id] = waiter
         self._write({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
@@ -216,11 +218,13 @@ class AcpClient:
                     "sessionId": session_id,
                     "prompt": [{"type": "text", "text": text}],
                 }, timeout=timeout)
-                handle.finish(result or {}, None)
+                error = None
             except BaseException as exc:  # surfaced to the caller
-                handle.finish(None, exc)
+                result, error = None, exc
             finally:
-                self._turns.pop(session_id, None)
+                if self._turns.get(session_id) is handle:
+                    self._turns.pop(session_id, None)
+            handle.finish(result or {} if error is None else None, error)
 
         threading.Thread(target=run, daemon=True).start()
         return handle

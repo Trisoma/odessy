@@ -23,13 +23,16 @@ class LegacyRuntime:
     capabilities: RuntimeCapabilities = LEGACY_CAPABILITIES
 
     def __init__(self, session: "SessionController"):
+        """Initialize the owned state and synchronization used by this component."""
         self._session = session
 
     @property
     def session_id(self) -> str:
+        """Return the application session identity owned by this adapter."""
         return self._session.id
 
     def events(self, after_id: int = 0) -> list[RuntimeEvent]:
+        """Return normalized events after the requested cursor."""
         return [
             RuntimeEvent.from_public(event)
             for event in self._session.events
@@ -37,9 +40,11 @@ class LegacyRuntime:
         ]
 
     def snapshot(self) -> dict[str, Any]:
+        """Return the application projection without creating a second runtime history."""
         return self._session.public_snapshot()
 
     async def run_turn(self, text: str, *args: Any, **kwargs: Any):
+        """Delegate one admitted input to the bound runtime and return its settled result."""
         return await self._session.run_turn(text, *args, **kwargs)
 
     async def stop(self, *, timeout: float | None = None) -> StopOutcome:
@@ -57,4 +62,5 @@ class LegacyRuntime:
         )
 
     async def close(self) -> None:
+        """Release this component and its owned resources; repeated closure is safe."""
         await self._session.close()

@@ -44,6 +44,7 @@ _WINDOWS_BASE_ENV = (
 
 
 def _base_env_names() -> tuple[str, ...]:
+    """Return the platform environment names required by the child runtime."""
     return _WINDOWS_BASE_ENV if sys.platform == "win32" else _POSIX_BASE_ENV
 
 
@@ -148,6 +149,7 @@ class HarnessConfig:
     source_env: Mapping[str, str] = field(default_factory=dict, repr=False, compare=False)
 
     def argv(self) -> list[str]:
+        """Build the explicit executable and ordered profile-overlay arguments."""
         argv = [*self.command, "--profile", self.profile]
         for patch in self.ordered_patches():
             argv += ["--patch", str(patch)]
@@ -168,6 +170,7 @@ class HarnessConfig:
         return ordered
 
     def child_env(self, parent: Mapping[str, str] | None = None) -> dict[str, str]:
+        """Build the allowlisted child environment from the configured source mapping."""
         if parent is None:
             parent = self.source_env or os.environ
         env = {name: parent[name] for name in _base_env_names() if name in parent}
@@ -208,6 +211,7 @@ class HarnessConfig:
         }
 
     def validate(self) -> None:
+        """Reject unusable launch inputs before a child process is started."""
         if not self.command:
             raise RuntimeUnavailable(ENGINE, "no runtime executable is configured")
         executable = Path(self.command[0])
@@ -246,16 +250,19 @@ class HarnessConfig:
 
 
 def _split_paths(value: str) -> tuple[Path, ...]:
+    """Parse explicit overlay paths without executable discovery."""
     return tuple(Path(part.strip()).expanduser()
                  for part in value.split(os.pathsep) if part.strip())
 
 
 def _split_names(value: str) -> tuple[str, ...]:
+    """Parse the explicitly requested environment passthrough names."""
     return tuple(part.strip() for part in value.replace(os.pathsep, ",").split(",")
                  if part.strip())
 
 
 def _seconds(environ: Mapping[str, str], name: str, default: float) -> float:
+    """Validate a positive configured timeout or use its declared default."""
     raw = (environ.get(name) or "").strip()
     if not raw:
         return default

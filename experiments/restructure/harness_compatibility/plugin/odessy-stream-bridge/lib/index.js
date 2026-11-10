@@ -55,6 +55,15 @@ export function apply(ctx, config) {
   /** Frames dropped since the last notice, because the client was not reading. */
   let dropped = 0
 
+  const pending = new Set()
+  const flushDropped = () => {
+    if (!client || !authenticated || client.destroyed || client.writableLength > MAX_QUEUED_BYTES || dropped === 0) return
+    const lost = dropped
+    dropped = 0
+    try { client.write(JSON.stringify({ type: 'dropped', protocol: 1, frames: lost }) + '\n') }
+    catch { client.destroy() }
+  }
+
   const send = (value) => {
     if (!client || !authenticated || client.destroyed) return
     if (client.writableLength > MAX_QUEUED_BYTES) {
@@ -62,11 +71,7 @@ export function apply(ctx, config) {
       return
     }
     try {
-      if (dropped > 0) {
-        const lost = dropped
-        dropped = 0
-        client.write(JSON.stringify({ type: 'dropped', protocol: 1, frames: lost }) + '\n')
-      }
+      flushDropped()
       client.write(JSON.stringify(value) + '\n')
     } catch {
       client.destroy()
@@ -74,24 +79,28 @@ export function apply(ctx, config) {
   }
 
   const server = net.createServer((socket) => {
-    if (client !== undefined) {
+    if (client !== undefined || pending.size >= 8) {
       socket.destroy()
       return
     }
-    client = socket
-    authenticated = false
+    pending.add(socket)
+    let accepted = false
+    socket.setTimeout(1000, () => socket.destroy())
     let buffer = ''
     socket.setEncoding('utf8')
     socket.on('error', () => socket.destroy())
+    socket.on('drain', flushDropped)
     socket.on('close', () => {
+      pending.delete(socket)
       if (client === socket) {
         client = undefined
         authenticated = false
       }
     })
     socket.on('data', (chunk) => {
-      if (authenticated) return
+      if (accepted) return
       buffer += chunk
+      if (Buffer.byteLength(buffer, 'utf8') > 4096) { socket.destroy(); return }
       const newline = buffer.indexOf('\n')
       if (newline < 0) {
         if (buffer.length > 4096) socket.destroy()
@@ -108,7 +117,11 @@ export function apply(ctx, config) {
         socket.destroy()
         return
       }
-      authenticated = true
+      if (client !== undefined) { socket.destroy(); return }
+      pending.delete(socket)
+      client = socket
+      accepted = authenticated = true
+      socket.setTimeout(0)
       socket.write(JSON.stringify({ type: 'hello', pid: process.pid, protocol: 1 }) + '\n')
     })
   })
@@ -119,6 +132,8 @@ export function apply(ctx, config) {
   ctx.effect(() => {
     server.listen(port, host)
     return () => {
+      for (const socket of pending) socket.destroy()
+      pending.clear()
       client?.destroy()
       client = undefined
       authenticated = false

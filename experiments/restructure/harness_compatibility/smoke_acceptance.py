@@ -160,8 +160,9 @@ def main() -> int:
     client = acp_client.AcpClient(args.exe, env=env, cwd=str(ws), on_request=on_request,
                                   extra_args=["--patch", str(acp_patch)],
                                   stderr_path=work / "acp-stderr.log")
-    bridge = BridgeClient("127.0.0.1", bridge_port, bridge_token)
+    bridge = None
     try:
+        bridge = BridgeClient("127.0.0.1", bridge_port, bridge_token)
         # --- C0 boot ----------------------------------------------------
         init = client.initialize()
         ready_s = round(time.perf_counter() - started, 3)
@@ -284,7 +285,8 @@ def main() -> int:
               bool(tools_call) and tools_call.get("name") == "spike_echo"
               and (tools_call.get("arguments") or {}).get("text") == "hello mcp", str(tools_call))
     finally:
-        bridge.close()
+        if bridge is not None:
+            bridge.close()
         client.close()
         server.shutdown()
 

@@ -199,6 +199,7 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             raise HTTPException(409, 'Service changed; nothing was stopped')
         affected = []
         for sid, controller in list(sessions.items()):
+            task = tasks.get(sid)
             try:
                 outcome = await controller.stop()
             except RuntimeCapabilityUnavailable as exc:
@@ -209,7 +210,6 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                 outcome = {'execution': 'unconfirmed', 'cleanup': 'pending',
                            'requested': False, 'confirmed': False,
                            'detail': type(exc).__name__}
-            task = tasks.get(sid)
             if task is not None and not task.done():
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -788,7 +788,7 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         if not isinstance(data.get('profile'), str):
             raise HTTPException(400, 'profile is required')
         try:
-            find(sid).select_model(data['profile'])
+            await find(sid).select_model_async(data['profile'])
         except RuntimeCapabilityUnavailable as exc:
             raise HTTPException(501, public(exc.public())) from exc
         except ModelRouteLocked as exc:

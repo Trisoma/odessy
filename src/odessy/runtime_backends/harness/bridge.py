@@ -50,6 +50,7 @@ class LiveBridge:
 
     def __init__(self, port: int, token: str, *, host: str = "127.0.0.1",
                  connect_timeout: float = 10.0, queue_size: int = MAX_QUEUED_FRAMES):
+        """Initialize the owned state and synchronization used by this component."""
         if not token:
             raise BridgeError("the bridge requires a non-empty token")
         if not 0 < int(port) < 65536:
@@ -78,6 +79,7 @@ class LiveBridge:
     # ------------------------------------------------------------------ connect/read
 
     def _connect(self, timeout: float) -> socket.socket:
+        """Authenticate the local bridge and validate its protocol greeting."""
         deadline = time.monotonic() + timeout
         last: Exception | None = None
         while time.monotonic() < deadline and not self._closed.is_set():
@@ -89,6 +91,7 @@ class LiveBridge:
         raise BridgeError(f"no bridge listening on {self.host}:{self.port} ({last})")
 
     def _read_line_blocking(self, *, timeout: float | None = None) -> dict[str, Any]:
+        """Read one size-limited handshake line within the socket deadline."""
         if timeout is not None:
             self._sock.settimeout(timeout)
         try:
@@ -112,6 +115,7 @@ class LiveBridge:
         return message
 
     def _read_loop(self) -> None:
+        """Parse bounded transient frames and count rejected frames without leaking payloads."""
         buffer = b""
         discarding = False
         while not self._closed.is_set():
@@ -150,11 +154,7 @@ class LiveBridge:
                 try:
                     self._queue.put_nowait(message)
                 except queue.Full:
-                    # Slow consumer: drop the oldest transient frame and report the loss.
-                    try:
-                        self._queue.get_nowait()
-                    except queue.Empty:
-                        pass
+                    # Keep queued frames; exactly one incoming frame was rejected.
                     self.dropped += 1
             if len(buffer) > MAX_LINE_BYTES:
                 discarding = True
@@ -179,9 +179,11 @@ class LiveBridge:
 
     @property
     def closed(self) -> bool:
+        """Report whether this transport has been explicitly closed."""
         return self._closed.is_set()
 
     def close(self) -> None:
+        """Release this component and its owned resources; repeated closure is safe."""
         self._closed.set()
         try:
             self._sock.shutdown(socket.SHUT_RDWR)

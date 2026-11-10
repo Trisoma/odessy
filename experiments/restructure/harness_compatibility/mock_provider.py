@@ -158,6 +158,7 @@ class Handler(BaseHTTPRequestHandler):
             if any(marker in name for marker in ("pwsh", "bash", "shell", "exec", "fs")):
                 schemas[name] = (tool.get("function") or {}).get("parameters") or tool.get("input_schema")
         self._record({
+            "authorization_present": bool(self.headers.get("authorization") or self.headers.get("x-api-key")),
             "path": self.path,
             "stream": bool(payload.get("stream")),
             "model": payload.get("model"),

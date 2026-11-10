@@ -46,6 +46,7 @@ class Delta:
     received_at: float
 
     def public(self) -> dict[str, Any]:
+        """Return the safe public representation without private runtime state."""
         return {"stream": self.stream, "seq": self.seq, "text": self.text,
                 "attempt": self.attempt, "turn": self.turn}
 
@@ -61,6 +62,7 @@ class ToolProgress:
     turn: Any = None
 
     def public(self) -> dict[str, Any]:
+        """Return the safe public representation without private runtime state."""
         return {"seq": self.seq, "name": self.name, "state": self.state,
                 "call_id": self.call_id, "turn": self.turn}
 
@@ -74,6 +76,7 @@ class Attempt:
     partial: bool
 
     def public(self) -> dict[str, Any]:
+        """Return the safe public representation without private runtime state."""
         return {"number": self.number, "chars": self.chars, "partial": self.partial}
 
 
@@ -96,6 +99,7 @@ class Settlement:
 
     @property
     def partial_attempts(self) -> int:
+        """Count attempts which ended without a complete answer."""
         return sum(1 for attempt in self.attempts if attempt.partial)
 
     def public(self) -> dict[str, Any]:
@@ -123,6 +127,7 @@ def _turn_of(message: Mapping[str, Any]) -> int | None:
     belonging to the turn that is running (the transport is ordered within a session).
     """
     def as_turn(value: Any) -> int | None:
+        """Project a transient attempt into its bounded turn representation."""
         return value if isinstance(value, int) and not isinstance(value, bool) else None
 
     turn = as_turn(message.get("turn"))
@@ -145,6 +150,7 @@ class TurnStream:
                  previous_turn: Any = None,
                  max_delta_chars: int = MAX_DELTA_CHARS,
                  max_turn_chars: int = MAX_TURN_CHARS):
+        """Initialize the owned state and synchronization used by this component."""
         self.session_id = session_id
         self.stream_id = stream_id or session_id
         #: Bridge turn numbers up to this one belong to a turn that has already settled.
@@ -177,10 +183,12 @@ class TurnStream:
 
     @property
     def settled(self) -> bool:
+        """Report whether this transient stream has a terminal settlement."""
         return self._settled is not None
 
     @property
     def attempts(self) -> tuple[Attempt, ...]:
+        """Return the recorded attempt projections for this turn."""
         with self._lock:
             return tuple(self._attempts)
 
@@ -191,6 +199,7 @@ class TurnStream:
             return self._turn
 
     def snapshot(self) -> dict[str, Any]:
+        """Return the application projection without creating a second runtime history."""
         with self._lock:
             return {"deltas": self._deltas, "dropped": self._dropped, "late": self._late,
                     "malformed": self._malformed, "foreign": self._foreign,
@@ -248,6 +257,7 @@ class TurnStream:
             return self._chunk(message, received)
 
     def _lifecycle(self, frame: Mapping[str, Any], turn: Any) -> list[Delta | ToolProgress]:
+        """Apply one ordered start/end frame to the active stream attempt."""
         kind = str(frame.get("type") or "")
         if kind == "start":
             if self._collector.number and not self._collector.closed:
@@ -267,6 +277,7 @@ class TurnStream:
         return []
 
     def _chunk(self, message: Mapping[str, Any], received: float) -> list[Delta | ToolProgress]:
+        """Apply a validated delta while enforcing text and identity bounds."""
         chunk = message.get("chunk")
         if not isinstance(chunk, Mapping):
             self._malformed += 1
@@ -347,6 +358,7 @@ class TurnStream:
             self._late += max(0, int(count))
 
     def _close_attempt(self, *, partial: bool) -> None:
+        """Finish the current attempt without reclassifying partial text as committed."""
         if not self._collector.number or self._collector.closed:
             return
         self._collector.closed = True

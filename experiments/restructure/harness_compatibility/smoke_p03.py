@@ -90,7 +90,7 @@ def main() -> int:
                      "    model: mock-model\n", encoding="utf-8")
     server, port = mock_provider.serve(work / "mock")
 
-    environ = {
+    environ = {"ODESSY_SMOKE_SECRET": "must-not-be-inherited",
         "ODESSY_HARNESS_EXE": str(Path(args.exe).resolve()),
         "ODESSY_HARNESS_HOME": str(home),
         "ODESSY_HARNESS_WORKSPACE": str(workspace),
@@ -119,6 +119,7 @@ def main() -> int:
     # Prove the allowlist is an allowlist: a variable that exists in this process but is
     # not named in ODESSY_HARNESS_PASS_ENV must not reach the child.
     os.environ["ODESSY_SMOKE_SECRET"] = "must-not-reach-the-child"
+    environ["ODESSY_SMOKE_SECRET"] = os.environ["ODESSY_SMOKE_SECRET"]
     config = from_environment(environ, workspace=workspace)
     child_env = config.child_env()
 

@@ -48,6 +48,7 @@ class RuntimeUnavailable(RuntimeSelectionFailure):
     code = "runtime_unavailable"
 
     def __init__(self, engine: str, reason: str, *, detail: str = ""):
+        """Initialize the owned state and synchronization used by this component."""
         self.engine = engine
         self.reason = reason
         self.detail = detail
@@ -57,6 +58,7 @@ class RuntimeUnavailable(RuntimeSelectionFailure):
         super().__init__(message)
 
     def public(self) -> dict[str, str]:
+        """Return the safe public representation without private runtime state."""
         return {"engine": self.engine, "reason": self.reason, "detail": self.detail}
 
 
@@ -66,6 +68,7 @@ class RuntimeEngineLocked(RuntimeSelectionFailure):
     code = "runtime_engine_locked"
 
     def __init__(self, current: str, requested: str):
+        """Initialize the owned state and synchronization used by this component."""
         self.current = current
         self.requested = requested
         super().__init__(
@@ -83,10 +86,12 @@ class ModelRouteError(RuntimeSelectionFailure):
     code = "model_route_invalid"
 
     def __init__(self, message: str):
+        """Initialize the owned state and synchronization used by this component."""
         self.message = message
         super().__init__(message)
 
     def public(self) -> dict[str, str]:
+        """Return the safe public representation without private runtime state."""
         return {"message": self.message}
 
 
@@ -102,6 +107,7 @@ class ModelRouteLocked(RuntimeSelectionFailure):
     code = "model_route_locked"
 
     def __init__(self, current: str, requested: str):
+        """Initialize the owned state and synchronization used by this component."""
         self.current = current
         self.requested = requested
         super().__init__(
@@ -110,6 +116,7 @@ class ModelRouteLocked(RuntimeSelectionFailure):
         )
 
     def public(self) -> dict[str, str]:
+        """Return the safe public representation without private runtime state."""
         return {"current": self.current, "requested": self.requested}
 
 
@@ -124,6 +131,7 @@ class RuntimeCapabilityUnavailable(RuntimeSelectionFailure):
     code = "runtime_capability_unavailable"
 
     def __init__(self, capability: str, *, engine: str = "harness", gate: str = ""):
+        """Initialize the owned state and synchronization used by this component."""
         self.capability = capability
         self.engine = engine
         self.gate = gate
@@ -133,6 +141,7 @@ class RuntimeCapabilityUnavailable(RuntimeSelectionFailure):
         super().__init__(message)
 
     def public(self) -> dict[str, str]:
+        """Return the safe public representation without private runtime state."""
         return {"engine": self.engine, "capability": self.capability, "gate": self.gate}
 
 
@@ -157,17 +166,19 @@ class RuntimeCapabilities:
 
     #: Flags a caller may gate on. An unknown name is a programming error, not a
     #: "not supported" answer, so it raises instead of returning False.
-    FLAGS: tuple[str, ...] = (
+    FLAGS: ClassVar[tuple[str, ...]] = (
         "live_text_deltas", "per_session_cancel", "approvals", "questions",
         "durable_history", "resume", "mcp_tools",
     )
 
     def supports(self, name: str) -> bool:
+        """Report whether a named capability is advertised by this engine."""
         if name not in self.FLAGS:
             raise KeyError(f"unknown runtime capability: {name!r}")
         return bool(getattr(self, name))
 
     def public(self) -> dict[str, Any]:
+        """Return the safe public representation without private runtime state."""
         return asdict(self)
 
 
@@ -267,6 +278,7 @@ class RuntimeEvent:
 
     @classmethod
     def from_public(cls, event: Mapping[str, Any]) -> "RuntimeEvent":
+        """Validate and restore a runtime event from its public envelope."""
         if not isinstance(event, Mapping):
             raise TypeError("runtime events must be mappings")
         event_id = event.get("id")
@@ -287,6 +299,7 @@ class RuntimeEvent:
         )
 
     def public(self) -> dict[str, Any]:
+        """Return the safe public representation without private runtime state."""
         return {"id": self.id, "type": self.type, "time": self.time,
                 "data": _copy_payload(self.data)}
 
@@ -317,6 +330,7 @@ class StopOutcome:
     CLEANUPS: ClassVar[tuple[str, ...]] = ("complete", "pending")
 
     def __post_init__(self) -> None:
+        """Validate the immutable contract before it can cross the runtime boundary."""
         if self.execution not in self.EXECUTIONS:
             raise ValueError(f"unknown stop execution: {self.execution!r}")
         if self.cleanup not in self.CLEANUPS:
@@ -328,6 +342,7 @@ class StopOutcome:
         return self.execution == "stopped"
 
     def public(self) -> dict[str, Any]:
+        """Return the safe public representation without private runtime state."""
         return {"requested": self.requested, "execution": self.execution,
                 "cleanup": self.cleanup, "stop_reason": self.stop_reason,
                 "confirmed": self.confirmed, "detail": self.detail}
@@ -342,11 +357,13 @@ class TurnCancelled(Exception):
     """
 
     def __init__(self, outcome: Mapping[str, Any] | None = None, *, detail: str = ""):
+        """Initialize the owned state and synchronization used by this component."""
         self.outcome = dict(outcome or {})
         self.detail = detail or str(self.outcome.get("detail") or "")
         super().__init__("the turn was cancelled" + (f": {self.detail}" if self.detail else ""))
 
     def public(self) -> dict[str, Any]:
+        """Return the safe public representation without private runtime state."""
         return dict(self.outcome)
 
 

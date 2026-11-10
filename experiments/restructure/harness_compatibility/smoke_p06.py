@@ -104,6 +104,11 @@ def main() -> int:
         path.mkdir(parents=True, exist_ok=True)
     (work / "mock" / "requests.jsonl").write_text("", encoding="utf-8")
 
+    if args.toolchain:
+        from smoke_p05 import install_plugin
+        installed, detail = install_plugin(args.exe, home, Path(args.toolchain).resolve())
+        if not installed:
+            raise RuntimeError(detail)
     checks: list[tuple[str, bool, str]] = []
     server, port = mock_provider.serve(work / "mock")
     try:
@@ -135,6 +140,7 @@ def main() -> int:
                 other_turn = asyncio.ensure_future(unrelated.run_turn("hello"))
                 await asyncio.sleep(STOP_AFTER)
                 seen["generating"] = delta_count("stopped-session")
+                seen["provider_started"] = (work / "mock" / "requests.jsonl").stat().st_size > 0
                 started = time.monotonic()
                 outcome = await stopped.stop(timeout=15.0)
                 seen["stop_seconds"] = time.monotonic() - started
@@ -147,7 +153,8 @@ def main() -> int:
                 seen["after_stop"] = delta_count("stopped-session")
                 await asyncio.sleep(1.5)     # nothing should arrive for a finished turn
                 seen["later"] = delta_count("stopped-session")
-                again = await stopped.run_turn("hello")    # the session survived the Stop
+                again = await stopped.run_turn("hello")
+                seen["post_stop_pid"] = stopped._process.pid    # the session survived the Stop
                 return outcome, cancelled, other, again
             finally:
                 await stopped.close()
@@ -163,7 +170,7 @@ def main() -> int:
                        seen.get("stop_seconds", 99) < 5.0,
                        f"{seen.get('stop_seconds', 0):.2f}s"))
         checks.append(("the turn was really generating when it was stopped",
-                       seen["generating"] > 0,
+                       (seen["generating"] > 0 if stopped.capabilities.live_text_deltas else seen["provider_started"]),
                        f"{seen['generating']} deltas before the Stop"))
         checks.append(("the cancelled text never became an answer",
                        cancelled is not None
@@ -184,7 +191,7 @@ def main() -> int:
                        all(not _alive(pid) for pid in seen["pids"].values()),
                        str(sorted(seen["pids"].values()))))
         checks.append(("stops were not implemented by killing the child",
-                       "the session was still usable" and again.final_text == EXPECTED_TEXT,
+                       seen.get("post_stop_pid") == seen["pids"]["stopped"] and again.final_text == EXPECTED_TEXT,
                        "the stopped session ran another turn after the Stop"))
         requests = [json.loads(line) for line in
                     (work / "mock" / "requests.jsonl").read_text(

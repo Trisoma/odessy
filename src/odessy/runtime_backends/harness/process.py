@@ -56,6 +56,7 @@ class HarnessTransportError(HarnessProcessError):
 
     def __init__(self, message: str, *, exit_code: int | None = None,
                  diagnostics: Sequence[str] = ()):  # noqa: D401 - plain data
+        """Initialize the owned state and synchronization used by this component."""
         self.exit_code = exit_code
         self.diagnostics = list(diagnostics)
         detail = f" (exit code {exit_code})" if exit_code is not None else ""
@@ -69,6 +70,7 @@ class HarnessProtocolError(HarnessProcessError):
 
 
 def _clip(text: str) -> str:
+    """Redact and bound a diagnostic before retaining or exposing it."""
     text = redact_text(text)
     return text if len(text) <= _MAX_FRAME_CHARS else text[:_MAX_FRAME_CHARS] + "…"
 
@@ -77,6 +79,7 @@ class HarnessProcess:
     """One supervised child. Not reusable: construct a new instance per session."""
 
     def __init__(self, config: HarnessConfig):
+        """Initialize the owned state and synchronization used by this component."""
         self.config = config
         self._process: subprocess.Popen[str] | None = None
         self._reader: threading.Thread | None = None
@@ -102,21 +105,26 @@ class HarnessProcess:
 
     @property
     def pid(self) -> int | None:
+        """Return the owned child PID, if a child was started."""
         return None if self._process is None else self._process.pid
 
     @property
     def exit_code(self) -> int | None:
+        """Return the most recently observed child exit status."""
         return self._exit_code
 
     @property
     def alive(self) -> bool:
+        """Report whether the direct child is still running."""
         return self._process is not None and self._process.poll() is None
 
     @property
     def malformed_frames(self) -> int:
+        """Return the number of rejected malformed transport frames."""
         return self._malformed
 
     def diagnostics(self) -> list[str]:
+        """Return a bounded snapshot of content-safe runtime diagnostics."""
         with self._state_lock:
             return list(self._diagnostics)
 
@@ -136,6 +144,7 @@ class HarnessProcess:
     # ---------------------------------------------------------------------- start
 
     def start(self) -> None:
+        """Start the explicitly configured child and establish process-tree ownership."""
         if self._process is not None:
             raise RuntimeError("the Harness process was already started")
         argv = self.config.argv()
@@ -231,12 +240,14 @@ class HarnessProcess:
         return result
 
     def notify(self, method: str, params: Mapping[str, Any] | None = None) -> None:
+        """Write one JSON-RPC notification without registering a reply waiter."""
         payload = {"jsonrpc": "2.0", "method": method}
         if params is not None:
             payload["params"] = dict(params)
         self._write(payload)
 
     def _write(self, payload: Mapping[str, Any]) -> None:
+        """Serialize a protocol frame to the child under the writer lock."""
         process = self._process
         if process is None or process.stdin is None:
             raise HarnessTransportError("the Harness process is not running")
@@ -254,6 +265,7 @@ class HarnessProcess:
     # ---------------------------------------------------------------------- reads
 
     def _read_stdout(self) -> None:
+        """Read bounded protocol lines and dispatch valid frames to their owners."""
         stream = self._process.stdout  # type: ignore[union-attr]
         try:
             for line in stream:
@@ -277,6 +289,7 @@ class HarnessProcess:
             self._on_stream_end("stdout")
 
     def _read_stderr(self) -> None:
+        """Retain bounded redacted diagnostics without blocking the protocol reader."""
         stream = self._process.stderr  # type: ignore[union-attr]
         try:
             for line in stream:
@@ -287,6 +300,7 @@ class HarnessProcess:
             pass
 
     def _dispatch(self, message: dict[str, Any]) -> None:
+        """Route a validated JSON-RPC message to its waiter, observer or refusal handler."""
         if "method" in message:
             if "id" in message:
                 self._refuse(message)
@@ -313,6 +327,7 @@ class HarnessProcess:
         waiter.put(message)
 
     def _refuse(self, message: dict[str, Any]) -> None:
+        """Reject an unsupported server request without granting authority."""
         method = str(message.get("method"))
         request_id = message.get("id")
         with self._state_lock:
@@ -331,6 +346,7 @@ class HarnessProcess:
             pass
 
     def _on_stream_end(self, which: str) -> None:
+        """Wake pending waiters when a transport ends, including during closure."""
         process = self._process
         exit_code: int | None = None
         if process is not None:
@@ -340,20 +356,19 @@ class HarnessProcess:
                 exit_code = None
         with self._state_lock:
             self._exit_code = exit_code
-            if self._closing:
-                return
-            if self._dead is None:
+            if self._dead is None and not self._closing:
                 self._dead = HarnessTransportError(
                     f"the Harness process {which} ended unexpectedly",
                     exit_code=exit_code, diagnostics=self.diagnostics(),
                 )
-            failure = self._dead
+            failure = self._dead or HarnessTransportError("the Harness process closed", exit_code=exit_code)
             pending, self._pending = self._pending, {}
         self._add_diagnostic(f"{which} ended (exit={exit_code})")
         for waiter in pending.values():
             waiter.put({_TRANSPORT_FAILURE: str(failure)})
 
     def _add_diagnostic(self, line: str) -> None:
+        """Append one already bounded diagnostic to the retained history."""
         with self._state_lock:
             self._diagnostics.append(line)
 
@@ -371,7 +386,7 @@ class HarnessProcess:
         try:
             process = self._process
             if process is not None and process.poll() is None:
-                if self._job is None:
+                if self._job is None and (sys.platform == "win32" or self._pgid is None):
                     # Without a job object a graceful exit can orphan descendants: the
                     # runtime ends on EOF and its children keep running, out of reach of
                     # `taskkill /T` because the parent pid is gone. Killing while the
@@ -384,12 +399,18 @@ class HarnessProcess:
                     self._kill_tree()
                 else:
                     self._add_diagnostic("closing stdin (graceful shutdown)")
-                    with self._write_lock:
+                    acquired = self._write_lock.acquire(timeout=max(0, deadline - time.monotonic()))
+                    if not acquired:
+                        self._add_diagnostic("shutdown writer is blocked; killing the owned tree")
+                        self._kill_tree()
+                    else:
                         try:
                             if process.stdin is not None:
                                 process.stdin.close()
                         except OSError:
                             pass
+                        finally:
+                            self._write_lock.release()
                     try:
                         process.wait(timeout=max(0.1, deadline - time.monotonic()))
                     except subprocess.TimeoutExpired:
@@ -408,6 +429,7 @@ class HarnessProcess:
             self._closed.set()
 
     def _terminate(self) -> None:
+        """Request direct-child termination when graceful shutdown cannot finish."""
         process = self._process
         if process is None or process.poll() is not None:
             return
@@ -471,6 +493,7 @@ class HarnessProcess:
             pass
 
     def wait_for_exit(self, timeout: float) -> int | None:
+        """Wait up to the caller bound and return the observed child exit code."""
         process = self._process
         if process is None:
             return None

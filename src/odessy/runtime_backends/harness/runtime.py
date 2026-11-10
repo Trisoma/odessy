@@ -53,7 +53,7 @@ CANCEL_STOP_REASON = "cancelled"
 _LIVE_CAPABILITIES = replace(HARNESS_CAPABILITIES, live_text_deltas=True)
 
 
-def _sibling_models(session: Any, selected: Any) -> tuple[str, ...]:
+def _sibling_models(session: Any, selected: Any, environ=None) -> tuple[str, ...]:
     """Models of the session's other profiles that share the selected profile's provider.
 
     Declaring them up front is what lets ``select_route`` change the model without a
@@ -61,7 +61,10 @@ def _sibling_models(session: Any, selected: Any) -> tuple[str, ...]:
     """
     provider = (selected or {}).get("provider") if isinstance(selected, dict) else None
     if not provider:
-        return ()
+        try:
+            provider = resolve_route(selected, environ=environ, require_credential=False).provider
+        except (ModelRouteError, RuntimeUnavailable):
+            return ()
     profiles = getattr(session, "model_profiles", None)
     profiles = profiles() if callable(profiles) else profiles
     models = []
@@ -108,6 +111,7 @@ class HarnessRuntime:
         # an unroutable profile fails session creation instead of the first prompt.
         # Engine configuration first: "this build has no runtime" is a more fundamental
         # failure than "this profile has no route", and callers rely on that ordering.
+        """Initialize the owned state and synchronization used by this component."""
         base_config = config if config is not None else from_environment()
         profile = getattr(session, "model_profile", None)
         selected = profile() if callable(profile) else profile
@@ -116,7 +120,7 @@ class HarnessRuntime:
             # The route resolves in the same environment the engine was configured from, so
             # an explicit mapping (tests, integration smoke) also governs credentials.
             environ=dict(base_config.source_env) or None,
-            extra_models=_sibling_models(session, selected),
+            extra_models=_sibling_models(session, selected, dict(base_config.source_env) or None),
         )
         # Live text needs a port and a token the packaged plugin reads from its
         # environment. Both are generated per session; the token never leaves memory or
@@ -185,6 +189,7 @@ class HarnessRuntime:
 
     @property
     def config(self) -> HarnessConfig:
+        """Return the immutable launch configuration for this session."""
         return self._config
 
     @property
@@ -194,10 +199,12 @@ class HarnessRuntime:
 
     @property
     def acp_session_id(self) -> str | None:
+        """Return the opened runtime session identity, if available."""
         return self._acp_session
 
     @property
     def last_stop_reason(self) -> str | None:
+        """Return the latest runtime-reported terminal reason."""
         return self._last_stop_reason
 
     @property
@@ -227,9 +234,11 @@ class HarnessRuntime:
             return self._stopping or self._pending_cancel_writes > 0
 
     def diagnostics(self) -> list[str]:
+        """Return a bounded snapshot of content-safe runtime diagnostics."""
         return [] if self._process is None else self._process.diagnostics()
 
     def _bridge_environment(self) -> dict[str, str]:
+        """Return the session-specific bridge coordinates without other credentials."""
         if not self._bridge_enabled:
             return {}
         return {"ODESSY_BRIDGE_PORT": str(self._bridge_port),
@@ -243,18 +252,41 @@ class HarnessRuntime:
             raise RuntimeUnavailable(ENGINE, "the session is closed")
         if self._ready:
             return dict(self._identity)
+        worker = asyncio.create_task(asyncio.to_thread(self._start_blocking))
         try:
-            await asyncio.to_thread(self._start_blocking)
+            await asyncio.shield(worker)
         except asyncio.CancelledError:
             # Cancelling this await does not stop the worker thread. Mark the start as
             # abandoned so the worker closes the child it is building instead of
             # publishing it; otherwise a cancelled start would leak a running runtime.
             self._abandoned = True
+            try:
+                await asyncio.shield(worker)
+            except Exception:
+                pass
+            await asyncio.to_thread(self._reset_cancelled_start)
             raise
         return dict(self._identity)
 
+    def _reset_cancelled_start(self) -> None:
+        """Dispose only the interrupted startup attempt, preserving a reusable session."""
+        with self._lifecycle:
+            if self._closed:
+                return
+            self._stop_pump()
+            if self._bridge is not None:
+                self._bridge.close()
+                self._bridge = None
+            if self._process is not None:
+                self._process.close()
+            self._process = None
+            self._acp_session = None
+            self._ready = self._live = False
+            self._abandoned = False
+
     def _start_blocking(self) -> None:
         # Thread context: no event loop, so every wait here is a plain blocking wait.
+        """Verify, launch and negotiate the child while holding lifecycle ownership."""
         with self._lifecycle:
             if self._ready:
                 return
@@ -384,6 +416,15 @@ class HarnessRuntime:
         ]
 
     def select_route(self, profile: Any, *, profile_name: str = "") -> dict[str, Any]:
+        """Serialize a blocking route change with turn admission; async callers offload it."""
+        if self.stopping or not self._turn_lock.acquire(blocking=False):
+            raise ModelRouteError("the model cannot change while a turn is running")
+        try:
+            return self._select_route_locked(profile, profile_name=profile_name)
+        finally:
+            self._turn_lock.release()
+
+    def _select_route_locked(self, profile: Any, *, profile_name: str = "") -> dict[str, Any]:
         """Apply a model change for **future** turns; refuse anything else.
 
         A provider change would need another child (the credential is fixed at launch), so
@@ -391,7 +432,7 @@ class HarnessRuntime:
         """
         if self._closed:
             raise RuntimeUnavailable(ENGINE, "the session is closed")
-        if self._busy:
+        if self._busy or self.stopping:
             raise ModelRouteError("the model cannot change while a turn is running")
         # Resolve in the environment this session was configured from, not whatever the
         # process environment happens to be at the moment of the change.
@@ -438,6 +479,7 @@ class HarnessRuntime:
         return candidate.public()
 
     def _discard(self, process: HarnessProcess) -> None:
+        """Reap a failed startup child without masking its original error."""
         try:
             process.close()
         except Exception:  # noqa: BLE001 - cleanup must not mask the original failure
@@ -445,6 +487,7 @@ class HarnessRuntime:
 
     @staticmethod
     def _detail(exc: BaseException) -> str:
+        """Return bounded diagnostic context suitable for a runtime failure."""
         text = str(exc)
         diagnostics = getattr(exc, "diagnostics", None)
         if diagnostics:
@@ -459,6 +502,7 @@ class HarnessRuntime:
     def _close_blocking(self) -> None:
         # Blocks until any in-flight startup has left its critical section, so the two
         # transitions cannot interleave and no process can appear after this returns.
+        """Dispose the owned runtime and bridge under lifecycle synchronization."""
         with self._lifecycle:
             if self._closed:
                 return
@@ -476,6 +520,7 @@ class HarnessRuntime:
     # ----------------------------------------------------------------- interface
 
     def events(self, after_id: int = 0) -> list[RuntimeEvent]:
+        """Return normalized events after the requested cursor."""
         events = getattr(self._session, "events", ())
         if callable(events):  # a session may expose events as a method
             events = events()
@@ -484,6 +529,7 @@ class HarnessRuntime:
                 if event["id"] > after_id]
 
     def snapshot(self) -> dict[str, Any]:
+        """Return the application projection without creating a second runtime history."""
         return self._session.public_snapshot()
 
     async def run_turn(self, text: str, *args: Any, **kwargs: Any) -> AgentTurnResult:
@@ -546,6 +592,7 @@ class HarnessRuntime:
         return True
 
     def _note(self, line: str) -> None:
+        """Record a safe diagnostic when a runtime process is available."""
         process = self._process
         if process is not None:
             try:
@@ -554,6 +601,7 @@ class HarnessRuntime:
                 pass
 
     def _prompt_blocking(self, text: str) -> AgentTurnResult:
+        """Execute and settle one ACP prompt without releasing live timed-out work."""
         process = self._process
         if process is None:
             raise RuntimeUnavailable(ENGINE, "the runtime is not running")
@@ -589,6 +637,10 @@ class HarnessRuntime:
                 raise RuntimeUnavailable(ENGINE, "the runtime exited during the turn",
                                          detail=self._detail(exc)) from exc
             except HarnessProtocolError as exc:
+                if "got no reply within" in str(exc):
+                    # Losing the reply waiter does not stop remote work. Reap the owned
+                    # runtime before releasing admission, never send another prompt to it.
+                    self._close_blocking()
                 raise RuntimeUnavailable(ENGINE, "the turn failed", detail=str(exc)) from exc
 
             stop_reason = str(reply.get("stopReason"))
@@ -638,6 +690,7 @@ class HarnessRuntime:
     # ------------------------------------------------------------------ live pump
 
     def _discard_stale(self, stream: TurnStream) -> None:
+        """Drain pre-turn transient frames so they cannot enter the next turn."""
         bridge = self._bridge
         if bridge is None:
             return
@@ -729,6 +782,7 @@ class HarnessRuntime:
 
     @staticmethod
     def _assistant_text(updates: list[dict[str, Any]]) -> str:
+        """Assemble visible assistant text from committed runtime notifications."""
         parts: list[str] = []
         for notification in updates:
             params = notification.get("params") or {}
