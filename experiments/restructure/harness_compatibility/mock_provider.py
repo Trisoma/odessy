@@ -165,6 +165,8 @@ class Handler(BaseHTTPRequestHandler):
                 "sandbox_permissions": "danger-full-access",
                 "justification": "Spike: prove the approval prompt reaches the client.",
             }}
+        if prompt.startswith("tool ") and messages and messages[-1].get("role") == "tool":
+            chunks, delay_ms, tool_call = (["Tool completed."], 10, None)
         tools = payload.get("tools") or []
 
         def tool_name(tool: dict) -> str:

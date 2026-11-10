@@ -35,8 +35,11 @@ from collections.abc import Mapping, MutableMapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from odessy.authority.command_bridge import terminate_process_tree
+from odessy.authority.tool_control import ToolClient
 from odessy.authority.policy import OdessyPolicy
 from odessy.authority.redaction import looks_like_secret_name
+from odessy.authority.action_approval import build_action_approval
 from odessy.config.sandbox import SandboxSettings
 from odessy.execution.registry import host_registry
 from odessy.tools.mcp_server import SessionPolicy, build_odessy_mcp_server
@@ -92,27 +95,27 @@ def scrub_environment(environ: MutableMapping[str, str] | None = None) -> tuple[
     return dropped
 
 
-def authorize(policy: OdessyPolicy, name: str, arguments: Mapping[str, Any]) -> str | None:
-    """``None`` when the policy allows this call outright, else the refusal reason.
+def authorize(policy: OdessyPolicy, name: str, arguments: Mapping[str, Any]):
+    """``None`` to run, ``("confirm", details)`` to ask, or a refusal reason.
 
-    `allow` executes. `confirm` would need a person, and this transport cannot ask one, so it
-    is refused rather than downgraded: an operation that needs consent must not run because it
-    arrived over a channel that cannot request consent. `deny` is refused with its rule.
+    `allow` executes. `confirm` returns the same approval projection every other Odessy
+    approval uses, so the caller can put it to a person through the application's own broker;
+    without a consent channel it does not run. `deny` is refused with its rule.
     """
 
-    decision: PolicyDecision = policy.evaluate(ToolRequest(name, dict(arguments)))
+    request = ToolRequest(name, dict(arguments))
+    decision: PolicyDecision = policy.evaluate(request)
     if decision.action == "allow":
         return None
     if decision.action == "confirm":
-        return (
-            "this operation requires confirmation, and the Harness tool transport has no "
-            "consent channel; refusing instead of running it unconfirmed "
-            f"(rule={decision.rule})"
-        )
+        plan = build_action_approval(request, decision, policy, call_id="mcp-tool-call",
+                                     execution_target={"host": "local", "runtime": "harness"})
+        return ("confirm", plan.public_dict())
     return f"refused by policy ({decision.rule}): {decision.reason}"
 
 
-def build_server(*, workspace: Path, policy: OdessyPolicy, session: SessionPolicy):
+def build_server(*, workspace: Path, policy: OdessyPolicy, session: SessionPolicy,
+                 consent=None, on_spawn=None):
     """The reviewed Odessy tool surface, guarded and confined for one session."""
 
     return build_odessy_mcp_server(
@@ -122,6 +125,8 @@ def build_server(*, workspace: Path, policy: OdessyPolicy, session: SessionPolic
         include_terminal=True,
         session_policy=session,
         authorize=lambda name, arguments: authorize(policy, name, arguments),
+        consent=consent,
+        on_spawn=on_spawn,
     )
 
 
@@ -133,6 +138,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--network", default="allow")
     parser.add_argument("--hidden", action="append", default=[])
     parser.add_argument("--extra-writable", action="append", default=[])
+    parser.add_argument("--control-port", type=int, default=0)
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     workspace = Path(args.workspace).resolve()
@@ -140,6 +146,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"odessy-stdio: workspace is not a directory: {workspace}", file=sys.stderr)
         return 2
     # Before anything else can start a child: this process is a tool pipeline, not a client.
+    control_token = os.environ.pop("ODESSY_TOOL_CONTROL_TOKEN", "")
     dropped = scrub_environment()
     if dropped:
         print(f"odessy-stdio: dropped inherited secrets: {', '.join(dropped)}", file=sys.stderr)
@@ -149,7 +156,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     session = SessionPolicy(mode=args.mode, isolation=args.isolation, network=args.network,
                             hidden_paths=tuple(args.hidden),
                             extra_writable=tuple(args.extra_writable))
-    server = build_server(workspace=workspace, policy=policy, session=session)
+
+    client = ToolClient(args.control_port, control_token) if args.control_port else None
+    def checked_authorize(name, arguments):
+        if client is not None and not client.enter():
+            return "the turn is cancelled or the control channel is unavailable"
+        return authorize(policy, name, arguments)
+    server = build_odessy_mcp_server(
+        workspace_root=workspace, registry=host_registry(), include_terminal=True,
+        session_policy=session, authorize=checked_authorize,
+        consent=client.consent if client else None,
+        on_spawn=client.on_spawn if client else None,
+        before_spawn=client.before_spawn if client else None)
     asyncio.run(server.run_stdio_async())
     return 0
 

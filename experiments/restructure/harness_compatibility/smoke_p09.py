@@ -103,6 +103,48 @@ def _alive(pid: int) -> bool:
     return str(pid) in out
 
 
+async def _approve_once(session, approved=True) -> None:
+    """Answer the first approval the session raises, through its own broker.
+
+    This is the same broker an interactive client uses (`pending_approvals` /
+    `answer_approval`), so the consent travels the authenticated path, not a test-only
+    shortcut inside the tool server.
+    """
+
+    for _ in range(2400):
+        pending = session.pending_approvals
+        if pending:
+            session.answer_approval(pending[0]["id"], approved)
+            return
+        await asyncio.sleep(0.05)
+
+
+def _sleeping_pids() -> list[int]:
+    """Processes running the probe's long command, to prove Stop reached the tool."""
+
+    script = ("Get-CimInstance Win32_Process | "
+              "Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like '*Start-Sleep 25*' } | "
+              "ForEach-Object { $_.ProcessId }")
+    out = subprocess.run(["powershell", "-NoProfile", "-Command", script],
+                         capture_output=True, text=True, check=False).stdout
+    return [int(line) for line in out.split() if line.strip().isdigit()]
+
+
+def _tool_server_processes() -> list[int]:
+    """PIDs whose command line is this pipeline's tool server.
+
+    The tool server is the runtime's MCP child, so "the session ended cleanly" means the
+    child is gone too — not only that the runtime exited.
+    """
+
+    script = ("Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+              "Where-Object { $_.CommandLine -like '*odessy.tools.stdio_server*' } | "
+              "ForEach-Object { $_.ProcessId }")
+    out = subprocess.run(["powershell", "-NoProfile", "-Command", script],
+                         capture_output=True, text=True, check=False).stdout
+    return [int(line) for line in out.split() if line.strip().isdigit()]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", required=True)
@@ -156,15 +198,50 @@ def main() -> int:
                 # 2: an allowed read-only command, through the real pipeline.
                 await asyncio.wait_for(
                     session.run_turn(f'tool {call} {{"command": "echo {MARKER}"}}'), 120)
+                deny_task = asyncio.create_task(_approve_once(session, False))
                 # 3: an unapproved write outside the workspace.
-                await asyncio.wait_for(
-                    session.run_turn(
-                        f'tool {call} {{"command": "cmd /c echo x > \\"{escaped}\\""}}'), 120)
+                await asyncio.wait_for(session.run_turn('tool ' + call + ' ' + json.dumps(
+                    {'command': "Set-Content -LiteralPath '" + str(escaped) + "' -Value x"})), 30)
+                await asyncio.wait_for(deny_task, 5)
                 # 4: a call that tries to choose its own sandbox mode.
                 await asyncio.wait_for(
                     session.run_turn(
                         f'tool {call} {{"command": "echo hi", "mode": "danger-full-access"}}'),
                     120)
+                approved_task = asyncio.create_task(_approve_once(session))
+                await asyncio.wait_for(session.run_turn(
+                    'tool ' + call + ' ' + json.dumps({'command': 'echo confirmed > confirmed.txt'})), 30)
+                await asyncio.wait_for(approved_task, 5)
+                checks.append(("approved operation executed", (workspace / "confirmed.txt").exists(), "broker approval"))
+                approve_sleep = asyncio.create_task(_approve_once(session))
+                sleeping = asyncio.create_task(session.run_turn(
+                    'tool ' + call + ' ' + json.dumps({'command': 'Start-Sleep 25', 'timeout': 30})))
+                running = []
+                for _ in range(80):
+                    running = list(session.runtime._control.running)
+                    if running:
+                        break
+                    await asyncio.sleep(.1)
+                checks.append(("long command started before Stop", bool(running), str(running)))
+                outcome = await session.stop()
+                checks.append(("Stop confirms cleanup before returning",
+                               session.runtime._control.clean.is_set()
+                               and outcome.get("cleanup") == "complete", str(outcome)))
+                for _ in range(40):
+                    left = [pid for pid in running if await asyncio.to_thread(_alive, pid)]
+                    if not left:
+                        break
+                    await asyncio.sleep(.1)
+                checks.append(("Stop killed active tool command", bool(running) and not left, str(left)))
+                try:
+                    await asyncio.wait_for(sleeping, 10)
+                except Exception:
+                    pass
+                approve_sleep.cancel()
+                await asyncio.gather(approve_sleep, return_exceptions=True)
+                await asyncio.wait_for(session.run_turn('tool ' + call + ' ' + json.dumps(
+                    {'command': 'echo after-stop'})), 30)
+                checks.append(("session accepts a new tool turn after Stop", True, "turn completed"))
                 seen = _tool_turns(work)
                 pid = session.runtime._process.pid if session.runtime._process else 0
                 return names, seen, call, (pid, dict(session.runtime.identity))
@@ -192,7 +269,7 @@ def main() -> int:
                        and sandbox.get("hidden_paths") == 0,
                        json.dumps({k: sandbox.get(k) for k in ("network", "hidden_paths")})))
 
-        refused = [item for item in seen if "confirmation" in str(item.get("stderr") or "")]
+        refused = [item for item in seen if any(word in str(item.get("stderr") or "") for word in ("confirmation", "not approved"))]
         checks.append(("the unapproved write was refused", bool(refused),
                        json.dumps([item.get("stderr") for item in seen])[:300]))
         checks.append(("the unapproved write left no file", not escaped.exists(), str(escaped)))
@@ -209,6 +286,9 @@ def main() -> int:
             # The tool server is the runtime's child; closing the session must end both.
             checks.append(("close() left no runtime process", pid == 0 or not _alive(pid),
                            f"pid={pid}"))
+            leftover = _tool_server_processes()
+            checks.append(("close() left no tool-server process", not leftover,
+                           f"pids={leftover}"))
     finally:
         server.shutdown()
 

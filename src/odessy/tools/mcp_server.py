@@ -92,6 +92,9 @@ def build_odessy_mcp_server(
     include_terminal: bool = True,
     session_policy: "SessionPolicy | None" = None,
     authorize: "Callable[[str, Mapping[str, Any]], str | None] | None" = None,
+    consent: "Callable[[Mapping[str, Any]], tuple[bool, str]] | None" = None,
+    on_spawn: "Callable[[Any], None] | None" = None,
+    before_spawn: "Callable[[], None] | None" = None,
 ) -> MCPServer:
     """Build the Odessy tool server.
 
@@ -110,6 +113,10 @@ def build_odessy_mcp_server(
     the call (a Harness-initiated tool call): the confinement is then fixed by the session
     rather than taken from the arguments, and every call is put to ``authorize`` first, which
     returns a refusal reason or ``None``.
+
+    ``consent`` is how a `confirm` operation becomes *approvable* rather than refused: the
+    caller supplies ``(details) -> (approved, reason)``, which the stdio pipeline wires to the
+    application's own approval broker. Without it, `confirm` is refused.
     """
 
     server = MCPServer("odessy-v0.1.0")
@@ -166,11 +173,27 @@ def build_odessy_mcp_server(
                     ),
                 )
         if authorize is not None:
-            refusal = authorize("terminal.run", {
+            verdict = authorize("terminal.run", {
                 "command": command, "cwd": cwd, "timeout": timeout,
+                "mode": session_policy.mode if session_policy else mode,
+                "isolation": session_policy.isolation if session_policy else isolation,
             })
-            if refusal:
-                return _refusal_result(command=command, cwd=cwd, reason=refusal)
+            if verdict and verdict[0] == "confirm":
+                # A confirmable operation is *offered*, not refused: the caller owns the
+                # consent channel, and only an explicit approval lets it run.
+                if consent is None:
+                    return _refusal_result(
+                        command=command, cwd=cwd,
+                        reason=("this operation requires confirmation, and no consent "
+                                "channel is attached to this tool server"))
+                approved, reason = consent(verdict[1])
+                if not approved:
+                    return _refusal_result(
+                        command=command, cwd=cwd,
+                        reason=f"not approved: {reason}")
+            elif verdict:
+                reason = verdict if isinstance(verdict, str) else str(verdict[0])
+                return _refusal_result(command=command, cwd=cwd, reason=reason)
 
         try:
             if session_policy is not None:
@@ -181,6 +204,8 @@ def build_odessy_mcp_server(
                     command=command,
                     cwd=cwd,
                     timeout=timeout,
+                    on_spawn=on_spawn,
+                    before_spawn=before_spawn,
                     **session_policy.confinement(),
                 )
             return bridge.run(

@@ -695,13 +695,35 @@ def test_startup_timeout_is_bounded_and_leaves_no_process(monkeypatch, tmp_path,
     monkeypatch.setenv("FAKE_MODE", "hang")
     config = make_config(tmp_path, fake, passthrough=("FAKE_MODE",), startup_timeout=0.6)
     runtime = HarnessRuntime(FakeSession(), config=config)
-    started = time.monotonic()
+    measured = {}
+    spawned = []
+    real_call, real_start = HarnessProcess.call, HarnessProcess.start
+
+    def start(process):
+        real_start(process)
+        spawned.append(process)
+
+    def call(process, method, *args, **kwargs):
+        if method != "initialize":
+            return real_call(process, method, *args, **kwargs)
+        measured["timeout"] = kwargs["timeout"]
+        started = time.monotonic()
+        try:
+            return real_call(process, method, *args, **kwargs)
+        finally:
+            measured["elapsed"] = time.monotonic() - started
+
+    monkeypatch.setattr(HarnessProcess, "start", start)
+    monkeypatch.setattr(HarnessProcess, "call", call)
     with pytest.raises(RuntimeUnavailable) as caught:
         run(runtime.start())
-    elapsed = time.monotonic() - started
-    assert elapsed < 3.0
+    # Measure the actual no-reply phase, excluding separately bounded version-probe,
+    # process creation and cleanup scheduling. Keep the configured timeout exact.
+    assert measured["timeout"] == config.startup_timeout == 0.6
+    assert measured["elapsed"] < 3.0
     assert "did not complete the handshake" in caught.value.public()["reason"]
-    assert runtime._process is None  # the failed child was not adopted
+    assert spawned and all(not child.alive and child.exit_code is not None for child in spawned)
+    assert runtime._process is None
 
 
 def test_a_crash_during_startup_reports_the_exit_code(monkeypatch, tmp_path, fake):

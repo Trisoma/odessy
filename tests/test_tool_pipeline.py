@@ -16,6 +16,7 @@ that decides *what* reaches the provider.
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -75,6 +76,15 @@ def _call(server, name: str, arguments: dict) -> dict:
     result = asyncio.run(server.call_tool(name, arguments))
     # ``call_tool`` returns the MCP content list; the tool's dict is serialised into it.
     return result
+
+
+def _payload(result):  # noqa: ANN001 - MCP result shape
+    """The tool's own dict, as the model receives it."""
+
+    content = getattr(result, "content", None)
+    if content:
+        return json.loads(content[0].text)
+    return result
 # -- the session decides the confinement -------------------------------------
 
 def test_the_session_mode_reaches_the_provider_not_the_call(tmp_path):
@@ -116,12 +126,50 @@ def test_an_allowed_operation_runs(tmp_path):
     assert authorize(policy, "terminal.run", {"command": "echo hi", "cwd": ".", "timeout": 10}) is None
 
 
-def test_an_operation_needing_consent_is_refused_because_this_transport_cannot_ask(tmp_path):
-    settings = SandboxSettings(hidden_paths=(), extra_writable=())
-    policy = OdessyPolicy(tmp_path, sandbox=settings)
-    reason = authorize(policy, "terminal.run",
-                       {"command": "Remove-Item important.txt", "cwd": ".", "timeout": 10})
-    assert reason is not None and "confirmation" in reason
+def test_an_operation_needing_consent_is_offered_not_refused(tmp_path):
+    policy = OdessyPolicy(tmp_path, sandbox=SandboxSettings(hidden_paths=(), extra_writable=()))
+    verdict = authorize(policy, "terminal.run",
+                        {"command": "Remove-Item important.txt", "cwd": ".", "timeout": 10})
+    # A tuple means "ask a person": the projection is the same one every other approval uses.
+    assert isinstance(verdict, tuple) and verdict[0] == "confirm"
+    assert verdict[1]["operation"] == "terminal.run"
+    assert verdict[1]["arguments"]["command"].startswith("Remove-Item")
+
+
+def test_a_confirmable_operation_runs_only_after_consent(tmp_path):
+    asked: list[dict] = []
+
+    def consent(details):
+        asked.append(dict(details))
+        return True, "resolved"
+
+    provider = RecordingProvider()
+    server = build_odessy_mcp_server(
+        workspace_root=tmp_path,
+        registry=ProviderRegistry([provider]),
+        session_policy=SessionPolicy(mode="workspace-write"),
+        authorize=lambda name, arguments: ("confirm", {"operation": name,
+                                                        "arguments": dict(arguments)}),
+        consent=consent,
+    )
+    payload = _payload(_call(server, "terminal.run", {"command": "echo hi"}))
+    assert asked and asked[0]["operation"] == "terminal.run"
+    assert payload["status"] == "ok" and payload["stdout"].strip() == "hi"
+
+
+def test_a_confirmable_operation_does_not_run_when_consent_is_denied(tmp_path):
+    provider = RecordingProvider()
+    server = build_odessy_mcp_server(
+        workspace_root=tmp_path,
+        registry=ProviderRegistry([provider]),
+        session_policy=SessionPolicy(mode="workspace-write"),
+        authorize=lambda name, arguments: ("confirm", {"operation": name}),
+        consent=lambda details: (False, "rejected"),
+    )
+    payload = _payload(_call(server, "terminal.run", {"command": "echo hi"}))
+    assert payload["status"] == "refused"
+    assert "not approved" in payload["stderr"]
+    assert provider.policies == []
 
 
 def test_a_denied_operation_is_refused_with_its_rule(tmp_path):
@@ -227,3 +275,62 @@ def test_the_tool_server_entry_is_built_from_the_plan(tmp_path):
     assert args[args.index("--mode") + 1] == runtime.sandbox.mode
     assert args[args.index("--workspace") + 1] == runtime.sandbox.workspace_root
     assert entry["env"] == []
+
+
+# -- validation, failures and output bounds survive the pipeline ---------------
+
+def test_malformed_arguments_are_rejected_by_the_schema(tmp_path):
+    server, provider = _server(tmp_path, mode="workspace-write")
+    with pytest.raises(Exception) as caught:  # the MCP layer raises a ToolError
+        _call(server, "terminal.run", {"command": 12345})
+    assert "validation" in str(caught.value).lower()
+    assert provider.policies == []  # nothing reached the backend
+
+
+def test_a_failing_command_is_a_structured_failure_not_a_crash(tmp_path):
+    server, provider = _server(tmp_path, mode="workspace-write")
+    result = _call(server, "terminal.run", {"command": "exit 3"})
+    payload = _payload(result)
+    assert payload["exit_code"] == 3
+    assert payload["status"] == "failed"
+    assert payload["timed_out"] is False
+
+
+def test_output_bounds_are_preserved_through_the_pipeline(tmp_path):
+    server, provider = _server(tmp_path, mode="workspace-write")
+    result = _call(server, "terminal.run", {"command": "'x' * 200000"})
+    payload = _payload(result)
+    assert payload["stdout_truncated"] is True
+    assert payload["stdout_spill"]
+
+
+def test_unapproved_network_use_is_a_confirmation_request(tmp_path):
+    policy = OdessyPolicy(tmp_path, sandbox=SandboxSettings(hidden_paths=(), extra_writable=()))
+    verdict = authorize(policy, "terminal.run",
+                        {"command": "Invoke-WebRequest https://example.com -OutFile x",
+                         "cwd": ".", "timeout": 10})
+    # It is a *confirm* with the network rule in it, so it cannot run unapproved.
+    assert isinstance(verdict, tuple) and verdict[0] == "confirm"
+    assert "network" in str(verdict[1]).lower() or "command_" in str(verdict[1])
+
+
+# -- the alternate paths a model could try -----------------------------------
+
+@pytest.mark.parametrize("title", [
+    "tool-pwsh",            # a built-in shell row the narrow overlay disables
+    "tool-fs",              # a built-in filesystem row
+    "filesystem.write",     # an Odessy tool name that is not this server's prefix
+    "mcp__other__run",      # someone else's MCP server
+    "pwsh",
+])
+def test_alternate_execution_titles_are_refused(tmp_path, title):
+    runtime = _runtime(tmp_path, tools=True)
+    with pytest.raises(RuntimeCapabilityUnavailable):
+        runtime._refuse_unimplemented(_tool_call(title), 0)
+
+
+def test_control_secret_is_not_exposed_in_tool_server_command_line(tmp_path):
+    runtime = _runtime(tmp_path, tools=True)
+    entry = runtime.config.mcp_servers((12345, 'private-control-token'))[0]
+    assert 'private-control-token' not in ' '.join(entry['args'])
+    assert {'name': 'ODESSY_TOOL_CONTROL_TOKEN', 'value': 'private-control-token'} in entry['env']

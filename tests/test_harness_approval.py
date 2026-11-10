@@ -181,6 +181,8 @@ def fake_approval(tmp_path):
 @pytest.fixture(autouse=True)
 def _credential(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "k-test-not-a-real-key")
+    # The ACP permission fixture does not host the separate streaming plugin.
+    monkeypatch.setenv("ODESSY_HARNESS_BRIDGE", "off")
 
 
 def make_config(tmp_path, fake, **overrides):
@@ -544,6 +546,7 @@ def test_no_tool_executes_before_the_human_approves(tmp_path, fake_approval, mon
 
     async def flow():
         try:
+            await runtime.start()
             turn = asyncio.create_task(runtime.run_turn("run a command"))
             entry = await wait_for_approval(session.interactions)
             # Nothing has run: the runtime is waiting for the human, not executing.
@@ -579,6 +582,7 @@ def test_a_denied_request_is_rejected_and_nothing_runs(tmp_path, fake_approval, 
 
     async def flow():
         try:
+            await runtime.start()
             turn = asyncio.create_task(runtime.run_turn("run a command"))
             entry = await wait_for_approval(session.interactions)
             session.interactions.resolve_approval(entry["id"], False,
@@ -606,6 +610,7 @@ def test_a_stop_cancels_the_pending_approval_and_a_late_allow_cannot_resurrect_i
 
     async def flow():
         try:
+            await runtime.start()
             turn = asyncio.create_task(runtime.run_turn("run a command"))
             entry = await wait_for_approval(session.interactions)
             # Exactly what SessionController.stop() does first, plus the epoch it bumps.
@@ -634,6 +639,7 @@ def test_close_does_not_wait_for_a_person(tmp_path, fake_approval, monkeypatch):
         tmp_path, fake_approval, passthrough=("FAKE_MODE",)))
 
     async def flow():
+        await runtime.start()
         turn = asyncio.create_task(runtime.run_turn("run a command"))
         await wait_for_approval(session.interactions)
         started = time.monotonic()
@@ -666,6 +672,7 @@ def test_an_allow_held_for_the_wire_is_retracted_by_a_stop(
 
     async def flow():
         try:
+            await runtime.start()
             turn = asyncio.create_task(runtime.run_turn("run a command"))
             entry = await wait_for_approval(session.interactions)
             process = runtime._process
@@ -717,6 +724,7 @@ def test_an_allow_waiting_on_the_actual_write_lock_is_retracted_by_stop(
         write_lock = None
         held = False
         try:
+            await runtime.start()
             turn = asyncio.create_task(runtime.run_turn("run a command"))
             entry = await wait_for_approval(session.interactions)
             process = runtime._process

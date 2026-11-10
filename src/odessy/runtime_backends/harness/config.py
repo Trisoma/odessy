@@ -207,13 +207,15 @@ class HarnessConfig:
             return self.sandbox
         return plan_for_session(workspace=self.workspace, environ=self.source_env or None)
 
-    def mcp_servers(self) -> list[dict[str, object]]:
+    def mcp_servers(self, control=None) -> list[dict[str, object]]:
         """The tool pipeline for this session, or nothing.
 
         Odessy's reviewed tool server, spawned by the runtime as a stdio MCP child of *this*
         session (the pin's own facility — no second scheduler). Its confinement is fixed by
         argv from the resolved plan, so the call cannot choose it, and the server's authority
-        gate refuses anything the policy would not allow outright.
+        gate refuses anything the policy would not allow outright. ``control`` names the
+        application's approval/cancel channel: with it a `confirm` operation can be put to a
+        person, and a Stop can stop the command; without it those are refused.
         """
 
         if not self.tools_enabled:
@@ -225,12 +227,22 @@ class HarnessConfig:
                 "--mode", plan.mode,
                 "--isolation", plan.isolation,
                 "--network", plan.network]
+        if control is not None:
+            argv += ["--control-port", str(control[0])]
         for hidden in plan.hidden_paths:
             argv += ["--hidden", hidden]
         for extra in plan.extra_writable:
             argv += ["--extra-writable", extra]
+        # An explicit minimal environment: an empty list is not "inherit", and a full inherit
+        # would carry the bridge token and the route credential into the tool process. Only
+        # the platform names a process needs to start and to open a socket are passed.
+        parent = self.source_env or os.environ
+        env = [{"name": name, "value": parent[name]}
+               for name in _base_env_names() if name in parent]
+        if control is not None:
+            env.append({"name": "ODESSY_TOOL_CONTROL_TOKEN", "value": control[1]})
         return [{"name": "odessy", "command": self.tools_python or sys.executable,
-                 "args": argv, "env": []}]
+                 "args": argv, "env": env}]
 
     def child_env(self, parent: Mapping[str, str] | None = None) -> dict[str, str]:
         if parent is None:

@@ -597,3 +597,52 @@ def test_close_after_a_stop_still_reaps_the_runtime(tmp_path, fake, monkeypatch)
     run(flow())
     pid = int(pidfile.read_text(encoding="utf-8"))
     assert _wait_until_dead(pid), "closing after a Stop left the runtime running"
+
+def test_stop_does_not_claim_complete_while_tool_cleanup_is_pending(tmp_path, fake, monkeypatch):
+    runtime = configured(tmp_path, fake, monkeypatch, mode='hold', hold=3)
+    class Control:
+        running = {12345}
+        clean = threading.Event()
+        def cancel(self):
+            pass
+        def begin(self):
+            pass
+        def close(self):
+            pass
+    async def flow():
+        try:
+            await runtime.start()
+            runtime._control = Control()
+            turn = asyncio.create_task(runtime.run_turn('hello'))
+            for _ in range(200):
+                if runtime._turn_prompt_sent is not None and runtime._turn_prompt_sent.is_set():
+                    break
+                await asyncio.sleep(.01)
+            result = await runtime.stop(timeout=.1)
+            await asyncio.gather(turn, return_exceptions=True)
+            assert result.cleanup == 'pending'
+            assert result.execution == 'unconfirmed'
+        finally:
+            await runtime.close()
+    run(flow())
+
+
+def test_cleanup_admission_failure_releases_the_turn_lock(tmp_path, fake, monkeypatch):
+    runtime = configured(tmp_path, fake, monkeypatch, mode='normal')
+    class Control:
+        def begin(self):
+            raise RuntimeError('tool cleanup is pending')
+        def cancel(self):
+            pass
+        def close(self):
+            pass
+    async def flow():
+        try:
+            await runtime.start()
+            runtime._control = Control()
+            with pytest.raises(RuntimeError, match='cleanup'):
+                await runtime.run_turn('hello')
+            assert not runtime._turn_lock.locked()
+        finally:
+            await runtime.close()
+    run(flow())

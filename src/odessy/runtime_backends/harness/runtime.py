@@ -13,6 +13,8 @@ engine or to another provider; a failure surfaces as a typed error.
 
 from __future__ import annotations
 
+from odessy.authority.tool_control import ToolControl
+
 import asyncio
 import secrets
 import threading
@@ -51,6 +53,7 @@ from odessy.runtime_backends.harness.questions import HarnessQuestionBridge
 from odessy.runtime_backends.harness.routes import HarnessRoute, resolve_route
 from odessy.runtime_backends.harness.stream import Delta, Settlement, TurnStream
 from odessy.runtime.types import AgentTurnResult
+
 
 ENGINE = "harness"
 _CLIENT_INFO = {"name": "odessy", "version": "0.5.0"}
@@ -145,6 +148,8 @@ class HarnessRuntime:
         self._bridge_token = secrets.token_hex(16) if self._bridge_enabled else ""
         self._bridge: LiveBridge | None = None
         self._live = False
+        #: The tool server's approval/cancel channel (prompt 09). Created at start() once the
+        #: session loop exists; None until then, and for a session with no tool server.
         self._stream: TurnStream | None = None
         self._last_settlement: Settlement | None = None
         #: Highest bridge turn number already settled. A frame at or below it is a
@@ -196,6 +201,7 @@ class HarnessRuntime:
         #: Tool-call ids this turn allowed: exactly the clarification tool's own calls.
         self._allowed_calls: set[str] = set()
         #: The loop the session's turns run on; server requests are scheduled here.
+        self._control = None
         self._loop: asyncio.AbstractEventLoop | None = None
         #: Turn number, starting at 1. A permission request is bound to the turn it
         #: arrived in, not to whichever turn happens to be running later.
@@ -337,6 +343,8 @@ class HarnessRuntime:
         # Captured before the worker starts: the child can raise a server request as
         # soon as it has a session, and the answer must be scheduled on this loop.
         self._loop = asyncio.get_running_loop()
+        if self._config.tools_enabled and self._control is None:
+            self._control = ToolControl(self._loop, self._ask_human)
         try:
             await asyncio.to_thread(self._start_blocking)
         except asyncio.CancelledError:
@@ -344,6 +352,13 @@ class HarnessRuntime:
             # abandoned so the worker closes the child it is building instead of
             # publishing it; otherwise a cancelled start would leak a running runtime.
             self._abandoned = True
+            if self._control is not None:
+                self._control.cancel()
+            raise
+        except Exception:
+            control, self._control = self._control, None
+            if control is not None:
+                await asyncio.to_thread(control.close)
             raise
         return dict(self._identity)
 
@@ -391,7 +406,7 @@ class HarnessRuntime:
                     # this session's stdio MCP child (prompt 09). Empty unless the operator
                     # opted in, so a package that has not qualified a tool surface still has
                     # none. Its confinement is fixed by argv from the resolved plan.
-                    "mcpServers": self._config.mcp_servers(),
+                    "mcpServers": self._config.mcp_servers(self._control.address if self._control else None),
                 }, timeout=self._config.startup_timeout)
                 session_id = opened.get("sessionId")
                 if not isinstance(session_id, str) or not session_id:
@@ -571,6 +586,8 @@ class HarnessRuntime:
             if self._closed:
                 return
             self._closed = True
+            if self._control is not None:
+                self._control.cancel()
             self._ready = False
             # Nobody may keep waiting on a human for a session that is closing, and an
             # answer that arrives afterwards must not be written as consent.
@@ -585,6 +602,9 @@ class HarnessRuntime:
             process = self._process
             if process is not None:
                 process.close()
+            if self._control is not None:
+                self._control.close()
+                self._control = None
             self._loop = None
 
     # ----------------------------------------------------------------- interface
@@ -616,6 +636,12 @@ class HarnessRuntime:
             raise RuntimeError("a turn is being stopped")
         if not self._turn_lock.acquire(blocking=False):
             raise RuntimeError("a turn is already running")
+        try:
+            if self._control is not None:
+                self._control.begin()
+        except BaseException:
+            self._turn_lock.release()
+            raise
         self._turn_orphaned = False
         self._busy = True
         worker = asyncio.ensure_future(asyncio.to_thread(self._prompt_blocking, text))
@@ -632,6 +658,8 @@ class HarnessRuntime:
                 worker.add_done_callback(self._release_orphaned_turn)
             raise
         finally:
+            if self._control is not None:
+                self._control.cancel()
             self._busy = False
             if not self._turn_orphaned:
                 self._turn_lock.release()
@@ -1060,25 +1088,37 @@ class HarnessRuntime:
         A join that exceeds ``timeout`` is reported as ``unconfirmed``: the turn may still be
         running, and nothing about it is rolled back.
         """
+        control = self._control
+        tool_interrupted = bool(control is not None and control.running)
+        cleanup_complete = True
+        def outcome(requested, execution, cleanup, reason, detail):
+            if not cleanup_complete:
+                return StopOutcome(requested, "unconfirmed", "pending", reason,
+                                   "the tool process cleanup is not confirmed")
+            return StopOutcome(requested, execution, cleanup, reason, detail)
         process = self._process
         acp_session = self._acp_session
         if self._closed:
-            return StopOutcome(False, "idle", "complete", None, "the session is closed")
+            return outcome(False, "idle", "complete", None, "the session is closed")
         if process is None or not self._ready or not acp_session:
-            return StopOutcome(False, "idle", "complete", None, "no runtime process")
+            return outcome(False, "idle", "complete", None, "no runtime process")
         # A clarification waiting for a person belongs to the turn being stopped: withdraw
         # it first so the tool errs rather than resuming after the Stop.
+        if self._control is not None:
+            self._control.cancel()
         self._questions.cancel_all("stopped")
         bound = self._config.shutdown_timeout if timeout is None else timeout
+        if control is not None:
+            cleanup_complete = await asyncio.to_thread(control.clean.wait, bound)
         done = self._turn_done
         if done is None:
             with self._cancel_write_lock:
                 write_pending = self._pending_cancel_writes > 0
             if write_pending:
-                return StopOutcome(True, "unconfirmed", "pending", None,
+                return outcome(True, "unconfirmed", "pending", None,
                                    "a cancellation write is still pending")
             if not self._turn_lock.locked():
-                return StopOutcome(False, "idle", "complete", None, "no turn is running")
+                return outcome(False, "idle", "complete", None, "no turn is running")
             # A turn has started but its prompting thread has not published its completion
             # handle yet. Reporting "idle" here would be a Stop that silently did nothing,
             # so wait (bounded) for the handle instead.
@@ -1087,17 +1127,17 @@ class HarnessRuntime:
                 await asyncio.sleep(0.005)
                 done = self._turn_done
             if done is None:
-                return StopOutcome(True, "unconfirmed", "pending", None,
+                return outcome(True, "unconfirmed", "pending", None,
                                    "a turn is in flight but its prompt has not started")
         if done.is_set():
-            return StopOutcome(False, "idle", "complete", None, "no turn is running")
+            return outcome(False, "idle", "complete", None, "no turn is running")
         sent = self._turn_prompt_sent
         if sent is not None and not sent.is_set():
             # The prompt has not reached the child yet. A cancel written now would arrive
             # before there is anything to cancel and be dropped, so wait for the write
             # (bounded) instead of racing it.
             if not await asyncio.to_thread(sent.wait, bound):
-                return StopOutcome(True, "unconfirmed", "pending", None,
+                return outcome(True, "unconfirmed", "pending", None,
                                    f"the prompt was not sent within {bound:g}s")
         # From here on no new turn may start: the cancellation and the prompt share one ACP
         # session, so admitting work now would race it.
@@ -1117,34 +1157,34 @@ class HarnessRuntime:
             )
         except asyncio.TimeoutError:
             self._note(f"stop: the cancellation could not be written within {bound:g}s")
-            return StopOutcome(True, "unconfirmed", "pending", None,
+            return outcome(True, "unconfirmed", "pending", None,
                                f"the cancellation could not be written within {bound:g}s")
         except (HarnessProcessError, OSError) as exc:
             # The child cannot receive the cancellation. Its work may have ended or not: that
             # is unknown, so nothing here is called stopped.
             self._note(f"stop: the cancellation could not be sent ({type(exc).__name__})")
-            return StopOutcome(True, "unconfirmed", "pending", None,
+            return outcome(True, "unconfirmed", "pending", None,
                                "the runtime could not receive the cancellation")
         finished = await asyncio.to_thread(done.wait, bound)
         if not finished:
             self._note(f"stop: the runtime did not end the turn within {bound:g}s")
-            return StopOutcome(True, "unconfirmed", "pending", None,
+            return outcome(True, "unconfirmed", "pending", None,
                                f"the runtime did not end the turn within {bound:g}s")
         reason = self._last_stop_reason
         if reason is None:
             # The turn ended without a prompt result: the runtime died mid-turn. Nothing
             # confirms the cancellation, so this is unknown rather than stopped.
             self._note("stop: the turn ended without a prompt result")
-            return StopOutcome(True, "unconfirmed", "pending", None,
+            return outcome(True, "unconfirmed", "pending", None,
                                "the runtime ended the turn without reporting a reason")
-        if reason != CANCEL_STOP_REASON:
+        if reason != CANCEL_STOP_REASON and not (tool_interrupted and cleanup_complete):
             # The prompt came back with a normal stop reason: the runtime finished the turn
             # instead of cancelling it, so the Stop was not honoured. Saying "stopped" here
             # would claim an effect this call did not have.
             self._note(f"stop: the runtime completed the turn instead ({reason})")
-            return StopOutcome(True, "unconfirmed", "complete", reason,
+            return outcome(True, "unconfirmed", "complete", reason,
                                f"the runtime completed the turn ({reason}) instead of "
                                "cancelling it")
         self._note(f"stop: the turn ended ({reason})")
-        return StopOutcome(True, "stopped", "complete", reason,
+        return outcome(True, "stopped", "complete", reason,
                            "the runtime ended the turn")
