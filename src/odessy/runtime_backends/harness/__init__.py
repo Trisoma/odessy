@@ -44,9 +44,18 @@ from odessy.runtime_backends.harness.profile import (
 )
 from odessy.runtime_backends.harness.questions import HarnessQuestionBridge
 from odessy.runtime_backends.harness.resources import (
+    INSTALLED_ENV,
     artifact_inventory,
     bundle_root,
     bundle_status,
+    compose_profile,
+    executable_declaration,
+    installed_executable,
+    installed_node,
+    installed_node_tools_dir,
+    installed_runtime_dir,
+    runtime_wheel,
+    verify_runtime_assets,
 )
 from odessy.runtime_backends.harness.runtime import HarnessRuntime
 from odessy.runtime_backends.harness.stream import (
@@ -68,6 +77,7 @@ __all__ = [
     "HarnessQuestionBridge",
     "HarnessRuntime",
     "HarnessTransportError",
+    "INSTALLED_ENV",
     "LiveBridge",
     "NARROW_PATCH_NAME",
     "NARROW_PATCH_TEXT",
@@ -78,7 +88,15 @@ __all__ = [
     "artifact_inventory",
     "bundle_root",
     "bundle_status",
+    "compose_profile",
     "default_home",
+    "executable_declaration",
     "from_environment",
+    "installed_executable",
+    "installed_node",
+    "installed_node_tools_dir",
+    "installed_runtime_dir",
     "materialize_narrow_patch",
+    "runtime_wheel",
+    "verify_runtime_assets",
 ]

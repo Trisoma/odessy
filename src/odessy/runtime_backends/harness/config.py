@@ -188,6 +188,10 @@ class HarnessConfig:
     #: Variables the session adds to the child's allowlist (a credential for the selected
     #: route). Values are never logged; :meth:`describe` reports names only.
     extra_env: Mapping[str, str] = field(default_factory=dict, repr=False, compare=False)
+    #: What :func:`odessy.runtime_backends.harness.resources.compose_profile` did for this
+    #: launch: which profile files it wrote, which it kept, and whether the bundle was
+    #: installed or repaired. Recorded so "the plugin loaded" has an explanation.
+    profile_record: Mapping[str, Any] = field(default_factory=dict, repr=False, compare=False)
     expected_version: str = PINNED_VERSION
     #: New-session roster policy: ``preferred`` records uncertainty, ``required`` refuses it.
     #: Restores always require a verified roster, regardless of this setting. An observed
@@ -368,6 +372,8 @@ class HarnessConfig:
             # application ships. Reported, never required: a missing bundle degrades the
             # live-delta capabilities and is visible here instead of being guessed at.
             "bundle": resources.bundle_status(),
+            # What the composed profile needed this launch: written, kept, repaired.
+            "profile_composition": dict(self.profile_record),
             # Names only: a credential value never enters a diagnostic record.
             "extra_env": sorted(self.extra_env),
             "workspace": str(self.workspace),
@@ -492,15 +498,21 @@ def from_environment(
     *,
     workspace: str | os.PathLike[str] | None = None,
 ) -> HarnessConfig:
-    """Resolve the launch description from explicit configuration only."""
+    """Resolve the launch description from explicit configuration only.
+
+    Two resolutions are accepted, and both are explicit: ``ODESSY_HARNESS_EXE`` for a
+    developer-supplied executable, or ``ODESSY_HARNESS_RUNTIME_DIR`` for the payload an
+    installed Odessy staged (the installed launcher exports it). Nothing searches ``PATH``,
+    a sibling checkout or ``.harness-spike``, and there is no fallback between the two.
+    """
     environ = os.environ if environ is None else environ
     executable = (environ.get("ODESSY_HARNESS_EXE") or "").strip()
-    if not executable:
-        raise RuntimeUnavailable(
-            ENGINE, "not configured: ODESSY_HARNESS_EXE is unset",
-            detail="the Harness engine is developer-only; point ODESSY_HARNESS_EXE at "
-                   "the pinned runtime executable",
-        )
+    if executable:
+        command: tuple[str, ...] = (executable,)
+    else:
+        # Refuses with the staged file and the expected digest when the installed payload
+        # was moved or edited; never silently continues with another executable.
+        command = (str(resources.installed_executable(environ)),)
     home = Path((environ.get("ODESSY_HARNESS_HOME") or "").strip()
                 or default_home(environ)).expanduser()
     workspace_path = Path(workspace if workspace is not None
@@ -518,11 +530,16 @@ def from_environment(
     sandbox_overlay = materialize_sandbox_patch(home, plan)
     node_tools = _node_tools(environ)
     external_tools, servers_file = _external_tools(environ)
+    profile = (environ.get("ODESSY_HARNESS_PROFILE") or "").strip() or PINNED_PROFILE
+    # The profile the runtime composes is a product input, not something a package manager
+    # builds on the user's machine: seed it from the packaged bundle and verify every byte.
+    # A bundled but corrupt plugin refuses here, before a process is spawned.
+    profile_record = resources.compose_profile(home / "profiles" / profile, profile=profile)
     config = HarnessConfig(
-        command=(executable,),
+        command=command,
         home=home,
         workspace=workspace_path,
-        profile=(environ.get("ODESSY_HARNESS_PROFILE") or "").strip() or PINNED_PROFILE,
+        profile=profile,
         patches=extras,
         narrow_patch=narrow,
         sandbox=plan,
@@ -542,6 +559,7 @@ def from_environment(
         node_tools=node_tools,
         external_tools=external_tools,
         servers_file=servers_file,
+        profile_record=profile_record,
         source_env=dict(environ),
     )
     config.validate()
@@ -565,14 +583,28 @@ def _node_tools(environ: Mapping[str, str]) -> NodeTools | None:
         return None
     executable = (environ.get("ODESSY_HARNESS_NODE") or "").strip()
     if not executable:
-        raise RuntimeUnavailable(
-            ENGINE, "ODESSY_HARNESS_NODE_TOOLS is set but ODESSY_HARNESS_NODE is not",
-            detail="point it at the Node executable that runs the reviewed tool server",
-        )
+        # An installed Odessy stages its own Node next to the runtime (the runtime binary
+        # embeds Node but exposes no interpreter, so it cannot run the tool server). Only
+        # that staged file is defaulted; a system Node is never searched for.
+        staged = resources.installed_node(environ)
+        if staged is None:
+            raise RuntimeUnavailable(
+                ENGINE, "ODESSY_HARNESS_NODE_TOOLS is set but no Node executable is named",
+                detail="set ODESSY_HARNESS_NODE, or select an installation that staged "
+                       "runtime/node-runtime/node.exe",
+            )
+        executable = str(staged)
+    # The reviewed tool server's own directory, when the installation staged one and the
+    # operator did not point somewhere else.
+    resolved_env = environ
+    if not (environ.get("ODESSY_NODE_TOOLS_DIR") or "").strip():
+        staged_tools = resources.installed_node_tools_dir(environ)
+        if staged_tools is not None:
+            resolved_env = {**environ, "ODESSY_NODE_TOOLS_DIR": str(staged_tools)}
     try:
         from odessy.tools.node_mcp import node_tool_server_launch
 
-        resolved, entry = node_tool_server_launch(executable, environ=environ)
+        resolved, entry = node_tool_server_launch(executable, environ=resolved_env)
     except (ValueError, OSError) as exc:
         raise RuntimeUnavailable(
             ENGINE, "the Node tool server is unavailable", detail=str(exc)) from exc

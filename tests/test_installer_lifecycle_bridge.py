@@ -121,7 +121,7 @@ def test_versioned_rollback_rechecks_journal_under_lock(tmp_path):
 def test_core_health_and_artifacts_never_probe_model(tmp_path,monkeypatch):
     from installer.operations import component_repair,role_maintenance
     from installer import workflow
-    monkeypatch.setattr(workflow,'steps_for',lambda plan:[Step('runtime',lambda:{},lambda:{}),Step('dependencies',lambda:{},lambda:{})])
+    monkeypatch.setattr(workflow,'steps_for',lambda plan:[Step('runtime',lambda:{},lambda:{}),Step('harness_runtime',lambda:{},lambda:{}),Step('dependencies',lambda:{},lambda:{})])
     monkeypatch.setattr(component_repair,'dependency_integrity',lambda root:{})
     monkeypatch.setattr(component_repair.model,'load_release',lambda:(_ for _ in ()).throw(AssertionError('model loaded')))
     assert role_maintenance.health(tmp_path,{'engine':'role-aware-existing-installer-v1'})==([],{})

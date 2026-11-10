@@ -178,3 +178,31 @@ class RemovalUiTests(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+class HarnessComponentTests(unittest.TestCase):
+    """The staged Harness payload is nested under runtime/, not at the installation root."""
+
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.base=Path(self.temp.name);self.root=self.base/'installed';self.cache=self.base/'cache';self.cache.mkdir()
+        run_steps(self.root,dict(install_dir=str(self.root),cache_dir=str(self.cache)),[Step('fixture',lambda:{},lambda:{})])
+        for name,marker in uninstall.COMPONENTS.items():
+            if name in ('launcher','harness-runtime'):continue
+            folder=self.root/name;folder.mkdir();(folder/'payload.bin').write_bytes(b'owned')
+            if marker:(folder/marker).write_text(json.dumps(dict(schema_version=1)))
+        self.folders={key:self.base/key for key in ('desktop','programs')}
+        for folder in self.folders.values():folder.mkdir()
+        self.options=dict(folders=self.folders,probe=lambda root:[])
+
+    def test_nested_harness_component_is_planned_and_removed(self):
+        nested=self.root/'runtime'/'harness-runtime';nested.mkdir()
+        (nested/'payload.bin').write_bytes(b'owned')
+        (nested/'harness-runtime.json').write_text(json.dumps(dict(schema_version=1)))
+        (self.root/'my-note.txt').write_text('keep root note')
+        preview=uninstall.plan(self.root,**self.options)
+        self.assertIn('harness-runtime',preview['components'])
+        self.assertIn('runtime/harness-runtime/payload.bin',[item['path'] for item in preview['inventory']])
+        result=uninstall.execute(self.root,preview['plan_sha256'],**self.options)
+        self.assertEqual(result['status'],'completed')
+        self.assertFalse(nested.exists())
+        self.assertTrue((self.root/'my-note.txt').exists())

@@ -24,10 +24,17 @@ def inspect_application(app: Path) -> dict:
     _reject_link(app)
     settings = json.loads((app / 'odessy-application.json').read_text(encoding='utf-8'), object_pairs_hook=_unique_keys)
     fields = {'schema_version', 'status', 'runtime_dir', 'dependency_dir', 'python', 'runtime_versions',
-              'source_sha256', 'tool_sha256'}
+              'source_sha256', 'tool_sha256', 'harness'}
     if (not isinstance(settings, dict) or set(settings) != fields or type(settings['schema_version']) is not int
         or settings['schema_version'] != 1 or settings['status'] != 'ready'):
         raise ValueError('Application assembly marker is incomplete or unsupported.')
+    staged = settings['harness']
+    if not isinstance(staged, dict):
+        raise ValueError('Application assembly marker has no Harness component record.')
+    if staged:
+        for key in ('runtime_dir', 'executable', 'node_executable', 'node_tools_dir'):
+            if not isinstance(staged.get(key), str) or not Path(staged[key]).is_absolute():
+                raise ValueError('An installed Harness path must be absolute: ' + key)
     for key in ('runtime_dir', 'dependency_dir', 'python'):
         if not isinstance(settings[key], str) or not Path(settings[key]).is_absolute():
             raise ValueError('Application component paths must be absolute.')

@@ -6,10 +6,27 @@ from pathlib import Path
 from installer import workflow
 from installer.core.checkpoint import Step,run_steps
 from installer.core.space import load_resources
-from installer.components import runtime,dependencies,application,model
+from installer.components import harness,runtime,dependencies,application,model
 from odessy.setup.contracts import SetupSelection,public
 from odessy.setup.configuration import write_new,environment_text
 from odessy.setup.planning import build_plan as settings_plan
+
+#: The stages a role-aware installation owns, in execution order. Named explicitly: the
+#: shared workflow gained ``harness_runtime`` before ``dependencies``, and a positional
+#: slice silently dropped application assembly from that point on.
+ROLE_STEPS = ('tool_bundle', 'runtime', 'harness_runtime', 'dependencies', 'application')
+
+
+def _workflow_steps(plan, *, cancelled, emit_progress):
+    """The role's stages, selected by name and in the declared order."""
+
+    available = {step.name: step for step in workflow.steps_for(
+        plan, cancelled=cancelled, emit_progress=emit_progress)}
+    missing = [name for name in ROLE_STEPS if name not in available]
+    if missing:
+        raise ValueError('the installer workflow is missing required stages: '
+                         + ', '.join(missing))
+    return [available[name] for name in ROLE_STEPS]
 
 
 def build_plan(root,cache,bundle,selection):
@@ -17,19 +34,30 @@ def build_plan(root,cache,bundle,selection):
     plan=workflow.build_plan(Path(root),Path(cache),Path(bundle),'http://127.0.0.1:11435',180)
     runtime_manifest,runtime_resources=runtime.load_release(runtime.DEFAULT_RESOURCES)
     dependency_manifest,dependency_resources=load_resources(dependencies.DEFAULT_RESOURCES)
+    declaration=harness.load_declaration()
+    wheel=harness.wheel_artifact(declaration)
     _,tool=application.validate_bundle(Path(bundle))
     sources=application.source_snapshot(workflow.REPO_ROOT)
-    app_bytes=sum(item['unpacked_bytes'] for item in runtime_resources['runtimes'].values())+sum(item['unpacked_bytes'] for item in dependency_resources['layout'].values())+tool['unpacked_bytes']+sum(map(len,sources.values()))
+    app_bytes=(sum(item['unpacked_bytes'] for item in runtime_resources['runtimes'].values())
+               +sum(item['unpacked_bytes'] for item in dependency_resources['layout'].values())
+               +tool['unpacked_bytes']+sum(map(len,sources.values()))
+               +harness.unpacked_bytes(declaration))
+    downloads=[{'id':artifact.id,'size_bytes':artifact.size_bytes,'sha256':artifact.sha256,'url':artifact.url}
+               for manifest in (runtime_manifest,dependency_manifest) for artifact in manifest.artifacts]
+    downloads.append({'id':wheel.id,'size_bytes':wheel.size_bytes,'sha256':wheel.sha256,'url':wheel.url})
     plan.update(engine='role-aware-existing-installer-v1',selection=public(selection),model=None,model_strategy='external' if selection.model else 'unconfigured',
-                budget_bytes={'cache':runtime_manifest.download_bytes+2*dependency_manifest.download_bytes,'application':2*app_bytes,'models':0},
-                downloads=[{'id':artifact.id,'size_bytes':artifact.size_bytes,'sha256':artifact.sha256,'url':artifact.url} for manifest in (runtime_manifest,dependency_manifest) for artifact in manifest.artifacts])
+                # The cache figure includes the runtime wheel and the second dependency copy;
+                # the application figure includes the staged Harness payload.
+                budget_bytes={'cache':runtime_manifest.download_bytes+2*dependency_manifest.download_bytes+wheel.size_bytes,
+                              'application':2*app_bytes,'models':0},
+                downloads=downloads)
     return plan
 
 
 def steps_for(plan,*,cancelled=lambda:False,emit_progress=lambda value:None):
     # Original runtime preparation, verified downloads, dependency environment,
     # application assembly and validators. Never call the pinned model stages.
-    core=workflow.steps_for(plan,cancelled=cancelled,emit_progress=emit_progress)[:4]
+    core=_workflow_steps(plan,cancelled=cancelled,emit_progress=emit_progress)
     root=Path(plan['install_dir']);selection=SetupSelection.from_dict(plan['selection'])
     contents={'selection.json':json.dumps({'schema_version':1,'selection':public(selection)},indent=2)+'\n'}
     if selection.model:contents['odessy.env']=environment_text(settings_plan(selection))
