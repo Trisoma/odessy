@@ -11,6 +11,7 @@ an implicit request target. There are no direct provider/native calls in widgets
 | Next-turn selection | PUT `/v1/sessions/{sid}/model`, `{profile}` |
 | Submit once | POST `/v1/sessions/{sid}/turns`, `{text}` |
 | Stop | POST `/v1/sessions/{sid}/stop` |
+| Emergency stop (all sessions) | POST `/v1/lifecycle/stop-all`, `{service_instance_id, reason, confirm: true}` |
 | Events | GET `/v1/sessions/{sid}/events?after_id=N` |
 | Local usage history | GET `/v1/usage/history?days=30&provider=...&model=...&limit=20&offset=0` |
 | Approval | POST `/v1/sessions/{sid}/approvals/{id}`, `{approved: bool}` |
@@ -37,6 +38,24 @@ an implicit request target. There are no direct provider/native calls in widgets
 | Monitoring inventory/detail | GET `/v1/monitoring/hosts`, GET `/v1/monitoring/hosts/{id}` |
 | Monitoring metrics/history | GET `/v1/monitoring/hosts/{id}/metrics`, GET `/v1/monitoring/hosts/{id}/history` |
 | Monitoring events | GET `/v1/monitoring/events`, `Last-Event-ID: epoch:sequence` |
+
+Stop returns HTTP 200 with a body that says what was actually established, not merely that the
+request was accepted:
+
+| Field | Meaning |
+|---|---|
+| `requested` | a cancellation was sent to the engine |
+| `execution` | `idle` (nothing was running), `stopped` (the engine confirmed the turn ended) or `unconfirmed` (the bound elapsed: the turn may still be running) |
+| `cleanup` | `complete` or `pending` — what this side could join |
+| `stop_reason` | the engine's own reason (`cancelled`) when it reported one |
+| `confirmed` | true only when `execution` is `stopped` |
+| `detail` | a short, non-secret explanation |
+
+`unconfirmed` is not a softer word for `stopped`, and no Stop claims a rollback: work that
+already happened stays done. The session stays open either way; ending it is
+`DELETE /v1/sessions/{sid}`. The process-wide stop is a separate, explicit call that requires
+`confirm: true` and a reason, and returns `affected[]` naming every session with its own
+outcome plus `unconfirmed[]`.
 
 Session snapshots include `available_profiles`, the model names accepted by that
 session's model selector. The desktop falls back to the global profiles endpoint

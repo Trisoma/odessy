@@ -18,6 +18,13 @@ from contextlib import asynccontextmanager
 from .session import public
 from odessy.interaction.broker import InteractionError
 from odessy.models.cloud_model import CloudModelConfigError
+from odessy.runtime_backends import (
+    ModelRouteError,
+    ModelRouteLocked,
+    RuntimeCapabilityUnavailable,
+    RuntimeSelectionError,
+    RuntimeUnavailable,
+)
 
 _DIAGNOSTIC = r'''<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Odessy diagnostics</title>
@@ -172,6 +179,48 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         restart_reservation = None
         return {'status':'resumed'}
 
+    @app.post('/v1/lifecycle/stop-all')
+    async def stop_all(request: Request):
+        """The explicit process-wide stop. Not the per-session Stop, and it says what it did.
+
+        Every session is asked to stop its own turn through its engine; nothing is killed,
+        and the response names each session with its outcome so a caller can see which ones
+        confirmed. Sessions stay open and usable afterwards; ending one (and the child it
+        owns) is ``DELETE /v1/sessions/{sid}``.
+        """
+        data = await body(request)
+        if set(data) - {'service_instance_id', 'reason', 'confirm'}:
+            raise HTTPException(400, 'Unknown lifecycle fields')
+        if data.get('confirm') is not True:
+            raise HTTPException(400, 'The emergency stop requires "confirm": true')
+        if not isinstance(data.get('reason'), str) or not data['reason'].strip():
+            raise HTTPException(400, 'A reason is required for the emergency stop')
+        if data.get('service_instance_id') != app.state.service_instance_id:
+            raise HTTPException(409, 'Service changed; nothing was stopped')
+        affected = []
+        for sid, controller in list(sessions.items()):
+            task = tasks.get(sid)
+            try:
+                outcome = await controller.stop()
+            except RuntimeCapabilityUnavailable as exc:
+                outcome = {'execution': 'unconfirmed', 'cleanup': 'pending',
+                           'requested': False, 'confirmed': False,
+                           'detail': str(exc)}
+            except Exception as exc:  # noqa: BLE001 - one session must not hide the rest
+                outcome = {'execution': 'unconfirmed', 'cleanup': 'pending',
+                           'requested': False, 'confirmed': False,
+                           'detail': type(exc).__name__}
+            if task is not None and not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.wait({task}, timeout=2.0)
+            affected.append({'session_id': sid, 'engine': controller.engine,
+                             'reason': data['reason'].strip()[:200], **outcome})
+        return {'affected': affected,
+                'unconfirmed': [entry['session_id'] for entry in affected
+                                if entry.get('execution') == 'unconfirmed'],
+                'service_instance_id': app.state.service_instance_id}
+
     def verified(request):
         value = request.headers.get('authorization', '')
         supplied = value[7:] if value.startswith('Bearer ') else ''
@@ -200,13 +249,7 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         return sessions[sid]
 
     def snapshot(controller):
-        return {'id': controller.id, 'selected_profile': controller.selected_profile,
-                'available_profiles': list(controller.profiles),
-                'active_profile': controller.active_profile, 'running': controller.running,
-                'history': public(controller.memory.turns),
-                'pending_approvals': controller.pending_approvals,
-                'pending_questions': controller.pending_questions,
-                'events': controller.events}
+        return controller.public_snapshot()
 
     async def make_controller():
         nonlocal pending_admissions
@@ -219,6 +262,16 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                     controller = await controller
             except CloudModelConfigError as exc:
                 raise HTTPException(503, public(str(exc))) from exc
+            except RuntimeUnavailable as exc:
+                # A selected engine that is not in this build is unavailable, never a
+                # reason to construct the legacy engine behind the caller's back.
+                raise HTTPException(503, public(str(exc))) from exc
+            except ModelRouteError as exc:
+                # The chosen model profile has no faithful route on this engine: refuse it
+                # visibly instead of running a different provider.
+                raise HTTPException(400, public(exc.message)) from exc
+            except RuntimeSelectionError as exc:
+                raise HTTPException(400, public(str(exc))) from exc
             except SystemExit as exc:
                 # The shared CLI model builder wraps configuration failures.
                 # Translate only that known cause; unrelated exits stay errors.
@@ -735,7 +788,15 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         if not isinstance(data.get('profile'), str):
             raise HTTPException(400, 'profile is required')
         try:
-            find(sid).select_model(data['profile'])
+            await find(sid).select_model_async(data['profile'])
+        except RuntimeCapabilityUnavailable as exc:
+            raise HTTPException(501, public(exc.public())) from exc
+        except ModelRouteLocked as exc:
+            # The provider credential is fixed when the engine starts; another provider
+            # is a new session, not a silent switch inside this one.
+            raise HTTPException(409, public(str(exc))) from exc
+        except ModelRouteError as exc:
+            raise HTTPException(400, public(exc.message)) from exc
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(400, str(exc))
         return snapshot(find(sid))
@@ -759,9 +820,10 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         if controller.running or sid in tasks:
             raise HTTPException(409, 'A turn is already running')
         turn_id = secrets.token_hex(16)
+        epoch = controller.stop_epoch
         async def run():
             try:
-                result=await controller.run_turn(data['text'], participant=data.get('participant'), turn_id=turn_id)
+                result=await controller.run_turn(data['text'], participant=data.get('participant'), turn_id=turn_id, admitted_epoch=epoch)
                 if spoken and desktop_voice is not None:
                     await desktop_voice.speak(controller,result.final_text)
                 return result.final_text
@@ -828,14 +890,21 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
 
     @app.post('/v1/sessions/{sid}/stop')
     async def stop(sid: str):
-        if desktop_voice is not None and desktop_voice.owner==sid:await desktop_voice.cancel(find(sid))
-        await find(sid).stop()
+        controller = find(sid)
         task = tasks.get(sid)
-        if task is not None:
+        if desktop_voice is not None and desktop_voice.owner==sid:await desktop_voice.cancel(controller)
+        try:
+            outcome = await controller.stop()
+        except RuntimeCapabilityUnavailable as exc:
+            raise HTTPException(501, public(exc.public())) from exc
+        if task is not None and outcome.get('execution') != 'stopped':
+            # The engine did not confirm the end, so stop waiting for it here as well - and
+            # bound that too: a handler that waits for an unconfirmed turn would hang the
+            # very request that is meant to report it.
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await task
-        return {'status': 'stopped'}
+                await asyncio.wait({task}, timeout=2.0)
+        return outcome
 
     @app.post('/v1/sessions/{sid}/approvals/{approval_id}')
     async def answer(sid: str, approval_id: str, request: Request):
