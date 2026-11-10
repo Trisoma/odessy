@@ -891,12 +891,12 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     @app.post('/v1/sessions/{sid}/stop')
     async def stop(sid: str):
         controller = find(sid)
+        task = tasks.get(sid)
         if desktop_voice is not None and desktop_voice.owner==sid:await desktop_voice.cancel(controller)
         try:
             outcome = await controller.stop()
         except RuntimeCapabilityUnavailable as exc:
             raise HTTPException(501, public(exc.public())) from exc
-        task = tasks.get(sid)
         if task is not None and outcome.get('execution') != 'stopped':
             # The engine did not confirm the end, so stop waiting for it here as well - and
             # bound that too: a handler that waits for an unconfirmed turn would hang the

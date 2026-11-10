@@ -372,3 +372,46 @@ def test_the_explicit_process_wide_stop_is_guarded_and_reports_every_session(har
     assert body["unconfirmed"] == []
     # Both sessions were stopped through their own engines, not by killing anything.
     assert first_runtime.stops >= 1 and second_runtime.stops >= 1
+
+def test_harness_route_credentials_are_redacted_from_public_events(harness_controller):
+    """Saved or session route credentials need not exist in the process environment."""
+    import json
+    from types import SimpleNamespace
+    session, runtime = harness_controller(hold=False)
+    runtime.route = SimpleNamespace(api_key='session-only-route-secret-123')
+    session.emit('error', {'message': 'failure session-only-route-secret-123'})
+    assert 'session-only-route-secret-123' not in json.dumps(session.events)
+
+
+def test_external_stop_event_cancels_a_nonlegacy_turn(harness_controller):
+    """Voice and other callers use the same Stop semantics as typed input."""
+    session, runtime = harness_controller()
+    async def flow():
+        stop = asyncio.Event()
+        turn = asyncio.create_task(session.run_turn('hello', stop_event=stop))
+        try:
+            while not runtime.turns:
+                await asyncio.sleep(0)
+            stop.set()
+            with pytest.raises(TurnCancelled):
+                await asyncio.wait_for(asyncio.shield(turn), .5)
+            assert runtime.stops >= 1
+        finally:
+            await session.close()
+            await asyncio.gather(turn, return_exceptions=True)
+    run(flow())
+
+
+def test_preset_external_stop_event_never_admits_a_harness_turn(harness_controller):
+    """Already revoked input cannot reach the runtime or publish a completed answer."""
+    session, runtime = harness_controller()
+    async def flow():
+        event = asyncio.Event()
+        event.set()
+        try:
+            with pytest.raises(TurnCancelled):
+                await session.run_turn('hello', stop_event=event)
+            assert runtime.turns == []
+        finally:
+            await session.close()
+    run(flow())

@@ -224,7 +224,8 @@ class SessionController:
                 secret = os.environ.get(env, '') if env else ''
                 if secret:
                     value = value.replace(secret, '<redacted>')
-            models = [self._model, self._active_model]
+            models = [self._model, self._active_model,
+                      getattr(getattr(self, "runtime", None), "route", None)]
             for model in tuple(models):
                 # A failover model holds one adapter (and key) per provider.
                 models.extend(child for _, child in getattr(model, 'candidates', ()))
@@ -490,7 +491,8 @@ class SessionController:
             # Not a fallback: a harness session runs the harness, and refuses whatever
             # that engine has not implemented rather than running the legacy loop.
             return await self._run_engine_turn(text, participant=participant,
-                                               remember=remember, turn_id=turn_id)
+                                               remember=remember, turn_id=turn_id,
+                                               stop_event=stop_event)
         self.interactions.start_turn(turn_id)
         self._task = asyncio.current_task()
         self._stop = stop_event if stop_event is not None else asyncio.Event()
@@ -592,7 +594,7 @@ class SessionController:
             self._active_model = None
             self._task = None
 
-    async def _run_engine_turn(self, text, *, participant=None, remember=True, turn_id=None):
+    async def _run_engine_turn(self, text, *, participant=None, remember=True, turn_id=None, stop_event=None):
         """One turn on a non-legacy engine.
 
         The session keeps ownership of the turn's bookkeeping (pinning, history, usage,
@@ -601,6 +603,9 @@ class SessionController:
         """
         if participant is not None:
             raise RuntimeCapabilityUnavailable('collaboration', gate='10')
+        if stop_event is not None and stop_event.is_set():
+            raise TurnCancelled(StopOutcome(False, 'stopped', 'complete', 'cancelled',
+                                            'input was cancelled before admission').public())
         self.interactions.start_turn(turn_id)
         self._task = asyncio.current_task()
         # Deltas arrive from the engine's worker threads; the loop must be capturable so
@@ -611,6 +616,10 @@ class SessionController:
         self.emit('transcript', {'role': 'user', 'text': text})
         self.emit('selection', {'profile': self.active_profile, 'reason': 'Pinned for this turn',
                                 'engine': self.engine})
+        async def watch_external_stop():
+            await stop_event.wait()
+            await self.stop()
+        watcher = asyncio.create_task(watch_external_stop()) if stop_event is not None else None
         try:
             from odessy.models.usage import process_ledger
             ledger = process_ledger()
@@ -643,6 +652,9 @@ class SessionController:
             self.emit('error', {'message': str(exc), 'error_type': type(exc).__name__})
             raise
         finally:
+            if watcher is not None:
+                watcher.cancel()
+                await asyncio.gather(watcher, return_exceptions=True)
             self._flush_thread_events()
             self._loop = None
             self.interactions.end_turn()

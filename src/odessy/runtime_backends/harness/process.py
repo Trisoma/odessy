@@ -304,6 +304,7 @@ class HarnessProcess:
         if "method" in message:
             if "id" in message:
                 self._refuse(message)
+                return
             else:
                 with self._state_lock:
                     self._notifications.append(message)

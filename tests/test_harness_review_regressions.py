@@ -112,7 +112,8 @@ def test_model_change_keeps_the_application_event_loop_responsive():
             await task
     asyncio.run(flow())
 
-def test_stop_all_does_not_cancel_a_newly_admitted_turn():
+@pytest.mark.parametrize("endpoint", ['/v1/lifecycle/stop-all', '/v1/sessions/s/stop'])
+def test_stop_all_does_not_cancel_a_newly_admitted_turn(endpoint):
     """A Stop awaiting the old task must not look up and cancel its replacement."""
     import httpx
     from odessy.application.api import create_app
@@ -126,13 +127,13 @@ def test_stop_all_does_not_cancel_a_newly_admitted_turn():
             await asyncio.gather(old, return_exceptions=True)
             new = asyncio.create_task(asyncio.Event().wait())
             app.state.turn_tasks['s'] = new
-            return {'execution': 'stopped', 'cleanup': 'complete'}
+            return {'execution': 'unconfirmed', 'cleanup': 'pending'}
         app.state.sessions['s'] = SimpleNamespace(stop=stop, engine='harness')
         app.state.turn_tasks['s'] = old
         try:
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                     base_url='http://test', headers={'Authorization': 'Bearer secret'}) as client:
-                response = await client.post('/v1/lifecycle/stop-all', json={
+                response = await client.post(endpoint, json={
                     'service_instance_id': app.state.service_instance_id,
                     'reason': 'operator stop', 'confirm': True})
                 assert response.status_code == 200
@@ -143,3 +144,15 @@ def test_stop_all_does_not_cancel_a_newly_admitted_turn():
                 new.cancel()
             await asyncio.gather(*[task for task in (old, new) if task], return_exceptions=True)
     asyncio.run(flow())
+
+
+def test_refused_server_request_is_not_reparsed_as_a_reply(tmp_path, fake, monkeypatch):
+    """A valid refused request is not also a malformed or unknown response."""
+    process = HarnessProcess(configured(tmp_path, fake, monkeypatch))
+    writes = []
+    monkeypatch.setattr(process, '_write', writes.append)
+    process._dispatch({'jsonrpc': '2.0', 'id': 'server-request', 'method': 'unsupported'})
+    assert process.malformed_frames == 0
+    assert len(process.refused_requests()) == 1
+    assert len(writes) == 1 and writes[0]['error']['code'] == -32601
+    assert not any('reply' in item for item in process.diagnostics())
