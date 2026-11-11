@@ -13,6 +13,7 @@ starts in a reply, the rest of that reply is not.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -41,11 +42,15 @@ class SpeechStream:
         self._held = False
         #: Sentences emitted so far in this turn.
         self.emitted = 0
+        #: Every sentence this turn said, across attempts. A retry drops the unfinished
+        #: buffer of the earlier attempt, but words already heard stay heard.
+        self.spoken: list[str] = []
         self.last_text = ""
 
     def begin(self) -> None:
         """Start one model reply (also called before a retried request)."""
 
+        # ``spoken`` is deliberately kept: only unspoken text is discarded.
         self._buffer = ""
         self._reply = []
         self._held = False
@@ -73,10 +78,29 @@ class SpeechStream:
         self._buffer = ""
         self.last_text = "" if self._held else "".join(self._reply).strip()
 
+    def unspoken(self, answer: str) -> str:
+        """The part of ``answer`` this turn has not already said.
+
+        The committed answer joins every message chunk of the turn, including text spoken
+        before a tool call or a retry. Returning the remainder is what keeps those words
+        from being said twice; when the answer does not begin with what was said, all of
+        it is new and is returned unchanged.
+        """
+
+        spoken = " ".join(self.spoken).split()
+        if not spoken:
+            return answer.strip()
+        if answer.split()[:len(spoken)] != spoken:
+            return answer.strip()
+        pattern = r"\s*".join(re.escape(word) for word in spoken)
+        match = re.match(r"\s*" + pattern + r"\s*", answer)
+        return answer[match.end():].strip() if match else answer.strip()
+
     def _say(self, text: str) -> None:
         text = text.strip()
         if text:
             self.emitted += 1
+            self.spoken.append(text)
             self._emit(text)
 
 

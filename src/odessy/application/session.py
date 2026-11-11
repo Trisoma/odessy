@@ -182,6 +182,14 @@ class SessionController:
         #: ``(task, outcome)`` for the last Stop that addressed a running turn. A local
         #: cancellation of that task reports *this* outcome rather than inventing "stopped".
         self._last_stop: tuple[Any, dict] | None = None
+        #: Voice (prompt 13): the turn's speech stream, and where its phases are recorded.
+        #: A voice session binds both from its own task; the engine delivers text from a
+        #: worker thread, so they are captured here and fed on the loop where the public
+        #: events are delivered. ``None`` on a text turn, and on the legacy engine whose
+        #: adapter feeds its own stream directly.
+        self._speech_stream = None
+        self._speech_attempt: Any = None
+        self._voice_timing: Any = None
         self._closed = False
         self.monitoring_sink = None
         # The engine is decided once, here, and never afterwards. ``resolve_and_build``
@@ -562,6 +570,12 @@ class SessionController:
         return value
 
     def emit(self, event_type, data=None):
+        if event_type == 'delta':
+            self._observe_engine_text(data if isinstance(data, dict) else {})
+        elif event_type == 'tool_progress' and self._speech_stream is not None:
+            # A tool call started in this reply: what follows it is not spoken while it
+            # runs (prompt 13 §2). The settled answer is still spoken if it was not read.
+            self._speech_stream.hold()
         if self.monitoring_sink is not None and event_type == 'usage':
             from odessy.monitoring.runtime import sanitize
             values = asdict(data) if is_dataclass(data) else data if isinstance(data, dict) else {}
@@ -596,6 +610,49 @@ class SessionController:
         for transient events, so a runtime without it simply stays settlement-only.
         """
         self._emit_from_thread(event_type, data)
+
+    # ------------------------------------------------------------ voice (prompt 13)
+
+    def bind_turn_timing(self, timing) -> None:
+        """Record this turn's voice phases on ``timing``; ``None`` unbinds.
+
+        The application owns the object (one per voice turn) and reports its snapshots;
+        the session only marks the first engine text it delivers.
+        """
+        self._voice_timing = timing
+
+    def _observe_engine_text(self, data) -> None:
+        """Feed genuine engine text to a voice turn's speech stream.
+
+        The stream belongs to the voice session, which speaks each sentence through the
+        existing provider. Nothing is spoken for a text turn, and the committed answer is
+        never spoken from here — only the transient text the engine produced.
+        """
+        stream = self._speech_stream
+        if stream is None:
+            return
+        text = data.get('text')
+        attempt = data.get('attempt')
+        if attempt is not None and attempt != self._speech_attempt:
+            # A retried request speaks its own text. The earlier attempt's unfinished
+            # buffer is dropped; sentences already spoken stay spoken.
+            self._speech_attempt = attempt
+            stream.begin()
+        if not isinstance(text, str) or not text:
+            return
+        if self._voice_timing is not None:
+            # The first *text*, not the first frame: a boundary frame with no text is not
+            # the answer starting to arrive.
+            self._voice_timing.mark_first_text()
+        stream.feed(text)
+
+    def _end_engine_speech(self) -> None:
+        """The reply finished: flush its last sentence. Cleared, never replayed."""
+
+        stream, self._speech_stream = self._speech_stream, None
+        self._speech_attempt = None
+        if stream is not None:
+            stream.end()
 
     def _emit_from_thread(self, event_type, data=None, *, loop=None):
         """Queue an event raised off the loop thread.
@@ -986,6 +1043,12 @@ class SessionController:
         # Deltas arrive from the engine's worker threads; the loop must be capturable so
         # they are delivered live rather than held until the turn ends.
         self._loop = asyncio.get_running_loop()
+        # A voice turn binds its speech stream in this task's context (prompt 13). It is
+        # captured here because the engine emits from its own thread, where the context
+        # variable is not visible; the stream itself is spoken by the voice session.
+        from odessy.runtime.speech import current_speech
+        self._speech_stream = current_speech()
+        self._speech_attempt = None
         self.active_profile = self.selected_profile
         self._active_model = self._model
         self.emit('transcript', {'role': 'user', 'text': text})
@@ -1024,6 +1087,9 @@ class SessionController:
             # Transient deltas were queued while the turn ran. Deliver them before the
             # committed message so a consumer never sees text after the answer.
             self._flush_thread_events()
+            # The reply is complete: its last sentence is spoken now, before the answer
+            # is compared with what was already heard.
+            self._end_engine_speech()
             if remember:
                 self.memory.add(self._public(original), self._public(result.final_text))
             self.emit('transcript', {'role': 'assistant', 'text': result.final_text})
@@ -1052,6 +1118,10 @@ class SessionController:
             self._finish_turn(turn, FAILED)
             raise
         finally:
+            # The turn is over: text that arrives afterwards belongs to no turn and is
+            # not spoken. A cancelled reply's unfinished buffer is dropped, never read.
+            self._speech_stream = None
+            self._speech_attempt = None
             if watcher is not None:
                 watcher.cancel()
                 await asyncio.gather(watcher, return_exceptions=True)

@@ -15,6 +15,18 @@ from dataclasses import asdict
 import time
 from contextlib import asynccontextmanager
 
+async def _stop_when_asked(controller, stop_event):
+    """Barge-in: the voice session asked for the running turn to end.
+
+    A fresh wake phrase (or a client Stop) sets that event; the turn is ended through
+    the same cancellation implementation every other Stop uses (prompt 06), so a
+    barge-in does not create a second path. The caller cancels this waiter when the
+    turn ends on its own.
+    """
+    await stop_event.wait()
+    await controller.stop()
+
+
 from .session import public
 from odessy.application.durable import RuntimeSessionUnavailable
 from odessy.interaction.broker import InteractionError
@@ -972,7 +984,7 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             else:await desktop_voice.cancel(controller)
         return admit_turn(controller,data)
 
-    def admit_turn(controller,data,spoken=False):
+    def admit_turn(controller,data,spoken=False,timing=None):
         sid=controller.id
         admission_open()
         if not isinstance(data.get('text'), str) or not data['text'].strip():
@@ -989,8 +1001,17 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         if record_queued is not None:
             record_queued(turn_id, data['text'])
         async def run():
+            # This turn's voice phases: the audio adapter marked capture and recognition;
+            # the session marks the first engine text on the same object (prompt 13).
+            settled = False
+            controller.bind_turn_timing(timing)
             try:
                 result=await controller.run_turn(data['text'], participant=data.get('participant'), turn_id=turn_id, admitted_epoch=epoch)
+                settled = True
+                if timing is not None:
+                    # The committed answer is available now. Playback may take seconds;
+                    # it must not be included in first-text/model latency.
+                    controller.emit('voice_timing', timing.settle(settled=True))
                 if spoken and desktop_voice is not None:
                     await desktop_voice.speak(controller,result.final_text)
                 return result.final_text
@@ -999,6 +1020,11 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                 pass
             finally:
                 tasks.pop(sid, None)
+                if timing is not None:
+                    # A cancelled or failed turn has no committed answer, so it has no
+                    # first text to claim; that phase stays unmeasured.
+                    controller.emit('voice_timing', timing.settle(settled=settled))
+                controller.bind_turn_timing(None)
                 if desktop_voice is not None:await desktop_voice.typed(controller,False)
         tasks[sid] = asyncio.create_task(run())
         return {'turn_id': turn_id, 'session_id': sid, 'status': 'accepted'}
@@ -1022,9 +1048,18 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                 async def submit_wake(text,stop_event,context):
                     c=controller
                     c.emit('voice_transcript',{'text':c._public(text),'source':'wake'})
-                    admit_turn(c,{'text':text})
+                    admit_turn(c,{'text':text},timing=desktop_voice.timing)
                     task=tasks.get(c.id)
-                    return (await asyncio.shield(task)) or '' if task is not None else ''
+                    # A fresh wake phrase during this turn sets ``stop_event``: the turn is
+                    # ended through the ordinary Stop path, not abandoned mid-request.
+                    watcher=asyncio.create_task(_stop_when_asked(c,stop_event)) if stop_event is not None else None
+                    try:
+                        return (await asyncio.shield(task)) or '' if task is not None else ''
+                    finally:
+                        if watcher is not None:
+                            watcher.cancel()
+                            with contextlib.suppress(asyncio.CancelledError, Exception):
+                                await watcher
                 async def stop_wake_turn():
                     await controller.stop()
                     task=tasks.get(sid)
@@ -1039,7 +1074,7 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                 return await desktop_voice.start(controller,data.get('expected_interaction_id'),preview=action=='test_input')
             if action=='finish_capture':
                 if not isinstance(data.get('capture_id'),str):raise VoiceError('capture_id is required',400)
-                async def submit(c,text):admit_turn(c,{'text':text},spoken=True)
+                async def submit(c,text):admit_turn(c,{'text':text},spoken=True,timing=desktop_voice.timing)
                 return await desktop_voice.finish(controller,data['capture_id'],submit)
             if action in ('cancel_capture','stop_playback'):
                 if action=='cancel_capture' and not isinstance(data.get('capture_id'),str):raise VoiceError('capture_id is required',400)

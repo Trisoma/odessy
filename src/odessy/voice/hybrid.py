@@ -53,6 +53,7 @@ from odessy.voice.session import (
 from odessy.voice.stt import WhisperCppSTT, blank_transcript_reason
 from odessy.voice.tts import KokoroTTS
 from odessy.voice.providers import create_stt, create_tts, close_providers, cancel_provider
+from odessy.voice.timing import VoiceTiming
 from odessy.voice.vad import SileroSpeechDetector
 from odessy.voice.wake import OpenWakeWordDetector, WakeGate
 
@@ -87,6 +88,10 @@ def _no_status(message: str) -> None:
     return None
 
 
+def _no_timing(snapshot: dict) -> None:
+    return None
+
+
 @dataclass
 class HybridAudioAdapter:
     """Own the microphone, the transcriber and the speaker of a hybrid session."""
@@ -98,6 +103,12 @@ class HybridAudioAdapter:
     stop_turn: Callable[[], Any] | None = None
     report_audio_error: Callable[[str, str], None] = _no_audio_error
     report_status: Callable[[str], None] = _no_status
+    #: Receives one bounded snapshot per completed phase (prompt 13). Numbers only:
+    #: no transcript, path or audio leaves this module.
+    report_timing: Callable[[dict], None] = _no_timing
+    #: Phase marks for the current voice turn. Shared with the application session so a
+    #: turn's first engine text is timed by whoever observes it first.
+    timing: VoiceTiming = field(default_factory=VoiceTiming)
     #: The session's shared history. Read only: the adapter passes
     #: ``remember_turns=False`` so nothing is appended here.
     memory: ConversationMemory = field(default_factory=ConversationMemory)
@@ -320,9 +331,17 @@ class HybridAudioAdapter:
             if not self.output_available:
                 # A later turn, /text or close made this audio obsolete.
                 return
+            # Synthesis succeeded: measure the playback request, not file creation.
+            # Device-level audible onset is unavailable. Withdraw this software mark
+            # on failure rather than presenting failed playback as successful.
+            marked = self.timing.mark_first_audio()
+            if marked:
+                self._report_timing()
             try:
                 await self._run_blocking(player.play, path, generation=generation)
             except Exception as error:  # noqa: BLE001 - reported, never propagated
+                if marked and self.timing.clear_first_audio():
+                    self._report_timing()
                 self._fail_output(PLAYBACK, f"speech playback failed: {error}")
         finally:
             _unlink(path)
@@ -521,6 +540,11 @@ class HybridAudioAdapter:
             on_audio_error=self._on_audio_error,
             start_recording=not self.listen and not self._typed_turn,
             on_reply_complete=self.on_reply_complete,
+            # One timing object for the whole adapter: the session marks capture and
+            # recognition, the application marks the first engine text on the same
+            # object, and this adapter marks the first audible playback.
+            timing=self.timing,
+            on_timing=self._report_timing,
         )
         self._session = session
         self._task = asyncio.create_task(session.run(), name="odessy-hybrid-voice")
@@ -558,12 +582,16 @@ class HybridAudioAdapter:
         stt = self._stt
         if stt is None:
             raise RuntimeError("speech recognition is not available")
+        # Capture already ended (the session or the push-to-talk path marked it); the
+        # interval to the transcript is recognition, measured on its own.
         path = self._audio_path("utterance")
         path.write_bytes(pcm_to_wav(pcm))
         try:
             result = await self._run_blocking(stt.transcribe, path)
         finally:
             _unlink(path)
+        self.timing.mark_stt_done()
+        self._report_timing()
         if result.status == "empty":
             return ""
         if result.status != "ok":
@@ -571,6 +599,22 @@ class HybridAudioAdapter:
                 result.error or f"speech recognition returned {result.status}"
             )
         return result.text
+
+    def begin_capture(self, turn: str = "") -> None:
+        """A recording window opened: the capture phase starts here."""
+
+        self.timing.begin(turn)
+        self._report_timing()
+
+    def note_capture_end(self) -> None:
+        """Recording ended; the utterance is being handed to recognition."""
+
+        if self.timing.mark_capture_end():
+            self._report_timing()
+
+    def _report_timing(self) -> None:
+        with contextlib.suppress(Exception):
+            self.report_timing(self.timing.public())
 
     def _status(self, message: str) -> None:
         with contextlib.suppress(Exception):

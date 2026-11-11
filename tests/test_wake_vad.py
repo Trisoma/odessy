@@ -17,6 +17,12 @@ def test_silero_uses_512_sample_chunks_instead_of_upstream_480_default(
     class UpstreamVAD:
         # Match openWakeWord's default, which is incompatible with the deployed
         # Silero model when a 512-sample frame is split into 480 + 32 samples.
+        def __init__(self, *, model_path=None):
+            # The adapter passes the deployed Silero model when it is present on this
+            # computer and falls back to the pinned default when it is not. Both are
+            # the same upstream seam; only the inference chunk size is under test.
+            self.model_path = model_path
+
         def predict(self, samples, frame_size=480):
             assert samples.typecode == "h"
             assert len(samples) == 512

@@ -59,6 +59,11 @@ def _chunks_for(prompt: str) -> tuple[list[str], int, dict | None]:
             "description": "Write a marker outside the workspace",
             "command": command,
         }})
+    if "slow sentences" in prompt.lower():
+        # Two complete sentences, then a long tail without sentence ends: the voice path
+        # speaks what arrived before a Stop and nothing after it (prompt 13).
+        return (["The first sentence is spoken. ", "The second one too. "]
+                + [f"tail{i} " for i in range(40)], 250, None)
     if "slow survive" in prompt.lower():
         # 5 s: still running after the other turn is cancelled and observed.
         return ([f"token{i} " for i in range(20)], 250, None)

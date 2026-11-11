@@ -36,7 +36,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
-from odessy.runtime.speech import SpeechStream, same_text, speech_scope
+from odessy.runtime.speech import SpeechStream, speech_scope
 from odessy.runtime.types import ConversationContext
 from odessy.voice.frames import (
     WAKE_FRAME_BYTES,
@@ -138,6 +138,12 @@ class VoiceSession:
 
     state: SessionState = "LISTENING"
     error: str | None = None
+
+    #: Phase marks for the current turn, and where each completed phase is reported.
+    #: Both are supplied by the adapter that owns this session (prompt 13); with
+    #: ``None`` nothing is measured and no timing is claimed.
+    timing: "VoiceTiming | None" = None
+    on_timing: Callable[[dict], None] | None = None
 
     _stop: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
     _pending: str | None = field(default=None, repr=False)
@@ -473,6 +479,7 @@ class VoiceSession:
         # Capture starts after the cue returns: the contract is that the user speaks
         # after the cue, so cue audio is never part of the utterance.
         self.segmenter.begin()
+        self._begin_capture()
         self._blank_attempts = 0
         self.state = "RECORDING"
         self.status("Recording speech")
@@ -495,10 +502,33 @@ class VoiceSession:
 
     async def _finish_capture(self) -> None:
         self._capture_pending = (self.segmenter.utterance, self._turn_id)
+        self._end_capture()
         self.state = "TRANSCRIBING"
         self.status("Transcribing speech")
         if self._transcription is None or self._transcription.done():
             self._transcription = asyncio.create_task(self._transcribe_pending())
+
+    # -- phase timing ------------------------------------------------------------
+
+    def _begin_capture(self) -> None:
+        """A recording window opened: the capture phase starts here."""
+
+        if self.timing is None:
+            return
+        self.timing.begin(f"wake-{self._turn_id}")
+        self._report_timing()
+
+    def _end_capture(self) -> None:
+        """Recording ended; recognition is next, and it is measured separately."""
+
+        if self.timing is not None and self.timing.mark_capture_end():
+            self._report_timing()
+
+    def _report_timing(self) -> None:
+        if self.timing is None or self.on_timing is None:
+            return
+        with contextlib.suppress(Exception):
+            self.on_timing(self.timing.public())
 
     async def _transcribe_pending(self) -> None:
         # Serialize STT, retaining at most one replacement recording.
@@ -565,6 +595,7 @@ class VoiceSession:
                 )
                 self._vad_frames.reset()
                 self.segmenter.begin()
+                self._begin_capture()
                 self.state = "RECORDING"
                 return
             self.status(f"No usable speech ({blank}); nothing was sent to the model")
@@ -645,9 +676,13 @@ class VoiceSession:
             # speaking it would talk over whatever the user is now saying.
             return
 
-        if stream is not None and not stopped and stream.emitted and same_text(stream.last_text, answer):
-            self._after_reply(turn_id)
-            return
+        if stream is not None and not stopped and stream.emitted:
+            # The committed answer joins every message of the turn. Say only what has not
+            # been heard: text spoken before a tool call or a retry keeps its place.
+            answer = stream.unspoken(answer)
+            if not answer:
+                self._after_reply(turn_id)
+                return
         await self._say(answer, turn_id)
 
     def _start_streaming(self, turn_id: int):
