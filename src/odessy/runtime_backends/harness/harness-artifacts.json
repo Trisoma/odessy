@@ -197,7 +197,7 @@
       "windows-x64": {
         "runtime_wheel": "win_amd64",
         "executable": "win-x64",
-        "qualification": "source tests + pinned-runtime smoke + complete role-aware installer chain into an isolated root (installed Node 22.23.0, bundled Python 3.12.13, executable digest matched; report 14 \u64027). Installed HTTP/desktop qualification is prompt 16: the installed dependency closure currently omits fastapi, so an installed service cannot serve /v1 yet."
+        "qualification": "Source tests; a complete role-aware installer chain into a fresh isolated root (declared Node 22.23.0, bundled CPython 3.12.13, executable digest matched); an installed payload from a previous build of this source set driven through the HTTP application (report 14.rev1 7.6-7.7: streaming, approved and denied consent, bundled Node tool, clarification, Stop, restore, no leftover child); the wheel closure now declares fastapi/uvicorn with hashes, so a packaged service can serve /v1. Payload and NSIS are rebuilt from this tree (report 14.rev3). Not qualified: native setup click-through, end-user desktop (prompt 16), Linux/Jetson (17-20)."
       }
     },
     "declared_not_qualified": {

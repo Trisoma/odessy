@@ -287,3 +287,124 @@ def test_installed_node_tools_are_under_the_application_not_the_root(tmp_path):
     (root / "tools").mkdir()
     assert resources.installed_node_tools_dir(environ) == tools
     assert resources.installed_node_tools_dir({}) is None
+
+
+# ---------------------------------------------------------------------------------------
+# The installed launch names the payload that ships beside it
+# ---------------------------------------------------------------------------------------
+
+def _launcher(root: Path):
+    """The launcher as it is installed: the template copied beside the application."""
+
+    import importlib.util
+    import shutil
+
+    target = Path(root) / "launch.py"
+    shutil.copyfile(REPO_ROOT / "installer" / "templates" / "launch.py", target)
+    spec = importlib.util.spec_from_file_location("odessy_installed_launcher", target)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _launcher_root(tmp_path: Path, *, record: bool) -> Path:
+    """An installed application whose paths contain a space and a non-ASCII character."""
+
+    import sys
+
+    root = tmp_path / "Odessy Test Äpp"
+    runtime = root / "runtime" / "harness-runtime"
+    runtime.mkdir(parents=True)
+    executable = runtime / resources.executable_declaration()["file"]
+    executable.write_bytes(b"MZ installed runtime")
+    node = root / "runtime" / "node-runtime" / "node.exe"
+    node.parent.mkdir(parents=True)
+    node.write_bytes(b"MZ node")
+    entry = root / "application" / "tools" / "dist" / "src" / "server.js"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("// entry", encoding="utf-8")
+    (root / "src" / "odessy").mkdir(parents=True)
+    (root / "src" / "odessy" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "src" / "odessy" / "__main__.py").write_text("", encoding="utf-8")
+    settings = {"schema_version": 1, "status": "ready", "runtime_dir": str(root / "runtime"),
+                "dependency_dir": str(root / "dependencies"), "python": sys.executable,
+                "runtime_versions": {}, "source_sha256": {}, "tool_sha256": "0" * 64}
+    if record:
+        settings["harness"] = {
+            "runtime_dir": str(runtime), "executable": str(executable),
+            "node_executable": str(node), "node_tools_dir": str(root / "application" / "tools")}
+    (root / "odessy-application.json").write_text(json.dumps(settings), encoding="utf-8")
+    return root
+
+
+def _launch_and_capture(root: Path, monkeypatch) -> dict:
+    """Run the launcher's own setup and report the environment it would hand to Odessy."""
+
+    import os
+    import runpy
+
+    launch = _launcher(root)
+    called: dict = {}
+    monkeypatch.setattr(runpy, "run_module", lambda name, **kw: called.update(name=name, **kw))
+    for name in ("ODESSY_NODE_TOOLS_DIR", "ODESSY_HARNESS_NODE", "ODESSY_HARNESS_RUNTIME_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    assert launch.main([]) == 0
+    assert called["name"] == "odessy"
+    return {name: os.environ[name] for name in
+            ("ODESSY_NODE_TOOLS_DIR", "ODESSY_HARNESS_NODE", "ODESSY_HARNESS_RUNTIME_DIR")
+            if name in os.environ}
+
+
+@pytest.mark.parametrize("record", [True, False])
+def test_the_installed_launcher_exports_the_staged_layout(tmp_path, monkeypatch, record):
+    """No external override: the launcher itself names the runtime, its Node and the tools.
+
+    The recorded case is what this installer assembles. The unrecorded case is a marker
+    written before the component shipped; it must resolve through the same layout rule as
+    the engine (``<root>/application/tools`` beside ``<root>/runtime/harness-runtime``).
+    """
+
+    root = _launcher_root(tmp_path, record=record)
+
+    exported = _launch_and_capture(root, monkeypatch)
+
+    assert exported["ODESSY_HARNESS_RUNTIME_DIR"] == str(root / "runtime" / "harness-runtime")
+    assert exported["ODESSY_HARNESS_NODE"] == str(root / "runtime" / "node-runtime" / "node.exe")
+    assert exported["ODESSY_NODE_TOOLS_DIR"] == str(root / "application" / "tools")
+
+
+def test_the_runtime_resolution_alone_agrees_with_the_launcher(tmp_path, monkeypatch):
+    """Given only the runtime directory, both resolvers name the same installed files."""
+
+    root = _launcher_root(tmp_path, record=True)
+    environ = {"ODESSY_HARNESS_RUNTIME_DIR": str(root / "runtime" / "harness-runtime")}
+
+    assert resources.installed_node(environ) == root / "runtime" / "node-runtime" / "node.exe"
+    assert resources.installed_node_tools_dir(environ) == root / "application" / "tools"
+    assert _launch_and_capture(root, monkeypatch)["ODESSY_NODE_TOOLS_DIR"] == str(
+        root / "application" / "tools")
+
+
+def test_the_engine_finds_the_staged_tool_server_without_the_override(tmp_path):
+    """The runtime's own resolution is enough to name a usable Node tool server."""
+
+    from odessy.runtime_backends.harness import config as harness_config
+
+    root = tmp_path / "Odessy Test Äpp"
+    node = root / "runtime" / "node-runtime" / "node.exe"
+    node.parent.mkdir(parents=True)
+    node.write_bytes(b"MZ node")
+    runtime = root / "runtime" / "harness-runtime"
+    runtime.mkdir(parents=True)
+    entry = root / "application" / "tools" / "dist" / "src" / "server.js"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("// entry", encoding="utf-8")
+
+    tools = harness_config._node_tools({
+        "ODESSY_HARNESS_RUNTIME_DIR": str(runtime),
+        "ODESSY_HARNESS_NODE_TOOLS": "on",
+    })
+
+    assert tools is not None
+    assert Path(tools.executable) == node
+    assert Path(tools.entry) == entry

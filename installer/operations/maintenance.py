@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 from installer.components import application
 from installer.components import connection
+from installer.components import harness
 from installer.components import model
 from installer.components import ollama_runtime
 from installer.core import pathing
@@ -104,8 +105,15 @@ def plan(root,bundle,executable,*,probe=running_processes,folders=None,validate_
     new=workflow.build_plan(root,Path(state['plan']['cache_dir']),bundle,state['plan']['endpoint'],state['plan']['timeout'])
     if new['model']!=state['plan']['model']:raise ValueError('This version changes the model; only application upgrades on the same model are supported for now.')
     if validate_base:
+        # The Harness payload is nested under runtime/, so it is required only when this
+        # installation recorded staging it. A record written before the component existed
+        # upgrades unchanged; a recorded payload that is now missing or edited refuses
+        # instead of being silently reattached to the new application.
+        required={'runtime','dependencies','ollama_runtime','model','configuration'}
+        if 'harness_runtime' in {step['name'] for step in state['steps'] if step.get('result') is not None}:
+            required.add('harness_runtime')
         for step in workflow.steps_for(new):
-            if step.name in {'runtime','dependencies','ollama_runtime','model','configuration'}:
+            if step.name in required:
                 if step.validate() is None:raise ValueError('Base component is missing and needs component repair: '+step.name)
     _,tool=application.validate_bundle(bundle)
     source=application.source_snapshot(application.REPO_ROOT)
@@ -225,6 +233,10 @@ def execute(root,bundle,executable,expected,*,probe=running_processes,folders=No
         if activation not in (['application'],['application','launcher']):raise ValueError('invalid activation scope')
         core_only=activation==['application']
         if core_only and preview['new_plan'].get('engine')!='role-aware-existing-installer-v1':raise ValueError('core-only proof requires role-aware plan')
+        # A rebuilt application must keep describing the staged Harness payload, otherwise
+        # the launcher stops exporting it and an installed engine silently disappears after
+        # an upgrade or repair. The stage is re-verified by ``assemble`` when it is present.
+        staged_harness={'harness_dir':root/'runtime'/harness.COMPONENT_DIRECTORY} if (root/'runtime'/harness.COMPONENT_DIRECTORY).is_dir() else {}
         identity=uuid.uuid4().hex;folder=root/'.installer/updates'/identity;model.guard_path(folder);folder.mkdir(parents=True)
         data=dict(schema_version=1,id=identity,install_dir=str(root),status='preparing',error=None,
                   old_state=read_state(root),had_application=(root/'application').exists(),had_launcher=(root/'launcher').exists())
@@ -237,7 +249,7 @@ def execute(root,bundle,executable,expected,*,probe=running_processes,folders=No
             if cancelled():raise KeyboardInterrupt()
             if repair is not None:repair(root,folder,preview,data)
             if cancelled():raise KeyboardInterrupt()
-            settings=assemble(root/'runtime',root/'dependencies',bundle,folder/'new-application')
+            settings=assemble(root/'runtime',root/'dependencies',bundle,folder/'new-application',**staged_harness)
             if not core_only:
                 launch=folder/'new-launcher';launch.mkdir()
                 shutil.copyfile(executable,launch/'OdessyLauncher.exe')

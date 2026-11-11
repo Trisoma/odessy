@@ -223,13 +223,12 @@ def main() -> int:
                 "ODESSY_RUNTIME_ENGINE": "harness",
             })
         elif installed_payload is not None:
-            # The installed resolver, not the developer override: the runtime directory, the
-            # private Node and the staged tool server all come from the payload, and the
-            # installed virtualenv is the tool python.
+            # The installed resolver, not the developer override: the runtime directory is
+            # named, and the private Node plus the staged tool server are derived from the
+            # installed layout (``<root>/application/tools``). No ``ODESSY_NODE_TOOLS_DIR``
+            # and no ``ODESSY_HARNESS_NODE`` here: proving they are not needed is the point.
             environment.update({
                 "ODESSY_HARNESS_RUNTIME_DIR": str(installed_payload / "runtime" / "harness-runtime"),
-                "ODESSY_HARNESS_NODE": str(installed_payload / "runtime" / "node-runtime" / "node.exe"),
-                "ODESSY_NODE_TOOLS_DIR": str(installed_payload / "application" / "tools"),
                 "ODESSY_HARNESS_NODE_TOOLS": "on",
                 "ODESSY_HARNESS_TOOL_PYTHON": str(
                     installed_payload / "dependencies" / "venv" / "Scripts" / "python.exe"),

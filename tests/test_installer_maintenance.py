@@ -32,7 +32,7 @@ class MaintenanceTests(unittest.TestCase):
                    launcher=dict(schema_version=1,install_dir=str(root),executable=str(root/'launcher/OdessyLauncher.exe'),sha256=digest(exe),links=[],link_sha256={}))
         value['plan_sha256']=fingerprint(value);return value
 
-    def assemble(self,runtime,deps,bundle,target):
+    def assemble(self,runtime,deps,bundle,target,**options):
         self.prepared.append(target);target.mkdir();(target/'new.txt').write_text('new application')
         return dict(python='private-python')
 

@@ -64,13 +64,40 @@ def test_core_only_activation_and_failure_reuse_existing_journal(tmp_path):
         maintenance.require_idle(root)
         value={'install_dir':str(root),'new_plan':old['plan'],'inventory':maintenance._tree(root,root/'application'),'activation_components':['application'],'scope':'role-aware-core','tool_archive_sha256':'x','executable_sha256':None}
         value['plan_sha256']=fingerprint(value);return value
-    def assemble(runtime,deps,bundle,target):
+    def assemble(runtime,deps,bundle,target,**options):
         target.mkdir();(target/'new.txt').write_text('new');return {'python':'unused'}
     preview=planner(root,bundle,None)
     result=maintenance.execute(root,bundle,None,preview['plan_sha256'],planner=planner,assemble=assemble,verify=lambda *args:{'core_verified':True},final_check=lambda app:None,probe=lambda root:[])
     assert result['status']=='completed' and (root/'application/new.txt').exists()
     maintenance.recover(root,probe=lambda root:[])
     assert (root/'application/old.txt').read_text()=='old'
+
+
+@pytest.mark.parametrize("staged", [True, False])
+def test_a_rebuilt_application_keeps_the_harness_record_it_had(tmp_path, staged):
+    """An upgrade or repair must not silently drop the installed engine from the record.
+
+    The assembler is what writes ``harness`` into ``odessy-application.json``; a maintenance
+    transaction that called it without the staged directory produced a marker whose engine
+    vanished, even though every staged byte was still on disk.
+    """
+    from installer.operations import maintenance
+    root=legacy(tmp_path/'legacy');old=read_state(root);bundle=tmp_path/'bundle';bundle.mkdir()
+    staged_path=root/'runtime/harness-runtime'
+    if staged:staged_path.mkdir(parents=True)
+    def planner(root,bundle,exe,**kwargs):
+        maintenance.require_idle(root)
+        value={'install_dir':str(root),'new_plan':old['plan'],'inventory':maintenance._tree(root,root/'application'),
+               'activation_components':['application'],'scope':'role-aware-core','tool_archive_sha256':'x','executable_sha256':None}
+        value['plan_sha256']=fingerprint(value);return value
+    seen={}
+    def assemble(runtime,deps,bundle,target,**options):
+        seen.update(options);target.mkdir();(target/'new.txt').write_text('new');return {'python':'unused'}
+    preview=planner(root,bundle,None)
+    maintenance.execute(root,bundle,None,preview['plan_sha256'],planner=planner,assemble=assemble,
+        verify=lambda *args:{'core_verified':True},final_check=lambda app:None,probe=lambda root:[])
+    if staged:assert seen.get('harness_dir')==staged_path
+    else:assert 'harness_dir' not in seen
 
 
 def test_uninstall_cancellation_records_partial_state_and_explicit_resume(tmp_path,monkeypatch):

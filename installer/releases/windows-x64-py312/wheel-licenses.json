@@ -273,7 +273,7 @@
       "wheel": "odessy-0.5.0.dev0-py3-none-any.whl",
       "name": "odessy",
       "version": "0.5.0.dev0",
-      "sha256": "692e33f1472325095a6a04a057c54b9da29917a5e5ea0a38e7e93f7a2daa5b14",
+      "sha256": "633b0712f939b926f854b3e0509d5222738809fe9d4f40b475d12eb7cad4c02f",
       "license": "Apache-2.0",
       "license_source": "metadata-expression",
       "license_files": [
