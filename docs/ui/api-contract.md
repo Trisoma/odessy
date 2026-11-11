@@ -7,7 +7,7 @@ an implicit request target. There are no direct provider/native calls in widgets
 | Operation | Existing backend route |
 |---|---|
 | List profiles | GET `/v1/profiles` |
-| Create/refresh/close | POST `/v1/sessions`, GET/DELETE `/v1/sessions/{sid}` |
+| Create/refresh/close | POST `/v1/sessions` (optional `{"restore": id, "runtime": engine}`), GET/DELETE `/v1/sessions/{sid}` |
 | Next-turn selection | PUT `/v1/sessions/{sid}/model`, `{profile}` |
 | Submit once | POST `/v1/sessions/{sid}/turns`, `{text}` |
 | Stop | POST `/v1/sessions/{sid}/stop` |
@@ -61,6 +61,23 @@ Session snapshots include `available_profiles`, the model names accepted by that
 session's model selector. The desktop falls back to the global profiles endpoint
 for older services that omit this field. Existing sessions keep their configuration
 snapshot; profile edits apply to newly created sessions.
+
+A new session may name its backend: `POST /v1/sessions` with `{"runtime": "harness"}`.
+The field is optional and applies only to the session being created — omitting it keeps the
+service's resolution (legacy, unless the installation chooses otherwise), and an open
+session never changes backend. An unknown name is `400`, a runtime this build cannot inject
+is `501`, and an engine whose own dependencies are missing is `503` carrying that engine's
+reason. Restoring continues the engine the history was written with; naming a different one
+is refused (`409`), never a silent reinterpretation. `GET /v1/capabilities` reports
+`runtime: {default, engines, known}` — what this build can create, and what a session gets
+without asking. Registration is not availability: a missing runtime is refused at creation,
+where the error can be acted on.
+
+Session snapshots also carry an `engine` block: `name`, `source` (`default` or `explicit`),
+the engine's own `identity` (empty until it starts) and the `capabilities` reported **for
+this session** (live deltas or questions can depend on the engine's plugin being attached).
+It is diagnostics, not conversation content; the desktop shows it in settings, and a service
+that omits it renders normally.
 
 Usage history is a read-only, bearer-authenticated view of provider-reported cloud
 API calls recorded by this service. Allowed ranges are 7, 30, 90 and 0 (all time)

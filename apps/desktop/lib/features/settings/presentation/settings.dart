@@ -7,6 +7,7 @@ import 'component_settings_pane.dart';
 import 'settings_navigation.dart';
 import 'model_profiles.dart';
 import 'runtime_inventory.dart';
+import 'runtime_engine.dart';
 import 'collaboration_setting_dialog.dart';
 import '../../../app/readiness_controller.dart';
 import 'package:flutter/material.dart';
@@ -541,6 +542,8 @@ class _SettingsPageState extends State<SettingsPage> {
                       icon: const Icon(Icons.devices_other, size: 18),
                       label: const Text('Open devices'))),
           ]),
+        if (section == SettingsSections.advanced)
+          RuntimeEngine(session: widget.controller),
         if (section == SettingsSections.advanced)
           RuntimeInventory(session: widget.controller),
         if (section == SettingsSections.advanced)

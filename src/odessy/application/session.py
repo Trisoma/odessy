@@ -426,6 +426,29 @@ class SessionController:
             raise RuntimeEngineLocked(self.engine, requested)
         return self.engine
 
+    def engine_public(self):
+        """The backend identity a diagnostics surface needs, and nothing more.
+
+        ``name`` and ``source`` say which engine runs this session and why it was chosen;
+        ``capabilities`` is what that engine actually provides *for this session* (the
+        Harness engine flips live deltas and questions on only when its plugin is attached,
+        so this is a measurement, not a product claim). ``identity`` is the engine's own
+        recorded identity, empty until a non-legacy engine has started and reported it.
+        """
+        runtime = self.runtime
+        identity = getattr(runtime, 'identity', None) or {}
+        capabilities = getattr(runtime, 'capabilities', None)
+        if hasattr(capabilities, 'public'):
+            capabilities = capabilities.public()
+        elif not isinstance(capabilities, dict):
+            capabilities = {}
+        return {
+            'name': self.engine,
+            'source': self.runtime_selection.source,
+            'identity': public(identity) if identity else {},
+            'capabilities': public(capabilities),
+        }
+
     def public_snapshot(self):
         """The transport-neutral session snapshot; the API and the runtime share one shape.
 
@@ -443,6 +466,10 @@ class SessionController:
                 'pending_questions': self.pending_questions,
                 'durability': self.durability(),
                 'restore': restored,
+                # Which backend runs this session, and what it can actually do. Diagnostics
+                # surface, not conversation content; a client must not depend on it to render
+                # a turn.
+                'engine': self.engine_public(),
                 'events': [event.public() for event in self.runtime.events()]}
 
     def _validate_profile_name(self, name):

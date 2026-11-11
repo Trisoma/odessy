@@ -11,6 +11,7 @@ class Session {
       this.activeProfile,
       this.running = false,
       List<String>? availableProfiles,
+      this.engine,
       List<ChatMessage> messages = const [],
       List<Json> pending = const [],
       List<SessionEvent> events = const []})
@@ -26,6 +27,10 @@ class Session {
 
   /// Null means an older service did not provide session-scoped profiles.
   final List<String>? availableProfiles;
+
+  /// Which backend runs this session and what it can actually do. Null for an older
+  /// service; diagnostics only — a conversation must render without it.
+  final EngineInfo? engine;
   final List<ChatMessage> messages;
   final List<Json> pending;
   final List<SessionEvent> events;
@@ -62,6 +67,10 @@ class Session {
             : List<String>.from(json['available_profiles'] as List),
         messages: List.unmodifiable(messages),
         events: List.unmodifiable(events),
+        engine: json['engine'] is Map
+            ? EngineInfo.fromJson(
+                Map<String, dynamic>.from(json['engine'] as Map))
+            : null,
         pending: List<Json>.unmodifiable([
           ...(json['pending_approvals'] as List? ?? [])
               .map((e) => Map<String, dynamic>.from(e)),
@@ -80,6 +89,43 @@ class SessionEvent {
       value['id'] as int,
       value['type'] as String,
       Map<String, dynamic>.from(value['data'] as Map? ?? {}));
+}
+
+/// Which backend runs a session, and what it can actually do (prompt 12).
+///
+/// Diagnostics only: `source` says whether the engine was the installation's default or
+/// an explicit choice, and `capabilities` is the engine's own report for this session —
+/// not a promise. An older service sends no `engine` block at all.
+class EngineInfo {
+  EngineInfo(
+      {required this.name,
+      this.source = '',
+      Map<String, dynamic>? identity,
+      Map<String, dynamic>? capabilities})
+      : identity = Map.unmodifiable(identity ?? const {}),
+        capabilities = Map.unmodifiable(capabilities ?? const {});
+  final String name;
+  final String source;
+  final Map<String, dynamic> identity;
+  final Map<String, dynamic> capabilities;
+
+  factory EngineInfo.fromJson(Json json) => EngineInfo(
+      name: json['name'] as String? ?? '',
+      source: json['source'] as String? ?? '',
+      identity: json['identity'] is Map
+          ? Map<String, dynamic>.from(json['identity'] as Map)
+          : null,
+      capabilities: json['capabilities'] is Map
+          ? Map<String, dynamic>.from(json['capabilities'] as Map)
+          : null);
+
+  /// Capability names this engine reports as unavailable, in stable order.
+  List<String> get unsupported => capabilities.entries
+      .where((entry) => entry.value is bool && entry.value == false)
+      .map((entry) => entry.key)
+      .toList(growable: false);
+
+  bool supports(String capability) => capabilities[capability] == true;
 }
 
 Json freezeJson(Json value) => Map<String, dynamic>.unmodifiable(
@@ -120,5 +166,6 @@ Session reduceSessionSnapshot(Session? current, Session incoming) {
       availableProfiles: incoming.availableProfiles,
       messages: incoming.messages,
       pending: incoming.pending,
+      engine: incoming.engine,
       events: events);
 }

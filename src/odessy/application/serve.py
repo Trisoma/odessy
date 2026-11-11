@@ -47,10 +47,14 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
     workspace = Path(workspace or Path.cwd()).resolve()
     turn_lock = asyncio.Lock()
 
-    async def factory(restore=None):
-        # Each session captures a freshly validated config and owns its resources.
+    async def factory(restore=None, runtime=None):
+        # Each session captures a freshly validated config and owns its resources. An
+        # explicit ``runtime`` chooses the engine for a new session; ``None`` keeps the
+        # installation's existing resolution, so a desktop that never selects one is
+        # unchanged.
         return await create_controller(workspace=workspace, use_fake_model=use_fake_model,
-                                       backend=backend, turn_lock=turn_lock, restore=restore)
+                                       backend=backend, turn_lock=turn_lock, restore=restore,
+                                       runtime_selection=runtime)
 
     def profiles():
         config = load_config()

@@ -248,9 +248,17 @@ def test_runtime_events_are_filtered_by_id_and_share_the_snapshot():
             # Prompt 10: durable identity and what a restore would report. This session was
             # built without a store, so it says so rather than pretending to be durable.
             "durability", "restore",
+            # Prompt 12: which backend runs this session and what it can actually do.
+            "engine",
         }
         assert session.public_snapshot()["durability"] == {"enabled": False}
         assert session.public_snapshot()["restore"] == {}
+        engine = session.public_snapshot()["engine"]
+        assert engine["name"] == "legacy"
+        assert engine["source"] == "default"
+        assert engine["identity"] == {}
+        assert engine["capabilities"]["engine"] == "legacy"
+        assert engine["capabilities"]["mcp_tools"] is True
     finally:
         asyncio.run(session.close())
 

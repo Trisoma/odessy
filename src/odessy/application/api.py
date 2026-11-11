@@ -74,6 +74,28 @@ def _factory_takes_restore(factory):
                for parameter in parameters)
 
 
+def _factory_runtime_keyword(factory):
+    """The keyword a controller factory accepts for an explicit engine, or None.
+
+    ``runtime`` is this API's name and ``runtime_selection`` is the bootstrap function's;
+    a composition may declare either. The caller passes the keyword the factory actually
+    has — declaring one name and being called with the other is a TypeError at runtime,
+    not a capability answer.
+    """
+    try:
+        parameters = inspect.signature(factory).parameters
+    except (TypeError, ValueError):
+        return None
+    if "runtime" in parameters:
+        return "runtime"
+    if "runtime_selection" in parameters:
+        return "runtime_selection"
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD
+           for parameter in parameters.values()):
+        return "runtime"
+    return None
+
+
 def create_app(controller_factory, *, config=None, settings=None, jobs=None, token=None,
                config_path=None, profiles=None, monitoring=None, runtime_configuration=None, desktop_voice=None,
                usage_history=None):
@@ -160,8 +182,29 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
 
     @app.get('/v1/capabilities')
     async def capabilities():
+        from odessy.runtime_backends.contracts import DEFAULT_ENGINE, ENGINES
+        from odessy.runtime_backends.selection import available_engines, resolve_selection
+
+        # The default a session actually gets — the environment override is part of it.
+        # An invalid configured value is reported as an error instead of being flattened
+        # into "legacy", which would describe a state the service will not run.
+        effective, configuration_error = DEFAULT_ENGINE, ''
+        try:
+            effective = resolve_selection(None).engine
+        except RuntimeSelectionError as exc:
+            configuration_error = str(exc)
+        runtime = {'default': effective, 'engines': list(available_engines()),
+                   'known': list(ENGINES)}
+        if configuration_error:
+            runtime['error'] = configuration_error
         return {'schema_version':1,'service_instance_id':app.state.service_instance_id,
-                'configuration':app.state.runtime_configuration,'restart_safe':restart_idle()}
+                'configuration':app.state.runtime_configuration,'restart_safe':restart_idle(),
+                # Which engines this build can inject, and what a session gets when it does
+                # not ask. Registration is all this can know: an engine's own dependencies
+                # (a pinned runtime, a profile) are checked when a session is created, where
+                # an unavailable one refuses with its actionable error instead of appearing
+                # available here.
+                'runtime': runtime}
 
     @app.get('/v1/usage/history')
     async def usage_history_report(days: int = 30, provider: str | None = None,
@@ -267,18 +310,29 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     def snapshot(controller):
         return controller.public_snapshot()
 
-    async def make_controller(restore=None):
+    async def make_controller(restore=None, runtime=None):
         nonlocal pending_admissions
         admission_open()
         pending_admissions += 1
         try:
             try:
+                runtime_keyword = _factory_runtime_keyword(controller_factory)
+                if runtime is not None and runtime_keyword is None:
+                    # Asking for an engine this build cannot inject and answering with the
+                    # default would be a silent switch of the conversation's backend.
+                    raise HTTPException(501, 'This build cannot select a runtime engine')
                 if restore is not None:
                     if not _factory_takes_restore(controller_factory):
                         # Asking for a restore and creating a fresh session instead is the exact
                         # substitution this build refuses to make silently.
                         raise HTTPException(501, 'This build cannot restore durable sessions')
-                    controller = controller_factory(restore=restore)
+                    if runtime is not None:
+                        controller = controller_factory(
+                            restore=restore, **{runtime_keyword: runtime})
+                    else:
+                        controller = controller_factory(restore=restore)
+                elif runtime is not None:
+                    controller = controller_factory(**{runtime_keyword: runtime})
                 else:
                     controller = controller_factory()
                 if inspect.isawaitable(controller):
@@ -804,6 +858,12 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         with that id: same application identity, same runtime session, settled content
         reconstructed from the bounded projection. Nothing is replayed to the engine, so the
         last prompt is never resubmitted by a reconnection.
+
+        ``{"runtime": "harness"}`` selects the engine for a **new** session. Omitting it keeps
+        this process's resolution (the installation's default, else legacy). An unknown name
+        is a 400, an engine this build cannot inject is a 501, and an engine whose
+        dependencies are missing is a 503 — never a silent fallback. A restored session keeps
+        the engine its history was written with; naming a different one is refused.
         """
         data = {}
         raw = await request.body()
@@ -814,9 +874,17 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                 raise HTTPException(400, 'Expected a JSON object')
             if not isinstance(data, dict):
                 raise HTTPException(400, 'Expected a JSON object')
-            if set(data) - {'restore'}:
+            if set(data) - {'restore', 'runtime'}:
                 raise HTTPException(400, 'Unknown session fields')
         restore = data.get('restore')
+        runtime = data.get('runtime')
+        if runtime is not None:
+            from odessy.runtime_backends.selection import normalize_engine
+
+            try:
+                runtime = normalize_engine(runtime)
+            except RuntimeSelectionError as exc:
+                raise HTTPException(400, public(str(exc))) from exc
         if restore is not None:
             if not isinstance(restore, str) or not re.fullmatch(r'[0-9a-f]{32}', restore):
                 raise HTTPException(400, 'restore must be a session id')
@@ -825,7 +893,7 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                 # first for the same history (the runtime refuses a second resume anyway, and
                 # this answers with the useful reason instead of an opaque engine error).
                 raise HTTPException(409, 'Session is already open')
-        controller = await make_controller(restore=restore)
+        controller = await make_controller(restore=restore, runtime=runtime)
         sessions[controller.id] = controller
         return snapshot(controller)
 
