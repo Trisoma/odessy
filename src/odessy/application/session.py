@@ -550,7 +550,8 @@ class SessionController:
                 secret = os.environ.get(env, '') if env else ''
                 if secret:
                     value = value.replace(secret, '<redacted>')
-            models = [self._model, self._active_model]
+            models = [self._model, self._active_model,
+                      getattr(getattr(self, "runtime", None), "route", None)]
             for model in tuple(models):
                 # A failover model holds one adapter (and key) per provider.
                 models.extend(child for _, child in getattr(model, 'candidates', ()))
@@ -673,6 +674,24 @@ class SessionController:
                     yield event
         finally:
             self._subscribers.discard(queue)
+
+    async def select_model_async(self, profile):
+        """Apply Harness protocol changes off-loop; publish the selection on the app loop."""
+        if self.engine == 'legacy':
+            return self.select_model(profile)
+        if self._closed:
+            raise RuntimeError('Session is closed')
+        self._validate_profile_name(profile)
+        value = self.profiles[profile]
+        if hasattr(value, 'public_dict'):
+            value = value.public_dict()
+        await asyncio.to_thread(self.runtime.select_route,
+                                dict(value) if isinstance(value, dict) else {},
+                                profile_name=profile)
+        self.selected_profile = profile
+        self.emit('selection', {'profile': profile, 'engine': self.engine,
+                               'reason': 'User selection; applies to next turn'})
+        return profile
 
     def select_model(self, profile):
         if self._closed:
@@ -856,7 +875,8 @@ class SessionController:
             # Not a fallback: a harness session runs the harness, and refuses whatever
             # that engine has not implemented rather than running the legacy loop.
             return await self._run_engine_turn(text, participant=participant,
-                                               remember=remember, turn_id=turn_id)
+                                               remember=remember, turn_id=turn_id,
+                                               stop_event=stop_event)
         turn = self._begin_turn(turn_id)
         self.interactions.start_turn(turn)
         self._task = asyncio.current_task()
@@ -945,7 +965,7 @@ class SessionController:
             self._active_model = None
             self._task = None
 
-    async def _run_engine_turn(self, text, *, participant=None, remember=True, turn_id=None):
+    async def _run_engine_turn(self, text, *, participant=None, remember=True, turn_id=None, stop_event=None):
         """One turn on a non-legacy engine.
 
         The session keeps ownership of the turn's bookkeeping (pinning, history, usage,
@@ -957,6 +977,9 @@ class SessionController:
         credential and limits are the application's, and the pinned runtime's subagent
         facilities run inside the child, where a per-participant credential cannot go.
         """
+        if stop_event is not None and stop_event.is_set():
+            raise TurnCancelled(StopOutcome(False, 'stopped', 'complete', 'cancelled',
+                                            'input was cancelled before admission').public())
         turn = self._begin_turn(turn_id)
         self.interactions.start_turn(turn)
         self._task = asyncio.current_task()
@@ -971,6 +994,10 @@ class SessionController:
         # The client and the durable record keep the user's own words; only the text the
         # engine receives carries the framed quotation.
         original, engine_text = text, text
+        async def watch_external_stop():
+            await stop_event.wait()
+            await self.stop()
+        watcher = asyncio.create_task(watch_external_stop()) if stop_event is not None else None
         try:
             if participant is not None:
                 if self.collaboration is None:
@@ -1025,6 +1052,9 @@ class SessionController:
             self._finish_turn(turn, FAILED)
             raise
         finally:
+            if watcher is not None:
+                watcher.cancel()
+                await asyncio.gather(watcher, return_exceptions=True)
             self._flush_thread_events()
             self._loop = None
             self.interactions.end_turn()

@@ -31,6 +31,7 @@ from test_harness_runtime import FAKE_RUNTIME, FakeSession, make_config
 
 class Vault:
     def __init__(self):
+        """Initialize the owned state and synchronization used by this component."""
         self.values = {}
 
     def get_password(self, service, account):
@@ -82,6 +83,7 @@ def run(coroutine):
     ("claude", "anthropic-messages", "https://api.anthropic.com"),
 ])
 def test_every_cloud_provider_maps_to_a_declared_route(credentials, provider, api, base):
+    """Verify every cloud provider maps to a declared route."""
     from odessy.model_providers import CLOUD_PROVIDERS
 
     environ = {CLOUD_PROVIDERS[provider].api_key_env: "k-literal"}
@@ -97,6 +99,7 @@ def test_every_cloud_provider_maps_to_a_declared_route(credentials, provider, ap
 
 
 def test_a_custom_openai_compatible_route_keeps_its_endpoint_and_model(credentials):
+    """Verify a custom openai compatible route keeps its endpoint and model."""
     profile = cloud_profile(provider="custom", model="my-local-model",
                             endpoint="http://192.168.1.9:8000/v1")
     route = resolve_route(profile, environ={"ODESSY_CLOUD_API_KEY": "k-literal"})
@@ -106,6 +109,7 @@ def test_a_custom_openai_compatible_route_keeps_its_endpoint_and_model(credentia
 
 @pytest.mark.parametrize("adapter", ["ollama", "lfm", "auto"])
 def test_local_and_auto_routes_are_refused_visibly_not_substituted(credentials, adapter):
+    """Verify local and auto routes are refused visibly not substituted."""
     with pytest.raises(ModelRouteError) as caught:
         resolve_route({"name": "local", "adapter": adapter, "model": "gemma3:1b"},
                       environ={"DEEPSEEK_API_KEY": "k-literal"})
@@ -136,6 +140,7 @@ def test_the_current_profile_follows_the_configured_cloud_backend(credentials, b
                                             ("llama_cpp", "lfm"),
                                             ("auto", "auto")])
 def test_the_current_profile_refuses_a_local_or_auto_backend(credentials, backend, named):
+    """Verify the current profile refuses a local or auto backend."""
     with pytest.raises(ModelRouteError) as caught:
         resolve_route({"name": "current", "model": "x"},
                       environ={"ODESSY_MODEL_BACKEND": backend})
@@ -143,6 +148,7 @@ def test_the_current_profile_refuses_a_local_or_auto_backend(credentials, backen
 
 
 def test_the_compatibility_table_names_every_adapter(credentials):
+    """Verify the compatibility table names every adapter."""
     table = {row["adapter"]: row for row in compatibility()}
     assert table["cloud"]["status"] == "supported"
     assert table["ollama"]["status"] == "unverified-local"
@@ -152,6 +158,7 @@ def test_the_compatibility_table_names_every_adapter(credentials):
 # -- credentials -------------------------------------------------------------
 
 def test_a_missing_key_is_refused_before_anything_is_launched(credentials):
+    """Verify a missing key is refused before anything is launched."""
     with pytest.raises(RuntimeUnavailable) as caught:
         resolve_route(cloud_profile(), environ={})
     assert caught.value.public()["reason"] == "model route 'deepseek' is not usable"
@@ -159,6 +166,7 @@ def test_a_missing_key_is_refused_before_anything_is_launched(credentials):
 
 
 def test_environment_is_used_when_nothing_is_saved(credentials):
+    """Verify environment is used when nothing is saved."""
     route = resolve_route(cloud_profile(), environ={"DEEPSEEK_API_KEY": "from-env"})
     assert route.api_key == "from-env"
     assert route.public()["credential"] == KEY_ENV
@@ -166,6 +174,7 @@ def test_environment_is_used_when_nothing_is_saved(credentials):
 
 
 def test_a_saved_or_session_key_beats_the_environment(credentials):
+    """Verify a saved or session key beats the environment."""
     from odessy.credentials import Scope
 
     scope = Scope("deepseek", "https://api.deepseek.com/v1")
@@ -178,6 +187,7 @@ def test_a_saved_or_session_key_beats_the_environment(credentials):
 
 
 def test_the_child_receives_only_the_resolved_value_under_one_name(credentials, tmp_path, fake):
+    """Verify the child receives only the resolved value under one name."""
     from odessy.runtime_backends.harness.runtime import attach_route
 
     credentials.set_value(credentials.Scope("deepseek", "https://api.deepseek.com/v1"),
@@ -199,6 +209,7 @@ def test_the_child_receives_only_the_resolved_value_under_one_name(credentials, 
 
 
 def test_an_explicit_credential_reference_is_honoured(credentials):
+    """Verify an explicit credential reference is honoured."""
     route = resolve_route(cloud_profile(credential_env="CUSTOM_MODEL_CREDENTIAL"),
                           environ={"DEEPSEEK_API_KEY": "ignored", "CUSTOM_MODEL_CREDENTIAL": "mine"})
     assert route.api_key == "mine"
@@ -251,6 +262,7 @@ def test_an_envelope_saved_for_another_endpoint_is_not_used(credentials):
 
 
 def test_an_invalid_endpoint_is_refused_with_the_existing_validation(credentials):
+    """Verify an invalid endpoint is refused with the existing validation."""
     for endpoint in ("ftp://api.example/v1", "https://user:pass@api.example/v1",
                      "https://api.example/v1?x=1"):
         with pytest.raises(RuntimeUnavailable) as caught:
@@ -260,6 +272,7 @@ def test_an_invalid_endpoint_is_refused_with_the_existing_validation(credentials
 
 
 def test_an_unknown_reasoning_level_is_refused(credentials):
+    """Verify an unknown reasoning level is refused."""
     with pytest.raises(ModelRouteError) as caught:
         resolve_route(cloud_profile(), environ={"DEEPSEEK_API_KEY": "k",
                                                 "ODESSY_CLOUD_EFFORT": "turbo"})
@@ -267,6 +280,7 @@ def test_an_unknown_reasoning_level_is_refused(credentials):
 
 
 def test_an_accepted_reasoning_level_travels_into_the_route(credentials):
+    """Verify an accepted reasoning level travels into the route."""
     route = resolve_route(cloud_profile(), environ={"DEEPSEEK_API_KEY": "k",
                                                     "ODESSY_CLOUD_EFFORT": "low"})
     assert route.reasoning == "low"
@@ -276,6 +290,7 @@ def test_an_accepted_reasoning_level_travels_into_the_route(credentials):
 # -- the overlay the runtime is launched with --------------------------------
 
 def test_the_overlay_declares_one_route_and_references_the_key_by_name(credentials, tmp_path):
+    """Verify the overlay declares one route and references the key by name."""
     route = resolve_route(cloud_profile(), environ={"DEEPSEEK_API_KEY": "secret-value"})
     text = route.overlay_text()
     assert "- id: llm-pi-ai" in text
@@ -290,6 +305,7 @@ def test_the_overlay_declares_one_route_and_references_the_key_by_name(credentia
 
 
 def test_sibling_profiles_of_the_same_provider_are_declared_up_front(credentials, tmp_path, fake):
+    """Verify sibling profiles of the same provider are declared up front."""
     session = FakeSession(cloud_profile(model="mock-model"))
     session.model_profiles = [cloud_profile(model="mock-model"),
                               cloud_profile(name="second", model="other-model"),
@@ -311,6 +327,7 @@ def harness_runtime(tmp_path, fake, profile=None):
 # -- one route file per session, not a shared mutable one --------------------
 
 def test_two_sessions_with_different_endpoints_get_their_own_overlay(credentials, tmp_path, fake):
+    """Verify two sessions with different endpoints get their own overlay."""
     home = tmp_path / "shared-home"
     profile_a = cloud_profile(model="mock-model", endpoint="http://10.0.0.1:8000/v1", name="a")
     profile_b = cloud_profile(model="mock-model", endpoint="http://10.0.0.2:8000/v1", name="b")
@@ -332,6 +349,7 @@ def test_two_sessions_with_different_endpoints_get_their_own_overlay(credentials
 
 
 def test_concurrent_sessions_with_different_endpoints_do_not_interleave(credentials, tmp_path, fake):
+    """Verify concurrent sessions with different endpoints do not interleave."""
     home = tmp_path / "race-home"
     profiles = [cloud_profile(model="mock-model",
                               endpoint=f"http://10.1.1.{index}:8000/v1", name=f"p{index}")
@@ -369,6 +387,7 @@ def test_concurrent_sessions_with_different_endpoints_do_not_interleave(credenti
 
 def test_a_change_to_launch_fixed_settings_is_refused_not_recorded(
         credentials, tmp_path, fake, monkeypatch):
+    """Verify a change to launch fixed settings is refused not recorded."""
     runtime = harness_runtime(tmp_path, fake)
     run(runtime.start())
     launched = runtime.route
@@ -393,6 +412,7 @@ def test_a_change_to_launch_fixed_settings_is_refused_not_recorded(
 
 
 def test_a_legitimate_model_change_keeps_every_other_setting(credentials, tmp_path, fake):
+    """Verify a legitimate model change keeps every other setting."""
     runtime = harness_runtime(tmp_path, fake)
     run(runtime.start())
     launched = runtime.route
@@ -410,9 +430,11 @@ def test_a_legitimate_model_change_keeps_every_other_setting(credentials, tmp_pa
 
 
 def test_readiness_selects_the_declared_pair(credentials, tmp_path, fake):
+    """Verify readiness selects the declared pair."""
     runtime = harness_runtime(tmp_path, fake)
 
     async def flow():
+        """Exercise the readiness selects the declared pair scenario through the async application boundary."""
         try:
             await runtime.start()
             return runtime._model_option
@@ -423,6 +445,7 @@ def test_readiness_selects_the_declared_pair(credentials, tmp_path, fake):
 
 
 def test_an_invalid_model_is_refused_at_readiness(credentials, tmp_path, fake):
+    """Verify an invalid model is refused at readiness."""
     profile = cloud_profile(model="not-offered")
     runtime = HarnessRuntime(FakeSession(profile), config=make_config(tmp_path, fake))
     with pytest.raises(RuntimeUnavailable) as caught:
@@ -432,9 +455,11 @@ def test_an_invalid_model_is_refused_at_readiness(credentials, tmp_path, fake):
 
 
 def test_a_model_change_applies_to_the_next_turn_and_not_while_running(credentials, tmp_path, fake):
+    """Verify a model change applies to the next turn and not while running."""
     runtime = harness_runtime(tmp_path, fake)
 
     async def flow():
+        """Exercise the a model change applies to the next turn and not while running scenario through the async application boundary."""
         try:
             await runtime.start()
             first = await runtime.run_turn("hello")
@@ -453,6 +478,7 @@ def test_a_model_change_applies_to_the_next_turn_and_not_while_running(credentia
 
 
 def test_a_provider_change_is_refused_instead_of_half_applied(credentials, tmp_path, fake):
+    """Verify a provider change is refused instead of half applied."""
     runtime = harness_runtime(tmp_path, fake)
     run(runtime.start())
     try:
@@ -466,6 +492,7 @@ def test_a_provider_change_is_refused_instead_of_half_applied(credentials, tmp_p
 
 
 def test_a_model_the_session_did_not_declare_is_refused(credentials, tmp_path, fake):
+    """Verify a model the session did not declare is refused."""
     runtime = harness_runtime(tmp_path, fake)
     run(runtime.start())
     try:
@@ -477,6 +504,7 @@ def test_a_model_the_session_did_not_declare_is_refused(credentials, tmp_path, f
 
 
 def test_selection_is_refused_while_a_turn_is_running(credentials, tmp_path, fake):
+    """Verify selection is refused while a turn is running."""
     runtime = harness_runtime(tmp_path, fake)
     run(runtime.start())
     try:
@@ -490,6 +518,7 @@ def test_selection_is_refused_while_a_turn_is_running(credentials, tmp_path, fak
 
 
 def test_one_session_switching_models_does_not_touch_another(credentials, tmp_path, fake):
+    """Verify one session switching models does not touch another."""
     for name in ("a", "b"):
         (tmp_path / name).mkdir()
     first = HarnessRuntime(FakeSession(cloud_profile(model="mock-model")),
@@ -498,6 +527,7 @@ def test_one_session_switching_models_does_not_touch_another(credentials, tmp_pa
                             config=make_config(tmp_path / "b", fake))
 
     async def flow():
+        """Exercise the one session switching models does not touch another scenario through the async application boundary."""
         await first.start()
         await second.start()
         return second._process
@@ -516,9 +546,11 @@ def test_one_session_switching_models_does_not_touch_another(credentials, tmp_pa
 
 
 def test_context_usage_is_recorded_and_no_tokens_are_invented(credentials, tmp_path, fake):
+    """Verify context usage is recorded and no tokens are invented."""
     runtime = harness_runtime(tmp_path, fake)
 
     async def flow():
+        """Exercise the context usage is recorded and no tokens are invented scenario through the async application boundary."""
         try:
             result = await runtime.run_turn("hello")
             return result
@@ -536,6 +568,7 @@ def test_context_usage_is_recorded_and_no_tokens_are_invented(credentials, tmp_p
 # -- HTTP mapping ------------------------------------------------------------
 
 def test_http_maps_route_errors_to_the_right_status(monkeypatch, tmp_path, fake):
+    """Verify http maps route errors to the right status."""
     httpx = pytest.importorskip("httpx")
     pytest.importorskip("fastapi")
     from odessy.application.api import create_app
@@ -557,6 +590,7 @@ def test_http_maps_route_errors_to_the_right_status(monkeypatch, tmp_path, fake)
         )
 
     async def flow():
+        """Exercise the http maps route errors to the right status scenario through the async application boundary."""
         app = create_app(factory, token="secret")
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
                                      base_url="http://test",
@@ -572,3 +606,11 @@ def test_http_maps_route_errors_to_the_right_status(monkeypatch, tmp_path, fake)
             return locked.status_code, unknown.status_code
 
     assert run(flow()) == (200, 400)
+
+
+def test_saved_output_limit_is_used_by_the_harness_route(credentials):
+    """A saved profile ceiling overrides global defaults for either wire protocol."""
+    for provider in ('openai', 'claude'):
+        route = resolve_route(cloud_profile(provider=provider, model='m', max_tokens=128),
+                              environ={'ODESSY_CLOUD_API_KEY': 'literal'})
+        assert route.max_tokens == 128

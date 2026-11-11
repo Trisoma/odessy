@@ -173,6 +173,14 @@ export function apply(ctx, config) {
   let authenticated = false
   /** Frames dropped since the last notice, because the client was not reading. */
   let dropped = 0
+  const pendingAuth = new Set()
+  const flushDropped = () => {
+    if (!client || !authenticated || client.destroyed || client.writableLength > MAX_QUEUED_BYTES || dropped === 0) return
+    const lost = dropped
+    dropped = 0
+    try { client.write(JSON.stringify({ type: 'dropped', protocol: 1, frames: lost }) + '\n') }
+    catch { client.destroy() }
+  }
   /** `requestId -> {resolve, reject, timer, sessionId, turn, questions}`. */
   const pending = new Map()
   /** The runtime's own turn number for each live agent, from `agent/inbox/claimed`. */
@@ -185,11 +193,7 @@ export function apply(ctx, config) {
       return false
     }
     try {
-      if (dropped > 0) {
-        const lost = dropped
-        dropped = 0
-        client.write(JSON.stringify({ type: 'dropped', protocol: 1, frames: lost }) + '\n')
-      }
+      flushDropped()
       client.write(JSON.stringify(value) + '\n')
       return true
     } catch {
@@ -345,16 +349,19 @@ export function apply(ctx, config) {
   }
 
   const server = net.createServer((socket) => {
-    if (client !== undefined) {
+    if (client !== undefined || pendingAuth.size >= 8) {
       socket.destroy()
       return
     }
-    client = socket
-    authenticated = false
+    pendingAuth.add(socket)
+    let accepted = false
+    socket.setTimeout(1000, () => socket.destroy())
     let buffer = ''
     socket.setEncoding('utf8')
     socket.on('error', () => socket.destroy())
+    socket.on('drain', flushDropped)
     socket.on('close', () => {
+      pendingAuth.delete(socket)
       if (client === socket) {
         client = undefined
         authenticated = false
@@ -363,12 +370,13 @@ export function apply(ctx, config) {
     })
     socket.on('data', (chunk) => {
       buffer += chunk
+      if (!accepted && Buffer.byteLength(buffer, 'utf8') > 4096) { socket.destroy(); return }
       for (;;) {
         const newline = buffer.indexOf('\n')
         if (newline < 0) break
         const line = buffer.slice(0, newline)
         buffer = buffer.slice(newline + 1)
-        if (!authenticated) {
+        if (!accepted) {
           let hello
           try {
             hello = JSON.parse(line)
@@ -380,7 +388,11 @@ export function apply(ctx, config) {
             socket.destroy()
             return
           }
-          authenticated = true
+          if (client !== undefined) { socket.destroy(); return }
+          pendingAuth.delete(socket)
+          client = socket
+          accepted = authenticated = true
+          socket.setTimeout(0)
           socket.write(JSON.stringify({
             type: 'hello', pid: process.pid, protocol: 1, features: FEATURES,
           }) + '\n')
@@ -402,6 +414,8 @@ export function apply(ctx, config) {
   ctx.effect(() => {
     server.listen(port, host)
     return () => {
+      for (const socket of pendingAuth) socket.destroy()
+      pendingAuth.clear()
       cancelAll('BRIDGE_LOST', 'the runtime is unloading the question bridge')
       client?.destroy()
       client = undefined

@@ -103,7 +103,7 @@
     "automatic_adoption": "never",
     "procedure": [
       "Propose a new SDK and runtime-bin pair and record both wheel hashes.",
-      "Re-run experiments/restructure/harness_compatibility/smoke_acp.py and smoke_sdk.py.",
+      "Re-run experiments/restructure/harness_compatibility/smoke_acceptance.py and smoke_sdk.py.",
       "Re-diff the released SDK sources against the new tag.",
       "Re-check every observed shape in docs/restructure/harness-integration-contract.md.",
       "Re-run the installed qualification in prompts 14 and 16 before any default change."

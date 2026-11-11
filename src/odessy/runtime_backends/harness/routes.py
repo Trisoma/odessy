@@ -95,6 +95,7 @@ class HarnessRoute:
 
     @property
     def route(self) -> str:
+        """Return the stable route identity used in the runtime profile."""
         return ROUTE_PREFIX + self.provider
 
     def option_value(self) -> str:
@@ -102,6 +103,7 @@ class HarnessRoute:
         return json.dumps([self.route, self.model], separators=(",", ":"))
 
     def environment(self) -> dict[str, str]:
+        """Return only the declared credential variable for this route."""
         return {KEY_ENV: self.api_key}
 
     def overlay_text(self) -> str:
@@ -136,11 +138,13 @@ class HarnessRoute:
 
 
 def _profile_value(profile: Mapping[str, Any], name: str) -> str:
+    """Read a normalized optional string from a model profile."""
     value = profile.get(name, "")
     return value.strip() if isinstance(value, str) else ""
 
 
 def _unsupported(adapter: str, profile_name: str) -> "ModelRouteError":
+    """Build a named route error instead of silently selecting another adapter."""
     status, note = ROUTE_SUPPORT.get(adapter, ("unsupported", "unknown adapter"))
     where = f"Model profile {profile_name!r} " if profile_name else ""
     return ModelRouteError(
@@ -159,6 +163,12 @@ def cloud_environment(profile: Mapping[str, Any], environ: Mapping[str, str]) ->
         env["ODESSY_CLOUD_MODEL"] = model
     if endpoint:
         env["ODESSY_CLOUD_BASE_URL"] = endpoint
+    ceiling = profile.get("max_tokens")
+    if ceiling is not None:
+        if not isinstance(ceiling, int) or isinstance(ceiling, bool) or ceiling <= 0:
+            raise ModelRouteError("max_tokens must be a positive integer")
+        env["ODESSY_CLOUD_MAX_TOKENS"] = str(ceiling)
+        env["ODESSY_CLOUD_OPENAI_MAX_TOKENS"] = str(ceiling)
     return env
 
 

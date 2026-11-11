@@ -62,6 +62,7 @@ class JobObject:
     """Best-effort: construction never raises; ``available`` says whether it worked."""
 
     def __init__(self):
+        """Initialize the owned state and synchronization used by this component."""
         self._handle = None
         self.reason = ""
         if sys.platform != "win32":
@@ -88,6 +89,7 @@ class JobObject:
 
     @property
     def available(self) -> bool:
+        """Report whether Windows process-tree ownership was established."""
         return self._handle is not None
 
     def adopt(self, pid: int) -> bool:

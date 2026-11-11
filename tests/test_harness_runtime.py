@@ -377,6 +377,7 @@ class FakeSession:
     """The parts of SessionController a runtime is allowed to touch."""
 
     def __init__(self, profile=None):
+        """Initialize the owned state and synchronization used by this component."""
         self.id = "sess-1"
         self._events = []
         #: What ``SessionController.model_profile`` returns for the selected profile.
@@ -388,6 +389,7 @@ class FakeSession:
         self.model_profiles = [self.model_profile]
 
     def events(self):
+        """Return normalized events after the requested cursor."""
         return list(self._events)
 
     def emit(self, event_type, data=None):
@@ -464,6 +466,7 @@ def _pid_alive(pid):
 # -- configuration -----------------------------------------------------------
 
 def test_from_environment_requires_an_explicit_executable(monkeypatch):
+    """Verify from environment requires an explicit executable."""
     monkeypatch.delenv("ODESSY_HARNESS_EXE", raising=False)
     with pytest.raises(RuntimeUnavailable) as caught:
         from_environment()
@@ -472,6 +475,8 @@ def test_from_environment_requires_an_explicit_executable(monkeypatch):
 
 
 def test_from_environment_never_falls_back_to_path_or_a_sibling(monkeypatch, tmp_path):
+    """Verify from environment never falls back to path or a sibling."""
+    monkeypatch.setenv("ODESSY_HARNESS_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("ODESSY_HARNESS_EXE", "harness-on-path")
     with pytest.raises(RuntimeUnavailable) as caught:
         from_environment()
@@ -484,6 +489,7 @@ def test_from_environment_never_falls_back_to_path_or_a_sibling(monkeypatch, tmp
 
 
 def test_child_environment_is_an_allowlist(monkeypatch, tmp_path, fake):
+    """Verify child environment is an allowlist."""
     config = make_config(tmp_path, fake, passthrough=("FAKE_MODE",))
     parent = {"PATH": "C:/bin", "SYSTEMROOT": "C:/Windows", "ODESSY_SECRET_TOKEN": "nope",
               "FAKE_MODE": "normal", "LOCALAPPDATA": str(tmp_path)}
@@ -496,11 +502,12 @@ def test_child_environment_is_an_allowlist(monkeypatch, tmp_path, fake):
 
 @pytest.mark.parametrize("row", ["tool-pwsh", "mcp-resources", "plan-mode", "tool-not-in-the-list"])
 def test_an_extra_overlay_cannot_take_part_in_the_tool_surface(tmp_path, row):
+    """Verify an extra overlay cannot take part in the tool surface."""
     from odessy.runtime_backends.harness.config import from_environment
 
     override = tmp_path / "override.yml"
     override.write_text(f"- id: {row}\n  disabled: false\n", encoding="utf-8")
-    environ = {"ODESSY_HARNESS_EXE": sys.executable, "ODESSY_HARNESS_PATCH": str(override)}
+    environ = {"ODESSY_HARNESS_EXE": sys.executable, "ODESSY_HARNESS_PATCH": str(override), "ODESSY_HARNESS_HOME": str(tmp_path / "home")}
     with pytest.raises(RuntimeUnavailable) as caught:
         from_environment(environ, workspace=tmp_path)
     assert caught.value.public()["reason"] == \
@@ -509,10 +516,11 @@ def test_an_extra_overlay_cannot_take_part_in_the_tool_surface(tmp_path, row):
 
 
 def test_an_extra_overlay_that_configures_a_route_is_allowed_and_loses_to_the_narrow_one(tmp_path):
+    """Verify an extra overlay that configures a route is allowed and loses to the narrow one."""
     route = tmp_path / "route.yml"
     route.write_text("- id: acp\n  config:\n    provider: deepseek-official\n"
                      "    model: mock-model\n", encoding="utf-8")
-    environ = {"ODESSY_HARNESS_EXE": sys.executable, "ODESSY_HARNESS_PATCH": str(route)}
+    environ = {"ODESSY_HARNESS_EXE": sys.executable, "ODESSY_HARNESS_PATCH": str(route), "ODESSY_HARNESS_HOME": str(tmp_path / "home")}
     config = from_environment(environ, workspace=tmp_path)
     ordered = config.ordered_patches()
     # Patch layers apply in argv order, so the reviewed overlay must come last of the layers
@@ -544,6 +552,7 @@ def test_the_narrow_overlay_precedes_only_the_sandbox_pin(tmp_path):
 # -- version pinning ---------------------------------------------------------
 
 def test_a_different_version_is_refused_before_any_session_exists(monkeypatch, tmp_path, fake):
+    """Verify a different version is refused before any session exists."""
     monkeypatch.setenv("FAKE_MODE", "badversion")
     config = make_config(tmp_path, fake, passthrough=("FAKE_MODE",))
     runtime = HarnessRuntime(FakeSession(), config=config)
@@ -555,6 +564,7 @@ def test_a_different_version_is_refused_before_any_session_exists(monkeypatch, t
 
 
 def test_a_mismatched_artifact_is_refused_even_with_the_right_version(tmp_path, fake):
+    """Verify a mismatched artifact is refused even with the right version."""
     from odessy.runtime_backends.harness import pin
 
     env = {"PATH": os.environ.get("PATH", "")}
@@ -568,6 +578,7 @@ def test_a_mismatched_artifact_is_refused_even_with_the_right_version(tmp_path, 
 def test_the_artifact_digest_is_enforced_by_default(tmp_path, fake):
     # No override: the production default demands the reviewed digest, and an interpreter
     # wrapped around a script is not it.
+    """Verify the artifact digest is enforced by default."""
     config = make_config(tmp_path, fake, verify_artifact=True)
     runtime = HarnessRuntime(FakeSession(), config=config)
     with pytest.raises(RuntimeUnavailable) as caught:
@@ -577,6 +588,7 @@ def test_the_artifact_digest_is_enforced_by_default(tmp_path, fake):
 
 
 def test_the_version_probe_runs_in_the_launch_environment(monkeypatch, tmp_path, fake):
+    """Verify the version probe runs in the launch environment."""
     from odessy.runtime_backends.harness import pin
 
     envfile = tmp_path / "probe-env.txt"
@@ -593,6 +605,7 @@ def test_the_version_probe_runs_in_the_launch_environment(monkeypatch, tmp_path,
 
 
 def test_a_missing_executable_fails_at_session_creation(tmp_path, fake):
+    """Verify a missing executable fails at session creation."""
     from dataclasses import replace
 
     config = replace(make_config(tmp_path, fake), command=(str(tmp_path / "missing.exe"),))
@@ -613,9 +626,11 @@ def test_a_missing_executable_fails_at_session_creation(tmp_path, fake):
 # -- handshake ---------------------------------------------------------------
 
 def test_handshake_captures_identity_and_is_idempotent(tmp_path, fake):
+    """Verify handshake captures identity and is idempotent."""
     runtime = HarnessRuntime(FakeSession(), config=make_config(tmp_path, fake))
 
     async def flow():
+        """Exercise the handshake captures identity and is idempotent scenario through the async application boundary."""
         first = await runtime.start()
         second = await runtime.start()
         assert first == second
@@ -634,6 +649,7 @@ def test_handshake_captures_identity_and_is_idempotent(tmp_path, fake):
 
 
 def test_malformed_frames_are_diagnosed_but_do_not_break_the_stream(monkeypatch, tmp_path, fake):
+    """Verify malformed frames are diagnosed but do not break the stream."""
     monkeypatch.setenv("FAKE_MODE", "garbage")
     config = make_config(tmp_path, fake, passthrough=("FAKE_MODE",))
     process = HarnessProcess(config)
@@ -649,6 +665,7 @@ def test_malformed_frames_are_diagnosed_but_do_not_break_the_stream(monkeypatch,
 
 
 def test_a_non_object_result_is_a_protocol_error(monkeypatch, tmp_path, fake):
+    """Verify a non object result is a protocol error."""
     monkeypatch.setenv("FAKE_MODE", "badresult")
     config = make_config(tmp_path, fake, passthrough=("FAKE_MODE",))
     process = HarnessProcess(config)
@@ -662,6 +679,7 @@ def test_a_non_object_result_is_a_protocol_error(monkeypatch, tmp_path, fake):
 
 
 def test_diagnostics_are_bounded(tmp_path, fake):
+    """Verify diagnostics are bounded."""
     config = make_config(tmp_path, fake, diagnostic_lines=3)
     process = HarnessProcess(config)
     process.start()
@@ -678,6 +696,7 @@ def test_diagnostics_are_bounded(tmp_path, fake):
     ("noproto", "protocolVersion=None"),
 ])
 def test_an_incompatible_handshake_is_refused(monkeypatch, tmp_path, fake, mode, fragment):
+    """Verify an incompatible handshake is refused."""
     monkeypatch.setenv("FAKE_MODE", mode)
     config = make_config(tmp_path, fake, passthrough=("FAKE_MODE",))
     runtime = HarnessRuntime(FakeSession(), config=config)
@@ -692,6 +711,7 @@ def test_an_incompatible_handshake_is_refused(monkeypatch, tmp_path, fake, mode,
 # -- failures ----------------------------------------------------------------
 
 def test_startup_timeout_is_bounded_and_leaves_no_process(monkeypatch, tmp_path, fake):
+    """Verify startup timeout is bounded and leaves no process."""
     monkeypatch.setenv("FAKE_MODE", "hang")
     config = make_config(tmp_path, fake, passthrough=("FAKE_MODE",), startup_timeout=0.6)
     runtime = HarnessRuntime(FakeSession(), config=config)
@@ -727,6 +747,7 @@ def test_startup_timeout_is_bounded_and_leaves_no_process(monkeypatch, tmp_path,
 
 
 def test_a_crash_during_startup_reports_the_exit_code(monkeypatch, tmp_path, fake):
+    """Verify a crash during startup reports the exit code."""
     monkeypatch.setenv("FAKE_MODE", "crash")
     config = make_config(tmp_path, fake, passthrough=("FAKE_MODE",))
     runtime = HarnessRuntime(FakeSession(), config=config)
@@ -737,10 +758,12 @@ def test_a_crash_during_startup_reports_the_exit_code(monkeypatch, tmp_path, fak
 
 
 def test_a_crash_during_a_turn_is_reported_not_swallowed(tmp_path, fake):
+    """Verify a crash during a turn is reported not swallowed."""
     runtime = HarnessRuntime(FakeSession(), config=make_config(tmp_path, fake))
     run(runtime.start())
 
     async def flow():
+        """Exercise the a crash during a turn is reported not swallowed scenario through the async application boundary."""
         process = runtime._process
         assert process is not None
         process._kill_tree()  # simulate the child dying mid-session
@@ -759,6 +782,7 @@ def test_a_crash_during_a_turn_is_reported_not_swallowed(tmp_path, fake):
 # -- shutdown ----------------------------------------------------------------
 
 def test_concurrent_close_is_idempotent(tmp_path, fake):
+    """Verify concurrent close is idempotent."""
     config = make_config(tmp_path, fake)
     process = HarnessProcess(config)
     process.start()
@@ -799,6 +823,7 @@ def _wait_until_dead(pid, timeout=10.0):
 
 
 def test_close_kills_a_grandchild_the_runtime_spawned(monkeypatch, tmp_path, fake):
+    """Verify close kills a grandchild the runtime spawned."""
     pidfile = tmp_path / "runtime.pid"
     monkeypatch.setenv("FAKE_MODE", "child")
     monkeypatch.setenv("FAKE_PIDFILE", str(pidfile))
@@ -819,6 +844,7 @@ def test_close_kills_a_grandchild_the_runtime_spawned(monkeypatch, tmp_path, fak
     assert _wait_until_dead(grandchild), "the grandchild outlived the closed runtime"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows Job Object fallback")
 def test_without_a_job_object_the_tree_dies_before_the_runtime_can_exit(
         monkeypatch, tmp_path, fake):
     """The fallback has exactly one ordering that can still work, and this pins it.
@@ -849,6 +875,7 @@ def test_without_a_job_object_the_tree_dies_before_the_runtime_can_exit(
 
 
 def test_close_during_startup_leaves_no_process(monkeypatch, tmp_path, fake):
+    """Verify close during startup leaves no process."""
     pidfile = tmp_path / "runtime.pid"
     monkeypatch.setenv("FAKE_MODE", "slowinit")
     monkeypatch.setenv("FAKE_PIDFILE", str(pidfile))
@@ -856,6 +883,7 @@ def test_close_during_startup_leaves_no_process(monkeypatch, tmp_path, fake):
     runtime = HarnessRuntime(FakeSession(), config=config)
 
     async def flow():
+        """Exercise the close during startup leaves no process scenario through the async application boundary."""
         starting = asyncio.create_task(runtime.start())
         await asyncio.sleep(0.25)  # inside the fake's 0.8 s initialize
         await runtime.close()
@@ -869,6 +897,7 @@ def test_close_during_startup_leaves_no_process(monkeypatch, tmp_path, fake):
 
 
 def test_a_cancelled_start_leaves_no_process(monkeypatch, tmp_path, fake):
+    """Verify a cancelled start leaves no process."""
     pidfile = tmp_path / "runtime.pid"
     monkeypatch.setenv("FAKE_MODE", "slowinit")
     monkeypatch.setenv("FAKE_PIDFILE", str(pidfile))
@@ -876,6 +905,7 @@ def test_a_cancelled_start_leaves_no_process(monkeypatch, tmp_path, fake):
     runtime = HarnessRuntime(FakeSession(), config=config)
 
     async def flow():
+        """Exercise the a cancelled start leaves no process scenario through the async application boundary."""
         starting = asyncio.create_task(runtime.start())
         await asyncio.sleep(0.25)
         starting.cancel()
@@ -898,6 +928,7 @@ def test_stop_is_implemented_through_the_runtimes_own_cancellation(tmp_path, fak
     assert runtime.capabilities.per_session_cancel is True
 
     async def flow():
+        """Exercise the stop is implemented through the runtimes own cancellation scenario through the async application boundary."""
         return await runtime.stop()  # not started: nothing to cancel, and no refusal
 
     outcome = run(flow())
@@ -906,10 +937,12 @@ def test_stop_is_implemented_through_the_runtimes_own_cancellation(tmp_path, fak
 
 
 def test_a_turn_returns_settled_text_and_claims_no_streaming(tmp_path, fake):
+    """Verify a turn returns settled text and claims no streaming."""
     session = FakeSession()
     runtime = HarnessRuntime(session, config=make_config(tmp_path, fake))
 
     async def flow():
+        """Exercise the a turn returns settled text and claims no streaming scenario through the async application boundary."""
         try:
             result = await runtime.run_turn("hello")
         finally:
@@ -923,12 +956,14 @@ def test_a_turn_returns_settled_text_and_claims_no_streaming(tmp_path, fake):
 
 
 def test_a_tool_update_is_refused_rather_than_ignored(monkeypatch, tmp_path, fake):
+    """Verify a tool update is refused rather than ignored."""
     monkeypatch.setenv("FAKE_MODE", "tool")
     runtime = HarnessRuntime(FakeSession(),
                              config=make_config(tmp_path, fake,
                                                 passthrough=("FAKE_MODE",)))
 
     async def flow():
+        """Exercise the a tool update is refused rather than ignored scenario through the async application boundary."""
         try:
             await runtime.run_turn("use a shell")
         finally:
@@ -940,12 +975,14 @@ def test_a_tool_update_is_refused_rather_than_ignored(monkeypatch, tmp_path, fak
 
 
 def test_a_server_request_is_refused_and_reported(monkeypatch, tmp_path, fake):
+    """Verify a server request is refused and reported."""
     monkeypatch.setenv("FAKE_MODE", "serverrequest")
     runtime = HarnessRuntime(FakeSession(),
                              config=make_config(tmp_path, fake,
                                                 passthrough=("FAKE_MODE",)))
 
     async def flow():
+        """Exercise the a server request is refused and reported scenario through the async application boundary."""
         try:
             await runtime.run_turn("do something that needs permission")
         finally:
@@ -958,12 +995,14 @@ def test_a_server_request_is_refused_and_reported(monkeypatch, tmp_path, fake):
 
 
 def test_readiness_never_blocks_the_event_loop(monkeypatch, tmp_path, fake):
+    """Verify readiness never blocks the event loop."""
     monkeypatch.setenv("FAKE_MODE", "slowinit")
     runtime = HarnessRuntime(FakeSession(),
                              config=make_config(tmp_path, fake,
                                                 passthrough=("FAKE_MODE",)))
 
     async def flow():
+        """Exercise the readiness never blocks the event loop scenario through the async application boundary."""
         beats = 0
         stopped = asyncio.Event()
 
@@ -1000,6 +1039,7 @@ def controller(**kwargs):
 
 
 def test_a_harness_session_runs_its_turn_through_the_engine(monkeypatch, tmp_path, fake):
+    """Verify a harness session runs its turn through the engine."""
     config = make_config(tmp_path, fake)
     monkeypatch.setitem(selection_module._BACKENDS, "harness",
                         lambda session: HarnessRuntime(session, config=config))
@@ -1008,6 +1048,7 @@ def test_a_harness_session_runs_its_turn_through_the_engine(monkeypatch, tmp_pat
                                               "model": "mock-model"}})
 
     async def flow():
+        """Exercise the a harness session runs its turn through the engine scenario through the async application boundary."""
         try:
             result = await session.run_turn("hello")
             types = [event_type.type for event_type in session.runtime.events()]

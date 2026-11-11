@@ -197,7 +197,7 @@ def main() -> int:
                        and settlement.foreign == 0,
                        json.dumps(settlement.public())))
         checks.append(("the settlement counts what was rendered",
-                       settlement.deltas == len(per_turn.get(sorted(per_turn)[-1], [])),
+                       bool(per_turn) and settlement.deltas == len(next(reversed(per_turn.values()))),
                        f"settlement={settlement.deltas}"))
 
         requests = [json.loads(line)

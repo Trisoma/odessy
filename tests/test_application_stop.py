@@ -38,6 +38,7 @@ class StubRuntime:
 
     def __init__(self, *, hold: bool = True,
                  outcome: StopOutcome | None = None, waits_for_approval: bool = False):
+        """Initialize the owned state and synchronization used by this component."""
         self.session_id = "stub-session"
         self.hold = hold
         self.waits_for_approval = waits_for_approval
@@ -55,12 +56,15 @@ class StubRuntime:
         return HARNESS_CAPABILITIES
 
     def events(self, after_id: int = 0):
+        """Return normalized events after the requested cursor."""
         return []
 
     def snapshot(self):
+        """Return the application projection without creating a second runtime history."""
         return {}
 
     async def run_turn(self, text, *args, **kwargs):
+        """Delegate one admitted input to the bound runtime and return its settled result."""
         self.turns.append(text)
         self._running = True
         self._cancelled = False
@@ -89,6 +93,7 @@ class StubRuntime:
         return self.outcome
 
     async def close(self):
+        """Release this component and its owned resources; repeated closure is safe."""
         self.closed = True
         self._gate.set()
 
@@ -112,9 +117,11 @@ def harness_controller(monkeypatch):
 
 
 def test_stop_during_a_generation_emits_stopped_and_keeps_the_text_out(harness_controller):
+    """Verify stop during a generation emits stopped and keeps the text out."""
     session, runtime = harness_controller()
 
     async def flow():
+        """Exercise the stop during a generation emits stopped and keeps the text out scenario through the async application boundary."""
         try:
             turn = asyncio.ensure_future(session.run_turn("hello"))
             while not runtime.turns:
@@ -141,9 +148,11 @@ def test_stop_during_a_generation_emits_stopped_and_keeps_the_text_out(harness_c
 
 
 def test_stop_during_a_pending_approval_declines_it_and_stops_the_turn(harness_controller):
+    """Verify stop during a pending approval declines it and stops the turn."""
     session, runtime = harness_controller(waits_for_approval=True)
 
     async def flow():
+        """Exercise the stop during a pending approval declines it and stops the turn scenario through the async application boundary."""
         try:
             turn = asyncio.ensure_future(session.run_turn("write"))
             while not session.pending_approvals:
@@ -171,6 +180,7 @@ def test_stop_before_generation_sends_nothing_to_the_engine(harness_controller):
     admitted = session.stop_epoch
 
     async def flow():
+        """Exercise the stop before generation sends nothing to the engine scenario through the async application boundary."""
         try:
             outcome = await session.stop()    # the runtime is idle: nothing to cancel
             with pytest.raises(TurnCancelled):
@@ -188,9 +198,11 @@ def test_stop_before_generation_sends_nothing_to_the_engine(harness_controller):
 
 
 def test_repeated_stop_is_idempotent(harness_controller):
+    """Verify repeated stop is idempotent."""
     session, runtime = harness_controller()
 
     async def flow():
+        """Exercise the repeated stop is idempotent scenario through the async application boundary."""
         try:
             turn = asyncio.ensure_future(session.run_turn("hello"))
             while not runtime.turns:
@@ -211,9 +223,11 @@ def test_repeated_stop_is_idempotent(harness_controller):
 
 
 def test_stop_after_settlement_changes_nothing(harness_controller):
+    """Verify stop after settlement changes nothing."""
     session, runtime = harness_controller(hold=False)
 
     async def flow():
+        """Exercise the stop after settlement changes nothing scenario through the async application boundary."""
         try:
             result = await session.run_turn("hello")
             before = len(session.events)
@@ -231,11 +245,13 @@ def test_stop_after_settlement_changes_nothing(harness_controller):
 
 
 def test_an_unconfirmed_stop_is_reported_as_unconfirmed(harness_controller):
+    """Verify an unconfirmed stop is reported as unconfirmed."""
     session, runtime = harness_controller(
         outcome=StopOutcome(True, "unconfirmed", "pending", None,
                             "the runtime did not end the turn within 0.5s"))
 
     async def flow():
+        """Exercise the an unconfirmed stop is reported as unconfirmed scenario through the async application boundary."""
         try:
             turn = asyncio.ensure_future(session.run_turn("hello"))
             while not runtime.turns:
@@ -275,6 +291,7 @@ def test_the_stop_route_reports_the_outcome_and_the_session_keeps_working(harnes
     headers = {"Authorization": "Bearer secret"}
 
     async def flow():
+        """Exercise the the stop route reports the outcome and the session keeps working scenario through the async application boundary."""
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test",
                                      headers=headers) as client:
@@ -318,6 +335,7 @@ def test_the_explicit_process_wide_stop_is_guarded_and_reports_every_session(har
     headers = {"Authorization": "Bearer secret"}
 
     async def flow():
+        """Exercise the the explicit process wide stop is guarded and reports every session scenario through the async application boundary."""
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test",
                                      headers=headers) as client:
@@ -354,3 +372,46 @@ def test_the_explicit_process_wide_stop_is_guarded_and_reports_every_session(har
     assert body["unconfirmed"] == []
     # Both sessions were stopped through their own engines, not by killing anything.
     assert first_runtime.stops >= 1 and second_runtime.stops >= 1
+
+def test_harness_route_credentials_are_redacted_from_public_events(harness_controller):
+    """Saved or session route credentials need not exist in the process environment."""
+    import json
+    from types import SimpleNamespace
+    session, runtime = harness_controller(hold=False)
+    runtime.route = SimpleNamespace(api_key='session-only-route-secret-123')
+    session.emit('error', {'message': 'failure session-only-route-secret-123'})
+    assert 'session-only-route-secret-123' not in json.dumps(session.events)
+
+
+def test_external_stop_event_cancels_a_nonlegacy_turn(harness_controller):
+    """Voice and other callers use the same Stop semantics as typed input."""
+    session, runtime = harness_controller()
+    async def flow():
+        stop = asyncio.Event()
+        turn = asyncio.create_task(session.run_turn('hello', stop_event=stop))
+        try:
+            while not runtime.turns:
+                await asyncio.sleep(0)
+            stop.set()
+            with pytest.raises(TurnCancelled):
+                await asyncio.wait_for(asyncio.shield(turn), .5)
+            assert runtime.stops >= 1
+        finally:
+            await session.close()
+            await asyncio.gather(turn, return_exceptions=True)
+    run(flow())
+
+
+def test_preset_external_stop_event_never_admits_a_harness_turn(harness_controller):
+    """Already revoked input cannot reach the runtime or publish a completed answer."""
+    session, runtime = harness_controller()
+    async def flow():
+        event = asyncio.Event()
+        event.set()
+        try:
+            with pytest.raises(TurnCancelled):
+                await session.run_turn('hello', stop_event=event)
+            assert runtime.turns == []
+        finally:
+            await session.close()
+    run(flow())

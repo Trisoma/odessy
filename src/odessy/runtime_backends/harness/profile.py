@@ -20,6 +20,7 @@ because disabling a row that no longer exists is silently a no-op.
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 NARROW_PATCH_NAME = "odessy_narrow.patch.yml"
@@ -79,7 +80,12 @@ def materialize_narrow_patch(home: Path) -> Path:
             return target
     except OSError:
         pass
-    scratch = target.with_name(target.name + ".writing")
-    scratch.write_text(text, encoding="utf-8", newline="\n")
-    os.replace(scratch, target)
+    fd, name = tempfile.mkstemp(prefix=target.name + ".", suffix=".writing", dir=home)
+    scratch = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+        os.replace(scratch, target)
+    finally:
+        scratch.unlink(missing_ok=True)
     return target

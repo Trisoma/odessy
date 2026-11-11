@@ -33,6 +33,7 @@ BackendBuilder = Callable[[Any], RuntimeSession]
 
 
 def _legacy_builder(session: Any) -> RuntimeSession:
+    """Construct the existing engine adapter without changing legacy behavior."""
     from .legacy import LegacyRuntime
 
     return LegacyRuntime(session)
@@ -41,6 +42,7 @@ def _legacy_builder(session: Any) -> RuntimeSession:
 def _harness_builder(session: Any) -> RuntimeSession:
     # Imported here, not at module import: the harness package owns subprocess and
     # threading machinery that a legacy-only deployment never needs.
+    """Construct the explicitly selected Harness backend."""
     from .harness import HarnessRuntime
 
     return HarnessRuntime(session)
@@ -66,6 +68,7 @@ def register_backend(engine: str, builder: BackendBuilder) -> None:
 
 
 def available_engines() -> tuple[str, ...]:
+    """List registered engine names without constructing a runtime."""
     return tuple(sorted(_BACKENDS))
 
 
@@ -97,6 +100,7 @@ class RuntimeSelection:
     source: str  # "default" | "explicit"
 
     def __post_init__(self) -> None:
+        """Validate the immutable contract before it can cross the runtime boundary."""
         object.__setattr__(self, "engine", normalize_engine(self.engine))
         if self.source not in ("default", "explicit"):
             raise RuntimeSelectionError(
@@ -104,6 +108,7 @@ class RuntimeSelection:
             )
 
     def public(self) -> dict[str, str]:
+        """Return the safe public representation without private runtime state."""
         return {"engine": self.engine, "source": self.source}
 
 
@@ -150,6 +155,7 @@ def build_runtime(session: Any, selection: RuntimeSelection) -> RuntimeSession:
 
 def resolve_and_build(session: Any, value: Any = None, *,
                       environ: Mapping[str, str] | None = None) -> tuple[RuntimeSelection, RuntimeSession]:
+    """Validate engine selection and construct exactly that engine."""
     selection = require_available(resolve_selection(value, environ=environ))
     return selection, _BACKENDS[selection.engine](session)
 

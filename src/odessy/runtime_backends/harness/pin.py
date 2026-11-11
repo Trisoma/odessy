@@ -78,6 +78,7 @@ def parse_version(output: str) -> str:
 
 
 def _digest(path: Path) -> tuple[str, int]:
+    """Compute the executable digest and size without loading the artifact into memory."""
     digest = hashlib.sha256()
     size = 0
     with path.open("rb") as handle:

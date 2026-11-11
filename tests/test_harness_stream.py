@@ -56,6 +56,7 @@ def lifecycle(kind, session="acp-1", attempt=1):
 # -- the translator ----------------------------------------------------------
 
 def test_deltas_are_ordered_and_carry_identity():
+    """Verify deltas are ordered and carry identity."""
     stream = TurnStream("acp-1", stream_id="sess-1:abc")
     assert stream.feed(lifecycle("start")) == []
     events = []
@@ -69,6 +70,7 @@ def test_deltas_are_ordered_and_carry_identity():
 
 
 def test_another_sessions_frames_are_counted_not_rendered():
+    """Verify another sessions frames are counted not rendered."""
     stream = TurnStream("acp-1")
     assert stream.feed(lifecycle("start", session="other")) == []
     assert stream.feed(text_delta("leaked", session="other")) == []
@@ -87,6 +89,7 @@ def test_another_sessions_frames_are_counted_not_rendered():
     frame(frame={"type": "unknown"}),
 ])
 def test_malformed_input_is_counted_and_dropped(message):
+    """Verify malformed input is counted and dropped."""
     stream = TurnStream("acp-1")
     assert stream.feed(message) == []
     assert stream.snapshot()["malformed"] == 1
@@ -135,6 +138,7 @@ def test_a_frame_from_a_settled_turn_is_not_rendered_into_the_next_one():
 
 
 def test_a_frame_without_a_turn_number_still_belongs_to_the_running_turn():
+    """Verify a frame without a turn number still belongs to the running turn."""
     stream = TurnStream("acp-1", previous_turn=4)
     message = {"type": "frame", "sessionId": "acp-1",
                "chunk": {"type": "text-delta", "text": "unattributed"}}
@@ -143,6 +147,7 @@ def test_a_frame_without_a_turn_number_still_belongs_to_the_running_turn():
 
 
 def test_a_failed_turn_leaves_its_unfinished_attempt_partial():
+    """Verify a failed turn leaves its unfinished attempt partial."""
     stream = TurnStream("acp-1")
     stream.feed(lifecycle("start"))
     stream.feed(text_delta("half an answer"))
@@ -163,6 +168,7 @@ def test_an_end_frame_does_not_make_an_abnormal_turn_complete(stop_reason):
 
 
 def test_a_normal_end_keeps_its_attempt_complete():
+    """Verify a normal end keeps its attempt complete."""
     stream = TurnStream("acp-1")
     stream.feed(lifecycle("start"))
     stream.feed(text_delta("answer"))
@@ -188,6 +194,7 @@ def test_the_turn_text_bound_is_cumulative_across_attempts():
 
 
 def test_a_retry_leaves_the_first_attempt_visibly_partial():
+    """Verify a retry leaves the first attempt visibly partial."""
     stream = TurnStream("acp-1")
     stream.feed(lifecycle("start"))
     stream.feed(text_delta("par"))
@@ -202,6 +209,7 @@ def test_a_retry_leaves_the_first_attempt_visibly_partial():
 
 
 def test_settlement_is_idempotent_and_late_deltas_are_counted():
+    """Verify settlement is idempotent and late deltas are counted."""
     stream = TurnStream("acp-1")
     stream.feed(lifecycle("start"))
     stream.feed(text_delta("Hello"))
@@ -221,6 +229,7 @@ def test_settlement_is_idempotent_and_late_deltas_are_counted():
 
 
 def test_text_is_bounded_per_frame_and_per_turn():
+    """Verify text is bounded per frame and per turn."""
     stream = TurnStream("acp-1", max_delta_chars=8, max_turn_chars=12)
     assert stream.feed(text_delta("0123456789")) == []       # one oversized frame
     assert stream.snapshot()["malformed"] == 1
@@ -234,6 +243,7 @@ def test_text_is_bounded_per_frame_and_per_turn():
 
 
 def test_reasoning_is_not_answer_text_but_is_attributed():
+    """Verify reasoning is not answer text but is attributed."""
     stream = TurnStream("acp-1")
     stream.feed(lifecycle("start"))
     assert stream.feed(frame(chunk={"type": "reasoning-delta", "text": "thinking"})) == []
@@ -243,6 +253,7 @@ def test_reasoning_is_not_answer_text_but_is_attributed():
 
 
 def test_tool_progress_carries_name_and_state_but_no_arguments():
+    """Verify tool progress carries name and state but no arguments."""
     stream = TurnStream("acp-1")
     events = stream.feed_notification({
         "method": "session/update",
@@ -262,6 +273,7 @@ def test_tool_progress_carries_name_and_state_but_no_arguments():
 
 
 def test_the_settlement_public_form_never_contains_text():
+    """Verify the settlement public form never contains text."""
     stream = TurnStream("acp-1")
     stream.feed(lifecycle("start"))
     stream.feed(text_delta("secret-content"))
@@ -277,6 +289,7 @@ class FakePlugin:
     """A stand-in for the Node plugin: the same greeting and frame lines."""
 
     def __init__(self, *, token="t0ken", protocol=1):
+        """Initialize the owned state and synchronization used by this component."""
         self.token, self.protocol = token, protocol
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.bind(("127.0.0.1", 0))
@@ -320,6 +333,7 @@ class FakePlugin:
         self._conn.sendall((payload + "\n").encode())
 
     def close(self):
+        """Release this component and its owned resources; repeated closure is safe."""
         try:
             self.sock.close()
         except OSError:
@@ -327,6 +341,7 @@ class FakePlugin:
 
 
 def test_the_bridge_authenticates_and_streams_frames():
+    """Verify the bridge authenticates and streams frames."""
     plugin = FakePlugin(token="shared-token")
     bridge = LiveBridge(plugin.port, "shared-token", connect_timeout=5.0)
     try:
@@ -343,6 +358,7 @@ def test_the_bridge_authenticates_and_streams_frames():
 
 
 def test_the_bridge_refuses_a_wrong_token():
+    """Verify the bridge refuses a wrong token."""
     plugin = FakePlugin(token="shared-token")
     with pytest.raises(BridgeError):
         LiveBridge(plugin.port, "wrong-token", connect_timeout=5.0)
@@ -350,6 +366,7 @@ def test_the_bridge_refuses_a_wrong_token():
 
 
 def test_the_bridge_refuses_an_unknown_protocol():
+    """Verify the bridge refuses an unknown protocol."""
     plugin = FakePlugin(protocol=2)
     with pytest.raises(BridgeError) as caught:
         LiveBridge(plugin.port, "t0ken", connect_timeout=5.0)
@@ -358,6 +375,7 @@ def test_the_bridge_refuses_an_unknown_protocol():
 
 
 def test_the_bridge_absent_is_a_named_error_not_a_hang():
+    """Verify the bridge absent is a named error not a hang."""
     port = free_port()
     started = time.monotonic()
     with pytest.raises(BridgeError):
@@ -366,6 +384,7 @@ def test_the_bridge_absent_is_a_named_error_not_a_hang():
 
 
 def test_oversized_and_malformed_lines_are_reported_without_losing_the_stream():
+    """Verify oversized and malformed lines are reported without losing the stream."""
     plugin = FakePlugin()
     bridge = LiveBridge(plugin.port, "t0ken", connect_timeout=5.0)
     try:
@@ -406,6 +425,7 @@ def test_the_environment_gap_that_breaks_the_bridge_socket_is_named(tmp_path, fa
 
 
 def test_a_blocked_consumer_loses_deltas_but_keeps_the_connection_open():
+    """Verify a blocked consumer loses deltas but keeps the connection open."""
     plugin = FakePlugin()
     bridge = LiveBridge(plugin.port, "t0ken", connect_timeout=5.0, queue_size=4)
     try:
@@ -467,6 +487,7 @@ def deltas(session):
 
 
 def test_deltas_reach_the_session_before_the_answer_is_committed(tmp_path, fake, monkeypatch):
+    """Verify deltas reach the session before the answer is committed."""
     runtime = bridged_runtime(tmp_path, fake, monkeypatch)
     session = runtime._session
     started_wall = time.time()
@@ -491,6 +512,7 @@ def test_deltas_reach_the_session_before_the_answer_is_committed(tmp_path, fake,
 
 
 def test_another_sessions_frames_never_reach_this_session(tmp_path, fake, monkeypatch):
+    """Verify another sessions frames never reach this session."""
     runtime = bridged_runtime(tmp_path, fake, monkeypatch, bridge="foreign")
     session = runtime._session
     try:
@@ -503,6 +525,7 @@ def test_another_sessions_frames_never_reach_this_session(tmp_path, fake, monkey
 
 
 def test_malformed_frames_do_not_break_the_turn(tmp_path, fake, monkeypatch):
+    """Verify malformed frames do not break the turn."""
     runtime = bridged_runtime(tmp_path, fake, monkeypatch, bridge="malformed")
     session = runtime._session
     try:
@@ -558,6 +581,7 @@ def test_a_late_chunk_after_settlement_changes_nothing(tmp_path, fake, monkeypat
 
 
 def test_a_retry_keeps_the_partial_attempt_visible(tmp_path, fake, monkeypatch):
+    """Verify a retry keeps the partial attempt visible."""
     runtime = bridged_runtime(tmp_path, fake, monkeypatch, bridge="retry")
     session = runtime._session
     try:
@@ -570,6 +594,7 @@ def test_a_retry_keeps_the_partial_attempt_visible(tmp_path, fake, monkeypatch):
 
 
 def test_tool_activity_is_rendered_then_the_turn_still_fails(tmp_path, fake, monkeypatch):
+    """Verify tool activity is rendered then the turn still fails."""
     config = with_fake_env(make_config(tmp_path, fake), FAKE_MODE="tool")
     runtime = HarnessRuntime(FakeSession(), config=config)
     session = runtime._session
@@ -584,6 +609,7 @@ def test_tool_activity_is_rendered_then_the_turn_still_fails(tmp_path, fake, mon
 
 
 def test_without_a_bridge_the_engine_stays_settlement_only(tmp_path, fake):
+    """Verify without a bridge the engine stays settlement only."""
     config = with_fake_env(make_config(tmp_path, fake), ODESSY_HARNESS_BRIDGE="off")
     runtime = HarnessRuntime(FakeSession(), config=config)
     try:
@@ -594,3 +620,21 @@ def test_without_a_bridge_the_engine_stays_settlement_only(tmp_path, fake):
         assert runtime.stream_settlement.first_delta_ms is None
     finally:
         run(runtime.close())
+
+
+def test_bridge_overflow_accounts_for_every_missing_frame():
+    """A full queue loses one frame, not an uncounted extra queued frame."""
+    import queue
+    plugin = FakePlugin()
+    bridge = LiveBridge(plugin.port, plugin.token)
+    bridge._queue = queue.Queue(maxsize=1)
+    try:
+        for index in range(5):
+            plugin.write({'type': 'frame', 'n': index})
+        deadline = time.monotonic() + 3
+        while bridge.dropped < 4 and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert bridge._queue.qsize() + bridge.dropped == 5
+    finally:
+        bridge.close()
+        plugin.close()

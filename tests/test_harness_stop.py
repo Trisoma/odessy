@@ -73,9 +73,9 @@ def wait_for_prompt(path, timeout=15.0):
 
 
 def _alive(pid):
-    out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-                         capture_output=True, text=True, check=False).stdout
-    return str(pid) in out
+    """Use the shared platform-aware process liveness check."""
+    from test_harness_runtime import _pid_alive
+    return _pid_alive(pid)
 
 
 def _wait_until_dead(pid, timeout=10.0):
@@ -90,9 +90,11 @@ def _wait_until_dead(pid, timeout=10.0):
 # -- the outcomes ------------------------------------------------------------
 
 def test_stop_with_no_turn_is_idle_and_repeatable(tmp_path, fake, monkeypatch):
+    """Verify stop with no turn is idle and repeatable."""
     runtime = configured(tmp_path, fake, monkeypatch, mode="hold")
 
     async def flow():
+        """Exercise the stop with no turn is idle and repeatable scenario through the async application boundary."""
         try:
             await runtime.start()
             return await runtime.stop(), await runtime.stop()
@@ -109,9 +111,11 @@ def test_stop_with_no_turn_is_idle_and_repeatable(tmp_path, fake, monkeypatch):
 
 
 def test_stop_does_not_end_the_session_it_did_not_interrupt(tmp_path, fake, monkeypatch):
+    """Verify stop does not end the session it did not interrupt."""
     runtime = configured(tmp_path, fake, monkeypatch, mode="hold", hold_turns=0)
 
     async def flow():
+        """Exercise the stop does not end the session it did not interrupt scenario through the async application boundary."""
         try:
             await runtime.start()
             before = await runtime.stop()          # nothing running: must not break anything
@@ -132,6 +136,7 @@ def test_stop_between_streamed_chunks_is_confirmed_and_keeps_the_answer_out(
     runtime = configured(tmp_path, fake, monkeypatch, mode="hold", hold=10.0, prompt_file=marker)
 
     async def flow():
+        """Exercise the stop between streamed chunks is confirmed and keeps the answer out scenario through the async application boundary."""
         try:
             await runtime.start()
             turn = asyncio.ensure_future(runtime.run_turn("hello"))
@@ -163,6 +168,7 @@ def test_stop_that_the_runtime_ignores_is_unconfirmed_not_stopped(tmp_path, fake
                          stop_bound=0.5, prompt_file=marker)
 
     async def flow():
+        """Exercise the stop that the runtime ignores is unconfirmed not stopped scenario through the async application boundary."""
         try:
             await runtime.start()
             turn = asyncio.ensure_future(runtime.run_turn("hello"))
@@ -186,12 +192,14 @@ def test_stop_that_the_runtime_ignores_is_unconfirmed_not_stopped(tmp_path, fake
 
 
 def test_a_crash_during_stop_is_unknown_not_stopped(tmp_path, fake, monkeypatch):
+    """Verify a crash during stop is unknown not stopped."""
     marker = tmp_path / "prompt.txt"
     pidfile = tmp_path / "runtime.pid"
     runtime = configured(tmp_path, fake, monkeypatch, mode="crash-on-cancel", hold=10.0,
                          prompt_file=marker, pidfile=pidfile)
 
     async def flow():
+        """Exercise the a crash during stop is unknown not stopped scenario through the async application boundary."""
         try:
             await runtime.start()
             turn = asyncio.ensure_future(runtime.run_turn("hello"))
@@ -217,6 +225,7 @@ def test_stop_keeps_the_event_loop_responsive(tmp_path, fake, monkeypatch):
                          stop_bound=0.5, prompt_file=marker)
 
     async def flow():
+        """Exercise the stop keeps the event loop responsive scenario through the async application boundary."""
         try:
             await runtime.start()
             turn = asyncio.ensure_future(runtime.run_turn("hello"))
@@ -247,6 +256,7 @@ def test_stop_during_the_window_before_the_prompt_starts_is_not_silently_idle(
     runtime = configured(tmp_path, fake, monkeypatch, mode="hold")
 
     async def flow():
+        """Exercise the stop during the window before the prompt starts is not silently idle scenario through the async application boundary."""
         try:
             await runtime.start()
             assert runtime._turn_lock.acquire(blocking=False)   # a turn is "in flight"
@@ -273,6 +283,7 @@ def test_a_child_that_stops_reading_stdin_leaves_the_stop_unconfirmed(
                          stop_bound=5.0, prompt_file=marker)
 
     async def flow():
+        """Exercise the a child that stops reading stdin leaves the stop unconfirmed scenario through the async application boundary."""
         try:
             await runtime.start()
             turn = asyncio.ensure_future(runtime.run_turn("hello"))
@@ -298,6 +309,7 @@ def test_the_cancel_write_itself_is_bounded(tmp_path, fake, monkeypatch):
                          stop_bound=0.3, prompt_file=marker)
 
     async def flow():
+        """Exercise the the cancel write itself is bounded scenario through the async application boundary."""
         try:
             await runtime.start()
             turn = asyncio.ensure_future(runtime.run_turn("hello"))
@@ -342,6 +354,7 @@ def test_a_timed_out_cancel_write_blocks_new_turns_until_the_real_write_finishes
     writer_finished = threading.Event()
 
     async def flow():
+        """Exercise the a timed out cancel write blocks new turns until the real write finishes scenario through the async application boundary."""
         try:
             await runtime.start()
             original_notify = runtime._process.notify
@@ -395,6 +408,7 @@ def test_a_cancel_is_not_sent_before_the_prompt_has_been_written(tmp_path, fake,
     process = None
 
     async def flow():
+        """Exercise the a cancel is not sent before the prompt has been written scenario through the async application boundary."""
         nonlocal process
         try:
             await runtime.start()
@@ -461,24 +475,27 @@ def test_the_api_reports_unconfirmed_within_its_bound_for_a_wedged_child(
     headers = {"Authorization": "Bearer secret"}
 
     async def flow():
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test",
-                                     headers=headers) as client:
-            sid = (await client.post("/v1/sessions")).json()["id"]
-            route = "/v1/sessions/" + sid
-            assert (await client.post(route + "/turns", json={"text": "hello"})).status_code == 202
-            await asyncio.to_thread(wait_for_prompt, marker)
-            started = time.monotonic()
-            response = await client.post(route + "/stop")
-            elapsed = time.monotonic() - started
-            body = response.json()
-            state = (await client.get(route)).json()
-            deadline = time.monotonic() + 10
-            while state["running"] and time.monotonic() < deadline:
-                await asyncio.sleep(0.1)
+        try:
+            """Exercise the the api reports unconfirmed within its bound for a wedged child scenario through the async application boundary."""
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://test",
+                                         headers=headers) as client:
+                sid = (await client.post("/v1/sessions")).json()["id"]
+                route = "/v1/sessions/" + sid
+                assert (await client.post(route + "/turns", json={"text": "hello"})).status_code == 202
+                await asyncio.to_thread(wait_for_prompt, marker)
+                started = time.monotonic()
+                response = await client.post(route + "/stop")
+                elapsed = time.monotonic() - started
+                body = response.json()
                 state = (await client.get(route)).json()
-            return response.status_code, body, elapsed, state, session
-        await session.close()
+                deadline = time.monotonic() + 10
+                while state["running"] and time.monotonic() < deadline:
+                    await asyncio.sleep(0.1)
+                    state = (await client.get(route)).json()
+                return response.status_code, body, elapsed, state, session
+        finally:
+            await session.close()
 
     status, body, elapsed, state, controller = run(flow())
     assert status == 200
@@ -502,6 +519,7 @@ def test_a_turn_is_refused_while_the_stopped_turn_is_still_in_flight(
     runtime = configured(tmp_path, fake, monkeypatch, mode="hold", hold=10.0, prompt_file=marker)
 
     async def flow():
+        """Exercise the a turn is refused while the stopped turn is still in flight scenario through the async application boundary."""
         try:
             await runtime.start()
             turn = asyncio.ensure_future(runtime.run_turn("hello"))
@@ -527,6 +545,7 @@ def test_an_abandoned_turn_keeps_the_session_busy_then_hands_it_back(
                          stop_bound=0.2, prompt_file=marker)
 
     async def flow():
+        """Exercise the an abandoned turn keeps the session busy then hands it back scenario through the async application boundary."""
         try:
             await runtime.start()
             turn = asyncio.ensure_future(runtime.run_turn("hello"))
@@ -550,6 +569,7 @@ def test_an_abandoned_turn_keeps_the_session_busy_then_hands_it_back(
 # -- two sessions ------------------------------------------------------------
 
 def test_stopping_one_session_leaves_the_other_running(tmp_path, fake, monkeypatch):
+    """Verify stopping one session leaves the other running."""
     for name in ("a", "b"):
         (tmp_path / name).mkdir(parents=True, exist_ok=True)
     marker = tmp_path / "prompt.txt"
@@ -558,6 +578,7 @@ def test_stopping_one_session_leaves_the_other_running(tmp_path, fake, monkeypat
     free = configured(tmp_path / "b", fake, monkeypatch, mode="hold", hold=10.0, hold_turns=0)
 
     async def flow():
+        """Exercise the stopping one session leaves the other running scenario through the async application boundary."""
         try:
             await held.start()
             await free.start()
@@ -580,12 +601,14 @@ def test_stopping_one_session_leaves_the_other_running(tmp_path, fake, monkeypat
 # -- teardown ----------------------------------------------------------------
 
 def test_close_after_a_stop_still_reaps_the_runtime(tmp_path, fake, monkeypatch):
+    """Verify close after a stop still reaps the runtime."""
     marker = tmp_path / "prompt.txt"
     pidfile = tmp_path / "runtime.pid"
     runtime = configured(tmp_path, fake, monkeypatch, mode="hold", hold=10.0,
                          prompt_file=marker, pidfile=pidfile)
 
     async def flow():
+        """Exercise the close after a stop still reaps the runtime scenario through the async application boundary."""
         await runtime.start()
         turn = asyncio.ensure_future(runtime.run_turn("hello"))
         await asyncio.to_thread(wait_for_prompt, marker)

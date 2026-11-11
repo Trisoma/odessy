@@ -44,8 +44,7 @@ def route_overlay(route: str, *, api: str, base_url: str, models: list[dict], ke
 def update_kinds(updates: list[dict]) -> list[str]:
     kinds = []
     for message in updates:
-        params = message.get("params") or {}
-        update = params.get("update") or {}
+        update = message.get("update") or {}
         kind = update.get("sessionUpdate")
         if kind:
             kinds.append(kind)
@@ -130,7 +129,7 @@ def main() -> int:
     report["provider_requests"] = len(requests)
     report["provider_models"] = [entry.get("model") for entry in requests]
     report["provider_paths"] = sorted({entry.get("path") for entry in requests})
-    report["authorization_present"] = any(True for _ in requests) and bool(requests)
+    report["authorization_present"] = bool(requests) and all(item.get("authorization_present") is True for item in requests)
     (work / "piai.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
     return 0 if report.get("selected") else 1

@@ -93,3 +93,24 @@ def _isolate_config_environment(
     reset_process_ledger()
     os.environ.clear()
     os.environ.update(saved)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_harness_credentials(request, monkeypatch):
+    """Give fake Harness processes literal credentials without reading the user's vault."""
+    if not request.module.__name__.split('.')[-1].startswith('test_harness_'):
+        yield
+        return
+    from odessy import credentials
+    class EmptyVault:
+        def get_password(self, service, account):
+            return None
+        def set_password(self, service, account, value):
+            pass
+        def delete_password(self, service, account):
+            pass
+    credentials.clear_sessions()
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'k-test-not-a-real-key')
+    monkeypatch.setattr(credentials, '_backend', lambda: EmptyVault())
+    yield
+    credentials.clear_sessions()
