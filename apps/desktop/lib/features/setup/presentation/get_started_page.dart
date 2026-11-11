@@ -3,6 +3,7 @@ import 'package:odessy_client/odessy_client.dart';
 
 import '../../../app/setup/native_picker.dart';
 import '../../../app/theme.dart';
+import '../../settings/presentation/model_credential_panel.dart';
 import '../controllers/installed_manage_controller.dart';
 import 'path_field.dart';
 import 'setup_shell.dart';
@@ -434,7 +435,10 @@ class _GetStartedPageState extends State<GetStartedPage> {
   Widget _remote(BuildContext context) => SetupSection(
         title: 'Remote or cloud',
         description:
-            'Choose a supported provider preset or a compatible endpoint, then name the model. Authentication is referenced by environment-variable name only; no key is entered here.',
+            'Choose a supported provider, save its API key, then choose a model. '
+            'The key goes to the OS credential store (or this session only); it is '
+            'never written to the configuration, the workspace or a log. Nothing is '
+            'sent to the provider until you fetch models or send a message.',
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -459,6 +463,13 @@ class _GetStartedPageState extends State<GetStartedPage> {
                       }),
             ),
             const SizedBox(height: OdessyTokens.spaceMedium),
+            ModelCredentialPanel(
+              backend: c.backend,
+              provider: preset,
+              endpoint: endpoint.text.trim(),
+              reference: credential.text.trim(),
+            ),
+            const SizedBox(height: OdessyTokens.spaceMedium),
             ModelPicker(
               catalog: catalog,
               provider: preset,
@@ -476,8 +487,10 @@ class _GetStartedPageState extends State<GetStartedPage> {
               onChanged: (_) => setState(() {}),
               enabled: !c.busy,
               decoration: const InputDecoration(
-                labelText: 'Endpoint (optional for presets)',
+                labelText: 'Endpoint (advanced; optional for presets)',
                 hintText: 'https://…',
+                helperText:
+                    'A key is stored per provider and endpoint. If you change this address, save the key again for the new address.',
               ),
             ),
             const SizedBox(height: OdessyTokens.spaceMedium),
@@ -487,10 +500,11 @@ class _GetStartedPageState extends State<GetStartedPage> {
               onChanged: (_) => setState(() {}),
               enabled: !c.busy,
               decoration: const InputDecoration(
-                labelText: 'Credential environment variable (optional)',
+                labelText:
+                    'Advanced: credential environment variable (optional)',
                 hintText: 'ODESSY_CLOUD_API_KEY',
                 helperText:
-                    'The variable name only. Keys stay in the environment; they are never stored in settings.',
+                    'A variable name only. A key saved above takes precedence; the environment is the fallback for headless or scripted use.',
               ),
             ),
           ],

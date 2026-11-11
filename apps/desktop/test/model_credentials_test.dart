@@ -43,6 +43,60 @@ class CredentialBackend implements SetupBackend {
   Future<void> cancel() async {}
 }
 
+/// Reports one credential per (provider, endpoint, reference) scope, so a test
+/// can prove which scope a destructive action reaches.
+class ScopedCredentialBackend implements SetupBackend {
+  final stored = <String, String>{};
+  final removals = <String>[];
+  final reads = <String>[];
+
+  @override
+  Future<SetupReply> execute(SetupRequest request) async {
+    final endpoint = request.parameters['endpoint'] as String? ?? '';
+    final action = request.parameters['action'] as String?;
+    if (action == 'describe') reads.add(endpoint);
+    if (action == 'set') {
+      stored[endpoint] = request.parameters['storage'] as String? ?? 'session';
+    }
+    if (action == 'remove') {
+      removals.add(endpoint);
+      stored.remove(endpoint);
+    }
+    final source = stored[endpoint] ?? 'none';
+    return SetupReply.fromJson({
+      'id': request.id,
+      'status': 'ok',
+      'result': {
+        'scope': 'scope-$endpoint',
+        'configured': source != 'none',
+        'source': source,
+        'writable': true,
+        'persistence': source == 'keyring'
+            ? 'persistent'
+            : source == 'session'
+                ? 'session'
+                : 'none',
+        'secure_storage_available': true,
+        'message': '',
+      }
+    }, request.id);
+  }
+
+  @override
+  Future<void> cancel() async {}
+  @override
+  Future<void> close() async {}
+}
+
+Widget _panel(SetupBackend backend, String endpoint) => MaterialApp(
+    home: Scaffold(
+        body: SingleChildScrollView(
+            child: ModelCredentialPanel(
+                backend: backend,
+                provider: 'deepseek',
+                endpoint: endpoint,
+                reference: ''))));
+
 void main() {
   testWidgets('environment credential permits explicit replacement',
       (tester) async {
@@ -143,5 +197,52 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('OS credential store'), findsOneWidget);
     expect(find.text('test-sentinel-key'), findsNothing);
+  });
+
+  testWidgets('a changed scope cannot remove the previous endpoint key',
+      (tester) async {
+    final backend = ScopedCredentialBackend()..stored[''] = 'keyring';
+    await tester.pumpWidget(_panel(backend, ''));
+    await tester.pumpAndSettle();
+    expect(find.text('Configured \u00b7 OS credential store'), findsOneWidget);
+    expect(
+        tester
+            .widget<TextButton>(find.widgetWithText(TextButton, 'Remove'))
+            .onPressed,
+        isNotNull);
+
+    // Same panel, new endpoint: the shown status now describes another scope.
+    await tester.pumpWidget(_panel(backend, 'https://proxy.example/v1'));
+    await tester.pumpAndSettle();
+    expect(
+        find.textContaining('Removing a key stays disabled'), findsOneWidget);
+    expect(
+        tester
+            .widget<TextButton>(find.widgetWithText(TextButton, 'Remove'))
+            .onPressed,
+        isNull);
+    expect(backend.removals, isEmpty);
+    expect(backend.stored[''], 'keyring');
+
+    // Re-reading the new scope makes the new scope's own key removable.
+    await tester.ensureVisible(find.text('Refresh key status'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Refresh key status'));
+    await tester.pumpAndSettle();
+    expect(backend.reads.last, 'https://proxy.example/v1');
+    await tester.enterText(
+        find.byKey(const ValueKey('model-api-key')), 'sk-new-scope');
+    await tester.ensureVisible(find.text('Save securely'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save securely'));
+    await tester.pumpAndSettle();
+    expect(backend.stored['https://proxy.example/v1'], 'keyring');
+    await tester.ensureVisible(find.widgetWithText(TextButton, 'Remove'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Remove'));
+    await tester.pumpAndSettle();
+    expect(backend.removals, ['https://proxy.example/v1']);
+    expect(backend.stored[''], 'keyring',
+        reason: 'the previous endpoint key must survive');
   });
 }

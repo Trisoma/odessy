@@ -9,6 +9,15 @@ Replies contain `scope`, `configured`, `source: env|session|keyring|none`, `writ
 `persistence: persistent|session|none`, `secure_storage_available`, and safe `message`.
 No read operation returns a secret. Existing setup operations remain compatible.
 
+The first-run **Get started** screen uses that same bridge and the same masked field
+as Settings, so a new installation can configure a cloud provider without an
+environment variable. It adds no operation and no second credential store. The
+field belongs to one provider and endpoint; a changed endpoint shows the status as
+stale until the key is saved again or the status is refreshed explicitly, so typing
+a URL never re-reads the OS store on each keystroke. While the scope is stale,
+**Remove** is disabled: the operation would target the scope that was last read,
+not the one on screen, and must not delete another endpoint's key.
+
 The desktop keeps session-only values separately from component drafts and sends
 them only through owned helpers' stdin. Owned coordinators acknowledge numeric
 `credential_revision` updates on stdout before a save is reported complete. No
