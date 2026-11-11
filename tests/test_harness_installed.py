@@ -148,6 +148,25 @@ def test_the_private_node_is_reported_only_when_it_is_staged(staged):
     assert resources.installed_node({}) is None
 
 
+def test_a_versioned_install_reports_its_adjacent_node_and_tools(tmp_path):
+    """The packaged/versioned layout stages ``harness/`` next to ``node/`` and ``tools/``."""
+
+    version = tmp_path / "versions" / ("a" * 32)
+    harness = version / "harness"
+    harness.mkdir(parents=True)
+    node = version / "node" / "node.exe"
+    node.parent.mkdir()
+    node.write_bytes(b"MZ node")
+    entry = version / "tools" / "dist" / "src" / "server.js"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("// entry")
+
+    environ = {"ODESSY_HARNESS_RUNTIME_DIR": str(harness)}
+
+    assert resources.installed_node(environ) == node
+    assert resources.installed_node_tools_dir(environ) == version / "tools"
+
+
 def test_the_tool_server_requires_a_named_or_installed_node(staged, tmp_path):
     environ = {
         "ODESSY_HARNESS_RUNTIME_DIR": str(staged),

@@ -209,13 +209,17 @@ def _install_bundle(exe: str, home: Path, toolchain: Path) -> tuple[bool, str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exe", required=True)
+    parser.add_argument("--exe", default="", help="developer executable (ODESSY_HARNESS_EXE)")
+    parser.add_argument("--installed-runtime", default="",
+                        help="staged runtime directory; uses the production resolution instead of --exe")
     parser.add_argument("--home", required=True)
     parser.add_argument("--work", required=True)
     parser.add_argument("--toolchain", default="")
     parser.add_argument("--tool-python", default="")
     parser.add_argument("--only", default="", help="run one scenario by name")
     args = parser.parse_args()
+    if not args.exe and not args.installed_runtime:
+        parser.error("give --exe (development) or --installed-runtime (production payload)")
 
     work = Path(args.work).resolve()
     home = Path(args.home).resolve()
@@ -235,7 +239,6 @@ def main() -> int:
     server, port = mock_provider.serve(work / "mock")
     try:
         os.environ.update({
-            "ODESSY_HARNESS_EXE": str(Path(args.exe).resolve()),
             "ODESSY_HARNESS_HOME": str(home),
             "ODESSY_HARNESS_WORKSPACE": str(workspace),
             "ODESSY_CLOUD_API_KEY": "mock-key-not-a-secret",
@@ -244,13 +247,30 @@ def main() -> int:
             "ODESSY_HARNESS_TOOL_PYTHON": args.tool_python or sys.executable,
             "ODESSY_SESSION_STATE_DIR": str(state),
         })
+        if args.installed_runtime:
+            # Production: the launch resolves the staged payload and verifies every byte.
+            os.environ.pop("ODESSY_HARNESS_EXE", None)
+            os.environ["ODESSY_HARNESS_RUNTIME_DIR"] = str(Path(args.installed_runtime).resolve())
+        else:
+            os.environ.pop("ODESSY_HARNESS_RUNTIME_DIR", None)
+            os.environ["ODESSY_HARNESS_EXE"] = str(Path(args.exe).resolve())
         profile = _profile(port)
         store = SessionStore(state)
         findings: dict = {}
 
-        # The plugin is a production input, not a test double: install the packaged bundle.
+        # The plugin is a production input, not a test double. Two ways it gets there: the
+        # developer installer (pnpm, needs --toolchain), or the production composition the
+        # installed application performs, which needs nothing but the packaged bundle.
         installed, install_detail = (False, "no --toolchain given")
-        if args.toolchain:
+        if args.installed_runtime:
+            from odessy.runtime_backends.harness import resources as harness_resources
+
+            record = harness_resources.compose_profile(home / "profiles" / "acp")
+            copied = home / "profiles" / "acp" / "node_modules" / "@odessy" / "dsh-stream-bridge"
+            installed = (copied / "lib" / "index.js").is_file() and not record["directory"] == ""
+            install_detail = ("composed from the packaged bundle: wrote "
+                              + ", ".join(record["wrote"] or record["kept"]))
+        elif args.toolchain:
             installed, install_detail = _install_bundle(str(Path(args.exe).resolve()), home,
                                                        Path(args.toolchain).resolve())
         findings["plugin_install"] = {"installed": installed, "detail": install_detail}
@@ -452,6 +472,25 @@ def main() -> int:
 
         async def roster_policy() -> None:
             """New sessions may prefer a roster; restores always require verification."""
+
+            if args.installed_runtime:
+                # A production installation composes the packaged plugin into every profile,
+                # so "the plugin is absent" is no longer a reachable state to simulate here.
+                # The refusal paths for an unverifiable roster stay covered by
+                # tests/test_durable_sessions.py; this records the state that *is* reachable.
+                from odessy.runtime_backends.harness.config import from_environment
+
+                composed = from_environment({**os.environ,
+                                             "ODESSY_HARNESS_TOOL_ROSTER": "required"})
+                bundle = (Path(composed.home) / "profiles" / composed.profile / "node_modules"
+                          / "@odessy" / "dsh-stream-bridge" / "lib" / "index.js")
+                findings["roster_policy"] = {"production": composed.profile_record,
+                                             "bundle_present": bundle.is_file()}
+                check("the production profile composes the packaged plugin",
+                      bundle.is_file() and composed.profile_record.get("bundle") in
+                      {"installed", "current", "repaired"},
+                      json.dumps(findings["roster_policy"])[:220])
+                return
 
             alt_home = work / "home-noplugin"
             alt_state = work / "state-noplugin"

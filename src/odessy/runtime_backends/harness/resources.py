@@ -376,32 +376,41 @@ def installed_node(environ: Mapping[str, str] | None = None) -> Path | None:
     """The private Node that runs the separately launched tool server, if one is staged.
 
     The runtime executable is a single-executable application: it embeds Node but exposes
-    no interpreter, so the tool server cannot borrow it. The installer already stages
-    ``node-runtime/node.exe`` next to the harness runtime directory; this reports that
-    neighbour rather than requiring a system Node.
+    no interpreter, so the tool server cannot borrow it. Two layouts are recognized, because
+    both are produced by the installers: the legacy component format stages
+    ``runtime/node-runtime/node.exe`` beside ``runtime/harness-runtime``; the versioned
+    payload stages ``node/node.exe`` beside ``harness/`` inside the active version.
     """
 
     runtime_dir = installed_runtime_dir(environ)
     if runtime_dir is None:
         return None
-    candidate = runtime_dir.parent / "node-runtime" / "node.exe"
-    return candidate if candidate.is_file() else None
+    for candidate in (runtime_dir.parent / "node-runtime" / "node.exe",
+                      runtime_dir.parent / "node" / "node.exe",
+                      runtime_dir.parent / "node" / "bin" / "node"):
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def installed_node_tools_dir(environ: Mapping[str, str] | None = None) -> Path | None:
     """The installed copy of the reviewed Node tool server, if one is staged.
 
-    The assembler lays the payload out as ``<root>/runtime/harness-runtime`` and
-    ``<root>/application/tools`` — not ``<root>/tools``. Resolving from the runtime
-    directory therefore takes two parents, then ``application/tools``, which is exactly
-    the path ``templates/launch.py`` exports and the tool server's entry lives under.
+    The legacy assembler lays the payload out as ``<root>/runtime/harness-runtime`` and
+    ``<root>/application/tools`` — not ``<root>/tools``. Resolving from the runtime directory
+    therefore takes two parents, then ``application/tools``, which is exactly the path
+    ``templates/launch.py`` exports and the tool server's entry lives under. The versioned
+    payload places ``tools/`` next to ``harness/`` inside the active version instead.
     """
 
     runtime_dir = installed_runtime_dir(environ)
     if runtime_dir is None:
         return None
-    candidate = runtime_dir.parent.parent / "application" / "tools"
-    return candidate if candidate.is_dir() else None
+    for candidate in (runtime_dir.parent.parent / "application" / "tools",
+                      runtime_dir.parent / "tools"):
+        if candidate.is_dir():
+            return candidate
+    return None
 
 
 # --------------------------------------------------------------------------------------

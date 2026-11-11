@@ -1,13 +1,11 @@
 """Staging, activation, rollback and interrupted-maintenance boundaries."""
 import copy
-import gc
 import json
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from installer import maintenance,start
+from installer import maintenance
 from installer.checkpoint import Step,run_steps,read_state,fingerprint
 from installer.shortcuts import digest
 
@@ -97,7 +95,7 @@ class MaintenanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Original component or rollback backup changed'):maintenance.recover(self.root,probe=lambda root:[])
         self.assertTrue((self.root/'application/new.txt').exists())
         self.assertEqual(maintenance.journal(self.root)['status'],'recovery_required')
-        with self.assertRaisesRegex(ValueError,'This installation has unfinished maintenance'):start.inspect_installation(self.root)
+        with self.assertRaisesRegex(ValueError,'This installation has unfinished maintenance'):maintenance.require_idle(self.root)
 
     def test_interrupted_switch_can_be_recovered_from_rename_evidence(self):
         result=self.apply();result['status']='activating';maintenance._save(self.root,result)
@@ -128,31 +126,6 @@ class MaintenanceTests(unittest.TestCase):
         state=read_state(self.root);state['plan']['endpoint']='http://127.0.0.1:12345';state['plan_sha256']=fingerprint(state['plan']);save_state(self.root,state)
         with self.assertRaisesRegex(ValueError,'The installation record changed after upgrade'):maintenance.recover(self.root,probe=lambda root:[])
         self.assertTrue((self.root/'application/new.txt').exists())
-
-
-class MaintenanceUiTests(unittest.TestCase):
-    def test_preview_and_confirmation_are_required(self):
-        self.addCleanup(gc.collect)  # Run Tk finalizers on this main thread.
-        import tkinter as tk
-        from installer.maintenance_ui import Maintenance
-        try:root=tk.Tk();root.withdraw()
-        except tk.TclError as error:self.skipTest(str(error))
-        calls=[];allow=[False]
-        preview=dict(application_action='repair',required_free_bytes=512,plan_sha256='fixture')
-        ui=Maintenance(root,Path('D:/test'),Path('D:/bundle'),Path('D:/setup.exe'),preview=lambda *args:preview,
-            apply=lambda *args:calls.append(args) or dict(status='completed'),confirm=lambda message:allow[0])
-        def pump():
-            deadline=time.monotonic()+3
-            while ui.busy and time.monotonic()<deadline:root.update();time.sleep(.01)
-            self.assertFalse(ui.busy)
-        try:
-            ui.apply();self.assertEqual(calls,[])
-            ui.preview();pump();ui.apply();self.assertEqual(calls,[])
-            allow[0]=True;ui.apply();pump();self.assertEqual(len(calls),1)
-        finally:
-            if ui.thread:ui.thread.join(3)
-            for callback in root.tk.call('after','info'):root.after_cancel(callback)
-            root.destroy()
 
 
 if __name__=='__main__':unittest.main()

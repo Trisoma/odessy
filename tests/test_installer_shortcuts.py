@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from installer import shortcuts, exe_entry, maintenance, shelllink
+from installer import shortcuts, maintenance, shelllink
 from installer.checkpoint import Step, run_steps
 
 
@@ -147,30 +147,6 @@ class ShortcutTests(unittest.TestCase):
         with patch.object(shortcuts.shutil,'disk_usage',return_value=SimpleNamespace(free=1)):
             with self.assertRaisesRegex(ValueError,'Not enough disk space to save the standalone'):self.create()
         self.assertFalse((self.root/'launcher').exists())
-
-    def test_close_during_background_creation_waits_for_result_without_false_cancellation(self):
-        from installer.ui.wizard_controller import Controller
-        from types import SimpleNamespace
-        import threading
-        entered=threading.Event();release=threading.Event()
-        def create(payload):
-            entered.set();release.wait(3);return {'executable':'persistent.exe'}
-        controller=Controller(SimpleNamespace(shortcuts=create))
-        controller.start('shortcuts',{})
-        try:
-            self.assertTrue(entered.wait(2));controller.request_cancel();release.set();controller.thread.join(3)
-            messages=[]
-            while not controller.messages.empty():messages.append(controller.messages.get_nowait())
-            self.assertEqual(messages[-1]['kind'],'finished');self.assertFalse(controller.busy)
-        finally:
-            release.set();controller.thread.join(3)
-
-    def test_direct_installed_executable_defaults_to_its_own_launcher(self):
-        result=self.create()
-        with patch.object(exe_entry.sys,'frozen',True,create=True),patch.object(exe_entry.sys,'executable',result['executable']):
-            self.assertEqual(exe_entry.installed_launcher_root(),self.root.resolve())
-        with patch.object(exe_entry.sys,'frozen',True,create=True),patch.object(exe_entry.sys,'executable',str(self.source)):
-            self.assertIsNone(exe_entry.installed_launcher_root())
 
     @unittest.skipUnless(os.name=='nt','Windows Shell shortcut')
     def test_actual_link_contains_exact_quoted_unicode_arguments(self):

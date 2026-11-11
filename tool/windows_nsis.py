@@ -56,7 +56,10 @@ Section "Preparing Odessy Setup"
   IfErrors failed
   System::Call 'kernel32::SetEnvironmentVariableW(w "ODESSY_SETUP_PAYLOAD", w "$INSTDIR") i .r0'
   HideWindow
-  Exec '"$INSTDIR\\desktop\\odessy_desktop.exe" --setup'
+  # The payload root is passed explicitly: the Flutter setup only discovers a
+  # payload beside the executable, and this bootstrap extracts it one level above
+  # desktop/. The environment variable stays for the Python helper.
+  Exec '"$INSTDIR\\desktop\\odessy_desktop.exe" --setup --payload "$INSTDIR"'
   IfErrors failed
   Goto done
 failed:
@@ -91,6 +94,9 @@ def build(payload,output,stage):
     icon=Path(__file__).resolve().parents[1]/'installer/assets/odessy-boat.ico'
     source=Path(stage)/'OdessySetup.nsi'
     source.write_text(script(files,Path(output).resolve(),icon),encoding='utf-8-sig')
-    subprocess.run([compiler(),'/V2',str(source)],check=True,timeout=600)
+    # A payload with the private runtime, Flutter release and Harness engine is ~180 MB
+    # compressed; solid LZMA takes minutes even on an idle machine, so this must not be
+    # the default 10-minute build timeout.
+    subprocess.run([compiler(),'/V2',str(source)],check=True,timeout=3600)
     if not Path(output).is_file():raise RuntimeError('NSIS did not produce an installer')
     return Path(output)

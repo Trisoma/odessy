@@ -131,18 +131,18 @@
         "files": [
           {
             "file": "package.json",
-            "bytes": 555,
-            "sha256": "0b5db83151f40fe2435b160054bb117ecca509f5fa45ce402786a2489d51b552"
+            "bytes": 533,
+            "sha256": "f41f7fbbb417e7130ab93305ebcbe25e0ff9b5209f699487716a0fe38f46ff4d"
           },
           {
             "file": "cordis.patch.yml",
-            "bytes": 1443,
-            "sha256": "3b0ea9d20859bbdbe0ae3845079b058a48372567ed6df1494ce62b0913f646f3"
+            "bytes": 1417,
+            "sha256": "226c3a4e54bc53a37c09762962615ead7b94a8041b5742b5bb6a6e31b09e72ae"
           },
           {
             "file": "lib/index.js",
-            "bytes": 19528,
-            "sha256": "6300c4f6abd277b878e02fe161bf66166e0ba2a8b718ab3a9aebad85d7ecc646"
+            "bytes": 19034,
+            "sha256": "571c5c1b8f0e8f7399384a674ad53fd18829759296a1941ec634a0bf227cb249"
           }
         ]
       }
