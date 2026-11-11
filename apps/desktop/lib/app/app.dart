@@ -362,6 +362,7 @@ class _OdessyAppState extends State<OdessyApp> {
     if (installed != null) {
       installManagement = InstalledManageController(
           widget.managementBackend ?? LocalSetupBackend(),
+          progressBackend: widget.managementBackend ?? LocalSetupBackend(),
           spec: {...installed, 'root': installed['root']})
         ..load();
     }

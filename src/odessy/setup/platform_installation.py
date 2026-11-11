@@ -49,9 +49,9 @@ def launch(root,mode='app',launch_id=None):
     return _require('launching the desktop').launch(root,mode,launch_id=launch_id)
 
 
-def register(root,record,payload=None):
+def register(root,record,payload=None,**options):
     """Create the platform's user-facing entries and return the recorded resources."""
-    return _require('desktop registration').register(root,record,payload=payload)
+    return _require('desktop registration').register(root,record,payload=payload,**options)
 
 
 def refresh(root,record):

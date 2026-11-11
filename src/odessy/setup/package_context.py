@@ -5,7 +5,7 @@ from pathlib import Path
 from .maintenance import guard,read_json,digest
 
 #: Payload top-level directories produced by tool/build_setup_bundle.py.
-COMPONENT_DIRECTORIES=('runtime','desktop','node','tools','link','monitor')
+COMPONENT_DIRECTORIES=('runtime','desktop','node','tools','link','monitor','harness')
 KNOWN_DIRECTORIES=frozenset((*COMPONENT_DIRECTORIES,'bootstrap','wheelhouse'))
 KNOWN_FILES=frozenset(('install.py','install.cmd','install.sh','runtime-manifest.json',
                        'LICENSE','THIRD-PARTY-NOTICES.md'))
@@ -25,7 +25,7 @@ def optional_components(role):
     """Components that extend a role; absence is reported, never invented."""
     optional=set()
     if role!='coordinator':optional.update(('node','tools'))
-    if role!='execution':optional.add('monitor')
+    if role!='execution':optional.update(('monitor','harness'))
     if role!='combined':optional.add('link')
     return optional
 
@@ -34,7 +34,7 @@ def _prefix(name):
     return 'runtime' if name=='python' else name
 
 
-def _inventory(payload,manifest):
+def _inventory(payload,manifest,*,verify_bytes=True):
     files=manifest['files']
     if not isinstance(files,dict) or not files or len(files)>MAX_FILES:
         raise ValueError('invalid setup inventory')
@@ -50,12 +50,14 @@ def _inventory(payload,manifest):
         if top not in KNOWN_DIRECTORIES and name not in KNOWN_FILES:
             raise ValueError('unsupported setup payload path')
         if not re.fullmatch('[a-f0-9]{64}',str(sha)):raise ValueError('invalid setup inventory path')
-    # Then prove the payload matches that inventory, in bounded reads.
+    # Then prove the payload matches that inventory, in bounded reads. A caller that
+    # has just verified every member itself (the maintenance-cache copy) may ask for
+    # the path/shape audit only, so a 1 GiB payload is not hashed twice.
     for name,sha in files.items():
         file=guard(payload/name)
         if not file.is_file():raise ValueError('setup payload is incomplete')
         if file.stat().st_size>MAX_FILE_BYTES:raise ValueError('setup payload member exceeds its size limit')
-        if digest(file)!=sha:raise ValueError('setup payload checksum mismatch')
+        if verify_bytes and digest(file)!=sha:raise ValueError('setup payload checksum mismatch')
     return files
 
 
@@ -78,7 +80,7 @@ def validate_components(manifest,role,*,runtime=False):
     empty=[name for name in sorted(set(listed)) if _prefix(name) not in present]
     if empty:raise ValueError('setup payload declares components with no files: '+', '.join(empty))
     selected={'link'}
-    if role!='execution':selected.update(('desktop','monitor'))
+    if role!='execution':selected.update(('desktop','monitor','harness'))
     if role!='coordinator':selected.update(('node','tools'))
     absent=[name for name in sorted(optional_components(role)) if name not in listed]
     return {'copy':selected,'absent':absent}
@@ -126,7 +128,7 @@ def _check_retained_runtime(root,payload):
             raise ValueError(message)
 
 
-def context(*,payload=None,local_app_data=None,root=None):
+def context(*,payload=None,local_app_data=None,root=None,verify_bytes=True):
     payload=guard(payload or os.environ.get('ODESSY_SETUP_PAYLOAD') or Path(sys.executable).parent)
     manifest=read_json(payload/'setup-context.json')
     if set(manifest)!={'schema_version','components','files'} or manifest['schema_version']!=1:
@@ -134,7 +136,7 @@ def context(*,payload=None,local_app_data=None,root=None):
     components=manifest['components']
     if not isinstance(components,list) or any(not isinstance(x,str) for x in components):
         raise ValueError('invalid setup inventory')
-    files=_inventory(payload,manifest)
+    files=_inventory(payload,manifest,verify_bytes=verify_bytes)
     base=Path(local_app_data or os.environ.get('LOCALAPPDATA') or Path.home()/'.local/share')
     # The extracted installer payload lives under LOCALAPPDATA/Odessy/Setup; the
     # installation must not share that directory, so empty-root ownership checks

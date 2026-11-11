@@ -219,7 +219,9 @@ class _InstalledApplicationState extends State<InstalledApplication> {
       _manageRoot = root;
       _manage?.removeListener(_managementChanged);
       _manage?.dispose();
-      _manage = InstalledManageController(_backend, spec: _startup.spec)
+      _manage = InstalledManageController(_backend,
+          progressBackend: widget.backend ?? LocalSetupBackend(),
+          spec: _startup.spec)
         ..addListener(_managementChanged)
         ..load();
     }

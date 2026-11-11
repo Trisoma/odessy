@@ -223,7 +223,7 @@ class ManagedInstallation:
             data['absent_components']=review['absent']
             # What this payload actually ships, independent of what was requested.
             shipped={name.split('/')[0] for name in data['payload_manifest']['files']}
-            data['components']=sorted(shipped & {'runtime','desktop','node','tools','link','monitor'})
+            data['components']=sorted(shipped & {'runtime','desktop','node','tools','link','monitor','harness'})
             data['payload_root']=str(self.payload)
         data['plan_id']=hashlib.sha256(json.dumps(data,sort_keys=True,separators=(',',':')).encode()).hexdigest()
         return data
@@ -385,6 +385,14 @@ class ManagedInstallation:
             except (ValueError,OSError):
                 # A damaged or unsafe helper must not hide installation status.
                 pass
+        registration_progress=None
+        if os.name=='nt':
+            try:
+                from .windows_installation import registration_progress as read_registration_progress
+                registration_progress=read_registration_progress(self.root)
+            except (OSError,ValueError,ImportError,TypeError):
+                # A damaged or unavailable journal must not hide installation status.
+                registration_progress=None
         return {**snapshot(operation,log_cursor),'installation_format':'versioned','installation_id':record['id'],'active':active,
                 'versions':list(record['versions']),'operation':{key:value for key,value in operation.items() if key!='logs'} if operation else None,
                 'status':(operation or {}).get('status','idle'),
@@ -393,6 +401,7 @@ class ManagedInstallation:
                 'steps_total':(operation or {}).get('steps_total',0),
                 'files_written':written,'configuration':configuration,
                 'payload':payload,'registration':registration.get('state','none'),
+                'registration_progress':registration_progress,
                 'service_recorded':(self.root/'service.json').exists(),'ready':False}
 
     def rollback(self,version,*,confirm,expected_state=None,expected_operation=...):
