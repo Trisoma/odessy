@@ -78,6 +78,15 @@ def component_path(root, name):
     return root / HARNESS_PATH if name == HARNESS_COMPONENT else root / name
 
 
+def restore_application_registration(root):
+    """Re-register the installed application after its dependency environment was rebuilt."""
+
+    root = Path(root)
+    application_dir = root / 'application'
+    if (application_dir / 'src').is_dir() and (root / 'dependencies' / 'venv').is_dir():
+        application.register_installed_source(root / 'dependencies', application_dir)
+
+
 def _health(root,new):
     if new.get('engine')=='role-aware-existing-installer-v1':
         from installer.operations.role_maintenance import health
@@ -173,7 +182,11 @@ def repair(root,folder,preview,data,*,download=download_artifact):
             # A corrupted staged payload is replaced wholesale from the declared wheel;
             # the verify step re-checks every byte and the version probe afterwards.
             reports['harness_runtime']=harness.prepare(harness.load_declaration(),component_path(root,name),cache,download=download)
-        elif name=='dependencies':reports['dependencies']=dependencies.prepare_dependencies(root/'runtime',root/name,cache,download=download)
+        elif name=='dependencies':
+            reports['dependencies']=dependencies.prepare_dependencies(root/'runtime',root/name,cache,download=download)
+            # The rebuilt environment is new: the private interpreter's application
+            # registration (a .pth in its site-packages) has to be restored with it.
+            restore_application_registration(root)
         elif name=='ollama-runtime':reports['ollama_runtime']=ollama_runtime.prepare_runtime(root/name,cache,download=download)
     if preview['new_plan'].get('engine')=='role-aware-existing-installer-v1':
         if 'dependencies' in preview['repair_components']:dependency_integrity(root)

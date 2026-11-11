@@ -108,9 +108,9 @@ class ComponentSelection(unittest.TestCase):
     def test_timed_out_probes_select_the_component_for_repair(self):
         for stage in ('runtime','dependencies','ollama_runtime','stdlib','integrity'):
             with self.subTest(stage=stage):
-                steps=[SimpleNamespace(name=name,validate=lambda:{}) for name in ('runtime','dependencies','ollama_runtime','configuration')]
+                steps=[SimpleNamespace(name=name,validate=lambda:{}) for name in ('runtime','harness_runtime','dependencies','ollama_runtime','configuration')]
                 timeout=subprocess.TimeoutExpired('fixture probe',30)
-                if stage in ('runtime','dependencies','ollama_runtime'):
+                if stage in ('runtime','harness_runtime','dependencies','ollama_runtime'):
                     next(step for step in steps if step.name==stage).validate=Mock(side_effect=timeout)
                 with patch.object(repair.workflow,'steps_for',return_value=steps), \
                      patch.object(repair,'run_step',side_effect=timeout if stage=='stdlib' else None), \
@@ -170,7 +170,7 @@ class ComponentSelection(unittest.TestCase):
 
     def test_runtime_rebuild_also_rebuilds_fixed_path_venv(self):
         from types import SimpleNamespace
-        steps=[SimpleNamespace(name=name,validate=lambda:{}) for name in ('runtime','dependencies','ollama_runtime','configuration')]
+        steps=[SimpleNamespace(name=name,validate=lambda:{}) for name in ('runtime','harness_runtime','dependencies','ollama_runtime','configuration')]
         steps[0].validate=lambda:None
         with patch.object(repair.workflow,'steps_for',return_value=steps),patch.object(repair,'dependency_integrity'),patch.object(repair,'model_targets',return_value=[]):
             names,issues=repair._health(Path('D:/fixture'),{})
@@ -178,7 +178,7 @@ class ComponentSelection(unittest.TestCase):
 
     def test_missing_configuration_is_not_silently_rewritten(self):
         from types import SimpleNamespace
-        steps=[SimpleNamespace(name=name,validate=lambda:{}) for name in ('runtime','dependencies','ollama_runtime')]
+        steps=[SimpleNamespace(name=name,validate=lambda:{}) for name in ('runtime','harness_runtime','dependencies','ollama_runtime')]
         steps.append(SimpleNamespace(name='configuration',validate=lambda:None))
         with patch.object(repair.workflow,'steps_for',return_value=steps),patch.object(repair,'dependency_integrity'),patch.object(repair,'run_step'):
             with self.assertRaisesRegex(ValueError,'Connection configuration is missing'):repair._health(Path('D:/fixture'),{})

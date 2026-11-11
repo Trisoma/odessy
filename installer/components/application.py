@@ -118,6 +118,25 @@ def validate_dependencies(runtime: Path,dependencies: Path,*,repo: Path=REPO_ROO
     return {'python':str(python.resolve()),'packages':expected}
 
 
+def register_installed_source(dependencies: Path, target: Path) -> Path:
+    """Point the private dependency interpreter at this installed application.
+
+    Tool gateways are launched by the private interpreter as fresh ``-I`` processes, so the
+    registration has to live in that environment's ``site-packages`` — never an inherited
+    ``PYTHONPATH``. Rebuilding the dependency environment destroys it, so this is
+    idempotent and called again after a dependency repair.
+    """
+
+    dependencies, target = Path(dependencies), Path(target)
+    site_packages = dependencies / 'venv' / 'Lib' / 'site-packages'
+    site_packages.mkdir(parents=True, exist_ok=True)
+    path = site_packages / 'odessy-application.pth'
+    desired = str((target / 'src').resolve()) + '\n'
+    if not path.exists() or path.read_text(encoding='utf-8') != desired:
+        path.write_text(desired, encoding='utf-8')
+    return path
+
+
 def assemble(runtime: Path,dependencies: Path,bundle_dir: Path,target: Path,*,repo: Path=REPO_ROOT,harness_dir: Path|None=None,
              run=run_step,validate=validate_runtimes,dependency_check=validate_dependencies) -> dict:
     for path in (runtime,dependencies,bundle_dir):
@@ -173,9 +192,7 @@ def assemble(runtime: Path,dependencies: Path,bundle_dir: Path,target: Path,*,re
         (output/'odessy-application.json').write_text(json.dumps(settings,indent=2),encoding='utf-8')
         # Tool gateways are launched by the private interpreter as fresh processes.
         # Register only this installed application, without inheriting checkout PYTHONPATH.
-        site_packages = dependencies/'venv'/'Lib'/'site-packages'
-        site_packages.mkdir(parents=True, exist_ok=True)
-        (site_packages/'odessy-application.pth').write_text(str((target/'src').resolve())+'\n', encoding='utf-8')
+        register_installed_source(dependencies, target)
         env=child_env(runtime)
         command=[dep['python'],'-I',str(output/'launch.py')]
         print('Checking assembled application startup...',flush=True)
