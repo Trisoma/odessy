@@ -18,6 +18,9 @@ def test_native_script_is_single_layer_and_per_user(tmp_path):
     assert 'Page instfiles' in script
     assert 'ODESSY_SETUP_PAYLOAD' in script
     assert '--setup' in script
+    # The Flutter setup receives the staged payload root explicitly; it only
+    # auto-discovers a `payload/` folder beside the executable.
+    assert '--payload "$INSTDIR"' in script
     assert 'payload.zip' not in script and 'powershell' not in script.lower()
     assert 'RMDir /r' not in script
 

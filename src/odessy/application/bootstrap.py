@@ -71,10 +71,106 @@ class ManagedController(SessionController):
         await self.resources.aclose()
 
 
+def _caller_omitted(selection):
+    """True when the caller expressed no engine, so the environment must not decide.
+
+    ``None`` and an empty string/mapping are omission. A :class:`RuntimeSelection` is an
+    explicit choice by construction.
+    """
+    if selection is None:
+        return True
+    if isinstance(selection, str):
+        return not selection.strip()
+    if isinstance(selection, dict):
+        return not selection.get('engine')
+    return False
+
+
+def restored_runtime_selection(runtime_selection, record):
+    """Which engine a restore uses: the one that wrote the record, never the default.
+
+    A caller may name the record's engine explicitly. Naming a *different* one is refused
+    here — before any engine is built or any credential resolved — because continuing a
+    conversation on another backend is a silent reinterpretation of its history. When the
+    caller names nothing, the record still decides; only a record that predates engine
+    identity falls back to the caller's resolution.
+
+    The environment is deliberately not consulted for the "caller named nothing" case:
+    ``ODESSY_RUNTIME_ENGINE`` is an installation default for *new* sessions, not a request
+    to reinterpret an existing conversation. It is also not parsed, so an invalid
+    configured default cannot block a restore that the record already answers.
+    """
+    from odessy.application.durable import RuntimeSessionUnavailable
+    from odessy.runtime_backends.selection import resolve_selection
+
+    recorded = str((record or {}).get('engine', {}).get('name') or '') if isinstance(record, dict) else ''
+    if not recorded:
+        return runtime_selection
+    if _caller_omitted(runtime_selection):
+        return recorded
+    requested = resolve_selection(runtime_selection)
+    if requested.engine != recorded:
+        raise RuntimeSessionUnavailable(
+            'engine_mismatch',
+            f'the session belongs to the {recorded!r} engine, not {requested.engine!r}')
+    return recorded
+
+
 async def create_controller(*, workspace=None, model=None, backend=None, use_fake_model=False,
-                            selected_profile=None, interactive=False, turn_lock=None, mode="text"):
+                            selected_profile=None, interactive=False, turn_lock=None,
+                            mode="text", durable=True, restore=None, runtime_selection=None):
     """``mode`` sets the per-turn model-call default: ``voice`` for spoken turns,
-    ``text`` (the default) for typed turns and the session API."""
+    ``text`` (the default) for typed turns and the session API.
+
+    ``runtime_selection`` is the engine this *new* session runs. ``None`` keeps the existing
+    resolution order (``ODESSY_RUNTIME_ENGINE``, else legacy), so an installation that never
+    chooses a runtime is unchanged. ``restore`` continues an existing record by id: the
+    engine is the one the record names, and a caller that explicitly asks for a different
+    one is refused rather than silently switching the conversation's backend.
+
+    ``durable`` enables the application's own session records (a :class:`SessionStore`, a
+    directory, ``True`` for the default location, or ``False``). ``restore`` continues an
+    existing record by id: the engine is asked to resume the runtime session that record names,
+    and a record that cannot be read or cannot be resumed is refused rather than replaced by a
+    fresh session under the same identity.
+    """
+    from odessy.application.durable import (
+        RuntimeSessionUnavailable,
+        SessionStore,
+        default_store,
+    )
+    store = None
+    if durable not in (None, False):
+        store = durable if isinstance(durable, SessionStore) else default_store()
+    restore_request, restored_id, recorded_profile = None, None, ''
+    if restore is not None:
+        if store is None:
+            raise RuntimeSessionUnavailable('disabled',
+                                            'durable sessions are disabled in this process')
+        try:
+            loaded = store.load(str(restore))
+        except ValueError as error:
+            raise RuntimeSessionUnavailable('invalid_id', str(error)) from error
+        if not loaded.usable:
+            raise RuntimeSessionUnavailable(loaded.verdict, loaded.reason)
+        record = loaded.record
+        runtime = record.get('runtime') or {}
+        restored_id = loaded.session
+        restore_request = {'runtime_session': runtime.get('session_id') or '',
+                           'workspace': runtime.get('workspace') or '',
+                           'identity': dict((record.get('engine') or {}).get('identity') or {}),
+                           # The tools this session actually had, verified at creation. A
+                           # restore refuses an observed gap rather than trusting that the
+                           # same servers were asked for again.
+                           'tools': runtime.get('tools')}
+        candidate = record.get('profile')
+        # Applied below, once ``profiles`` exists: the record's profile name is only usable
+        # after this launch has resolved its own profile table.
+        recorded_profile = candidate if isinstance(candidate, str) else ''
+    if restore is not None:
+        # A restored session keeps the backend that wrote its history. The caller may name
+        # the same engine explicitly; naming a different one is a refusal, never a switch.
+        runtime_selection = restored_runtime_selection(runtime_selection, record)
     from odessy import cli
     workspace = Path(workspace or Path.cwd()).resolve()
     config = load_config()
@@ -93,6 +189,9 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
                 "local": {"name": "local", "adapter": "lfm"}}
     profiles.update({name: profile.public_dict() for name, profile in config.participants.items()
                      if profile.adapter in {"cloud", "ollama", "lfm", "auto"}})
+    if recorded_profile and recorded_profile in profiles:
+        # The model profile the record was written with, when this build still has it.
+        selected_profile = recorded_profile
 
     def model_factory(name):
         if name == "current":
@@ -189,7 +288,9 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
 
         controller = ManagedController(resources=resources, turn_lock=turn_lock, model_factory=model_factory,
             agent_factory=agent_factory, profiles=profiles, selected_profile=selected_profile or "current",
-            collaboration=service, jobs=jobs, config=config)
+            collaboration=service, jobs=jobs, config=config, audit=audit,
+            durable=store, session_id=restored_id, resume=restore_request,
+            runtime_selection=runtime_selection)
         if interactive:
             from odessy.interaction.terminal import TerminalInteractionHandler, TerminalUnavailable
             keyboard = TerminalInteractionHandler(controller.interactions, stop_turn=controller.stop)

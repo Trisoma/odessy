@@ -56,8 +56,8 @@ class WorkflowTests(unittest.TestCase):
     def test_step_order_and_real_check_not_skipped(self):
         plan = self.plan(); steps = workflow.steps_for(plan)
         self.assertEqual(tuple(step.name for step in steps), workflow.STEP_NAMES)
-        self.assertTrue(steps[6].always_run)
-        self.assertTrue(all(not step.always_run for step in steps[:6]))
+        self.assertTrue(steps[7].always_run)
+        self.assertTrue(all(not step.always_run for step in steps[:7]))
 
     def test_foreign_profile_is_preserved(self):
         plan = self.plan(); steps = workflow.steps_for(plan)
@@ -72,7 +72,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(step.validate()['config_file'], str((self.root / 'config/odessy.env').resolve()))
 
     def test_model_partial_download_can_continue_but_corruption_is_not_ignored(self):
-        plan = self.plan(); step = workflow.steps_for(plan)[5]
+        plan = self.plan(); step = workflow.steps_for(plan)[6]
         with patch.object(workflow.model, 'load_release', return_value=(None, {'model': 'fixture:1b'}, None)):
             self.assertIsNone(step.validate())
             manifest = workflow.model.manifest_path(self.root / 'models', 'fixture:1b')
@@ -86,7 +86,7 @@ class WorkflowTests(unittest.TestCase):
             events.append('started'); yield {'reused': False}; events.append('stopped')
         with patch.object(workflow.ollama_runtime, 'managed_service', service), \
              patch.object(workflow.connection, 'verify_connection', return_value={'inference_verified': True}):
-            report = workflow.steps_for(plan)[6].prepare()
+            report = workflow.steps_for(plan)[7].prepare()
         self.assertEqual(events, ['started', 'stopped']); self.assertTrue(report['owned_service_stopped'])
 
     def test_connection_failure_still_exits_service_context(self):
@@ -97,7 +97,7 @@ class WorkflowTests(unittest.TestCase):
             finally: events.append('stopped')
         with patch.object(workflow.ollama_runtime, 'managed_service', service), \
              patch.object(workflow.connection, 'verify_connection', side_effect=ValueError('inference failed')):
-            with self.assertRaises(ValueError): workflow.steps_for(plan)[6].prepare()
+            with self.assertRaises(ValueError): workflow.steps_for(plan)[7].prepare()
         self.assertEqual(events, ['stopped'])
 
     def test_connection_retry_preserves_abandoned_locks_and_uses_fresh_session(self):
@@ -144,7 +144,7 @@ class WorkflowTests(unittest.TestCase):
         with patch.object(workflow.ollama_runtime, 'managed_service', service), \
              patch.object(workflow.connection, 'verify_connection', side_effect=[
                  ValueError('interrupted verification'), {'inference_verified': True}]):
-            step = workflow.steps_for(plan)[6]
+            step = workflow.steps_for(plan)[7]
             with self.assertRaisesRegex(ValueError, 'interrupted verification'): step.prepare()
             report = step.prepare()
         self.assertTrue(report['owned_service_stopped'])
@@ -157,7 +157,7 @@ class WorkflowTests(unittest.TestCase):
         plan = self.plan()
         with patch.object(workflow.ollama_runtime, 'managed_service') as service:
             with self.assertRaises(KeyboardInterrupt):
-                workflow.steps_for(plan, cancelled=lambda: True)[6].prepare()
+                workflow.steps_for(plan, cancelled=lambda: True)[7].prepare()
         service.assert_not_called()
 
     def test_interrupted_checkpoint_resumes_to_complete_without_reinstalling_components(self):
@@ -183,7 +183,7 @@ class WorkflowTests(unittest.TestCase):
         with patch.object(workflow.ollama_runtime, 'managed_service', service), \
              patch.object(workflow.connection, 'verify_connection', side_effect=[
                  ValueError('interrupted verification'), {'inference_verified': True}]):
-            steps = [checkpoint.Step('component', prepare, validate), *workflow.steps_for(plan)[6:]]
+            steps = [checkpoint.Step('component', prepare, validate), *workflow.steps_for(plan)[7:]]
             with self.assertRaisesRegex(ValueError, 'interrupted verification'):
                 checkpoint.run_steps(self.root, plan, steps)
             state = checkpoint.read_state(self.root)
@@ -210,7 +210,7 @@ class WorkflowTests(unittest.TestCase):
         with patch.object(workflow.ollama_runtime, 'managed_service', service), \
              patch.object(workflow.connection, 'verify_connection') as verify:
             with self.assertRaises(KeyboardInterrupt):
-                workflow.steps_for(plan, cancelled=lambda: stopped)[6].prepare()
+                workflow.steps_for(plan, cancelled=lambda: stopped)[7].prepare()
         verify.assert_not_called()
         self.assertEqual(events, ['owned service stopped'])
 
@@ -224,7 +224,7 @@ class WorkflowTests(unittest.TestCase):
         with patch.object(workflow.ollama_runtime, 'managed_service', service), \
              patch.object(workflow.connection, 'verify_connection', side_effect=KeyboardInterrupt):
             with self.assertRaises(KeyboardInterrupt):
-                checkpoint.run_steps(self.root, plan, workflow.steps_for(plan)[6:])
+                checkpoint.run_steps(self.root, plan, workflow.steps_for(plan)[7:])
         state = checkpoint.read_state(self.root)
         self.assertEqual(state['status'], 'cancelled')
         self.assertFalse(state['summary']['workflow_complete'])

@@ -99,6 +99,42 @@ def test_serve_starts_coordinator_with_recorded_configuration(tmp_path, monkeypa
     assert kwargs['workspace'] == workspace and workspace.is_dir()
 
 
+def test_serve_exports_the_staged_harness_runtime_of_the_active_version(tmp_path, monkeypatch):
+    root = tmp_path / 'App'
+    version, _, _ = make_installation(root, model=True)
+    base = root / 'versions' / version
+    (base / 'harness').mkdir()
+    (base / 'harness' / 'harness-runtime.json').write_text('{}')
+    (base / 'node').mkdir()
+    (base / 'node' / 'node.exe').write_bytes(b'node')
+    (base / 'tools' / 'dist' / 'src').mkdir(parents=True)
+    (base / 'tools' / 'dist' / 'src' / 'server.js').write_text('x')
+    calls = []
+    monkeypatch.setattr('odessy.setup.service_entry.run', lambda selection, **kwargs: calls.append((selection, kwargs)))
+    monkeypatch.setenv('ODESSY_API_TOKEN', 't' * 32)
+    # The active version owns its runtime directory; an inherited value must not win.
+    monkeypatch.setenv('ODESSY_HARNESS_RUNTIME_DIR', str(tmp_path / 'stale'))
+    monkeypatch.delenv('ODESSY_HARNESS_NODE', raising=False)
+    monkeypatch.delenv('ODESSY_NODE_TOOLS_DIR', raising=False)
+    installed.serve(['--root', str(root), '--port', '18766'])
+    assert calls, 'the coordinator must still start'
+    assert os.environ['ODESSY_HARNESS_RUNTIME_DIR'] == str(base / 'harness')
+    assert os.environ['ODESSY_HARNESS_NODE'] == str(base / 'node' / 'node.exe')
+    assert os.environ['ODESSY_NODE_TOOLS_DIR'] == str(base / 'tools')
+
+
+def test_serve_exports_no_harness_environment_without_a_staged_runtime(tmp_path, monkeypatch):
+    root = tmp_path / 'App'
+    make_installation(root, model=True)
+    calls = []
+    monkeypatch.setattr('odessy.setup.service_entry.run', lambda selection, **kwargs: calls.append((selection, kwargs)))
+    monkeypatch.setenv('ODESSY_API_TOKEN', 't' * 32)
+    monkeypatch.delenv('ODESSY_HARNESS_RUNTIME_DIR', raising=False)
+    installed.serve(['--root', str(root), '--port', '18767'])
+    assert calls
+    assert 'ODESSY_HARNESS_RUNTIME_DIR' not in os.environ
+
+
 def test_serve_refuses_without_a_launcher_token(tmp_path, monkeypatch):
     root = tmp_path / 'App'
     make_installation(root, model=True)

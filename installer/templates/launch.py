@@ -61,6 +61,20 @@ def main(argv=None):
         if key.upper() in {'PYTHONHOME','PYTHONPATH','NODE_OPTIONS','NODE_PATH'}:
             os.environ.pop(key)
     os.environ['PATH']=os.pathsep.join((str(runtime/'node-runtime'),str(runtime/'python-runtime'),os.environ.get('PATH','')))
+    # The installed staged payload. Only paths that actually exist are exported: the
+    # Harness engine is opt-in, so a missing component must leave legacy sessions working
+    # and make a harness launch refuse with its own actionable error.
+    staged=settings.get('harness')
+    if isinstance(staged,dict):
+        exe=Path(str(staged.get('executable','')))
+        if exe.is_file():
+            os.environ['ODESSY_HARNESS_RUNTIME_DIR']=str(exe.parent)
+        node=Path(str(staged.get('node_executable','')))
+        if node.is_file():
+            os.environ.setdefault('ODESSY_HARNESS_NODE',str(node))
+        tools=Path(str(staged.get('node_tools_dir','')))
+        if (tools/'dist'/'src'/'server.js').is_file():
+            os.environ.setdefault('ODESSY_NODE_TOOLS_DIR',str(tools))
     # Preserve ODESSY_* settings/API keys and the existing runtime's config precedence.
     sys.path.insert(0,str(root/'src'))
     sys.argv=['odessy',*(forwarded or ['--help'])]

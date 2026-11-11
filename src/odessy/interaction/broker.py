@@ -149,9 +149,13 @@ class InteractionBroker:
     def _question_result(identifier, status, **values):
         return {'status': status, 'source': 'human_information', 'question_id': identifier, **values}
 
-    async def ask(self, question, choices=None, allow_free_text=True):
+    async def ask(self, question, choices=None, allow_free_text=True, *, detail=None, header=None):
         if not isinstance(question, str) or not question.strip() or len(question) > 8192:
             raise ValueError('Nonempty question of at most 8192 characters required')
+        if detail is not None and (not isinstance(detail, str) or len(detail) > 8192):
+            raise ValueError('detail must be a string of at most 8192 characters')
+        if header is not None and (not isinstance(header, str) or len(header) > 80):
+            raise ValueError('header must be a string of at most 80 characters')
         if choices is not None and (not isinstance(choices, list) or not choices or len(choices) > 32 or
                 any(not isinstance(choice, str) or not choice.strip() or len(choice) > 1024 for choice in choices)):
             raise ValueError('choices must be a nonempty list of strings')
@@ -160,17 +164,33 @@ class InteractionBroker:
         if self._questions >= self.max_questions:
             return self._question_result(None, 'limit_reached', reason='Clarification limit reached')
         self._questions += 1
-        return await self._request('question', {'question': question.strip(), 'prompt': question.strip(),
-            'choices': choices or [], 'allow_free_text': allow_free_text, 'risk': 'low'})
+        details = {'question': question.strip(), 'prompt': question.strip(),
+                   'choices': choices or [], 'allow_free_text': allow_free_text, 'risk': 'low'}
+        if detail is not None:
+            details['detail'] = detail
+        if header is not None:
+            details['header'] = header
+        result, _ = await self._request('question', details)
+        return result
 
-    async def request_approval(self, details):
-        return await self._request('approval', details)
+    async def request_approval(self, details, *, with_reason=False, audit=None):
+        """Ask a person to approve one operation.
 
-    async def _request(self, kind, details):
+        ``with_reason`` returns ``(approved, reason)``: an engine that must translate the
+        outcome (a one-shot runtime permission, for instance) needs to tell an explicit
+        denial from a timeout, a Stop or a missing channel. An engine that does not run
+        the agent loop supplies the audit log it holds, so the record is not lost.
+        """
+        result, reason = await self._request('approval', details, audit_log=audit)
+        return (result, reason) if with_reason else result
+
+    async def _request(self, kind, details, *, audit_log=None):
         if self._closed:
-            return False if kind == 'approval' else self._question_result(None, 'cancelled', reason='closed')
+            return ((False, 'closed') if kind == 'approval' else
+                    (self._question_result(None, 'cancelled', reason='closed'), 'closed'))
         if any(entry['turn_id'] == self._turn_id for entry, _ in self._pending.values()):
-            return False if kind == 'approval' else self._question_result(None, 'busy', reason='Another interaction is pending')
+            return ((False, 'busy') if kind == 'approval' else
+                    (self._question_result(None, 'busy', reason='Another interaction is pending'), 'busy'))
         identifier = uuid.uuid4().hex
         entry = deepcopy(self.redact(details))
         risk = entry.get('risk', 'high' if kind == 'approval' else 'low')
@@ -215,10 +235,10 @@ class InteractionBroker:
                             self._finish(identifier, False if kind == 'approval' else
                                 self._question_result(identifier, 'expired', reason='timeout'), 'expired')
                 result = future.result()
-                audit = current_audit() if kind == 'approval' else None
+                audit = (audit_log if audit_log is not None else current_audit()) if kind == 'approval' else None
                 if audit is not None:
                     audit.approval(entry, approved=result, **self._tombstones.get(identifier, {}))
-                return result
+                return result, self._tombstones.get(identifier, {}).get('reason')
         finally:
             if identifier in self._pending:
                 self._finish(identifier, False if kind == 'approval' else

@@ -118,10 +118,27 @@ def test_versioned_rollback_rechecks_journal_under_lock(tmp_path):
         manager.rollback('c'*32,confirm=record['id'],expected_state=record,expected_operation=None)
 
 
+def test_parent_runtime_repair_includes_existing_nested_harness(tmp_path, monkeypatch):
+    """Repair the nested component before replacing its damaged parent runtime."""
+    from installer.operations import component_repair, role_maintenance
+    from installer import workflow
+    (tmp_path/'runtime/harness-runtime').mkdir(parents=True)
+    monkeypatch.setattr(workflow, 'steps_for', lambda plan: [
+        Step('runtime', lambda: {}, lambda: None),
+        Step('harness_runtime', lambda: {}, lambda: {}),
+        Step('dependencies', lambda: {}, lambda: {}),
+    ])
+    monkeypatch.setattr(component_repair, 'dependency_integrity', lambda root: {})
+    repairs, issues = role_maintenance.health(tmp_path, {})
+    assert repairs.count(component_repair.HARNESS_COMPONENT) == 1
+    assert component_repair.HARNESS_COMPONENT in issues
+    assert 'runtime' in repairs and 'dependencies' in repairs
+
+
 def test_core_health_and_artifacts_never_probe_model(tmp_path,monkeypatch):
     from installer.operations import component_repair,role_maintenance
     from installer import workflow
-    monkeypatch.setattr(workflow,'steps_for',lambda plan:[Step('runtime',lambda:{},lambda:{}),Step('dependencies',lambda:{},lambda:{})])
+    monkeypatch.setattr(workflow,'steps_for',lambda plan:[Step('runtime',lambda:{},lambda:{}),Step('harness_runtime',lambda:{},lambda:{}),Step('dependencies',lambda:{},lambda:{})])
     monkeypatch.setattr(component_repair,'dependency_integrity',lambda root:{})
     monkeypatch.setattr(component_repair.model,'load_release',lambda:(_ for _ in ()).throw(AssertionError('model loaded')))
     assert role_maintenance.health(tmp_path,{'engine':'role-aware-existing-installer-v1'})==([],{})

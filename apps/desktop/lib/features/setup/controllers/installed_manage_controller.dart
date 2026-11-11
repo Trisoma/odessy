@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:odessy_client/odessy_client.dart';
 
@@ -8,11 +10,17 @@ import '../../../app/setup/platform_copy.dart';
 /// The installation root and the maintenance payload come from the installation
 /// itself; the user never supplies an internal Python, wheelhouse or payload path.
 class InstalledManageController extends ChangeNotifier {
-  InstalledManageController(this.backend, {Json? spec, String? setupPayload})
-      : _suppliedPayload = setupPayload ?? '',
+  InstalledManageController(this.backend,
+      {SetupBackend? progressBackend, Json? spec, String? setupPayload})
+      : progressBackend = progressBackend ?? backend,
+        _suppliedPayload = setupPayload ?? '',
         spec = spec ?? const {};
 
   final SetupBackend backend;
+
+  /// A second read-only helper, so the maintenance-cache copy can report its
+  /// bounded progress while the mutating request is still running.
+  final SetupBackend progressBackend;
   final String _suppliedPayload;
   Json spec;
   Json status = {}, result = {}, review = const {};
@@ -23,6 +31,30 @@ class InstalledManageController extends ChangeNotifier {
   Json _reviewParameters = const {};
   int _epoch = 0;
   bool _disposed = false;
+  Timer? _progressPoll;
+  bool _polling = false;
+
+  /// The last bounded registration counters, when the service reports them.
+  Json registrationProgress = const {};
+
+  /// Copy progress while the maintenance cache is prepared, or null when unknown.
+  double? get progress {
+    if (registrationProgress['status'] != 'running') return null;
+    final done = registrationProgress['files_done'];
+    final total = registrationProgress['files_total'];
+    if (done is! int || total is! int || total <= 0) return null;
+    return (done / total).clamp(0.0, 1.0);
+  }
+
+  String get progressLabel {
+    if (registrationProgress['status'] != 'running') return '';
+    final done = registrationProgress['files_done'];
+    final total = registrationProgress['files_total'];
+    if (done is int && total is int && total > 0) {
+      return 'Preparing the maintenance copy: $done of $total files.';
+    }
+    return 'Preparing the maintenance copy.';
+  }
 
   String get root => (spec['root'] as String?) ?? '';
   String get payload => _suppliedPayload.isNotEmpty
@@ -82,8 +114,56 @@ class InstalledManageController extends ChangeNotifier {
 
   void _end(int epoch) {
     if (_disposed || epoch != _epoch) return;
+    _stopProgress();
     busy = false;
     notifyListeners();
+  }
+
+  void _startProgress() {
+    _stopProgress();
+    if (identical(progressBackend, backend)) return;
+    registrationProgress = const {};
+    _progressPoll = Timer.periodic(
+        const Duration(milliseconds: 500), (_) => _pollProgress());
+  }
+
+  void _stopProgress() {
+    _progressPoll?.cancel();
+    _progressPoll = null;
+    _polling = false;
+  }
+
+  Future<void> _pollProgress() async {
+    if (_polling || _disposed) return;
+    _polling = true;
+    try {
+      final reply = await progressBackend.execute(SetupRequest(
+          id: 'manage-progress-${DateTime.now().microsecondsSinceEpoch}',
+          operation: 'manage',
+          selection: const {},
+          parameters: {'action': 'package-status', 'root': root}));
+      if (_disposed) return;
+      final value = reply.ok ? reply.result['registration_progress'] : null;
+      if (value is Map<String, dynamic>) {
+        registrationProgress = value;
+        notifyListeners();
+      }
+    } catch (_) {
+      // A failed progress read must never fail the operation it observes.
+    } finally {
+      _polling = false;
+    }
+  }
+
+  /// Ask the running helper to stop before its next bounded step.
+  Future<void> cancel() async {
+    if (!busy || _disposed) return;
+    _stopProgress();
+    notice =
+        'Cancellation requested. Completed steps are not undone; inspect status before retrying.';
+    notifyListeners();
+    await backend.cancel();
+    if (!identical(progressBackend, backend)) await progressBackend.cancel();
   }
 
   void _failed(int epoch, Object failure) {
@@ -286,6 +366,7 @@ class InstalledManageController extends ChangeNotifier {
     if (busy || _disposed || uninstalled || root.isEmpty) return;
     final epoch = ++_epoch;
     _begin();
+    _startProgress();
     try {
       final value = await _execute(
           'package-register', {if (payload.isNotEmpty) 'payload': payload});
@@ -373,6 +454,7 @@ class InstalledManageController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _stopProgress();
     super.dispose();
   }
 }

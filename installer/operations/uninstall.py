@@ -17,8 +17,12 @@ from installer.windows.shortcuts import digest, powershell, user_folders
 
 RECORD = '.installer/uninstall.json'
 COMPONENTS = {'application':'odessy-application.json','dependencies':'odessy-dependencies.json',
-              'runtime':'odessy-runtime.json','ollama-runtime':'odessy-ollama-runtime.json',
+              'runtime':'odessy-runtime.json','harness-runtime':'harness-runtime.json',
+              'ollama-runtime':'odessy-ollama-runtime.json',
               'launcher':'odessy-shortcuts.json','ollama-state':None}
+#: Components that do not live directly under the installation root. The staged Harness
+#: payload is inside ``runtime/`` beside the private interpreters, not at the root.
+COMPONENT_PATHS = {'harness-runtime': Path('runtime') / 'harness-runtime'}
 
 
 def removal_started(root):
@@ -86,7 +90,7 @@ def plan(root, *, keep_models=True, keep_config=True, folders=None, probe=runnin
     if processes: raise ValueError("Close the Odessy terminal, launcher panel and this installation's model service before previewing uninstall.")
     inventory=[];selected=[]
     for name,marker in COMPONENTS.items():
-        folder=root/name;guard_path(folder)
+        folder=root/COMPONENT_PATHS.get(name,name);guard_path(folder)
         if not folder.exists():continue
         if not folder.is_dir(): raise ValueError('Component path is not a directory: '+str(folder))
         if marker and previous is None:
@@ -97,6 +101,9 @@ def plan(root, *, keep_models=True, keep_config=True, folders=None, probe=runnin
         selected.append('models');inventory.extend(_tree(root,root/'models'))
     if not keep_config:
         selected.append('config/odessy.env');inventory.extend(_tree(root,root/'config/odessy.env'))
+    # A nested component (the Harness payload under runtime/) is also inside its parent's
+    # tree. Keep one entry per path so the removal pass never deletes a file twice.
+    inventory=list({item['path']:item for item in inventory}.values())
     links=[];retained=[]
     marker=root/'launcher/odessy-shortcuts.json'
     shortcut_record=_json(marker) if marker.exists() else (previous or {}).get('shortcut_record')

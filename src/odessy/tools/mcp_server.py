@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from mcp.server import MCPServer
 
@@ -51,6 +52,36 @@ def _local_clock() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+@dataclass(frozen=True)
+class SessionPolicy:
+    """The confinement one *session* runs under, chosen before the model speaks.
+
+    When a server is built with this, the confinement arguments stop being tool arguments:
+    a call cannot set the mode, the network policy or the hidden paths, because there is no
+    agent loop on that path to strip what the model supplied. The values come from Odessy's
+    resolved ``SandboxPlan`` and are fixed for the process's lifetime.
+    """
+
+    mode: str = "read-only"
+    isolation: str = "preferred"
+    network: str = "allow"
+    hidden_paths: tuple[str, ...] = ()
+    extra_writable: tuple[str, ...] = ()
+
+    def confinement(self) -> dict[str, Any]:
+        """The keyword arguments ``CommandBridge.run`` takes for these values."""
+
+        values: dict[str, Any] = {
+            "mode": self.mode,
+            "isolation": self.isolation,
+            "network": self.network,
+            "hidden_paths": list(self.hidden_paths),
+        }
+        if self.extra_writable:
+            values["extra_writable"] = list(self.extra_writable)
+        return values
+
+
 def build_odessy_mcp_server(
     *,
     clock: Clock | None = None,
@@ -59,6 +90,11 @@ def build_odessy_mcp_server(
     policy: ExecutionPolicy | None = None,
     registry: ProviderRegistry | None = None,
     include_terminal: bool = True,
+    session_policy: "SessionPolicy | None" = None,
+    authorize: "Callable[[str, Mapping[str, Any]], str | None] | None" = None,
+    consent: "Callable[[Mapping[str, Any]], tuple[bool, str]] | None" = None,
+    on_spawn: "Callable[[Any], None] | None" = None,
+    before_spawn: "Callable[[], None] | None" = None,
 ) -> MCPServer:
     """Build the Odessy tool server.
 
@@ -72,6 +108,15 @@ def build_odessy_mcp_server(
     with each result reporting ``enforcement: "none"`` so the absence is visible
     rather than implied; a call that requires isolation is then refused.
     ``registry`` instead selects a backend per call (see `CommandBridge.registry`).
+
+    ``session_policy`` and ``authorize`` are for the path with **no agent loop** in front of
+    the call (a Harness-initiated tool call): the confinement is then fixed by the session
+    rather than taken from the arguments, and every call is put to ``authorize`` first, which
+    returns a refusal reason or ``None``.
+
+    ``consent`` is how a `confirm` operation becomes *approvable* rather than refused: the
+    caller supplies ``(details) -> (approved, reason)``, which the stdio pipeline wires to the
+    application's own approval broker. Without it, `confirm` is refused.
     """
 
     server = MCPServer("odessy-v0.1.0")
@@ -113,7 +158,61 @@ def build_odessy_mcp_server(
         ``extra_writable`` and ``limits`` come the same way, from ``sandbox.toml``.
         """
 
+        if session_policy is not None:
+            supplied = [name for name, value in (
+                ("mode", mode), ("isolation", isolation), ("network", network),
+                ("hidden_paths", hidden_paths), ("extra_writable", extra_writable),
+                ("limits", limits),
+            ) if value is not None]
+            if supplied:
+                return _refusal_result(
+                    command=command, cwd=cwd,
+                    reason=(
+                        "this server runs under a policy fixed by the session, so "
+                        f"{', '.join(supplied)} cannot be supplied per call"
+                    ),
+                )
+        if authorize is not None:
+            verdict = authorize("terminal.run", {
+                "command": command, "cwd": cwd, "timeout": timeout,
+                "mode": session_policy.mode if session_policy else mode,
+                "isolation": session_policy.isolation if session_policy else isolation,
+            })
+            if verdict and verdict[0] == "confirm":
+                # A confirmable operation is *offered*, not refused: the caller owns the
+                # consent channel, and only an explicit approval lets it run.
+                if consent is None:
+                    return _refusal_result(
+                        command=command, cwd=cwd,
+                        reason=("this operation requires confirmation, and no consent "
+                                "channel is attached to this tool server"))
+                approved, reason = consent(verdict[1])
+                if not approved:
+                    return _refusal_result(
+                        command=command, cwd=cwd,
+                        reason=f"not approved: {reason}")
+            elif verdict:
+                reason = verdict if isinstance(verdict, str) else str(verdict[0])
+                return _refusal_result(command=command, cwd=cwd, reason=reason)
+
+        def dispatch_guard():
+            if before_spawn is not None:before_spawn()
+            if authorize is not None and isinstance(verdict, tuple):
+                validate = getattr(verdict[1], 'validate', None)
+                if validate is not None:validate()
         try:
+            if session_policy is not None:
+                # The session decided these; the call may not. A model-supplied value is
+                # dropped rather than trusted, and the drop is visible in the result's
+                # ``sandbox`` block, which reports what actually ran.
+                return bridge.run(
+                    command=command,
+                    cwd=cwd,
+                    timeout=timeout,
+                    on_spawn=on_spawn,
+                    before_spawn=dispatch_guard,
+                    **session_policy.confinement(),
+                )
             return bridge.run(
                 command=command,
                 cwd=cwd,
@@ -125,7 +224,7 @@ def build_odessy_mcp_server(
                 extra_writable=extra_writable,
                 limits=limits,
             )
-        except ProviderError as exc:
+        except (ProviderError, ValueError) as exc:
             # A refusal is RETURNED, not raised. Raising would let it cross the MCP
             # boundary, which flattens a typed tool exception into a generic
             # `RuntimeError("MCP tool returned an error")` and discards the reason.

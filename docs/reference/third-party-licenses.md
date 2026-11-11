@@ -107,6 +107,18 @@ enabled features; NVIDIA acceleration libraries are not covered by Odessy's Apac
 license. Include their exact notices/redistribution terms if bundling them. Merely
 using a configured executable path is not evidence that it is shipped in Odessy.
 
+## Windows shipping payload wheels
+
+The exact Windows payload wheel set is inventoried in
+[`installer/releases/windows-x64-py312/wheel-licenses.json`](../../installer/releases/windows-x64-py312/wheel-licenses.json)
+(name, version, SHA-256, license, and the metadata field the license came from).
+`tool/audit_setup_artifact.py` re-derives each license from the wheel METADATA and
+reports the source, so a wheel is only "unknown" when it truly declares nothing.
+Two wheels (`backports.tarfile`, `jaraco.classes`) publish only the MIT OSI
+classifier; their bundled `*.dist-info/LICENSE` and PyPI wheel digests are
+recorded in that file. Publisher acceptance of the distributed set is a release
+decision, not a factual gap.
+
 ## Existing adapted code and release packaging
 
 OpenClaw and DeepSeek Harness adaptations are MIT; NemoClaw adaptations are

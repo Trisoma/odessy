@@ -36,7 +36,29 @@ def test_incomplete_bundle_is_rejected_and_absent_components_are_reported(tmp_pa
     assert not (manager.root/'versions').exists()
     # The optional Node tool server is reported rather than invented.
     (payload/'setup-context.json').write_text(json.dumps({'schema_version':1,'components':['desktop'],'files':{'desktop/app.exe':digest(path)}}))
-    assert manager.plan(source,selection)['absent_components']==['monitor','node','tools']
+    assert manager.plan(source,selection)['absent_components']==['harness','monitor','node','tools']
+
+
+def test_staged_harness_runtime_is_copied_for_a_coordinator_only(tmp_path):
+    source=bundle(tmp_path);payload=tmp_path/'payload';payload.mkdir()
+    files={}
+    for name in ('desktop/app.exe','harness/harness-runtime.json','harness/engine.exe'):
+        path=payload/name;path.parent.mkdir(exist_ok=True);path.write_bytes(b'component');files[name]=digest(path)
+    (payload/'setup-context.json').write_text(json.dumps({'schema_version':1,'components':['desktop','harness'],'files':files}))
+    manager=ManagedInstallation(tmp_path/'installed',runner=fake_runner,payload=payload)
+    selection=SetupSelection(role='combined');plan=manager.plan(source,selection)
+    assert 'harness' in plan['components'] and 'harness' not in plan['absent_components']
+    manager.install(source,selection,plan['plan_id'])
+    active=manager.record()['active']
+    owned=manager.record()['versions'][active]
+    assert 'harness/engine.exe' in owned and 'harness/harness-runtime.json' in owned
+    assert (manager.root/'versions'/active/'harness/engine.exe').is_file()
+    # An execution node never receives the coordinator's engine payload.
+    execution=ManagedInstallation(tmp_path/'execution',runner=fake_runner,payload=payload)
+    selection=SetupSelection(role='execution');plan=execution.plan(source,selection)
+    execution.install(source,selection,plan['plan_id'])
+    owned=execution.record()['versions'][execution.record()['active']]
+    assert not any(name.startswith('harness/') for name in owned)
 
 
 def test_install_journal_reports_real_stages(tmp_path):

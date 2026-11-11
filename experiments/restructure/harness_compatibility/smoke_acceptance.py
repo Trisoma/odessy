@@ -11,7 +11,8 @@ Scenarios:
   C3  close + resume replays prior history
   C4  a real approval request is raised, answered, honoured, and nothing is written
   C5  an external MCP tool is attached and invoked
-  C6  with the built-in tool rows disabled, the MCP tool is the only model tool
+  C6  with the built-in tool rows disabled, the MCP tool and the clarification tool are the
+    only model tools
 
 Prerequisites: the spike plugin bundle installed into the isolated profile
 (`python install_plugin.py`), the pinned wheels, and nothing else.
@@ -306,12 +307,17 @@ def main() -> int:
         }])["sessionId"]
         turn_x = client_ex.prompt(session_x, "hello")
         roster = last_tools(work / "mock-exclusive" / "requests.jsonl")
-        bypass = sorted(name for name in roster if not name.startswith("mcp__"))
+        # Prompt 07 mounts exactly one model-facing tool of Odessy's own (the clarification
+        # tool); every other name here must be the attached MCP tool.
+        bypass = sorted(name for name in roster
+                        if not name.startswith("mcp__") and name != "ask_user_question")
         check("C6 runtime boots with built-in tool rows disabled", turn_x.stop_reason == "end_turn", str(turn_x.error))
-        check("C6 the model sees only the MCP tool", roster == ["mcp__spike__spike_echo"], str(roster))
+        check("C6 the model sees only the MCP tool and the clarification tool",
+              set(roster) == {"mcp__spike__spike_echo", "ask_user_question"}, str(roster))
         check("C6 no built-in execution or file tool remains", not bypass, str(bypass))
-        if roster:
-            client_ex.prompt(session_x, f'tool {roster[0]} {{"text": "exclusive"}}')
+        mcp_tool = next((name for name in roster if name.startswith("mcp__")), None)
+        if mcp_tool:
+            client_ex.prompt(session_x, f'tool {mcp_tool} {{"text": "exclusive"}}')
         calls_x = [json.loads(line) for line in mcp_log_ex.read_text(encoding="utf-8").splitlines() if line.strip()] if mcp_log_ex.exists() else []
         call_x = next((c.get("params") for c in calls_x if c.get("method") == "tools/call"), None)
         check("C6 the one exposed tool still executes", bool(call_x) and (call_x.get("arguments") or {}).get("text") == "exclusive", str(call_x))

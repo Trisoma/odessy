@@ -184,6 +184,19 @@ abstract interface class RuntimeSettingsApi {
   Future<Json> runtimeSettings();
 }
 
+/// Optional: choose the runtime engine for a **new** session (prompt 12).
+///
+/// A service that predates runtime selection does not implement this; callers keep using
+/// [OdessyApi.createSession] in that case. Naming an engine is an explicit choice and
+/// applies to the session being created — an existing session keeps its backend.
+abstract interface class RuntimeSelectionApi {
+  /// `{"default": "legacy", "engines": [...], "known": [...]}` as the service reports it.
+  Future<Json> runtimeEngines();
+
+  /// Create a session on [runtime]; `null` keeps the service's default.
+  Future<Session> createSessionOn({String? runtime});
+}
+
 /// Compare-and-save for the connected service's collaboration limit.
 abstract interface class ConsultationLimitApi {
   Future<Json> readConsultationLimit();
@@ -274,6 +287,7 @@ class LocalApi
         JobsApi,
         HandoffRunsApi,
         RuntimeSettingsApi,
+        RuntimeSelectionApi,
         ConsultationLimitApi,
         ContextLimitApi,
         RoundLimitApi,
@@ -645,6 +659,24 @@ class LocalApi
   @override
   Future<Session> createSession() async => Session.fromJson(
         await _json('/v1/sessions', 'POST', null, const Duration(seconds: 90)),
+      );
+  @override
+  Future<Json> runtimeEngines() async {
+    final data = await _json('/v1/capabilities');
+    final runtime = data['runtime'];
+    return runtime is Map
+        ? Map<String, dynamic>.from(runtime)
+        : <String, dynamic>{};
+  }
+
+  @override
+  Future<Session> createSessionOn({String? runtime}) async => Session.fromJson(
+        await _json(
+          '/v1/sessions',
+          'POST',
+          runtime == null ? null : <String, dynamic>{'runtime': runtime},
+          const Duration(seconds: 90),
+        ),
       );
   @override
   Future<Session> snapshot(String sid) async =>
@@ -1168,7 +1200,7 @@ class UsagePreviewApi extends DemoApi implements UsageHistoryApi {
 }
 
 /// Presentation fixtures only: no models, tools or processes execute here.
-class DemoApi implements OdessyApi {
+class DemoApi implements OdessyApi, RuntimeSelectionApi {
   DemoApi({this.delay = const Duration(milliseconds: 1000)});
   final Duration delay;
   final _stream = StreamController<SessionEvent>.broadcast();
@@ -1206,6 +1238,14 @@ class DemoApi implements OdessyApi {
   Future<List<String>> profiles() async => ['auto', 'local', 'cloud-example'];
   @override
   Future<Session> createSession() => snapshot('demo');
+  @override
+  Future<Json> runtimeEngines() async => <String, dynamic>{
+        'default': 'legacy',
+        'engines': <String>['legacy'],
+        'known': <String>['legacy', 'harness'],
+      };
+  @override
+  Future<Session> createSessionOn({String? runtime}) => snapshot('demo');
   @override
   Future<Session> snapshot(String sid) async => Session(
         'demo',

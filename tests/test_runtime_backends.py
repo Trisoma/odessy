@@ -263,7 +263,20 @@ def test_runtime_events_are_filtered_by_id_and_share_the_snapshot():
         assert set(session.public_snapshot()) == {
             "id", "selected_profile", "available_profiles", "active_profile", "running",
             "history", "pending_approvals", "pending_questions", "events",
+            # Prompt 10: durable identity and what a restore would report. This session was
+            # built without a store, so it says so rather than pretending to be durable.
+            "durability", "restore",
+            # Prompt 12: which backend runs this session and what it can actually do.
+            "engine",
         }
+        assert session.public_snapshot()["durability"] == {"enabled": False}
+        assert session.public_snapshot()["restore"] == {}
+        engine = session.public_snapshot()["engine"]
+        assert engine["name"] == "legacy"
+        assert engine["source"] == "default"
+        assert engine["identity"] == {}
+        assert engine["capabilities"]["engine"] == "legacy"
+        assert engine["capabilities"]["mcp_tools"] is True
     finally:
         asyncio.run(session.close())
 
@@ -307,7 +320,12 @@ def test_capability_reports_are_distinct_and_frozen():
     assert CAPABILITIES["harness"].live_text_deltas is False
     # Implemented in prompt 06: ACP session/cancel on this session's own child.
     assert CAPABILITIES["harness"].per_session_cancel is True
-    assert CAPABILITIES["harness"].approvals is False
+    # Implemented in prompt 07: a permission request is bound to the session's broker.
+    assert CAPABILITIES["harness"].approvals is True
+    # The static record is the no-bridge baseline. A session whose packaged plugin
+    # announces the question feature reports `questions=True`; there is no ACP question
+    # channel, so the baseline stays False.
+    assert CAPABILITIES["harness"].questions is False
     assert HARNESS_TARGET_CAPABILITIES.live_text_deltas is True
     with pytest.raises(FrozenInstanceError):
         CAPABILITIES["legacy"].approvals = False

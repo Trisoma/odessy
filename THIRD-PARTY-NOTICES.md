@@ -13,6 +13,31 @@ credential services instead. No Harness credential implementation was copied.
 The verification inventory records wheel versions and SHA-256 hashes; it is not
 a redistribution approval for unbuilt Linux/macOS artifacts.
 
+## Windows shipping payload wheels (November 11, 2026)
+
+The Windows setup payload ships a closed wheel set: the pinned CPython 3.12
+runtime dependencies, the Odessy wheel and the keyring/keyring-adjacent desktop
+closure (42 wheels for the current release). The exact set, with each wheel's
+SHA-256, license and the metadata field it came from, is
+[`installer/releases/windows-x64-py312/wheel-licenses.json`](installer/releases/windows-x64-py312/wheel-licenses.json).
+A release must regenerate that file from the wheelhouse it is about to package.
+
+Resolved metadata gaps: `backports.tarfile` 1.2.0 and `jaraco.classes` 3.4.0
+publish only the OSI classifier `License :: OSI Approved :: MIT License` (no SPDX
+`License-Expression` or `License` field on PyPI). Both wheels ship the MIT
+permission text as `*.dist-info/LICENSE` (1 023 bytes, SHA-256
+`86da0f01aeae46348a3c3d465195dc1ceccde79f79e87769a64b8da04b2a4741`) and their
+PyPI wheel digests match the packaged files. They are MIT; the audit resolves the
+classifier instead of reporting an unknown license.
+
+Required notices are retained by shipping the wheels unmodified: every wheel
+carries its own license files in `*.dist-info`, the payload carries the CPython
+`LICENSE`, the Harness runtime component carries its `LICENSE` and
+`THIRD_PARTY_NOTICES.md`, and the payload root carries this file and the
+repository `LICENSE`. Distributing the payload is a publisher decision: the
+inventory is factual, and accepting the resulting license set remains the
+owner's call.
+
 ## Runtime libraries and model assets (October 23, 2026)
 
 See the [third-party license inventory](docs/reference/third-party-licenses.md)

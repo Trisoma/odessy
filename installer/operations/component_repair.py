@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 from installer.components import application
 from installer.components import dependencies
+from installer.components import harness
 from installer.operations import maintenance
 from installer.components import model
 from installer.components import ollama_runtime
@@ -63,13 +64,36 @@ def model_targets(root):
     return bad
 
 
+#: Where the staged Harness runtime lives, relative to the installation root.
+HARNESS_COMPONENT = 'harness-runtime'
+HARNESS_PATH = Path('runtime') / HARNESS_COMPONENT
+#: Repair order, and the directory name each stage repairs.
+_REPAIR_ORDER = {'runtime': 0, HARNESS_COMPONENT: 1, 'dependencies': 2, 'ollama-runtime': 3}
+
+
+def component_path(root, name):
+    """The installed directory for a repair component, including nested components."""
+
+    root = Path(root)
+    return root / HARNESS_PATH if name == HARNESS_COMPONENT else root / name
+
+
+def restore_application_registration(root):
+    """Re-register the installed application after its dependency environment was rebuilt."""
+
+    root = Path(root)
+    application_dir = root / 'application'
+    if (application_dir / 'src').is_dir() and (root / 'dependencies' / 'venv').is_dir():
+        application.register_installed_source(root / 'dependencies', application_dir)
+
+
 def _health(root,new):
     if new.get('engine')=='role-aware-existing-installer-v1':
         from installer.operations.role_maintenance import health
         return health(root,new)
     repairs=[];issues={}
     validators={step.name:step.validate for step in workflow.steps_for(new)}
-    for name in ('runtime','dependencies','ollama_runtime'):
+    for name in ('runtime','harness_runtime','dependencies','ollama_runtime'):
         try:
             if validators[name]() is None:raise ValueError('Component missing')
             if name=='runtime':
@@ -77,8 +101,11 @@ def _health(root,new):
                     cwd=root,env=child_env(root/'runtime'),label='Private Python standard library')
             if name=='dependencies':dependency_integrity(root)
         except (OSError,ValueError,DownloadError,subprocess.TimeoutExpired) as error:
-            directory='ollama-runtime' if name=='ollama_runtime' else name
+            directory={'ollama_runtime':'ollama-runtime','harness_runtime':HARNESS_COMPONENT}.get(name,name)
             repairs.append(directory);issues[directory]=str(error)
+    if 'runtime' in repairs and HARNESS_COMPONENT not in repairs:
+        repairs.append(HARNESS_COMPONENT)
+        issues[HARNESS_COMPONENT]='Rebuild nested Harness with its parent runtime.'
     if 'runtime' in repairs and 'dependencies' not in repairs:
         repairs.append('dependencies')
         issues['dependencies']=' The pinned-path virtual environment is rebuilt with the runtime.'
@@ -92,6 +119,7 @@ def _artifacts(preview):
     names=set(preview['repair_components']);values=[]
     if 'runtime' in names:values.extend(runtime.load_release(runtime.DEFAULT_RESOURCES)[0].artifacts)
     if 'dependencies' in names:values.extend(load_resources(dependencies.DEFAULT_RESOURCES)[0].artifacts)
+    if HARNESS_COMPONENT in names:values.append(harness.wheel_artifact(harness.load_declaration()))
     if 'ollama-runtime' in names:values.extend(ollama_runtime.load_release()[0].artifacts)
     if preview.get('new_plan',{}).get('engine')=='role-aware-existing-installer-v1':return values
     manifest,_,_=model.load_release()
@@ -103,11 +131,12 @@ def _artifacts(preview):
 def plan(root,bundle,executable,*,probe=maintenance.running_processes,folders=None):
     value=maintenance.plan(root,bundle,executable,probe=probe,folders=folders,validate_base=False)
     root=Path(value['install_dir']);repairs,issues=_health(root,value['new_plan'])
-    repairs=sorted(repairs,key=lambda name:({'runtime':0,'dependencies':1,'ollama-runtime':2}.get(name,3),name))
+    repairs=sorted(repairs,key=lambda name:(_REPAIR_ORDER.get(name,9),name))
     value.update(repair_components=repairs,component_issues=issues,base_inventory=[],scope='pinned-components-application-and-launcher')
-    for name in repairs:value['base_inventory'].extend(maintenance._tree(root,root/name))
+    for name in repairs:value['base_inventory'].extend(maintenance._tree(root,component_path(root,name)))
     extra=0
     if 'runtime' in repairs:extra+=sum(item['unpacked_bytes'] for item in runtime.load_release(runtime.DEFAULT_RESOURCES)[1]['runtimes'].values())
+    if HARNESS_COMPONENT in repairs:extra+=harness.unpacked_bytes(harness.load_declaration())
     if 'dependencies' in repairs:extra+=sum(item['unpacked_bytes'] for item in load_resources(dependencies.DEFAULT_RESOURCES)[1]['layout'].values())
     if 'ollama-runtime' in repairs:extra+=ollama_runtime.load_release()[1]['unpacked_bytes']
     extra+=sum(a.size_bytes for a in _artifacts(value) if a.id.startswith('model-'))
@@ -136,23 +165,32 @@ def repair(root,folder,preview,data,*,download=download_artifact):
     for artifact in _artifacts(preview):
         print('Preparing repair download:',artifact.id,flush=True);download(artifact,cache)
     now=[]
-    for name in preview['repair_components']:now.extend(maintenance._tree(root,root/name))
+    for name in preview['repair_components']:now.extend(maintenance._tree(root,component_path(root,name)))
     if now!=preview['base_inventory']:raise ValueError('Components to repair changed during download; check again.')
     if not preview['repair_components']:return
     data['status']='repairing';maintenance._save(root,data)
     reports={}
     def backup(name):
-        target=root/name;model.guard_path(target)
+        target=component_path(root,name);model.guard_path(target)
         if target.exists():
             destination=folder/('backup-'+name);model.guard_path(destination);destination.parent.mkdir(parents=True,exist_ok=True)
             target.rename(destination)
+    for name in sorted(preview['repair_components'], key=lambda n: n != HARNESS_COMPONENT):
+        if not name.startswith('models/'):backup(name)
     for name in preview['repair_components']:
         if name.startswith('models/'):continue
-        backup(name)
         if name=='runtime':
             manifest,resources=runtime.load_release(runtime.DEFAULT_RESOURCES)
             reports['runtime']=runtime.prepare_runtime(manifest,resources,root/name,cache,download=download)
-        elif name=='dependencies':reports['dependencies']=dependencies.prepare_dependencies(root/'runtime',root/name,cache,download=download)
+        elif name==HARNESS_COMPONENT:
+            # A corrupted staged payload is replaced wholesale from the declared wheel;
+            # the verify step re-checks every byte and the version probe afterwards.
+            reports['harness_runtime']=harness.prepare(harness.load_declaration(),component_path(root,name),cache,download=download)
+        elif name=='dependencies':
+            reports['dependencies']=dependencies.prepare_dependencies(root/'runtime',root/name,cache,download=download)
+            # The rebuilt environment is new: the private interpreter's application
+            # registration (a .pth in its site-packages) has to be restored with it.
+            restore_application_registration(root)
         elif name=='ollama-runtime':reports['ollama_runtime']=ollama_runtime.prepare_runtime(root/name,cache,download=download)
     if preview['new_plan'].get('engine')=='role-aware-existing-installer-v1':
         if 'dependencies' in preview['repair_components']:dependency_integrity(root)

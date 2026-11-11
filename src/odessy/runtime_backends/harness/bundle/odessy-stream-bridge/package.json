@@ -1,0 +1,22 @@
+{
+  "name": "@odessy/dsh-stream-bridge",
+  "version": "0.0.3",
+  "private": true,
+  "description": "Odessy bridge: forward agent/assistant-stream frames, answer the user-questions seam, and report the runtime read-only tool roster, over one token-authenticated loopback socket.",
+  "type": "module",
+  "main": "lib/index.js",
+  "files": [
+    "lib/index.js",
+    "cordis.patch.yml"
+  ],
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

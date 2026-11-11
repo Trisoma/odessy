@@ -20,10 +20,22 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 from odessy.runtime_backends.contracts import RuntimeUnavailable
+from odessy.runtime_backends.harness import resources
 from odessy.runtime_backends.harness.pin import PINNED_PROFILE, PINNED_VERSION
+from odessy.runtime_backends.harness.upstreams import (
+    NodeTools,
+    entries,
+    activation,
+)
+from odessy.tools.external_tools import ServerConfig, ServerConfigError, load_server_configs
 from odessy.runtime_backends.harness.profile import (
     NARROW_PATCH_NAME,
     materialize_narrow_patch,
+)
+from odessy.runtime_backends.harness.sandbox import (
+    SandboxPlan,
+    materialize_sandbox_patch,
+    plan_for_session,
 )
 
 ENGINE = "harness"
@@ -32,6 +44,21 @@ DEFAULT_STARTUP_TIMEOUT = 20.0
 DEFAULT_TURN_TIMEOUT = 300.0
 DEFAULT_SHUTDOWN_TIMEOUT = 10.0
 DEFAULT_DIAGNOSTIC_LINES = 200
+
+#: Seconds each *additional* MCP server is allowed on top of the startup budget.
+#:
+#: ``session/new`` starts every attached server before it answers, so the handshake is not
+#: one process boot but one per server. Measured on the pinned runtime: 7.4 s with Odessy's
+#: own server alone, +6.3 s with the Node gateway, +8.3 s with a third-party gateway (each
+#: gateway is 2.6 s of its own; the rest is the runtime's per-server startup). Ten seconds
+#: per extra server keeps the documented budget while making the default honest about the
+#: composition. A frozen config may still override ``startup_timeout`` directly.
+EXTRA_SERVER_STARTUP_SECONDS = 10.0
+
+#: Tool-roster verification policies (prompt 10). See ``HarnessConfig.tool_roster``.
+TOOL_ROSTER_PREFERRED = "preferred"
+TOOL_ROSTER_REQUIRED = "required"
+TOOL_ROSTER_MODES = (TOOL_ROSTER_PREFERRED, TOOL_ROSTER_REQUIRED)
 
 #: Inherited so the runtime can start and find its own temporary directory. Nothing
 #: here identifies a user session, a project or a credential.
@@ -70,11 +97,15 @@ def default_home(environ: Mapping[str, str] | None = None) -> Path:
 #: Row ids the packaged overlay disables. An extra overlay that names one of these (or any
 #: ``tool-`` / ``mcp-`` row, or ``plan-mode``) is refused: patch layers apply in argv
 #: order, so a later layer could otherwise re-enable a tool that prompt 03 must not expose.
+#: The confinement rows are protected for the same reason: an overlay that widened
+#: ``sandbox-policy``, ``approval`` or the ``permission`` presets would be a silent
+#: authority increase dressed as configuration (prompt 08).
 PROTECTED_ROWS = frozenset({
     "tool-pwsh", "tool-bash", "tool-fs", "tool-fs-search", "tool-web", "tool-skill",
     "tool-subagent", "tool-subagent-control", "tool-subagent-list-agents",
     "tool-subagent-fork", "tool-workflow", "tool-todo", "tool-goal", "tool-jobs",
     "tool-working-directory", "plan-mode", "mcp-resources",
+    "sandbox", "sandbox-policy", "approval", "permission", "fs-sandbox",
 })
 _PROTECTED_PREFIXES = ("tool-", "mcp-", "subagent", "plan-mode")
 _ROW_ID = re.compile(r"^\s*-?\s*id:\s*['\"]?([A-Za-z0-9_.:/-]+)", re.MULTILINE)
@@ -130,10 +161,43 @@ class HarnessConfig:
     #: The reviewed narrow overlay. Its position is a field, not a convention: it is always
     #: emitted last, so no extra overlay can re-enable what it disabled.
     narrow_patch: Path | None = None
+    #: The resolved confinement for this session (prompt 08): the two fields the pinned
+    #: runtime accepts, plus what stays with an Odessy provider because it has no
+    #: vocabulary there. ``None`` means "resolve from configuration" — an injected config
+    #: still gets a host-derived plan rather than inheriting the pin's own default.
+    sandbox: SandboxPlan | None = None
+    #: The overlay that pins ``sandbox-policy`` and ``approval`` explicitly.
+    sandbox_patch: Path | None = None
+    #: Whether this session attaches Odessy's own tool server (prompt 09). Off unless the
+    #: operator turns it on: the packaged profile ships no model-facing execution until a
+    #: release qualifies it, and an implicit tool surface is exactly what prompts 03–08
+    #: spent their time removing.
+    tools_enabled: bool = False
+    #: The interpreter that serves the tool surface. It defaults to this process's own, so
+    #: the tool server is the same installation as the application; an explicit path exists
+    #: for environments whose launcher shadows ``sys.executable`` (and for the spike, which
+    #: imports the checkout rather than an installed package).
+    tools_python: str = ""
+    #: The reviewed Node tool server (prompt 09a), when the operator enables it. ``None``
+    #: means "not attached": its tools are a separate surface, not part of the base one.
+    node_tools: NodeTools | None = None
+    #: Third-party servers this session attaches, already validated against ``servers.toml``.
+    #: Empty means none: a configured server is never attached implicitly.
+    external_tools: tuple[ServerConfig, ...] = ()
+    #: Where those configurations were read from, so a gateway can resolve the same file.
+    servers_file: Path | None = None
     #: Variables the session adds to the child's allowlist (a credential for the selected
     #: route). Values are never logged; :meth:`describe` reports names only.
     extra_env: Mapping[str, str] = field(default_factory=dict, repr=False, compare=False)
+    #: What :func:`odessy.runtime_backends.harness.resources.compose_profile` did for this
+    #: launch: which profile files it wrote, which it kept, and whether the bundle was
+    #: installed or repaired. Recorded so "the plugin loaded" has an explanation.
+    profile_record: Mapping[str, Any] = field(default_factory=dict, repr=False, compare=False)
     expected_version: str = PINNED_VERSION
+    #: New-session roster policy: ``preferred`` records uncertainty, ``required`` refuses it.
+    #: Restores always require a verified roster, regardless of this setting. An observed
+    #: missing tool is always refused.
+    tool_roster: str = TOOL_ROSTER_PREFERRED
     startup_timeout: float = DEFAULT_STARTUP_TIMEOUT
     turn_timeout: float = DEFAULT_TURN_TIMEOUT
     shutdown_timeout: float = DEFAULT_SHUTDOWN_TIMEOUT
@@ -156,18 +220,113 @@ class HarnessConfig:
         return argv
 
     def ordered_patches(self) -> list[Path]:
-        """Extras, then the model route, then the narrow overlay last.
+        """Extras, then the model route, then the narrow overlay, then the sandbox pin.
 
-        The narrow overlay stays last so no extra overlay can re-enable a tool row; the
-        route overlay only names the provider row (``llm-pi-ai``) and therefore never
-        competes with it.
+        The narrow overlay stays last among the layers that decide the tool surface; the
+        route overlay only names the provider row (``llm-pi-ai``). The sandbox overlay is
+        emitted after both, so nothing an operator can pass can decide the confinement
+        mode: that is Odessy's authority, not configuration.
         """
         ordered = [p for p in self.patches if p not in (self.narrow_patch, self.route_patch)]
         if self.route_patch is not None:
             ordered.append(self.route_patch)
         if self.narrow_patch is not None:
             ordered.append(self.narrow_patch)
+        if self.sandbox_patch is not None:
+            ordered.append(self.sandbox_patch)
         return ordered
+
+    def sandbox_plan(self) -> SandboxPlan:
+        """The session's confinement, resolved once and used by launch, env and gates.
+
+        An injected configuration that names no plan gets the host-derived one rather than
+        the pin's own default, so "unset" can never mean "workspace-write by accident".
+        """
+
+        if self.sandbox is not None:
+            return self.sandbox
+        return plan_for_session(workspace=self.workspace, environ=self.source_env or None)
+
+    def mcp_servers(self, control=None) -> list[dict[str, object]]:
+        """The tool pipeline for this session, or nothing.
+
+        Odessy's reviewed tool server, spawned by the runtime as a stdio MCP child of *this*
+        session (the pin's own facility — no second scheduler). Its confinement is fixed by
+        argv from the resolved plan, so the call cannot choose it, and the server's authority
+        gate refuses anything the policy would not allow outright. ``control`` names the
+        application's approval/cancel channel: with it a `confirm` operation can be put to a
+        person, and a Stop can stop the command; without it those are refused.
+
+        Prompt 09a adds up to one more entry per upstream: the reviewed Node tool server and
+        each configured third-party server, each behind its own gateway
+        (:mod:`odessy.runtime_backends.harness.upstreams`). A refused upstream is simply not
+        attached; :meth:`upstream_activation` says why, and
+        :meth:`describe` records it for the launch diagnostics.
+        """
+
+        if not self.tools_enabled:
+            return []
+        plan = self.sandbox_plan()
+        plan.require_launchable()
+        argv = ["-m", "odessy.tools.stdio_server",
+                "--workspace", plan.workspace_root,
+                "--mode", plan.mode,
+                "--isolation", plan.isolation,
+                "--network", plan.network]
+        if control is not None:
+            argv += ["--control-port", str(control[0])]
+        for hidden in plan.hidden_paths:
+            argv += ["--hidden", hidden]
+        for extra in plan.extra_writable:
+            argv += ["--extra-writable", extra]
+        # An explicit minimal environment: an empty list is not "inherit", and a full inherit
+        # would carry the bridge token and the route credential into the tool process. Only
+        # the platform names a process needs to start and to open a socket are passed.
+        parent = self.source_env or os.environ
+        base_env = {name: parent[name] for name in (*_base_env_names(), 'ODESSY_HOOKS_FILE', 'ODESSY_HOOKS_REQUIRED') if name in parent}
+        env = [{"name": name, "value": value} for name, value in base_env.items()]
+        if control is not None:
+            env.append({"name": "ODESSY_TOOL_CONTROL_TOKEN", "value": control[1]})
+        servers: list[dict[str, object]] = [
+            {"name": "odessy", "command": self.tools_python or sys.executable,
+             "args": argv, "env": env},
+        ]
+        upstreams, _record = entries(
+            plan=plan, control=control, tools_python=self.tools_python,
+            node=self.node_tools, externals=self.external_tools,
+            servers_file=self.servers_file, base_env=base_env, source=parent)
+        return [*servers, *upstreams]
+
+    def upstream_activation(self) -> dict[str, object]:
+        """What each potential upstream may do in this session, refusals included.
+
+        Pure: it reads the resolved plan and the configured upstreams, never the host. A
+        refusal here means the surface is *not attached*, and the reason names the dimension
+        the session asked for that this host cannot hold an upstream process to.
+        """
+
+        _servers, record = entries(
+            plan=self.sandbox_plan(), control=None, tools_python=self.tools_python,
+            node=self.node_tools, externals=self.external_tools,
+            servers_file=self.servers_file, base_env={})
+        return record
+
+    def session_timeout(self) -> float:
+        """The budget for ``session/new``, which starts every attached MCP server.
+
+        ``startup_timeout`` covers the runtime's own boot; each additional server is another
+        process the runtime starts before it can answer. Measured on the pinned runtime, so
+        the default is a measurement rather than a guess (:data:`EXTRA_SERVER_STARTUP_SECONDS`).
+        """
+
+        return self.startup_timeout + EXTRA_SERVER_STARTUP_SECONDS * self.extra_server_count()
+
+    def extra_server_count(self) -> int:
+        """How many MCP servers this session attaches beyond Odessy's own (0 when tools are off)."""
+
+        if not self.tools_enabled:
+            return 0
+        return max(0, len(self.mcp_servers()) - 1)
 
     def child_env(self, parent: Mapping[str, str] | None = None) -> dict[str, str]:
         """Build the allowlisted child environment from the configured source mapping."""
@@ -180,6 +339,10 @@ class HarnessConfig:
         for name, value in self.extra_env.items():
             env[name] = value
         env["DSH_HOME"] = str(self.home)
+        # Applied last: neither a passthrough name nor a session variable may decide the
+        # mode. The pin derives its own ``approval.policy`` from this variable, so it must
+        # be the plan's value, not whatever the operator environment happened to hold.
+        env.update(self.sandbox_plan().environment())
         return env
 
     def missing_for_network(self, parent: Mapping[str, str] | None = None) -> tuple[str, ...]:
@@ -202,10 +365,23 @@ class HarnessConfig:
             "home": str(self.home),
             "route_patch": str(self.route_patch) if self.route_patch else "",
             "narrow_patch": str(self.narrow_patch) if self.narrow_patch else "",
+            "sandbox_patch": str(self.sandbox_patch) if self.sandbox_patch else "",
+            "sandbox": self.sandbox_plan().describe(),
+            "tools": "odessy" if self.tools_enabled else "none",
+            # Every potential upstream and what it may do here, refusals included: an
+            # upstream that is not attached must be explainable, not merely absent.
+            "upstreams": self.upstream_activation(),
+            # The packaged plugin closure, resolved from the same files an installed
+            # application ships. Reported, never required: a missing bundle degrades the
+            # live-delta capabilities and is visible here instead of being guessed at.
+            "bundle": resources.bundle_status(),
+            # What the composed profile needed this launch: written, kept, repaired.
+            "profile_composition": dict(self.profile_record),
             # Names only: a credential value never enters a diagnostic record.
             "extra_env": sorted(self.extra_env),
             "workspace": str(self.workspace),
             "expected_version": self.expected_version,
+            "tool_roster": self.tool_roster,
             "startup_timeout": self.startup_timeout,
             "turn_timeout": self.turn_timeout,
         }
@@ -214,6 +390,11 @@ class HarnessConfig:
         """Reject unusable launch inputs before a child process is started."""
         if not self.command:
             raise RuntimeUnavailable(ENGINE, "no runtime executable is configured")
+        if self.tool_roster not in TOOL_ROSTER_MODES:
+            # Not silently coerced: a typo must not decide how strictly a restore is checked.
+            raise RuntimeUnavailable(
+                ENGINE, "unknown tool-roster policy",
+                detail=f"{self.tool_roster!r}; expected one of {', '.join(TOOL_ROSTER_MODES)}")
         executable = Path(self.command[0])
         if not executable.is_absolute():
             raise RuntimeUnavailable(
@@ -247,6 +428,49 @@ class HarnessConfig:
             )
         if self.startup_timeout <= 0 or self.turn_timeout <= 0 or self.shutdown_timeout <= 0:
             raise RuntimeUnavailable(ENGINE, "timeouts must be positive")
+        # The confinement is validated here, not at the first tool call: a session whose
+        # policy requires a boundary this host cannot provide must fail when it is created
+        # rather than run a turn under a weaker boundary. ``required`` refuses; ``preferred``
+        # records what is unenforced (``SandboxPlan.unenforced``) instead of claiming it.
+        plan = self.sandbox_plan()
+        plan.require_launchable()
+        if plan.workspace_root != str(Path(self.workspace).expanduser().resolve()):
+            raise RuntimeUnavailable(
+                ENGINE, "the sandbox plan's workspace root is not this session's workspace",
+                detail=f"plan={plan.workspace_root} workspace={self.workspace}",
+            )
+        # An upstream is part of the tool surface, so it needs that surface to exist at all.
+        # Saying so once here beats a configuration that silently attaches nothing.
+        if (self.node_tools is not None or self.external_tools) and not self.tools_enabled:
+            raise RuntimeUnavailable(
+                ENGINE, "an upstream tool server requires the tool surface",
+                detail="ODESSY_HARNESS_TOOLS is not enabled",
+            )
+        for kind, requested in (("node", self.node_tools is not None),
+                                ("external", bool(self.external_tools))):
+            if requested:
+                decision = activation(kind, plan)
+                if not decision['allowed']:
+                    raise RuntimeUnavailable(
+                        ENGINE, "the upstream server isolation requirement cannot be met",
+                        detail=decision['reason'])
+        if self.node_tools is not None:
+            executable = Path(self.node_tools.executable).expanduser()
+            if not executable.is_absolute() or not executable.is_file():
+                raise RuntimeUnavailable(
+                    ENGINE, "the Node tool server executable is not a file",
+                    detail=str(executable),
+                )
+            if not Path(self.node_tools.entry).is_file():
+                raise RuntimeUnavailable(
+                    ENGINE, "the Node tool server is not built",
+                    detail=f"{self.node_tools.entry} is missing (build `tools/` or set "
+                           "ODESSY_NODE_TOOLS_DIR)",
+                )
+        if self.external_tools and self.servers_file is None:
+            raise RuntimeUnavailable(
+                ENGINE, "external tool servers were requested without their configuration file",
+            )
 
 
 def _split_paths(value: str) -> tuple[Path, ...]:
@@ -281,15 +505,21 @@ def from_environment(
     *,
     workspace: str | os.PathLike[str] | None = None,
 ) -> HarnessConfig:
-    """Resolve the launch description from explicit configuration only."""
+    """Resolve the launch description from explicit configuration only.
+
+    Two resolutions are accepted, and both are explicit: ``ODESSY_HARNESS_EXE`` for a
+    developer-supplied executable, or ``ODESSY_HARNESS_RUNTIME_DIR`` for the payload an
+    installed Odessy staged (the installed launcher exports it). Nothing searches ``PATH``,
+    a sibling checkout or ``.harness-spike``, and there is no fallback between the two.
+    """
     environ = os.environ if environ is None else environ
     executable = (environ.get("ODESSY_HARNESS_EXE") or "").strip()
-    if not executable:
-        raise RuntimeUnavailable(
-            ENGINE, "not configured: ODESSY_HARNESS_EXE is unset",
-            detail="the Harness engine is developer-only; point ODESSY_HARNESS_EXE at "
-                   "the pinned runtime executable",
-        )
+    if executable:
+        command: tuple[str, ...] = (executable,)
+    else:
+        # Refuses with the staged file and the expected digest when the installed payload
+        # was moved or edited; never silently continues with another executable.
+        command = (str(resources.installed_executable(environ)),)
     home = Path((environ.get("ODESSY_HARNESS_HOME") or "").strip()
                 or default_home(environ)).expanduser()
     workspace_path = Path(workspace if workspace is not None
@@ -299,13 +529,28 @@ def from_environment(
     # the packaged one legitimately names every tool row.
     extras = _split_paths(environ.get("ODESSY_HARNESS_PATCH") or "")
     assert_extras_leave_tools_alone(extras)
+    narrow = materialize_narrow_patch(home)
+    # The confinement is resolved from configuration here — the same ``sandbox.toml`` and
+    # ``ODESSY_ISOLATION`` the Python execution path reads — and pinned as an overlay, so
+    # the launch states its mode instead of inheriting the pin's ``workspace-write`` default.
+    plan = plan_for_session(workspace=workspace_path, environ=environ)
+    sandbox_overlay = materialize_sandbox_patch(home, plan)
+    node_tools = _node_tools(environ)
+    external_tools, servers_file = _external_tools(environ)
+    profile = (environ.get("ODESSY_HARNESS_PROFILE") or "").strip() or PINNED_PROFILE
+    # The profile the runtime composes is a product input, not something a package manager
+    # builds on the user's machine: seed it from the packaged bundle and verify every byte.
+    # A bundled but corrupt plugin refuses here, before a process is spawned.
+    profile_record = resources.compose_profile(home / "profiles" / profile, profile=profile)
     config = HarnessConfig(
-        command=(executable,),
+        command=command,
         home=home,
         workspace=workspace_path,
-        profile=(environ.get("ODESSY_HARNESS_PROFILE") or "").strip() or PINNED_PROFILE,
+        profile=profile,
         patches=extras,
-        narrow_patch=materialize_narrow_patch(home),
+        narrow_patch=narrow,
+        sandbox=plan,
+        sandbox_patch=sandbox_overlay,
         expected_version=(environ.get("ODESSY_HARNESS_VERSION") or "").strip()
         or PINNED_VERSION,
         startup_timeout=_seconds(environ, "ODESSY_HARNESS_STARTUP_TIMEOUT",
@@ -314,7 +559,90 @@ def from_environment(
         shutdown_timeout=_seconds(environ, "ODESSY_HARNESS_SHUTDOWN_TIMEOUT",
                                   DEFAULT_SHUTDOWN_TIMEOUT),
         passthrough=_split_names(environ.get("ODESSY_HARNESS_PASS_ENV") or ""),
+        tools_enabled=_flag(environ, "ODESSY_HARNESS_TOOLS"),
+        tools_python=(environ.get("ODESSY_HARNESS_TOOL_PYTHON") or "").strip(),
+        tool_roster=(environ.get("ODESSY_HARNESS_TOOL_ROSTER") or "").strip().lower()
+        or TOOL_ROSTER_PREFERRED,
+        node_tools=node_tools,
+        external_tools=external_tools,
+        servers_file=servers_file,
+        profile_record=profile_record,
         source_env=dict(environ),
     )
     config.validate()
     return config
+
+
+def _flag(environ: Mapping[str, str], name: str) -> bool:
+    return (environ.get(name) or "").strip().lower() in {"1", "on", "true", "yes"}
+
+
+def _node_tools(environ: Mapping[str, str]) -> NodeTools | None:
+    """The reviewed Node tool server, or ``None`` when the operator did not enable it.
+
+    The executable is required to be explicit: this module never searches ``PATH``, for the
+    same reason ``ODESSY_HARNESS_EXE`` is explicit. The built entry comes from the same
+    resolution the legacy path uses (``ODESSY_NODE_TOOLS_DIR`` or the repository ``tools/``),
+    so there is one answer to "where is the tool server".
+    """
+
+    if not _flag(environ, "ODESSY_HARNESS_NODE_TOOLS"):
+        return None
+    executable = (environ.get("ODESSY_HARNESS_NODE") or "").strip()
+    if not executable:
+        # An installed Odessy stages its own Node next to the runtime (the runtime binary
+        # embeds Node but exposes no interpreter, so it cannot run the tool server). Only
+        # that staged file is defaulted; a system Node is never searched for.
+        staged = resources.installed_node(environ)
+        if staged is None:
+            raise RuntimeUnavailable(
+                ENGINE, "ODESSY_HARNESS_NODE_TOOLS is set but no Node executable is named",
+                detail="set ODESSY_HARNESS_NODE, or select an installation that staged "
+                       "runtime/node-runtime/node.exe",
+            )
+        executable = str(staged)
+    # The reviewed tool server's own directory, when the installation staged one and the
+    # operator did not point somewhere else.
+    resolved_env = environ
+    if not (environ.get("ODESSY_NODE_TOOLS_DIR") or "").strip():
+        staged_tools = resources.installed_node_tools_dir(environ)
+        if staged_tools is not None:
+            resolved_env = {**environ, "ODESSY_NODE_TOOLS_DIR": str(staged_tools)}
+    try:
+        from odessy.tools.node_mcp import node_tool_server_launch
+
+        resolved, entry = node_tool_server_launch(executable, environ=resolved_env)
+    except (ValueError, OSError) as exc:
+        raise RuntimeUnavailable(
+            ENGINE, "the Node tool server is unavailable", detail=str(exc)) from exc
+    return NodeTools(executable=str(resolved), entry=entry)
+
+
+def _external_tools(
+    environ: Mapping[str, str],
+) -> tuple[tuple[ServerConfig, ...], Path | None]:
+    """The third-party servers this session attaches, exactly as the user named them.
+
+    Only names listed in ``ODESSY_HARNESS_EXTERNAL_TOOLS`` are attached: a configured server
+    is never attached because it happens to exist in ``servers.toml``. A name that is not
+    configured is refused here, so a typo cannot become "no external tools this session".
+    """
+
+    names = _split_names(environ.get("ODESSY_HARNESS_EXTERNAL_TOOLS") or "")
+    if not names:
+        return (), None
+    from odessy.tools.external_tools import servers_file as configured_servers_file
+
+    path = configured_servers_file(environ)
+    try:
+        configured = {item.name: item for item in load_server_configs(path, environ)}
+    except ServerConfigError as exc:
+        raise RuntimeUnavailable(
+            ENGINE, "the external tool servers cannot be read", detail=str(exc)) from exc
+    missing = [name for name in names if name not in configured]
+    if missing:
+        raise RuntimeUnavailable(
+            ENGINE, "a requested external tool server is not configured",
+            detail=f"{', '.join(missing)} (in {path})",
+        )
+    return tuple(configured[name] for name in names), path

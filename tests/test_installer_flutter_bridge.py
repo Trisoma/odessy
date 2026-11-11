@@ -19,7 +19,7 @@ def test_role_adapter_uses_original_steps_and_never_model_steps(tmp_path,monkeyp
     monkeypatch.setattr(workflow,'steps_for',lambda *args,**kwargs:steps)
     plan={'install_dir':str(tmp_path/'new'),'selection':{'role':'execution'},'cache_dir':str(tmp_path/'cache'),'tool_bundle':str(tmp_path/'bundle')}
     selected=role_aware.steps_for(plan)
-    assert [step.name for step in selected]==['tool_bundle','runtime','dependencies','application','configuration']
+    assert [step.name for step in selected]==['tool_bundle','runtime','harness_runtime','dependencies','application','configuration']
     assert all(step.name not in ('model','ollama_runtime','connection') for step in selected)
 
 

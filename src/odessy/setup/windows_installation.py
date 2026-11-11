@@ -9,10 +9,16 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from .maintenance import guard, digest, ManagedInstallation, read_json
+import time
+from .maintenance import Cancelled, atomic, guard, digest, ManagedInstallation, read_json
+from .progress import Progress
 
 DISPLAY_VERSION='0.5.0.dev0'
 _IDENTITY=re.compile('[a-f0-9]{32}')
+#: The durable journal of the last registration attempt, beside ``operation.json``.
+REGISTRATION_JOURNAL='registration.json'
+#: The maintenance manifest is a closed inventory; refuse an unbounded list.
+MAX_HELPER_FILES=100001
 
 
 def _identity(record):
@@ -109,25 +115,78 @@ def _shortcut_path(identity):
     return guard(Path(os.environ['APPDATA'])/'Microsoft/Windows/Start Menu/Programs'/('Odessy-'+identity+'.lnk'))
 
 
-def _cache_helper(root,record,payload):
-    """Persist a verified maintenance payload outside the installation."""
+def _write_journal(root,journal):
+    """Persist the bounded registration journal; counters only, never file contents."""
+    journal['updated_at']=time.time()
+    atomic(guard(root)/REGISTRATION_JOURNAL,journal)
+
+
+def registration_progress(root):
+    """The last registration attempt as bounded counters, for ``package-status``."""
+    path=guard(Path(root)/REGISTRATION_JOURNAL)
+    if not path.is_file():return None
+    try:value=read_json(path)
+    except (OSError,ValueError):return None
+    if not isinstance(value,dict):return None
+    keys=('status','stage','files_done','files_total','bytes_done','bytes_total',
+          'reused','replaced','started_at','updated_at','finished_at','error')
+    return {key:value[key] for key in keys if key in value}
+
+
+def _cache_helper(root,record,payload,*,progress=None,cancelled=lambda:False):
+    """Persist a verified maintenance payload outside the installation.
+
+    The cache directory is keyed by the payload's own manifest, so the same reviewed
+    payload reuses the same directory. Every file is verified immediately before it
+    is trusted, and a copy is written to a temporary sibling and renamed only after
+    its digest matches, so an interrupted run cannot leave a torn file that a later
+    run would accept. A run that was interrupted resumes: entries that already
+    verify are kept, and only missing or damaged entries are rewritten.
+    """
     from .package_context import context
     payload=guard(payload)
-    context(payload=payload,root=root)
     manifest=read_json(payload/'setup-context.json')
+    files=manifest.get('files') if isinstance(manifest,dict) else None
+    if not isinstance(files,dict) or not files or len(files)>MAX_HELPER_FILES:
+        raise ValueError('maintenance payload has no bounded file manifest')
+    from .package_context import _inventory
+    _inventory(payload, manifest, verify_bytes=False)
+    total=len(files)
+    sizes={name:guard(payload/name).stat().st_size for name in files}
+    if progress is not None:
+        progress.journal.update(files_total=total,bytes_total=sum(sizes.values()))
+        progress.flush(force=True)
     key_hash=hashlib.sha256(json.dumps(manifest,sort_keys=True).encode()).hexdigest()[:32]
     helper=guard(Path(os.environ['LOCALAPPDATA'])/'OdessyMaintenance'/record['id']/key_hash)
     helper.mkdir(parents=True,exist_ok=True)
-    for name,sha in manifest['files'].items():
+    done_files=done_bytes=reused=replaced=0
+    for name,sha in files.items():
+        if cancelled():raise Cancelled('registration was cancelled')
         target=guard(helper/name)
-        if target.exists():
-            if digest(target)!=sha:raise ValueError('maintenance helper changed')
-            continue
-        target.parent.mkdir(parents=True,exist_ok=True)
-        shutil.copy2(guard(payload/name),target)
-        if digest(target)!=sha:raise ValueError('maintenance helper copy failed verification')
+        if target.is_file() and digest(target)==sha:
+            reused+=1
+        else:
+            target.parent.mkdir(parents=True,exist_ok=True)
+            temporary=guard(target.with_name(target.name+'.part'))
+            temporary.unlink(missing_ok=True)
+            shutil.copyfile(guard(payload/name),temporary)
+            if digest(temporary)!=sha:
+                temporary.unlink(missing_ok=True)
+                raise ValueError('maintenance helper copy failed verification')
+            replaced+=int(target.is_file())
+            os.replace(temporary,target)
+        done_files+=1;done_bytes+=sizes[name]
+        if progress is not None:
+            progress.journal.update(files_done=done_files,bytes_done=done_bytes,
+                                    reused=reused,replaced=replaced)
+            progress.flush()
     (helper/'setup-context.json').write_text(json.dumps(manifest),encoding='utf-8')
-    context(payload=helper,root=root)
+    if progress is not None:
+        progress.journal.update(stage='reuse',files_done=done_files,bytes_done=done_bytes)
+        progress.flush(force=True)
+    # Re-read the manifest through the same validation the installer uses, without
+    # hashing the whole cache a second time: every entry above was just verified.
+    context(payload=helper,root=root,verify_bytes=False)
     return helper
 
 
@@ -138,12 +197,14 @@ def _write_shortcut(shortcut,target,arguments):
                    stdin=subprocess.DEVNULL,timeout=30,**({'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}))
 
 
-def register(root, record, payload=None):
+def register(root, record, payload=None, *, cancelled=lambda: False):
     """Create the Start-menu entry, maintenance cache and Installed-apps record.
 
     Identity and payload ownership are validated before anything is written. A
     failed registry write leaves a recorded partial state and a working shortcut,
-    so the installation stays reachable instead of becoming orphaned.
+    so the installation stays reachable instead of becoming orphaned. The
+    maintenance cache copy is journalled, cancellable and resumable: cancelling it
+    leaves the previous registration untouched and no newly owned files recorded.
     """
     if os.name!='nt': return {}
     root=guard(root)
@@ -153,10 +214,23 @@ def register(root, record, payload=None):
     previous=record.get('windows_registration') or {}
     if previous and previous.get('installation_id') not in (None,identity):
         raise ValueError('registration belongs to another installation')
+    if cancelled():raise Cancelled('registration was cancelled')
     helper=previous.get('helper')
     helper_files=previous.get('helper_files')
+    journal=None
     if payload is not None:
-        helper=str(_cache_helper(root,record,payload))
+        journal={'schema_version':1,'operation':'register','status':'running','stage':'cache',
+                 'installation_id':identity,'version':version,'files_done':0,'files_total':0,
+                 'bytes_done':0,'bytes_total':0,'reused':0,'replaced':0}
+        _write_journal(root,journal)
+        progress=Progress(journal,lambda:_write_journal(root,journal))
+        try:
+            helper=str(_cache_helper(root,record,payload,progress=progress,cancelled=cancelled))
+        except BaseException as error:
+            journal.update(status='cancelled' if isinstance(error,Cancelled) else 'interrupted',
+                           finished_at=time.time(),error=str(error)[:300])
+            _write_journal(root,journal)
+            raise
         helper_files=dict(read_json(Path(helper)/'setup-context.json')['files'])
         helper_files['setup-context.json']=digest(Path(helper)/'setup-context.json')
     if helper:helper=guard(Path(helper))
@@ -196,8 +270,15 @@ def register(root, record, payload=None):
         _write_registry(key,values)
     except OSError as error:
         resources['error']='Installed-apps registration was not written.'
+        if journal is not None:
+            journal.update(status='interrupted',stage='registry',finished_at=time.time(),
+                           error=resources['error'])
+            _write_journal(root,journal)
         raise RuntimeError('Windows registration is incomplete; retry it from Odessy management') from error
     resources['state']='complete'
+    if journal is not None:
+        journal.update(status='complete',stage='registered',finished_at=time.time())
+        _write_journal(root,journal)
     return resources
 
 

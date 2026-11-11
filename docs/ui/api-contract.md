@@ -7,7 +7,7 @@ an implicit request target. There are no direct provider/native calls in widgets
 | Operation | Existing backend route |
 |---|---|
 | List profiles | GET `/v1/profiles` |
-| Create/refresh/close | POST `/v1/sessions`, GET/DELETE `/v1/sessions/{sid}` |
+| Create/refresh/close | POST `/v1/sessions` (optional `{"restore": id, "runtime": engine}`), GET/DELETE `/v1/sessions/{sid}` |
 | Next-turn selection | PUT `/v1/sessions/{sid}/model`, `{profile}` |
 | Submit once | POST `/v1/sessions/{sid}/turns`, `{text}` |
 | Stop | POST `/v1/sessions/{sid}/stop` |
@@ -62,6 +62,23 @@ session's model selector. The desktop falls back to the global profiles endpoint
 for older services that omit this field. Existing sessions keep their configuration
 snapshot; profile edits apply to newly created sessions.
 
+A new session may name its backend: `POST /v1/sessions` with `{"runtime": "harness"}`.
+The field is optional and applies only to the session being created — omitting it keeps the
+service's resolution (legacy, unless the installation chooses otherwise), and an open
+session never changes backend. An unknown name is `400`, a runtime this build cannot inject
+is `501`, and an engine whose own dependencies are missing is `503` carrying that engine's
+reason. Restoring continues the engine the history was written with; naming a different one
+is refused (`409`), never a silent reinterpretation. `GET /v1/capabilities` reports
+`runtime: {default, engines, known}` — what this build can create, and what a session gets
+without asking. Registration is not availability: a missing runtime is refused at creation,
+where the error can be acted on.
+
+Session snapshots also carry an `engine` block: `name`, `source` (`default` or `explicit`),
+the engine's own `identity` (empty until it starts) and the `capabilities` reported **for
+this session** (live deltas or questions can depend on the engine's plugin being attached).
+It is diagnostics, not conversation content; the desktop shows it in settings, and a service
+that omits it renders normally.
+
 Usage history is a read-only, bearer-authenticated view of provider-reported cloud
 API calls recorded by this service. Allowed ranges are 7, 30, 90 and 0 (all time)
 days; limit is 1–100. The response contains request metadata, daily aggregates,
@@ -108,6 +125,24 @@ risk, permission, action modification or model-written authorization. Interactio
 cards render the backend request and exact arguments. Pending IDs, expiry and
 allowed UI channels gate response controls; backend validation remains authoritative.
 HTTP 404/409/410 are stale/unavailable outcomes, never success.
+
+A Harness-originated approval uses the same `approvals/{id}` route and the same
+boolean answer, so no client shape changes. Its entry adds `operation`,
+`arguments`, `resolved_paths`, `workspace`, `requested_authority` (`allow_once`
+only), `risk`, `scopes`, `fingerprint`, plus `runtime_identity`
+(`runtime`, `version`, `artifact`), `session_identity` (`acp_session`,
+`odessy_session`) and `request_identity` (`request_id`, `method`,
+`tool_call_id`, `turn`). The runtime request is bound to the operation the card
+shows; an answer that no longer matches that operation is not authorization.
+
+A Harness clarification uses the existing `questions/{id}` route and a string
+answer. Its entry carries `prompt`, `choices` and, when the runtime supplied
+them, `header` and `detail`; `choices` may be empty for a free-text question. A
+choice label answered exactly appears in the model's tool result as `selected`;
+any other text appears as `custom`. Multi-select questions are refused by the
+runtime side rather than answered partially. A question is information, never
+authorization: it cannot resolve an approval, and an approval cannot resolve a
+question.
 
 The runtime inventory requires authentication and reports the server instance ID,
 registry metadata and whether each process-environment variable is nonempty. It

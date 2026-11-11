@@ -362,6 +362,7 @@ class _OdessyAppState extends State<OdessyApp> {
     if (installed != null) {
       installManagement = InstalledManageController(
           widget.managementBackend ?? LocalSetupBackend(),
+          progressBackend: widget.managementBackend ?? LocalSetupBackend(),
           spec: {...installed, 'root': installed['root']})
         ..load();
     }
@@ -645,6 +646,7 @@ class _OdessyAppState extends State<OdessyApp> {
                               controller: pairing,
                               pairing: true),
                           'Settings' => SettingsPage(
+                              onStartNewSession: () => _newSession(context),
                               readiness: readiness,
                               onRestartSaved: ((configuredCoordinator != null ||
                                           widget.onRestartSaved != null) &&

@@ -13,7 +13,7 @@ from installer.components import application
 from installer.components import connection
 
 from installer.components import dependencies
-
+from installer.components import harness
 from installer.components import model
 
 from installer.components import ollama_runtime
@@ -26,11 +26,12 @@ from installer.core.preflight import REPO_ROOT, default_locations
 from installer.core.process import validate_runtimes
 from installer.core.space import RESERVE_BYTES, load_resources, volume_for
 
-STEP_NAMES = ('tool_bundle', 'runtime', 'dependencies', 'application', 'ollama_runtime', 'model', 'connection', 'configuration')
+STEP_NAMES = ('tool_bundle', 'runtime', 'harness_runtime', 'dependencies', 'application', 'ollama_runtime', 'model', 'connection', 'configuration')
 
 
 def paths_for(root: Path) -> dict[str, Path]:
-    return dict(root=root, runtime=root / 'runtime', dependencies=root / 'dependencies', application=root / 'application',
+    return dict(root=root, runtime=root / 'runtime', harness=root / 'runtime' / harness.COMPONENT_DIRECTORY,
+                dependencies=root / 'dependencies', application=root / 'application',
                 ollama=root / 'ollama-runtime', models=root / 'models', service_state=root / 'ollama-state',
                 config=root / 'config/odessy.env')
 
@@ -41,6 +42,8 @@ def release_inputs(bundle: Path):
     deps_manifest, deps_resources = load_resources(dependencies.DEFAULT_RESOURCES)
     ollama_manifest, ollama_resources = ollama_runtime.load_release()
     model_manifest, model_resources, _ = model.load_release()
+    declaration = harness.load_declaration()
+    harness_wheel = harness.wheel_artifact(declaration)
     source = application.source_snapshot(REPO_ROOT)
     files = {}
     installer = Path(__file__).resolve().parent
@@ -52,13 +55,17 @@ def release_inputs(bundle: Path):
         files[path.relative_to(installer).as_posix()] = hashlib.sha256(path.read_bytes().replace(b'\r\n', b'\n')).hexdigest()
     for name, data in source.items():
         files['application/' + name] = hashlib.sha256(data.replace(b'\r\n', b'\n')).hexdigest()
-    release_hash = fingerprint({'files': files, 'tool_archive_sha256': tool['sha256']})
+    release_hash = fingerprint({'files': files, 'tool_archive_sha256': tool['sha256'],
+                                'harness_wheel_sha256': harness_wheel.sha256,
+                                'harness_executable_sha256': declaration['runtime']['executables'][harness.TARGET]['sha256']})
     cache_bytes = sum(m.download_bytes for m in (runtime_manifest, deps_manifest, ollama_manifest, model_manifest))
+    cache_bytes += harness_wheel.size_bytes
     # The dependency installer temporarily needs a second wheel copy for offline pip.
     cache_bytes += deps_manifest.download_bytes
     app_bytes = (sum(s['unpacked_bytes'] for s in runtime_resources['runtimes'].values())
                  + sum(s['unpacked_bytes'] for s in deps_resources['layout'].values())
-                 + ollama_resources['unpacked_bytes'] + tool['unpacked_bytes'] + sum(map(len, source.values())))
+                 + ollama_resources['unpacked_bytes'] + tool['unpacked_bytes'] + sum(map(len, source.values()))
+                 + harness.unpacked_bytes(declaration))
     amounts = dict(cache=cache_bytes, application=2 * app_bytes, models=2 * model_manifest.download_bytes)
     return release_hash, model_resources['model'], amounts
 
@@ -133,6 +140,11 @@ def steps_for(plan: dict, *, emit_progress=print, cancelled=lambda: False) -> li
     def runtime_prepare():
         manifest, resources = runtime.load_release(runtime.DEFAULT_RESOURCES)
         return runtime.prepare_runtime(manifest, resources, paths['runtime'], cache, download=fetch)
+    def harness_check():
+        if not existing_directory(paths['harness']): return None
+        return harness.verify(paths['harness'])
+    def harness_prepare():
+        return harness.prepare(harness.load_declaration(), paths['harness'], cache, download=fetch)
     def dependency_check():
         if not existing_directory(paths['dependencies']): return None
         return application.validate_dependencies(paths['runtime'], paths['dependencies'])
@@ -197,8 +209,9 @@ def steps_for(plan: dict, *, emit_progress=print, cancelled=lambda: False) -> li
     return [
         Step('tool_bundle', bundle_check, bundle_check),
         Step('runtime', runtime_prepare, runtime_check),
+        Step('harness_runtime', harness_prepare, harness_check),
         Step('dependencies', lambda: dependencies.prepare_dependencies(paths['runtime'], paths['dependencies'], cache, download=fetch), dependency_check),
-        Step('application', lambda: application.assemble(paths['runtime'], paths['dependencies'], bundle, paths['application']), application_check),
+        Step('application', lambda: application.assemble(paths['runtime'], paths['dependencies'], bundle, paths['application'], harness_dir=paths['harness']), application_check),
         Step('ollama_runtime', lambda: ollama_runtime.prepare_runtime(paths['ollama'], cache, download=fetch), ollama_check),
         Step('model', lambda: model.prepare_model(paths['models'], cache, download=fetch), model_check),
         Step('connection', connection_check, lambda: None, always_run=True),

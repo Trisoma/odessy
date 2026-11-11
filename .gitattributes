@@ -1,0 +1,3 @@
+# The packaged plugin digests are of the exact bytes it ships; a checkout must not
+# rewrite their line endings or compose_profile refuses the bundle as modified.
+src/odessy/runtime_backends/harness/bundle/** -text

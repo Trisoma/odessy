@@ -1,6 +1,6 @@
 import net from 'node:net'
 import assert from 'node:assert/strict'
-import { apply } from './plugin/odessy-stream-bridge/lib/index.js'
+import { apply } from '../../../src/odessy/runtime_backends/harness/bundle/odessy-stream-bridge/lib/index.js'
 const probe = net.createServer()
 await new Promise(resolve => probe.listen(0, '127.0.0.1', resolve))
 const port = probe.address().port

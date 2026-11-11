@@ -23,6 +23,33 @@ class DesktopSession extends ChangeNotifier {
   String status = 'Connecting', error = '', route = '';
   bool connected = false, busy = false, stopping = false, _disposed = false;
 
+  /// Which engine a *new* session should run. `null` keeps the service's default.
+  /// An existing session keeps the engine it started with — changing this never
+  /// reinterprets the open conversation.
+  String? newSessionRuntime;
+
+  /// What the service reported for `/v1/capabilities`: `default`, `engines`, `known`.
+  /// Diagnostics only; an unreadable report never blocks a session.
+  Json runtimeEngines = const {};
+
+  List<String> get availableEngines {
+    final value = runtimeEngines['engines'];
+    return value is List
+        ? value.whereType<String>().toList(growable: false)
+        : const <String>[];
+  }
+
+  String get engineDefault => runtimeEngines['default'] as String? ?? 'legacy';
+
+  /// The open session's backend identity, or null when the service did not report one.
+  EngineInfo? get engine => session?.engine;
+
+  void selectNewSessionRuntime(String? runtime) {
+    if (newSessionRuntime == runtime) return;
+    newSessionRuntime = runtime;
+    _notify();
+  }
+
   int _epoch = 0;
   Future<void>? _shutdown;
   Json? _consultationVersion;
@@ -57,7 +84,25 @@ class DesktopSession extends ChangeNotifier {
       final details = api is ProfileMetadataApi
           ? await (api as ProfileMetadataApi).profileMetadata()
           : <Profile>[];
-      final fresh = await api.createSession();
+      if (api is RuntimeSelectionApi) {
+        try {
+          runtimeEngines = await (api as RuntimeSelectionApi).runtimeEngines();
+        } catch (_) {
+          // Diagnostics only: a service that cannot describe its engines still serves
+          // sessions, and the create call below reports any real refusal.
+          runtimeEngines = const {};
+        }
+      } else if (newSessionRuntime != null) {
+        // Asking for an engine this service cannot inject and quietly opening the default
+        // is the silent switch this path must not make.
+        throw StateError('This service cannot select a runtime engine.');
+      }
+      // No selection keeps the original create call, so a composition that predates
+      // runtime selection behaves exactly as it did.
+      final fresh = newSessionRuntime == null
+          ? await api.createSession()
+          : await (api as RuntimeSelectionApi)
+              .createSessionOn(runtime: newSessionRuntime);
       final values = fresh.availableProfiles ?? legacyProfiles;
       if (_disposed || epoch != _epoch) return;
       profiles = values;
@@ -90,7 +135,9 @@ class DesktopSession extends ChangeNotifier {
 
   String _safeError(Object e) => e is ApiFailure
       ? e.toString()
-      : 'Connection unavailable. Check that the local service is running.';
+      : e is StateError
+          ? e.message
+          : 'Connection unavailable. Check that the local service is running.';
 
   void _listen(int epoch) {
     final sid = session!.id;

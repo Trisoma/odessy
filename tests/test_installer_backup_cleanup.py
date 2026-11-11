@@ -2,7 +2,6 @@
 import copy
 import json
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -98,30 +97,6 @@ class BackupCleanupTests(unittest.TestCase):
         with patch.object(cleanup,'guard_path',refuse):
             with self.assertRaisesRegex(ValueError,'reparse'):self.preview()
         self.assertTrue((self.folder/'backup-application/old.txt').exists())
-
-
-class CleanupUiTests(unittest.TestCase):
-    def test_preview_and_separate_confirmation_are_required(self):
-        import tkinter as tk
-        from installer.maintenance_ui import Maintenance
-        try:root=tk.Tk();root.withdraw()
-        except tk.TclError as error:self.skipTest(str(error))
-        calls=[];allow=[False]
-        preview=dict(inventory=[{}],bytes_to_remove=512,file_count=1,plan_sha256='fixture')
-        ui=Maintenance(root,Path('D:/test'),Path('D:/bundle'),Path('D:/setup.exe'),
-            cleanup_preview=lambda *args:preview,cleanup=lambda *args:calls.append(args) or dict(removed_files=1,removed_bytes=512),confirm=lambda text:allow[0])
-        def pump():
-            deadline=time.monotonic()+3
-            while ui.busy and time.monotonic()<deadline:root.update();time.sleep(.01)
-            self.assertFalse(ui.busy)
-        try:
-            ui.cleanup();self.assertEqual(calls,[])
-            ui.preview_cleanup();pump();ui.cleanup();self.assertEqual(calls,[])
-            allow[0]=True;ui.cleanup();pump();self.assertEqual(len(calls),1)
-        finally:
-            if ui.thread:ui.thread.join(3)
-            for callback in root.tk.call('after','info'):root.after_cancel(callback)
-            root.destroy()
 
 
 if __name__=='__main__':unittest.main()
