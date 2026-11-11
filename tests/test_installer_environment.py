@@ -41,7 +41,7 @@ class EnvironmentTests(unittest.TestCase):
         self.assertIn('--no-index',install); self.assertIn('--require-hashes',install)
         self.assertIn('--no-compile',install); self.assertIn('--isolated',install)
         self.assertEqual(Path(install[0]).resolve(),(self.root/'environment'/'venv'/'Scripts'/'python.exe').resolve())
-        self.assertEqual(len(report['packages']),29)
+        self.assertEqual(len(report['packages']),31)
         self.assertFalse((self.root/'environment'/'.odessy-preparing').exists())
         self.assertTrue((self.root/'environment'/'odessy-dependencies.json').is_file())
         self.assertEqual(list(self.cache.glob('.odessy-wheelhouse-*')),[])

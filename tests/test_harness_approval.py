@@ -732,12 +732,21 @@ def test_an_allow_waiting_on_the_actual_write_lock_is_retracted_by_stop(
             writer_waiting = threading.Event()
 
             class ObservedWriteLock:
+                # `close()` takes the lock with a bounded `acquire()` (that bound is what keeps
+                # a blocked writer from stalling shutdown), so the double must offer both
+                # interfaces and delegate to the real lock.
                 def __enter__(self):
                     writer_waiting.set()
                     return write_lock.__enter__()
 
                 def __exit__(self, *args):
                     return write_lock.__exit__(*args)
+
+                def acquire(self, blocking=True, timeout=-1):
+                    return write_lock.acquire(blocking, timeout)
+
+                def release(self):
+                    return write_lock.release()
 
             # Instrument entry, but hold the real production lock. Do not pause respond()
             # before its guard: that would miss the actual regression.

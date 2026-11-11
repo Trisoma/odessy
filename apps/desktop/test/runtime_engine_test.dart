@@ -30,7 +30,9 @@ class EngineApi extends DemoApi {
         engine: EngineInfo(
             name: runtime ?? 'legacy',
             source: runtime == null ? 'default' : 'explicit',
-            identity: {'version': '0.2.1-rc.2'},
+            identity: {
+              'version': '0.2.1-rc.2'
+            },
             capabilities: {
               'engine': runtime ?? 'legacy',
               'live_text_deltas': true,
@@ -100,7 +102,8 @@ void main() {
     controller.dispose();
   });
 
-  test('requesting an engine from a service that cannot select one fails loudly',
+  test(
+      'requesting an engine from a service that cannot select one fails loudly',
       () async {
     final controller = DesktopSession(BareApi());
     controller.selectNewSessionRuntime('harness');
@@ -110,13 +113,14 @@ void main() {
     controller.dispose();
   });
 
-  testWidgets('the settings card shows the backend and its unavailable capabilities',
+  testWidgets(
+      'the settings card shows the backend and its unavailable capabilities',
       (tester) async {
     final api = EngineApi(questions: false);
     final controller = DesktopSession(api);
     await controller.start();
-    await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: RuntimeEngine(session: controller))));
+    await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: RuntimeEngine(session: controller))));
     await tester.pumpAndSettle();
     expect(find.text('Runtime engine'), findsOneWidget);
     expect(find.text('This session: legacy'), findsOneWidget);
@@ -134,8 +138,8 @@ void main() {
     final api = EngineApi();
     final controller = DesktopSession(api);
     await controller.start();
-    await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: RuntimeEngine(session: controller))));
+    await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: RuntimeEngine(session: controller))));
     await tester.tap(find.text('Runtime engine'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('runtime-engine-select')));

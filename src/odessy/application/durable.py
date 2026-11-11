@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import sys
 import time
 from dataclasses import dataclass, field
@@ -268,8 +269,10 @@ class SessionStore:
         if path.exists():
             # The previous record stays readable if the new one turns out to be wrong, and a
             # migration (none is implemented here) would have something to fall back to.
+            # Copied, not moved: moving it first meant a crash between the two renames left
+            # *no* main record, so `load` reported the session missing and the listing hid it.
             try:
-                os.replace(path, self._backup_path(session))
+                shutil.copyfile(path, self._backup_path(session))
             except OSError:
                 pass
         os.replace(temporary, path)

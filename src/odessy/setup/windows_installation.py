@@ -149,6 +149,8 @@ def _cache_helper(root,record,payload,*,progress=None,cancelled=lambda:False):
     files=manifest.get('files') if isinstance(manifest,dict) else None
     if not isinstance(files,dict) or not files or len(files)>MAX_HELPER_FILES:
         raise ValueError('maintenance payload has no bounded file manifest')
+    from .package_context import _inventory
+    _inventory(payload, manifest, verify_bytes=False)
     total=len(files)
     sizes={name:guard(payload/name).stat().st_size for name in files}
     if progress is not None:

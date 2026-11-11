@@ -39,6 +39,7 @@ class InstalledManageController extends ChangeNotifier {
 
   /// Copy progress while the maintenance cache is prepared, or null when unknown.
   double? get progress {
+    if (registrationProgress['status'] != 'running') return null;
     final done = registrationProgress['files_done'];
     final total = registrationProgress['files_total'];
     if (done is! int || total is! int || total <= 0) return null;
@@ -157,10 +158,9 @@ class InstalledManageController extends ChangeNotifier {
   /// Ask the running helper to stop before its next bounded step.
   Future<void> cancel() async {
     if (!busy || _disposed) return;
-    ++_epoch;
     _stopProgress();
-    notice = 'Cancellation requested. The installation keeps its previous state.';
-    busy = false;
+    notice =
+        'Cancellation requested. Completed steps are not undone; inspect status before retrying.';
     notifyListeners();
     await backend.cancel();
     if (!identical(progressBackend, backend)) await progressBackend.cancel();

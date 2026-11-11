@@ -33,7 +33,8 @@ void main() {
         ]));
     expect(next.events.map((e) => e.id), [3, 4]);
   });
-  test('session engine identity is parsed, read-only and survives reduction', () {
+  test('session engine identity is parsed, read-only and survives reduction',
+      () {
     final parsed = Session.fromJson({
       'id': 'a',
       'selected_profile': 'auto',

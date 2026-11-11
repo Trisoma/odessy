@@ -39,6 +39,7 @@ def plan(root,bundle,executable=None,*,probe=None,folders=None,validate_base=Tru
         for name in ('runtime','harness_runtime','dependencies'):
             step=steps.get(name)
             if step is None:raise ValueError('the installer workflow is missing the '+name+' stage')
+            if name=='harness_runtime' and not (root/'runtime/harness-runtime').exists():continue
             if step.validate() is None:raise ValueError('base component needs repair: '+name)
     _,tool=application.validate_bundle(bundle)
     required=2*(sum(map(len,application.source_snapshot(workflow.REPO_ROOT).values()))+tool['unpacked_bytes'])+RESERVE_BYTES
@@ -49,6 +50,7 @@ def plan(root,bundle,executable=None,*,probe=None,folders=None,validate_base=Tru
 
 
 def health(root,new):
+    """Select damaged core components, including children of a replaced runtime."""
     from installer.operations import component_repair
     # Selected by name: the Harness stage is now between runtime and dependencies, so a
     # positional prefix would validate the wrong components (or miss the runtime).
@@ -63,6 +65,10 @@ def health(root,new):
             if stage=='dependencies':component_repair.dependency_integrity(root)
         except (OSError,ValueError,subprocess.SubprocessError) as error:
             repairs.append(directory);issues[directory]=str(error)
+    if ('runtime' in repairs and (Path(root)/'runtime'/component_repair.HARNESS_COMPONENT).exists()
+            and component_repair.HARNESS_COMPONENT not in repairs):
+        repairs.append(component_repair.HARNESS_COMPONENT)
+        issues[component_repair.HARNESS_COMPONENT]='rebuild nested Harness with its parent runtime'
     if 'runtime' in repairs and 'dependencies' not in repairs:
         repairs.append('dependencies');issues['dependencies']='rebuild environment at its pinned path with the runtime'
     return repairs,issues

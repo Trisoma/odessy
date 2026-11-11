@@ -298,7 +298,8 @@ def test_a_failing_command_is_a_structured_failure_not_a_crash(tmp_path):
 
 def test_output_bounds_are_preserved_through_the_pipeline(tmp_path):
     server, provider = _server(tmp_path, mode="workspace-write")
-    result = _call(server, "terminal.run", {"command": "'x' * 200000"})
+    prefix = "& " if sys.platform == "win32" else ""
+    result = _call(server, "terminal.run", {"command": prefix + f'"{sys.executable}" -c "print(\'x\' * 200000)"'})
     payload = _payload(result)
     assert payload["stdout_truncated"] is True
     assert payload["stdout_spill"]

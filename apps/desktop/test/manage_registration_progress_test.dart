@@ -55,7 +55,22 @@ class ProgressBackend implements SetupBackend {
 }
 
 void main() {
-  test('registration reports bounded copy progress and can be cancelled', () async {
+  test('finished registration counters do not describe later operations', () {
+    final c = InstalledManageController(BlockingBackend());
+    addTearDown(c.dispose);
+    for (final state in ['completed', 'interrupted', 'cancelled']) {
+      c.registrationProgress = {
+        'status': state,
+        'files_done': 4,
+        'files_total': 4
+      };
+      expect(c.progress, isNull);
+      expect(c.progressLabel, isEmpty);
+    }
+  });
+
+  test('registration reports bounded copy progress and can be cancelled',
+      () async {
     final backend = BlockingBackend();
     final progress = ProgressBackend();
     final c = InstalledManageController(backend,
@@ -71,10 +86,10 @@ void main() {
     expect(c.progressLabel, contains('2 of 4 files'));
 
     await c.cancel();
-    expect(c.busy, isFalse);
+    expect(c.busy, isTrue);
     expect(backend.cancelled, isTrue);
     expect(c.notice, contains('Cancellation requested'));
-    // A late reply from the cancelled helper is ignored.
+    // Stay busy until the helper reports its actual cancellation outcome.
     backend.pending.complete(SetupReply.fromJson({
       'id': backend.requests.single.id,
       'status': 'error',
@@ -82,7 +97,8 @@ void main() {
       'code': 'cancelled',
     }, backend.requests.single.id));
     await Future<void>.delayed(Duration.zero);
-    expect(c.error, isEmpty);
+    expect(c.busy, isFalse);
+    expect(c.error, contains('cancelled'));
   });
 
   test('a single helper is not polled for its own progress', () async {

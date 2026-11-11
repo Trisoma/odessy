@@ -107,13 +107,32 @@ def review(policy: OdessyPolicy, name: str, arguments: Mapping[str, Any]):
 
     request = ToolRequest(name, dict(arguments))
     decision: PolicyDecision = policy.evaluate(request)
+    from odessy.runtime.hooks import load_hooks, screen_request, tighten
+    from concurrent.futures import ThreadPoolExecutor
+    hooks = load_hooks(policy.workspace_root)
+    if hooks is not None:
+        async def screen():
+            value = await screen_request(hooks, request, decision)
+            return tighten(value, await hooks.pre_escalation(request, value))
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            decision = executor.submit(lambda: asyncio.run(screen())).result()
+
     if decision.action == "allow":
         return decision, None
     if decision.action == "confirm":
         plan = build_action_approval(request, decision, policy, call_id="mcp-tool-call",
                                      execution_target={"host": _target(name),
                                                        "runtime": "harness"})
-        return decision, ("confirm", plan.public_dict())
+        class BoundDetails(dict):
+            def validate(self):
+                fresh_decision, _ = review(policy, name, arguments)
+                if not plan.matches(request, fresh_decision, policy,
+                                    execution_target={"host": _target(name), "runtime": "harness"}):
+                    raise ValueError("approved action changed before dispatch")
+                current = load_hooks(policy.workspace_root)
+                if current is not None and current.verify().tampered is not None:
+                    raise ValueError("hooks changed before dispatch")
+        return decision, ("confirm", BoundDetails(plan.public_dict()))
     return decision, f"refused by policy ({decision.rule}): {decision.reason}"
 
 

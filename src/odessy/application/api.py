@@ -107,6 +107,10 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         raise RuntimeError('Install odessy[ui] to run the HTTP server') from exc
 
     sessions, tasks = {}, {}
+    # Restore ids currently being opened. A reservation is taken *before* the await so two
+    # concurrent restores of one durable session cannot both build a controller: the loser
+    # would be overwritten in `sessions` and never closed.
+    opening: set[str] = set()
     configured_names = set(config.participants) if config is not None else set()
     static_profiles = {} if callable(profiles) else {
         name: value for name, value in (profiles or {}).items() if name not in configured_names}
@@ -191,8 +195,11 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         effective, configuration_error = DEFAULT_ENGINE, ''
         try:
             effective = resolve_selection(None).engine
-        except RuntimeSelectionError as exc:
-            configuration_error = str(exc)
+        except RuntimeSelectionError:
+            # A fixed message: the exception text is diagnostic detail, and this endpoint is
+            # reachable by any local client. The configured value is reported by the
+            # administrator-facing record, not echoed here.
+            configuration_error = 'runtime selection is invalid'
         runtime = {'default': effective, 'engines': list(available_engines()),
                    'known': list(ENGINES)}
         if configuration_error:
@@ -339,8 +346,17 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                     controller = await controller
                 if restore is not None:
                     # An explicit restore is answered now: either the runtime still has this
-                    # conversation, or the caller is told it does not.
-                    await controller.prepare()
+                    # conversation, or the caller is told it does not. A controller that fails
+                    # preparation never enters `sessions`, so nothing else would ever close it:
+                    # its owned task, MCP servers and runtime child would outlive the refusal.
+                    try:
+                        await controller.prepare()
+                    except BaseException:
+                        try:
+                            await controller.close()
+                        except Exception:
+                            pass
+                        raise
             except RuntimeSessionUnavailable as exc:
                 # A durable session exists under this identity and cannot be continued. The
                 # caller asked to continue it; beginning a fresh one instead would lose the
@@ -888,12 +904,17 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         if restore is not None:
             if not isinstance(restore, str) or not re.fullmatch(r'[0-9a-f]{32}', restore):
                 raise HTTPException(400, 'restore must be a session id')
-            if restore in sessions:
+            if restore in sessions or restore in opening:
                 # One live owner per durable session: a second controller would compete with the
                 # first for the same history (the runtime refuses a second resume anyway, and
                 # this answers with the useful reason instead of an opaque engine error).
                 raise HTTPException(409, 'Session is already open')
-        controller = await make_controller(restore=restore, runtime=runtime)
+            opening.add(restore)
+        try:
+            controller = await make_controller(restore=restore, runtime=runtime)
+        finally:
+            if restore is not None:
+                opening.discard(restore)
         sessions[controller.id] = controller
         return snapshot(controller)
 

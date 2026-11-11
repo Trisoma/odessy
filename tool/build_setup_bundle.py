@@ -65,7 +65,8 @@ def _license_for(wheel, declared):
         derived = None
     placeholder = isinstance(declared, str) and 'UNREVIEW' in declared.upper()
     if isinstance(declared, str) and declared.strip() and not placeholder:
-        if derived and declared != derived:
+        ambiguous = derived in {'BSD License', 'Apache Software License', 'MIT License', 'Other/Proprietary License'}
+        if derived and not ambiguous and declared != derived:
             raise ValueError(f'license for {wheel.name} contradicts its metadata: '
                              f'declared {declared}, wheel says {derived}')
         return declared

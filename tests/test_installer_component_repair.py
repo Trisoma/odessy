@@ -174,7 +174,7 @@ class ComponentSelection(unittest.TestCase):
         steps[0].validate=lambda:None
         with patch.object(repair.workflow,'steps_for',return_value=steps),patch.object(repair,'dependency_integrity'),patch.object(repair,'model_targets',return_value=[]):
             names,issues=repair._health(Path('D:/fixture'),{})
-        self.assertEqual(names,['runtime','dependencies'])
+        self.assertEqual(names,['runtime','harness-runtime','dependencies'])
 
     def test_missing_configuration_is_not_silently_rewritten(self):
         from types import SimpleNamespace

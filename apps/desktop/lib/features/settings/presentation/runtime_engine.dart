@@ -8,8 +8,10 @@ import '../../../app/session_controller.dart';
 /// selector applies to the **next** session; the open session keeps the engine it
 /// started with, and ending it does not convert its history.
 class RuntimeEngine extends StatelessWidget {
-  const RuntimeEngine({super.key, required this.session});
+  const RuntimeEngine(
+      {super.key, required this.session, this.onStartNewSession});
   final DesktopSession session;
+  final VoidCallback? onStartNewSession;
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -69,7 +71,7 @@ class RuntimeEngine extends StatelessWidget {
                 Align(
                     alignment: Alignment.centerLeft,
                     child: OutlinedButton.icon(
-                        onPressed: canStart ? session.newSession : null,
+                        onPressed: canStart ? onStartNewSession : null,
                         icon: const Icon(Icons.add, size: 18),
                         label: const Text('Start a new session')))
               ],

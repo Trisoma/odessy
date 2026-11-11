@@ -46,6 +46,7 @@ class SettingsPage extends StatefulWidget {
   const SettingsPage({
     super.key,
     required this.controller,
+    this.onStartNewSession,
     this.onOpenManagement,
     this.onOpenInstaller,
     this.onOpenMaintenance,
@@ -70,6 +71,7 @@ class SettingsPage extends StatefulWidget {
   });
 
   final DesktopSession controller;
+  final VoidCallback? onStartNewSession;
   final SetupBackend? configurationBackend;
   final ComponentSettingsController? componentController;
   final ReadinessController? readiness;
@@ -543,7 +545,9 @@ class _SettingsPageState extends State<SettingsPage> {
                       label: const Text('Open devices'))),
           ]),
         if (section == SettingsSections.advanced)
-          RuntimeEngine(session: widget.controller),
+          RuntimeEngine(
+              session: widget.controller,
+              onStartNewSession: widget.onStartNewSession),
         if (section == SettingsSections.advanced)
           RuntimeInventory(session: widget.controller),
         if (section == SettingsSections.advanced)

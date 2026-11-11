@@ -215,9 +215,12 @@ def test_the_real_wheel_artifact_carries_the_production_pin():
 def test_the_installed_paths_point_inside_the_installation():
     paths = harness.installed_paths(Path("C:/Odessy installation"))
 
-    assert paths["executable"].endswith("harness-runtime\\deepseek-harness-sdk-runtime-win-x64.exe")
-    assert paths["node_executable"].endswith("node-runtime\\node.exe")
-    assert paths["node_tools_dir"].endswith("application\\tools")
+    # Compared by parts, not by separator: `installed_paths` uses the host's path type, so the
+    # rendered string is `/`-separated on Linux CI and `\`-separated on Windows.
+    assert Path(paths["executable"]).parts[-2:] == (
+        "harness-runtime", "deepseek-harness-sdk-runtime-win-x64.exe")
+    assert Path(paths["node_executable"]).parts[-2:] == ("node-runtime", "node.exe")
+    assert Path(paths["node_tools_dir"]).parts[-1] == "tools"
 
 
 def test_the_workflow_stages_the_harness_before_the_application():

@@ -51,18 +51,21 @@ class ManagePage extends StatelessWidget {
                 _message(context, c.notice,
                     onPressed: c.dismissNotice, action: 'Dismiss'),
               if (c.busy)
-                Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                  LinearProgressIndicator(value: c.progress),
-                  const SizedBox(height: 6),
-                  Row(children: [
-                    if (c.progressLabel.isNotEmpty)
-                      Expanded(
-                          child: Text(c.progressLabel,
-                              style: Theme.of(context).textTheme.bodySmall)),
-                    TextButton(
-                        onPressed: c.cancel, child: const Text('Cancel')),
-                  ]),
-                ]),
+                Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      LinearProgressIndicator(value: c.progress),
+                      const SizedBox(height: 6),
+                      Row(children: [
+                        if (c.progressLabel.isNotEmpty)
+                          Expanded(
+                              child: Text(c.progressLabel,
+                                  style:
+                                      Theme.of(context).textTheme.bodySmall)),
+                        TextButton(
+                            onPressed: c.cancel, child: const Text('Cancel')),
+                      ]),
+                    ]),
               const SizedBox(height: 12),
               _summary(context, c),
               const SizedBox(height: 20),

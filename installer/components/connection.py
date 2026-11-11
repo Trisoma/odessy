@@ -24,13 +24,17 @@ def inspect_application(app: Path) -> dict:
     _reject_link(app)
     settings = json.loads((app / 'odessy-application.json').read_text(encoding='utf-8'), object_pairs_hook=_unique_keys)
     fields = {'schema_version', 'status', 'runtime_dir', 'dependency_dir', 'python', 'runtime_versions',
-              'source_sha256', 'tool_sha256', 'harness'}
-    if (not isinstance(settings, dict) or set(settings) != fields or type(settings['schema_version']) is not int
+              'source_sha256', 'tool_sha256'}
+    # `harness` is optional, not required: a marker assembled before the Harness component
+    # existed has no such key and is still a complete, ready record. The engine is opt-in, so
+    # requiring the key would reject every existing installation.
+    if (not isinstance(settings, dict) or set(settings) not in (fields, fields | {'harness'})
+        or type(settings['schema_version']) is not int
         or settings['schema_version'] != 1 or settings['status'] != 'ready'):
         raise ValueError('Application assembly marker is incomplete or unsupported.')
-    staged = settings['harness']
+    staged = settings.get('harness', {})
     if not isinstance(staged, dict):
-        raise ValueError('Application assembly marker has no Harness component record.')
+        raise ValueError('Application assembly marker has a malformed Harness component record.')
     if staged:
         for key in ('runtime_dir', 'executable', 'node_executable', 'node_tools_dir'):
             if not isinstance(staged.get(key), str) or not Path(staged[key]).is_absolute():

@@ -192,11 +192,15 @@ def _cache_helper(root,record,payload):
     return helper
 
 
-def register(root,record,payload=None):
+def register(root,record,payload=None,cancelled=None):
     """Create the launcher, the application-menu entry and the maintenance cache.
 
     Identity and ownership are validated before anything is written. The launcher is
     written before the menu entry so the entry never points at a missing file.
+
+    ``cancelled`` mirrors the Windows adapter: the platform wrapper forwards the install's
+    cancellation callback to both, so a signature that lacks it raises ``TypeError`` here —
+    after the installation was already activated.
     """
     root=guard(root)
     if record.get('root')!=str(root): raise ValueError('registration root mismatch')

@@ -151,11 +151,8 @@ def _wait_for(path: Path, timeout: float = 10.0) -> bool:
 
 
 def _alive(pid: int) -> bool:
-    out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True,
-                         text=True, check=False).stdout
-    if not out.strip():
-        return False
-    return str(pid) in out
+    from test_harness_runtime import _pid_alive
+    return _pid_alive(pid)
 
 
 # -- external server ------------------------------------------------------------

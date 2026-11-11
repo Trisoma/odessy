@@ -133,8 +133,11 @@ def parse_request(message: Any) -> tuple[Question, ...]:
         choices: list[str] = []
         options = item.get("labels", item.get("options"))
         if options is not None:
-            if not isinstance(options, list) or not options or len(options) > MAX_OPTIONS:
-                raise QuestionFrameError(f"options must be 1..{MAX_OPTIONS} entries")
+            # An empty list is a *free-text* question, not a malformed one: the plugin sends
+            # `labels: []` when the runtime omitted choices, and refusing it cancelled a
+            # perfectly valid question before it reached the person.
+            if not isinstance(options, list) or len(options) > MAX_OPTIONS:
+                raise QuestionFrameError(f"options must be at most {MAX_OPTIONS} entries")
             for option in options:
                 label = option.get("label") if isinstance(option, Mapping) else option
                 if not isinstance(label, str) or not label.strip() or len(label) > MAX_OPTION_LABEL:

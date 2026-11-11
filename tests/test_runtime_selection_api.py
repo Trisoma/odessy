@@ -287,7 +287,7 @@ def test_an_invalid_environment_default_is_reported_not_flattened(monkeypatch):
         async with client(app) as api:
             data = (await api.get("/v1/capabilities")).json()
             assert data["runtime"]["default"] == "legacy"
-            assert "telepathy" in data["runtime"]["error"]
+            assert data["runtime"]["error"] == "runtime selection is invalid"
 
     run(flow())
 

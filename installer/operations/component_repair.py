@@ -103,6 +103,9 @@ def _health(root,new):
         except (OSError,ValueError,DownloadError,subprocess.TimeoutExpired) as error:
             directory={'ollama_runtime':'ollama-runtime','harness_runtime':HARNESS_COMPONENT}.get(name,name)
             repairs.append(directory);issues[directory]=str(error)
+    if 'runtime' in repairs and HARNESS_COMPONENT not in repairs:
+        repairs.append(HARNESS_COMPONENT)
+        issues[HARNESS_COMPONENT]='Rebuild nested Harness with its parent runtime.'
     if 'runtime' in repairs and 'dependencies' not in repairs:
         repairs.append('dependencies')
         issues['dependencies']=' The pinned-path virtual environment is rebuilt with the runtime.'
@@ -172,9 +175,10 @@ def repair(root,folder,preview,data,*,download=download_artifact):
         if target.exists():
             destination=folder/('backup-'+name);model.guard_path(destination);destination.parent.mkdir(parents=True,exist_ok=True)
             target.rename(destination)
+    for name in sorted(preview['repair_components'], key=lambda n: n != HARNESS_COMPONENT):
+        if not name.startswith('models/'):backup(name)
     for name in preview['repair_components']:
         if name.startswith('models/'):continue
-        backup(name)
         if name=='runtime':
             manifest,resources=runtime.load_release(runtime.DEFAULT_RESOURCES)
             reports['runtime']=runtime.prepare_runtime(manifest,resources,root/name,cache,download=download)

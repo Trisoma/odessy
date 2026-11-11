@@ -646,6 +646,7 @@ class _OdessyAppState extends State<OdessyApp> {
                               controller: pairing,
                               pairing: true),
                           'Settings' => SettingsPage(
+                              onStartNewSession: () => _newSession(context),
                               readiness: readiness,
                               onRestartSaved: ((configuredCoordinator != null ||
                                           widget.onRestartSaved != null) &&

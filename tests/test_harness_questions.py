@@ -156,6 +156,24 @@ def test_the_askers_header_and_detail_travel_with_the_question():
 
 # ----------------------------------------------------------- withdrawal paths
 
+
+def test_an_empty_label_list_is_a_free_text_question(tmp_path):
+    """The plugin sends ``labels: []`` when the runtime offered no choices.
+
+    Treating that as malformed cancelled a valid question before the person saw it.
+    """
+
+    async def flow():
+        bridge, sent, asked = make_bridge()
+        frame = question_frame()
+        frame["questions"] = [{"id": "a", "question": "x", "labels": []}]
+        bridge.observe(frame)
+        await settle()
+        assert asked, "a free-text question must reach the person"
+        assert not sent.of("cancel")
+
+    asyncio.run(flow())
+
 @pytest.mark.parametrize("questions", [
     None,                                                              # missing
     [],                                                                # empty
@@ -164,7 +182,6 @@ def test_the_askers_header_and_detail_travel_with_the_question():
     [{"id": "a", "question": ""}],                                     # empty text
     [{"id": "a", "question": "x" * 8193}],                             # over text bound
     [{"id": "a", "question": "x", "multiSelect": True}],               # unsupported shape
-    [{"id": "a", "question": "x", "labels": []}],                      # empty options
     [{"id": "a", "question": "x", "labels": ["y", "y"]}],              # duplicate labels
     ["not an object"],
 ])

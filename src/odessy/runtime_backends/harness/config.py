@@ -283,7 +283,7 @@ class HarnessConfig:
         # would carry the bridge token and the route credential into the tool process. Only
         # the platform names a process needs to start and to open a socket are passed.
         parent = self.source_env or os.environ
-        base_env = {name: parent[name] for name in _base_env_names() if name in parent}
+        base_env = {name: parent[name] for name in (*_base_env_names(), 'ODESSY_HOOKS_FILE', 'ODESSY_HOOKS_REQUIRED') if name in parent}
         env = [{"name": name, "value": value} for name, value in base_env.items()]
         if control is not None:
             env.append({"name": "ODESSY_TOOL_CONTROL_TOKEN", "value": control[1]})

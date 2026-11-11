@@ -195,6 +195,11 @@ def build_odessy_mcp_server(
                 reason = verdict if isinstance(verdict, str) else str(verdict[0])
                 return _refusal_result(command=command, cwd=cwd, reason=reason)
 
+        def dispatch_guard():
+            if before_spawn is not None:before_spawn()
+            if authorize is not None and isinstance(verdict, tuple):
+                validate = getattr(verdict[1], 'validate', None)
+                if validate is not None:validate()
         try:
             if session_policy is not None:
                 # The session decided these; the call may not. A model-supplied value is
@@ -205,7 +210,7 @@ def build_odessy_mcp_server(
                     cwd=cwd,
                     timeout=timeout,
                     on_spawn=on_spawn,
-                    before_spawn=before_spawn,
+                    before_spawn=dispatch_guard,
                     **session_policy.confinement(),
                 )
             return bridge.run(
@@ -219,7 +224,7 @@ def build_odessy_mcp_server(
                 extra_writable=extra_writable,
                 limits=limits,
             )
-        except ProviderError as exc:
+        except (ProviderError, ValueError) as exc:
             # A refusal is RETURNED, not raised. Raising would let it cross the MCP
             # boundary, which flattens a typed tool exception into a generic
             # `RuntimeError("MCP tool returned an error")` and discards the reason.

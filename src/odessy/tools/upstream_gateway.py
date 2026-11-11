@@ -342,8 +342,12 @@ async def _dispatch(upstream: Upstream, control: _Control | None, name: str,
         _audit_decision(log, upstream, name, arguments, decision, None, policy)
 
     remote = upstream.routes[name]
+    def before_dispatch():
+        if isinstance(verdict, tuple):
+            validate = getattr(verdict[1], 'validate', None)
+            if validate is not None:validate()
     forward = asyncio.create_task(
-        upstream.server.call_tool(remote, arguments))
+        upstream.server.call_tool(remote, arguments, before_dispatch=before_dispatch))
     if control is None:
         return _forwarded(await forward, name)
 

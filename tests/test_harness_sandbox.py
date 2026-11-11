@@ -375,7 +375,7 @@ def test_required_isolation_either_launches_or_refuses_never_downgrades(tmp_path
 
 def test_a_session_plan_names_the_host_backend_and_what_it_cannot_do(tmp_path):
     plan = plan_for_session(workspace=tmp_path, mode="workspace-write",
-                            settings=SandboxSettings(), environ={})
+                            settings=SandboxSettings(), environ={}, registry=_capable_registry(), isolation="preferred")
     assert plan.provider is not None
     assert set(plan.unenforced) <= {"network", "hidden_paths"}
     # The default hidden list is non-empty, so a backend that cannot mask paths must say so.
@@ -395,7 +395,7 @@ def test_no_hidden_paths_and_network_allowed_leave_nothing_unenforced(tmp_path):
     settings = SandboxSettings(hidden_paths=(), extra_writable=(), network_read_only="allow",
                                network_workspace_write="allow")
     plan = plan_for_session(workspace=tmp_path, settings=settings, mode="workspace-write",
-                            environ={})
+                            environ={}, registry=_capable_registry())
     assert plan.unenforced == ()
 
 
@@ -414,3 +414,9 @@ def test_the_plan_and_the_execution_layer_share_one_policy(tmp_path):
 def test_the_narrow_overlay_name_is_still_the_reviewed_one(tmp_path):
     # Guards against a rename in profile.py drifting away from the config's validation.
     assert NARROW_PATCH_NAME == "odessy_narrow.patch.yml"
+
+
+def _capable_registry():
+    from test_tool_pipeline import RecordingProvider
+    from odessy.execution.registry import ProviderRegistry
+    return ProviderRegistry([RecordingProvider()])
