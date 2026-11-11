@@ -968,10 +968,15 @@ class HarnessRuntime:
     async def run_turn(self, text: str, *args: Any, **kwargs: Any) -> AgentTurnResult:
         """One turn: transient deltas while it runs, one committed answer at the end.
 
-        Tools (07-10), consultation (10) and approvals (08) are refused, not emulated.
+        Unimplemented *engine* capabilities are refused, not emulated. A participant
+        consultation is not one of them: the session performs it before this call (it holds
+        the participant's provider and credential), so a stray argument here is a
+        programming error, not a capability gap.
         """
         if kwargs.get("participant") is not None or args:
-            raise RuntimeCapabilityUnavailable("collaboration", gate="10")
+            raise TypeError(
+                "an engine turn takes text only; participant consultation is performed by "
+                "the session before the engine is called")
         await self.start()
         if self._closed:
             raise RuntimeUnavailable(ENGINE, "the session is closed")

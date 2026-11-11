@@ -23,6 +23,7 @@ that a resumed session replayed its history).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import threading
 import time
@@ -184,6 +185,11 @@ class Handler(BaseHTTPRequestHandler):
             "message_roles": [m.get("role") for m in messages],
             "n_messages": len(messages),
             "last_user": prompt[:200],
+            # A 200-char head cannot prove what a framed/patched prompt said. The digest
+            # lets a scenario assert the exact text it expected, and the tail shows the end.
+            "last_user_length": len(prompt),
+            "last_user_tail": prompt[-200:],
+            "last_user_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             "tools": [tool_name(t) for t in tools][:60],
             "tool_schemas": schemas,
             # What the model was actually shown after a tool ran. Without it a fixture can
