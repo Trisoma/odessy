@@ -147,7 +147,9 @@ python -m odessy serve --fake-model
 ```
 
 Then run `flutter run -d linux` from `apps/desktop`. Use the generated token
-when connecting the desktop app. Generate a separate token on each machine.
+when connecting the desktop app. Display it locally with `$env:ODESSY_API_TOKEN`
+in PowerShell or `printf '%s\n' "$ODESSY_API_TOKEN"` on Linux before entering it
+in the app. Keep it private. Generate a separate token on each machine.
 
 Click the connection icon, enter the printed loopback address and the token, then
 send `what time is it?`. The token stays in application memory; the backend never

@@ -172,7 +172,11 @@ def main() -> int:
                         await asyncio.wait_for(turn, timeout=30)
                     except asyncio.CancelledError:  # local cancellation is an expected Stop outcome
                         pass
-                await asyncio.sleep(1.0)
+                provider_finished = await _wait_until(
+                    lambda: server.stream_completions.get("slow sentences please") is not None
+                    and server.stream_completions["slow sentences please"].is_set(),
+                    20.0, "provider stream completion")
+                check("the stopped provider stream finished within the bound", provider_finished)
                 check("Stop answers what the pinned runtime established",
                       outcome.get("execution") in {"stopped", "unconfirmed"},
                       json.dumps(outcome)[:240])
@@ -182,7 +186,7 @@ def main() -> int:
                 check("sentences spoken before the Stop stay spoken",
                       len(spoken_at_stop) > before, json.dumps(spoken_at_stop[before:])[:200])
                 check("nothing from the cancelled reply is spoken afterwards",
-                      spoken == spoken_at_stop, json.dumps(spoken[len(spoken_at_stop):])[:200])
+                      provider_finished and spoken == spoken_at_stop, json.dumps(spoken[len(spoken_at_stop):])[:200])
                 check("the cancelled reply's unfinished text is not spoken",
                       all("tail" not in sentence for sentence in spoken),
                       json.dumps([s for s in spoken if "tail" in s])[:200])

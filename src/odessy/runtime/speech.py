@@ -60,7 +60,7 @@ class SpeechStream:
     def feed(self, delta: str) -> None:
         if self._held or not delta:
             return
-        if self.on_text is not None:
+        if self.on_text is not None and delta.strip():
             self.on_text()
         self._reply.append(delta)
         self._buffer += delta

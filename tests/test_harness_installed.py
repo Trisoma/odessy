@@ -344,6 +344,12 @@ def _launch_and_capture(root: Path, monkeypatch) -> dict:
     import os
     import runpy
 
+    import sys
+
+    # The launcher mutates process globals as it would in its own interpreter.
+    # Keep those changes inside this test, away from later subprocess bootstraps.
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(sys, "argv", list(sys.argv))
     launch = _launcher(root)
     called: dict = {}
     monkeypatch.setattr(runpy, "run_module", lambda name, **kw: called.update(name=name, **kw))
@@ -409,3 +415,15 @@ def test_the_engine_finds_the_staged_tool_server_without_the_override(tmp_path):
     assert tools is not None
     assert Path(tools.executable) == node
     assert Path(tools.entry) == entry
+
+
+
+def test_launcher_fixture_restores_python_globals(tmp_path, monkeypatch):
+    import sys
+    original_path=list(sys.path)
+    original_argv=list(sys.argv)
+    root=_launcher_root(tmp_path,record=True)
+    with monkeypatch.context() as scoped:
+        _launch_and_capture(root,scoped)
+    assert sys.path==original_path
+    assert sys.argv==original_argv

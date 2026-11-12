@@ -631,7 +631,7 @@ class SessionController:
         text = data.get('text')
         if not isinstance(text, str) or not text:
             return
-        if self._voice_timing is not None:
+        if self._voice_timing is not None and text.strip():
             self._voice_timing.mark_first_text()
         stream = self._speech_stream
         if stream is None:

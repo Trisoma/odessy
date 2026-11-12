@@ -728,3 +728,25 @@ def test_legacy_stream_marks_text_before_playback(monkeypatch):
         assert session.timing.first_text is not None
         await finish()
     asyncio.run(run())
+
+
+@pytest.mark.anyio
+async def test_whitespace_deltas_do_not_mark_first_text(monkeypatch):
+    engine=FakeEngine([_delta(' \n\t')],answer='')
+    controller=build_controller(monkeypatch,engine)
+    timing=VoiceTiming().begin('whitespace')
+    controller.bind_turn_timing(timing)
+    await controller.run_turn('hi')
+    assert timing.first_text is None
+    controller._observe_engine_text({'text':'word'})
+    assert timing.first_text is not None
+
+
+def test_speech_whitespace_is_preserved_without_marking_first_text():
+    marks=[]
+    stream=SpeechStream(lambda text:None,on_text=lambda:marks.append(True))
+    stream.begin();stream.feed(' \n\t')
+    assert marks==[]
+    assert ''.join(stream._reply)==' \n\t'
+    stream.feed('hello')
+    assert marks==[True]
