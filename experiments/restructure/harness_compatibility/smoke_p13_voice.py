@@ -128,65 +128,71 @@ def main() -> int:
             controller = await create_controller(
                 workspace=workspace, use_fake_model=True, selected_profile=PROFILE,
                 durable=SessionStore(state), runtime_selection="harness")
-            check("the session runs on the selected engine", controller.engine == "harness",
-                  controller.engine)
+            try:
+                check("the session runs on the selected engine", controller.engine == "harness",
+                      controller.engine)
 
-            # -- streaming text reaches the voice segmenter, once ------------------
-            timing = VoiceTiming().begin("p13-turn-1")
-            controller.bind_turn_timing(timing)
-            spoken: list[str] = []
-            stream = SpeechStream(spoken.append)
-            with speech_scope(stream):
-                result = await controller.run_turn("ping the prompt thirteen voice path")
-            controller.bind_turn_timing(None)
-            events = [event["type"] for event in controller.events]
-            check("the pinned engine produced live deltas", "delta" in events,
-                  str(sorted(set(events)))[:200])
-            check("the reply was spoken sentence by sentence while the turn ran",
-                  bool(spoken), json.dumps(spoken)[:200])
-            check("the committed answer was not said a second time",
-                  not stream.unspoken(result.final_text),
-                  json.dumps({"spoken": stream.spoken,
-                              "answer": result.final_text})[:240])
-            phase = timing.public()
-            check("the first text is timed with its source",
-                  phase["first_text_source"] == DELTA_SOURCE
-                  and phase["first_text_ms"] is not None, json.dumps(phase)[:200])
-            check("recognition and playback are reported as not measured, not as zero",
-                  "stt" in phase["not_measured"] and "first_audio" in phase["not_measured"],
-                  json.dumps(phase["not_measured"]))
+                # -- streaming text reaches the voice segmenter, once ------------------
+                timing = VoiceTiming().begin("p13-turn-1")
+                controller.bind_turn_timing(timing)
+                spoken: list[str] = []
+                stream = SpeechStream(spoken.append)
+                with speech_scope(stream):
+                    result = await controller.run_turn("ping the prompt thirteen voice path")
+                controller.bind_turn_timing(None)
+                events = [event["type"] for event in controller.events]
+                check("the pinned engine produced live deltas", "delta" in events,
+                      str(sorted(set(events)))[:200])
+                check("the reply was spoken sentence by sentence while the turn ran",
+                      bool(spoken), json.dumps(spoken)[:200])
+                check("the committed answer was not said a second time",
+                      not stream.unspoken(result.final_text),
+                      json.dumps({"spoken": stream.spoken,
+                                  "answer": result.final_text})[:240])
+                phase = timing.public()
+                check("the first text is timed with its source",
+                      phase["first_text_source"] == DELTA_SOURCE
+                      and phase["first_text_ms"] is not None, json.dumps(phase)[:200])
+                check("recognition and playback are reported as not measured, not as zero",
+                      "stt" in phase["not_measured"] and "first_audio" in phase["not_measured"],
+                      json.dumps(phase["not_measured"]))
 
-            # -- Stop during the stream: the rest is never spoken -------------------
-            before = len(spoken)
-            stop_stream = SpeechStream(spoken.append)
-            outcome: dict = {}
-            turn = None
-            with speech_scope(stop_stream):
-                turn = asyncio.create_task(controller.run_turn("slow sentences please"))
-                # Wait until at least one sentence of this turn has been spoken.
-                await _wait_until(lambda: len(spoken) > before, 20.0, "a spoken sentence")
-                outcome = await controller.stop()
-                try:
-                    await asyncio.wait_for(turn, timeout=30)
-                except Exception:  # noqa: BLE001 - a cancelled turn raises by design
-                    pass
-            spoken_at_stop = list(spoken)
-            await asyncio.sleep(1.0)
-            check("Stop answers what the pinned runtime established",
-                  outcome.get("execution") in {"stopped", "unconfirmed"},
-                  json.dumps(outcome)[:240])
-            check("the stop is visible in the event stream",
-                  "stopped" in [event["type"] for event in controller.events],
-                  str(sorted(set(event["type"] for event in controller.events)))[:200])
-            check("sentences spoken before the Stop stay spoken",
-                  len(spoken_at_stop) > before, json.dumps(spoken_at_stop[before:])[:200])
-            check("nothing from the cancelled reply is spoken afterwards",
-                  spoken == spoken_at_stop, json.dumps(spoken[len(spoken_at_stop):])[:200])
-            check("the cancelled reply's unfinished text is not spoken",
-                  all("tail" not in sentence for sentence in spoken),
-                  json.dumps([s for s in spoken if "tail" in s])[:200])
+                # -- Stop during the stream: the rest is never spoken -------------------
+                before = len(spoken)
+                stop_stream = SpeechStream(spoken.append)
+                outcome: dict = {}
+                turn = None
+                with speech_scope(stop_stream):
+                    turn = asyncio.create_task(controller.run_turn("slow sentences please"))
+                    # Wait until at least one sentence of this turn has been spoken.
+                    await _wait_until(lambda: len(spoken) > before, 20.0, "a spoken sentence")
+                    outcome = await controller.stop()
+                    spoken_at_stop = list(spoken)
+                    try:
+                        await asyncio.wait_for(turn, timeout=30)
+                    except asyncio.CancelledError:  # local cancellation is an expected Stop outcome
+                        pass
+                provider_finished = await _wait_until(
+                    lambda: server.stream_completions.get("slow sentences please") is not None
+                    and server.stream_completions["slow sentences please"].is_set(),
+                    20.0, "provider stream completion")
+                check("the stopped provider stream finished within the bound", provider_finished)
+                check("Stop answers what the pinned runtime established",
+                      outcome.get("execution") in {"stopped", "unconfirmed"},
+                      json.dumps(outcome)[:240])
+                check("the stop is visible in the event stream",
+                      "stopped" in [event["type"] for event in controller.events],
+                      str(sorted(set(event["type"] for event in controller.events)))[:200])
+                check("sentences spoken before the Stop stay spoken",
+                      len(spoken_at_stop) > before, json.dumps(spoken_at_stop[before:])[:200])
+                check("nothing from the cancelled reply is spoken afterwards",
+                      provider_finished and spoken == spoken_at_stop, json.dumps(spoken[len(spoken_at_stop):])[:200])
+                check("the cancelled reply's unfinished text is not spoken",
+                      all("tail" not in sentence for sentence in spoken),
+                      json.dumps([s for s in spoken if "tail" in s])[:200])
 
-            await controller.close()
+            finally:
+                await controller.close()
 
         asyncio.run(scenario())
     finally:

@@ -62,7 +62,7 @@ class MonitoringSupervisor:
         if link is None and ssh is None:
             raise MonitorUnavailable(self.link_error or self.ssh_error or
                                      'Configure monitoring or an SSH computer')
-        import httpx
+        import httpx2
         options = {'creationflags': subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else {'start_new_session': True}
         self.process = await asyncio.create_subprocess_exec(str(binary), stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=65536, **options)
@@ -82,7 +82,7 @@ class MonitoringSupervisor:
             if ready.get('schema_version') != 1 or ready.get('op') != 'ready' or parsed.scheme != 'http' or parsed.hostname != '127.0.0.1' or not parsed.port or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ('', '/'):
                 raise MonitorUnavailable('Invalid monitor readiness')
             self.base_url = ready['base_url'].rstrip('/')
-            self.client = httpx.AsyncClient(base_url=self.base_url, headers={'Authorization': 'Bearer ' + self.token},
+            self.client = httpx2.AsyncClient(base_url=self.base_url, headers={'Authorization': 'Bearer ' + self.token},
                                             timeout=5, follow_redirects=False, trust_env=False)
         except asyncio.CancelledError:
             await self.close()

@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import subprocess
 import signal
+import stat
 import sys
 import tempfile
 import time
@@ -40,9 +41,16 @@ def _digest(stream):
 def guard(path):
     path=Path(path).absolute()
     for item in (path,*path.parents):
-        if item.is_symlink() or (hasattr(item,'is_junction') and item.is_junction()):
+        # One uncached, non-following metadata read checks both links and all
+        # Windows reparse points. Repeating exists/is_symlink/lstat for every
+        # ancestor amplified filesystem/scanner work for large inventories.
+        try:
+            info=item.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(info.st_mode):
             raise ValueError('linked installation paths are not supported')
-        if os.name=='nt' and item.exists() and getattr(item.lstat(),'st_file_attributes',0)&1024:
+        if os.name=='nt' and getattr(info,'st_file_attributes',0)&1024:
             raise ValueError('reparse points are not supported')
     return path
 
@@ -437,6 +445,14 @@ class ManagedInstallation:
             progress.stage('uninstall')
             atomic(self.root/'operation.json',journal)
             removed=[];retained=[]
+            total=sum(len(files) for files in record['versions'].values())
+            total+=sum(len(files) for files in record.get('runtimes',{}).values())
+            journal.update(files_total=total,files_done=0)
+            progress.flush(force=True)
+            def file_done():
+                journal.update(files_done=journal['files_done']+1,
+                               removed_files=len(removed),retained_files=len(retained))
+                progress.flush()
             try:
                 # A fully removed version is forgotten: its file inventory is the
                 # bulk of this record, and keeping it grew the record past its
@@ -450,6 +466,7 @@ class ManagedInstallation:
                         path=guard(base/name)
                         if path.is_file() and digest(path)==sha: path.unlink();removed.append(f'{version}/{name}')
                         elif path.exists(): retained.append(f'{version}/{name}');kept[name]=sha
+                        file_done()
                     if kept: remaining_versions[version]=kept
                 remaining_runtimes={}
                 for runtime_id,files in record.get('runtimes',{}).items():
@@ -462,11 +479,12 @@ class ManagedInstallation:
                         path=guard(self.root/'runtimes'/runtime_id/name)
                         if path.is_file() and digest(path)==sha:path.unlink();removed.append('runtimes/'+runtime_id+'/'+name)
                         elif path.exists():retained.append('runtimes/'+runtime_id+'/'+name);kept[name]=sha
+                        file_done()
                     if kept: remaining_runtimes[runtime_id]=kept
                 record['versions']=remaining_versions
                 if 'runtimes' in record: record['runtimes']=remaining_runtimes
                 record['active']=None;atomic(self.root/'installation.json',record)
-                journal.update(finished_at=time.time(),status='completed',removed_files=len(removed),retained_files=len(retained));atomic(self.root/'operation.json',journal)
+                journal.update(finished_at=time.time(),status='completed',removed_files=len(removed),retained_files=len(retained));progress.flush(force=True)
             except BaseException as error:
                 journal['finished_at']=time.time()
                 journal.update(status='interrupted',removed_files=len(removed),retained_files=len(retained),error='cancelled' if isinstance(error,KeyboardInterrupt) else 'failed; inspect before retrying')

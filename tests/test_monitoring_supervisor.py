@@ -1,5 +1,5 @@
 import asyncio
-import httpx
+import httpx2 as httpx
 import pytest
 from odessy.monitoring.supervisor import MonitoringSupervisor, MonitorHTTPError, MonitorUnavailable
 from odessy.monitoring.settings import MonitoringSettings

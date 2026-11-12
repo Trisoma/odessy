@@ -14,6 +14,23 @@ def _first_file(candidates):
     return ''
 
 
+def _binary_roots():
+    """Directories a packaged binary may sit in, for checkout and installed layouts.
+
+    A checkout keeps ``src/odessy/monitoring/settings.py``, so four parents up is the
+    repository root. The versioned Windows layout installs the wheel into
+    ``<root>/versions/<id>/Lib/site-packages``, where the same file is *five* parents
+    below the version directory, and the Go monitor and Rust link helpers live in
+    ``<version>/monitor`` and ``<version>/link``. Both roots are checked, in order.
+    """
+
+    here = Path(__file__).resolve()
+    roots = [here.parents[3]]
+    if len(here.parents) > 4:
+        roots.append(here.parents[4])
+    return roots
+
+
 def resolve_monitor_binary(env=None) -> str:
     """Find the packaged/source monitor without requiring an environment edit."""
 
@@ -24,13 +41,14 @@ def resolve_monitor_binary(env=None) -> str:
     found = shutil.which('odessy-monitor')
     if found:
         return found
-    root = Path(__file__).resolve().parents[3]
-    candidates = [
-        root / 'build' / 'local-desktop' / 'bin' / 'odessy-monitor.exe',
-        root / 'build' / 'local-desktop' / 'bin' / 'odessy-monitor',
-        root / 'monitor' / 'odessy-monitor.exe',
-        root / 'monitor' / 'odessy-monitor',
-    ]
+    candidates = []
+    for root in _binary_roots():
+        candidates.extend([
+            root / 'build' / 'local-desktop' / 'bin' / 'odessy-monitor.exe',
+            root / 'build' / 'local-desktop' / 'bin' / 'odessy-monitor',
+            root / 'monitor' / 'odessy-monitor.exe',
+            root / 'monitor' / 'odessy-monitor',
+        ])
     portable = env.get('ODESSY_PORTABLE_ROOT', '').strip()
     if portable:
         candidates.extend([Path(portable) / 'monitor' / 'odessy-monitor.exe',
@@ -50,13 +68,14 @@ def resolve_link_binary(env=None) -> str:
         path = None
     if path is not None and path.is_file():
         return str(path)
-    root = Path(__file__).resolve().parents[3]
-    candidates = [
-        root / 'link' / 'odessy-link.exe',
-        root / 'link' / 'odessy-link',
-        root / 'build' / 'odessy-link' / 'odessy-link.exe',
-        root / 'build' / 'odessy-link' / 'odessy-link',
-    ]
+    candidates = []
+    for root in _binary_roots():
+        candidates.extend([
+            root / 'link' / 'odessy-link.exe',
+            root / 'link' / 'odessy-link',
+            root / 'build' / 'odessy-link' / 'odessy-link.exe',
+            root / 'build' / 'odessy-link' / 'odessy-link',
+        ])
     portable = env.get('ODESSY_PORTABLE_ROOT', '').strip()
     if portable:
         candidates.extend([Path(portable) / 'link' / 'odessy-link.exe',

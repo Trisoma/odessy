@@ -660,3 +660,17 @@ async def test_close_unblocks_stalled_capture_and_idle_worker():
                 await task
     assert session._worker is None
     assert closed.is_set()
+
+
+@pytest.mark.anyio
+async def test_followup_starts_fresh_timing():
+    from odessy.voice.timing import VoiceTiming
+    session=Harness([]).build(interaction='conversation')
+    session.timing=VoiceTiming().begin('old')
+    session.timing.mark_capture_end();session.timing.mark_stt_done()
+    previous=session.timing.generation
+    session._after_reply(session._turn_id)
+    assert await session._followup_speech(SPEECH)
+    assert session.timing.generation==previous+1
+    assert session.timing.capture_end is None
+    assert session.timing.stt_done is None

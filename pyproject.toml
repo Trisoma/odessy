@@ -9,6 +9,7 @@ dependencies = [
   "mcp>=2,<3",
   "jsonschema>=4",
   "fastapi>=0.115,<1",
+  "httpx2>=2.13,<3",
   "tomli>=2.0.1; python_version < '3.11'",
 ]
 

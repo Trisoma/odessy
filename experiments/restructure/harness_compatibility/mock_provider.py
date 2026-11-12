@@ -221,6 +221,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             finally:
                 self.close_connection = True
+                with _LOCK:
+                    event = self.server.stream_completions.setdefault(prompt, threading.Event())
+                    event.set()
             return
 
         message: dict = {"role": "assistant", "content": "".join(chunks)}
@@ -321,6 +324,7 @@ def serve(log_dir: Path, port: int = 0) -> tuple[ThreadingHTTPServer, int]:
     log_dir.mkdir(parents=True, exist_ok=True)
     handler = type("BoundHandler", (Handler,), {"log_dir": log_dir})
     server = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    server.stream_completions = {}
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, server.server_address[1]

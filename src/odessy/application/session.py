@@ -628,22 +628,20 @@ class SessionController:
         existing provider. Nothing is spoken for a text turn, and the committed answer is
         never spoken from here — only the transient text the engine produced.
         """
+        text = data.get('text')
+        if not isinstance(text, str) or not text:
+            return
+        if self._voice_timing is not None and text.strip():
+            self._voice_timing.mark_first_text()
         stream = self._speech_stream
         if stream is None:
             return
-        text = data.get('text')
         attempt = data.get('attempt')
         if attempt is not None and attempt != self._speech_attempt:
             # A retried request speaks its own text. The earlier attempt's unfinished
             # buffer is dropped; sentences already spoken stay spoken.
             self._speech_attempt = attempt
             stream.begin()
-        if not isinstance(text, str) or not text:
-            return
-        if self._voice_timing is not None:
-            # The first *text*, not the first frame: a boundary frame with no text is not
-            # the answer starting to arrive.
-            self._voice_timing.mark_first_text()
         stream.feed(text)
 
     def _end_engine_speech(self) -> None:

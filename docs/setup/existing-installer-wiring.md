@@ -91,7 +91,8 @@ python -m installer.components.harness --prepare          # once per machine, do
 python tool/build_setup_bundle.py --wheelhouse <wheelhouse> --licenses <licenses.json> ^
     --python-runtime <python-3.12-prefix> --desktop-bundle <flutter-release-dir> ^
     --node-runtime <node-dir> --toolserver <tool-server-dir> ^
-    --harness-runtime <staged-harness-dir> --output <payload.zip>
+    --harness-runtime <staged-harness-dir> --monitor <staged-monitor-dir> ^
+    --rust <staged-link-dir> --output <payload.zip>
 python tool/audit_setup_artifact.py <payload.zip>
 python tool/package_native_setup.py --payload <payload.zip> --platform windows --output <OdessySetup.exe>
 ```
@@ -112,3 +113,14 @@ a release is recorded in `installer/releases/windows-x64-py312/wheel-licenses.js
 `tool/audit_setup_artifact.py` reports wheel by wheel together with the metadata field each
 license came from. Roles that also want the Node tool server or odessy-link report those as
 absent components rather than failing.
+
+For an SSH monitoring candidate, stage `odessy-monitor` from
+`services/monitoring/cmd/odessy-monitor` and `odessy-link` from
+`native/odessy-link`, using the same source revision as the wheel and desktop.
+Pass both directories above, retaining their licence notices. Omitting these
+optional inputs produces a payload without the corresponding capability.
+The authored Native setup acceptance workflow builds both helpers and checks their
+archive hashes on Windows, Linux and macOS. This is bootstrap acceptance;
+it does not qualify a signed desktop installer or Windows-to-Jetson monitoring.
+The monitor uses the explicitly declared `httpx2` dependency, matching the
+pinned Windows closure; a development-only `httpx` install is insufficient evidence.

@@ -104,10 +104,11 @@ def main() -> int:
                                     "selection": selection}})
     check("the payload reviews before installing", bool(review.get("plan_id")),
           json.dumps(review.get("components")))
+    declared = json.loads((payload / "setup-context.json").read_text(encoding="utf-8"))
     check("the reviewed components are the shipped ones",
-          set(review.get("components") or []) == {"desktop", "harness", "node", "runtime",
-                                                  "tools"},
-          json.dumps(review.get("components")))
+          set(review.get("components") or []) == set(declared.get("components") or []),
+          json.dumps({"reviewed": review.get("components"),
+                      "declared": declared.get("components")}))
 
     installed = bridge(interpreter, payload,
                        {"id": "p14-install", "operation": "manage",
@@ -221,6 +222,8 @@ def main() -> int:
         check("registration is outside the installation (a per-identity shortcut)",
               shortcut is not None, str(start_menu))
 
+    installed_executable = installed_exe.is_file()
+
     # -- user-owned files survive ------------------------------------------------
     user_files = {
         "models/user-model.bin": b"user-owned model",
@@ -244,7 +247,7 @@ def main() -> int:
     if args.register:
         leftover = (Path(os.environ.get("LOCALAPPDATA", "")) / "OdessyMaintenance")
         check("uninstall removed the registration it created",
-              args.keep_registered or shortcut is None or not shortcut.exists(),
+              shortcut is None or not shortcut.exists(),
               str(shortcut) if shortcut else "")
     survived = all((root / name).read_bytes() == data for name, data in user_files.items())
     check("uninstall keeps user-owned models, SSH files and unrelated data", survived,
@@ -271,7 +274,7 @@ def main() -> int:
             "version": executable.get("reported_version"),
             "source_commit": runtime.get("source_commit"),
             "executable_sha256": executable["sha256"],
-            "installed_executable": installed_exe.is_file(),
+            "installed_executable": installed_executable,
         },
         "plugin": {"version": declared_version, "files": plugin_files},
         "python": python_version,

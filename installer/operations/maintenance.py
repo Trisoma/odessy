@@ -236,7 +236,6 @@ def execute(root,bundle,executable,expected,*,probe=running_processes,folders=No
         # A rebuilt application must keep describing the staged Harness payload, otherwise
         # the launcher stops exporting it and an installed engine silently disappears after
         # an upgrade or repair. The stage is re-verified by ``assemble`` when it is present.
-        staged_harness={'harness_dir':root/'runtime'/harness.COMPONENT_DIRECTORY} if (root/'runtime'/harness.COMPONENT_DIRECTORY).is_dir() else {}
         identity=uuid.uuid4().hex;folder=root/'.installer/updates'/identity;model.guard_path(folder);folder.mkdir(parents=True)
         data=dict(schema_version=1,id=identity,install_dir=str(root),status='preparing',error=None,
                   old_state=read_state(root),had_application=(root/'application').exists(),had_launcher=(root/'launcher').exists())
@@ -249,7 +248,8 @@ def execute(root,bundle,executable,expected,*,probe=running_processes,folders=No
             if cancelled():raise KeyboardInterrupt()
             if repair is not None:repair(root,folder,preview,data)
             if cancelled():raise KeyboardInterrupt()
-            settings=assemble(root/'runtime',root/'dependencies',bundle,folder/'new-application',**staged_harness)
+            staged_harness={'harness_dir':root/'runtime'/harness.COMPONENT_DIRECTORY} if (root/'runtime'/harness.COMPONENT_DIRECTORY).is_dir() else {}
+            settings=assemble(root/'runtime',root/'dependencies',bundle,folder/'new-application',install_root=root,**staged_harness)
             if not core_only:
                 launch=folder/'new-launcher';launch.mkdir()
                 shutil.copyfile(executable,launch/'OdessyLauncher.exe')

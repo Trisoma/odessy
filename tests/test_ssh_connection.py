@@ -188,3 +188,34 @@ def test_pagination_and_shared_events_are_proxied_unchanged():
             assert "event: host.updated" in events.text
 
     asyncio.run(run())
+
+def test_ssh_helpers_pin_stdin_to_null(monkeypatch):
+    """The installed coordinator reads its own stdin; a child must not share it.
+
+    With ``--exit-on-stdin-close`` a reader thread blocks on the private stdin pipe.
+    Inheriting that handle made the real OpenSSH client return no answer within its
+    bound while the same argv worked from a shell. SSH helpers must use DEVNULL.
+    """
+
+    from odessy.ssh import identity
+
+    seen = []
+
+    class Completed:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout):
+            self.stdout = stdout
+
+    def fake_run(args, **kwargs):
+        seen.append(kwargs)
+        if "-G" in args:
+            return Completed("hostname 10.1.1.2\nuser jaimef\nport 22\n")
+        return Completed("odessy-connect-ok")
+
+    monkeypatch.setattr(identity.subprocess, "run", fake_run)
+    host = identity.resolve_host("jetson")
+    assert identity.probe_connection(host)["ok"] is True
+    assert seen and all(kwargs.get("stdin") is identity.subprocess.DEVNULL
+                        for kwargs in seen)

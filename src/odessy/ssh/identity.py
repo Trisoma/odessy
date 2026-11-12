@@ -85,8 +85,9 @@ def resolve_host(alias: str, *, ssh: str = "ssh", config_path: str | None = None
         args += ["-F", config_path]
     args.append(alias)
     try:
-        completed = subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
-                                   errors="replace", timeout=timeout, check=False)
+        completed = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True,
+                                   text=True, encoding="utf-8", errors="replace",
+                                   timeout=timeout, check=False)
     except (OSError, subprocess.SubprocessError) as error:
         raise SshError("SSH_NOT_AVAILABLE", f"cannot run the SSH client: {error}") from error
     if completed.returncode != 0:
@@ -130,8 +131,8 @@ def read_identity(host: SshHost, *, ssh_keygen: str = "ssh-keygen",
         for name in candidates:
             args = [ssh_keygen, "-l", "-F", name, "-f", path]
             try:
-                completed = subprocess.run(args, capture_output=True, text=True,
-                                           encoding="utf-8", errors="replace",
+                completed = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True,
+                                           text=True, encoding="utf-8", errors="replace",
                                            timeout=timeout, check=False)
             except (OSError, subprocess.SubprocessError) as error:
                 raise SshError("SSH_NOT_AVAILABLE", f"cannot run ssh-keygen: {error}") from error
@@ -166,9 +167,9 @@ def ssh_argv(host: SshHost, remote_command: str, *, ssh: str = "ssh") -> tuple[s
 
 def _ssh_version(ssh: str, timeout: float) -> str:
     try:
-        completed = subprocess.run([ssh, "-V"], capture_output=True, text=True,
-                                   encoding="utf-8", errors="replace", timeout=timeout,
-                                   check=False)
+        completed = subprocess.run([ssh, "-V"], stdin=subprocess.DEVNULL, capture_output=True,
+                                   text=True, encoding="utf-8", errors="replace",
+                                   timeout=timeout, check=False)
     except (OSError, subprocess.SubprocessError):
         return ""
     text = (completed.stderr or completed.stdout or "").strip().splitlines()
@@ -248,8 +249,9 @@ def discovered_keys(host: SshHost, *, ssh_keyscan: str = "ssh-keyscan",
 
     args = [ssh_keyscan, "-T", str(max(1, int(timeout))), "-p", str(host.port), host.hostname]
     try:
-        completed = subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
-                                   errors="replace", timeout=timeout, check=False)
+        completed = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True,
+                                   text=True, encoding="utf-8", errors="replace",
+                                   timeout=timeout, check=False)
     except (OSError, subprocess.SubprocessError) as error:
         raise SshError("SSH_KEYSCAN_UNAVAILABLE", f"cannot discover host keys: {error}") from error
     if completed.returncode != 0:
@@ -317,8 +319,9 @@ def probe_connection(host: SshHost, *, ssh: str = "ssh", timeout: float = 8) -> 
     started = time.monotonic()
     try:
         completed = subprocess.run(ssh_argv(host, "printf odessy-connect-ok", ssh=ssh),
-                                   capture_output=True, text=True, encoding="utf-8",
-                                   errors="replace", timeout=timeout, check=False)
+                                   stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace", timeout=timeout,
+                                   check=False)
     except subprocess.TimeoutExpired:
         return {"ok": False, "code": "SSH_TIMEOUT", "message": f"no answer within {timeout:.0f} s",
                 "elapsed_ms": round((time.monotonic() - started) * 1000, 1)}
