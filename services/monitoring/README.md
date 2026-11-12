@@ -3,12 +3,15 @@
 Central, single-process Go monitoring service for Odessy's multi-host monitoring
 feature. It owns fleet scheduling, identity projection, liveness, bounded
 history and the internal REST/SSE API. It does **not** own authentication
-policy, collection, the public API, or presentation.
+policy, arbitrary execution, the public API, or presentation. Paired collection
+comes from the Rust worker; the SSH provider runs fixed read-only status commands.
+For the user/contributor journey and one-laptop fixtures, follow the single
+[SSH contributor path](../../src/odessy/ssh/README.md).
 
 Contract revision: **monitoring-v1**. The canonical field/deadline/enum
-definitions live in `../../multihost-monitoring-codex-plan.md` §2 of the
-planning workspace; this module implements them against fake Rust/runtime
-sources.
+definitions are checked in under [contracts/monitoring](../../contracts/monitoring/README.md)
+and `internal/protocol`. Tests use local fakes; production composition supports
+paired Rust telemetry and the bounded SSH provider.
 
 ## Boundary
 
@@ -27,7 +30,7 @@ execution, and exposes no pairing/revocation/config mutation endpoint.
 ```text
 cmd/odessy-monitor/      binary: private bootstrap, readiness, graceful shutdown
 internal/protocol/       versioned wire types, strict validation, settings limits
-internal/link/           Rust worker interface + bounded JSONL process adapter
+internal/link/           Link interface, paired Rust process adapter, SSH provider and composition
 internal/fleet/          identity projection, trust leases, liveness, scheduler
 internal/history/        recent-sample ring, weighted aggregates, durable journal
 internal/events/         epoch:sequence cursor, bounded replay ring, subscribers
@@ -47,9 +50,12 @@ Python writes exactly one bounded (`<=64 KiB`) frame to private stdin:
  "settings":{"monitored_host_ids":[],"include_local":false,"preset":"default"}}
 ```
 
-The binary starts the configured `link_binary` with the fixed arguments
-`telemetry worker` (never through a shell), binds `127.0.0.1:0`, and writes one
-readiness frame to stdout:
+The example selects paired telemetry. A bootstrap may instead provide the
+validated `ssh` configuration, or both providers; see `protocol.BootstrapFrame`
+and `cmd/odessy-monitor`'s `startTelemetry`. At least one usable provider is needed.
+The paired path starts `link_binary telemetry worker` without a shell; the SSH
+path owns no long-lived remote agent. Both share one scheduler/fleet. The service
+binds `127.0.0.1:0` and writes one readiness frame to stdout:
 
 ```json
 {"schema_version":1,"op":"ready","base_url":"http://127.0.0.1:PORT","epoch":"..."}
@@ -128,19 +134,15 @@ The fake worker is built from this module and exercised through the real
 process adapter, including malformed frames, interleaved request ids and
 deadline cancellation.
 
-## Known limitations (honest handoff)
+## Evidence and limits
 
-1. **SQLite driver not pinned.** This environment has no module-proxy access, so
-   the pinned pure-Go SQLite driver could not be fetched. History persistence is
-   implemented behind `history.Store` with the contract's semantics (bounded
-   single-writer queue, row cap, byte budget, explicit degraded status) over an
-   append-only JSONL journal. Swapping in the SQLite driver replaces `Store`
-   internals only; nothing else imports a driver.
-2. **History queries read the in-memory ring.** Persisted journal rows are
-   counted for capacity/degradation but are not re-derived into aggregates yet,
-   so history does not survive a restart. Codex-owned integration should decide
-   whether that backfill is required before the UI ships.
-3. **Aggregate tiers are in-memory only.** The 1-minute/24 h and 5-minute/7-day
-   bucket maps are not yet materialised into the journal.
-4. **No real Rust, mTLS or GPU interaction is claimed.** Fake-worker success
-   proves the adapter, not physical pairing or device support.
+`go.mod`/`go.sum` pin the SQLite driver. `internal/history/sqlite.go` stores
+materialized aggregate tiers, with restart/deduplication tests in `sqlite_test.go`;
+the earlier JSONL-only/no-driver limitation no longer describes this source.
+Storage failure still reports degraded history rather than fabricating results.
+
+Local fakes prove interfaces, scheduler and bounded-process behavior, not physical
+pairing, real SSH authentication, GPU collectors or installed release support.
+Report source, installed and direction-specific hardware evidence separately.
+The current SSH adapter supports Linux load/root-disk samples only; it provides
+no execution/workspace capability and does not replace paired transport or grants.

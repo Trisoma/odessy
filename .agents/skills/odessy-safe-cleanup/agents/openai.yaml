@@ -1,0 +1,4 @@
+interface:
+  display_name: "Odessy Safe Cleanup"
+  short_description: "Verify bounded cleanup without changing behavior"
+  default_prompt: "Use $odessy-safe-cleanup to audit one authorized maintenance slice and verify its consumers and preserved behavior."

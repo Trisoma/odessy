@@ -222,6 +222,14 @@ For paired integration, build Node and Rust first, set `ODESSY_LINK_E2E=1`
 python -m pytest -q tests/test_paired_transport.py tests/test_paired_integration.py tests/test_paired_agent.py tests/test_paired_host.py
 ```
 
+### Remote computer monitoring (SSH)
+
+Use the [SSH contributor path](src/odessy/ssh/README.md) for an existing alias →
+test connection → first timestamped status → disconnect/reconnect. It includes
+the one-laptop fixture commands, provider/lifecycle seam and troubleshooting.
+SSH is monitoring-only; optional tasks still require an independently supported
+execution path and its grants. Existing paired hosts remain supported consumers.
+
 ### Live Linux confinement
 
 These checks require bubblewrap, util-linux and usable
