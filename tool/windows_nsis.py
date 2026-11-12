@@ -97,6 +97,7 @@ def _drained(command,log_path,*,timeout=COMPILE_TIMEOUT):
     """
     log_path=Path(log_path);log_path.parent.mkdir(parents=True,exist_ok=True)
     lines=[]
+    errors=[]
     with open(log_path,'w',encoding='utf-8',errors='replace') as log:
         process=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
                                  text=True,encoding='utf-8',errors='replace',bufsize=1)
@@ -105,7 +106,12 @@ def _drained(command,log_path,*,timeout=COMPILE_TIMEOUT):
             if stream is None:return
             for line in stream:
                 lines.append(line.rstrip('\n'))
-                log.write(line);log.flush()
+                if not errors:
+                    try:
+                        log.write(line)
+                        log.flush()
+                    except Exception as error:
+                        errors.append(error)  # Keep draining even when the log fails.
         reader=threading.Thread(target=drain,name='nsis-output',daemon=True)
         reader.start()
         try:
@@ -116,6 +122,8 @@ def _drained(command,log_path,*,timeout=COMPILE_TIMEOUT):
                                +' | '.join(lines[-5:])) from None
         finally:
             reader.join(timeout=10)
+    if errors:
+        raise errors[0]
     return code,lines
 
 
@@ -141,7 +149,20 @@ def compile_installer(source,output,*,compiler_path=None,log_path=None,timeout=C
     if not partial.is_file() or partial.stat().st_size==0:
         raise RuntimeError('NSIS exited 0 but wrote no installer: '+str(partial))
     with open(partial,'rb') as stream:
-        if stream.read(2)!=b'MZ':raise RuntimeError('NSIS output is not a Windows executable: '+str(partial))
+        header=stream.read(64)
+        valid=len(header)==64 and header[:2]==b'MZ'
+        if valid:
+            offset=int.from_bytes(header[0x3c:0x40],'little')
+            size=partial.stat().st_size
+            valid=64<=offset<=size-24
+        if valid:
+            stream.seek(offset)
+            pe=stream.read(24)
+            optional_size=int.from_bytes(pe[20:22],'little')
+            valid=(pe[:4]==b'PE\0\0' and optional_size>=2
+                   and offset+24+optional_size<=size)
+        if not valid:
+            raise RuntimeError('NSIS output is not a Windows executable: '+str(partial))
     os.replace(partial,output)
     return output
 

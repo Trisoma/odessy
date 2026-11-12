@@ -8,7 +8,9 @@ class ModelCredentialPanel extends StatefulWidget {
       required this.backend,
       required this.provider,
       required this.endpoint,
-      required this.reference});
+      required this.reference,
+      this.onSavingChanged});
+  final ValueChanged<bool>? onSavingChanged;
   final SetupBackend backend;
   final String provider, endpoint, reference;
   @override
@@ -41,8 +43,8 @@ class _ModelCredentialPanelState extends State<ModelCredentialPanel> {
     if (read) controller.load();
   }
 
-  void _recreate({bool read = true}) {
-    keyInput.clear();
+  void _recreate({bool read = true, bool clearDraft = true}) {
+    if (clearDraft) keyInput.clear();
     controller.removeListener(_changed);
     controller.dispose();
     _create(read: read);
@@ -51,7 +53,7 @@ class _ModelCredentialPanelState extends State<ModelCredentialPanel> {
   void _refresh() {
     if (controller.busy) return;
     if (_scopeChanged) {
-      _recreate();
+      _recreate(clearDraft: false);
     } else {
       controller.load();
     }
@@ -83,7 +85,12 @@ class _ModelCredentialPanelState extends State<ModelCredentialPanel> {
     // Save under the scope the form currently shows, not the one whose status
     // was last read.
     if (_scopeChanged) _recreate(read: false);
-    await controller.save(value, persistent: persistent);
+    widget.onSavingChanged?.call(true);
+    try {
+      await controller.save(value, persistent: persistent);
+    } finally {
+      widget.onSavingChanged?.call(false);
+    }
   }
 
   @override

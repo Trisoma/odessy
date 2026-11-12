@@ -52,6 +52,9 @@ for index in range(20000):
 if mode == "slow":
     import time
     time.sleep(30)
+if mode == "mz-only":
+    open(target, "wb").write(b"MZ")
+    sys.exit(0)
 if mode == "garbage":
     open(target, "wb").write(b"NOT-A-PE")
     sys.exit(0)
@@ -60,7 +63,12 @@ if mode in ("fail", "partial-fail"):
         open(target, "wb").write(b"MZ" + b"\\0" * 512)
     print("Error: could not open input file")
     sys.exit(2)
-open(target, "wb").write(b"MZ" + b"\\0" * 4096)
+header = bytearray(4096)
+header[:2] = b"MZ"
+header[0x3c:0x40] = (128).to_bytes(4, "little")
+header[128:132] = b"PE\\0\\0"
+header[148:150] = (240).to_bytes(2, "little")
+open(target, "wb").write(header)
 sys.exit(0)
 '''
 
@@ -109,8 +117,9 @@ def test_an_interrupted_compile_keeps_the_partial_but_never_publishes(tmp_path, 
     assert (tmp_path / 'Setup.exe.incomplete').is_file()
 
 
-def test_an_output_without_the_executable_signature_is_refused(tmp_path, monkeypatch):
-    command, source, output, mode = _fake_root(tmp_path, 'garbage')
+@pytest.mark.parametrize('mode', ['garbage', 'mz-only'])
+def test_an_output_without_the_executable_signature_is_refused(tmp_path, monkeypatch, mode):
+    command, source, output, mode = _fake_root(tmp_path, mode)
     monkeypatch.setenv('FAKE_NSIS_MODE', mode)
 
     with pytest.raises(RuntimeError, match='not a Windows executable'):
@@ -126,4 +135,25 @@ def test_a_compile_that_exceeds_its_bound_is_reported_as_slow_not_failed(tmp_pat
     with pytest.raises(TimeoutError, match='exceeded'):
         module().compile_installer(source, output, compiler_path=command,
                                    log_path=tmp_path / 'makensis.log', timeout=2)
+    assert not output.exists()
+
+
+def test_log_failure_does_not_deadlock_or_publish(tmp_path, monkeypatch):
+    import builtins
+    value = module()
+    command, source, output, mode = _fake_root(tmp_path, 'ok')
+    monkeypatch.setenv('FAKE_NSIS_MODE', mode)
+    actual_open = builtins.open
+    class BrokenLog:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def write(self, text): raise OSError('fixture log full')
+        def flush(self): pass
+    def opened(path, *args, **kwargs):
+        if Path(path).name == 'broken.log': return BrokenLog()
+        return actual_open(path, *args, **kwargs)
+    monkeypatch.setattr(value, 'open', opened, raising=False)
+    with pytest.raises(OSError, match='fixture log full'):
+        value.compile_installer(source, output, compiler_path=command,
+                                log_path=tmp_path/'broken.log', timeout=10)
     assert not output.exists()

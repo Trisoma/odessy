@@ -69,8 +69,10 @@ def test_installed_tts_patch_reuses_engine_and_preserves_llm(tmp_path):
 
 def test_source_persistence_survives_separate_helper_processes(tmp_path):
     import subprocess,sys
+    from pathlib import Path
     state_path=tmp_path/'desktop.json'
-    bootstrap='import sys;sys.path[:0]='+repr(sys.path)+';from pathlib import Path;from odessy.setup import configured;configured.desktop_state_file=lambda:Path(sys.argv[1]);configured.Path.home=lambda:Path(sys.argv[1]).parent;from odessy.setup.bridge import run;run()'
+    source_root=str(Path(__file__).resolve().parents[1]/'src')
+    bootstrap='import sys;sys.path[:0]='+repr([source_root])+';from pathlib import Path;from odessy.setup import configured;configured.desktop_state_file=lambda:Path(sys.argv[1]);configured.Path.home=lambda:Path(sys.argv[1]).parent;from odessy.setup.bridge import run;run()'
     def request(action,**values):
         data={'id':'separate','operation':'component-settings','parameters':{'action':action,**values}}
         completed=subprocess.run([sys.executable,'-c',bootstrap,str(state_path)],input=(json.dumps(data)+'\n').encode(),capture_output=True,timeout=10)

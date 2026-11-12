@@ -38,6 +38,7 @@ def _ms(earlier: float | None, later: float | None) -> float | None:
 class VoiceTiming:
     """One voice turn's phase marks. Mutable, reused per turn, never persisted."""
 
+    generation: int = 0
     turn: str = ""
     started: float | None = None
     capture_end: float | None = None
@@ -49,6 +50,7 @@ class VoiceTiming:
 
     def begin(self, turn: str = "") -> "VoiceTiming":
         """Start a fresh turn: every previous mark is cleared."""
+        self.generation += 1
         self.turn = turn
         self.started = time.monotonic()
         self.capture_end = None

@@ -128,7 +128,7 @@ host. A deterministic fake model makes the first text path checkable offline.
 Start the backend (this prints the loopback address; the API needs a token):
 
 ```powershell
-$env:ODESSY_API_TOKEN="choose-a-local-token"
+$env:ODESSY_API_TOKEN = python -c "import secrets; print(secrets.token_urlsafe(32))"
 python -m odessy serve --fake-model
 ```
 
@@ -139,10 +139,23 @@ cd apps/desktop
 flutter run -d windows
 ```
 
+On Linux, generate a local token and start the server with:
+
+```sh
+export ODESSY_API_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+python -m odessy serve --fake-model
+```
+
+Then run `flutter run -d linux` from `apps/desktop`. Use the generated token
+when connecting the desktop app. Generate a separate token on each machine.
+
 Click the connection icon, enter the printed loopback address and the token, then
 send `what time is it?`. The token stays in application memory; the backend never
 prints it. Without `--fake-model`, the same steps use the configured real model
 and its existing budget, which is what makes live-provider checks separate work.
+Clear the quickstart override first (`unset ODESSY_CONFIG_FILE` on Linux or
+`Remove-Item Env:ODESSY_CONFIG_FILE` in PowerShell), or point it at your personal
+configuration. Otherwise the live run still uses `.ci-no-config.env`.
 
 `python -m odessy --fake-model "what time is it?"` runs the same text loop without
 the desktop, which is the smallest end-to-end check of the Python side.

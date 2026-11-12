@@ -312,27 +312,28 @@ def _launcher_root(tmp_path: Path, *, record: bool) -> Path:
 
     import sys
 
-    root = tmp_path / "Odessy Test Äpp"
-    runtime = root / "runtime" / "harness-runtime"
+    install = tmp_path / "Odessy Test Äpp"
+    root = install / "application"
+    runtime = install / "runtime" / "harness-runtime"
     runtime.mkdir(parents=True)
     executable = runtime / resources.executable_declaration()["file"]
     executable.write_bytes(b"MZ installed runtime")
-    node = root / "runtime" / "node-runtime" / "node.exe"
+    node = root.parent / "runtime" / "node-runtime" / "node.exe"
     node.parent.mkdir(parents=True)
     node.write_bytes(b"MZ node")
-    entry = root / "application" / "tools" / "dist" / "src" / "server.js"
+    entry = root / "tools" / "dist" / "src" / "server.js"
     entry.parent.mkdir(parents=True)
     entry.write_text("// entry", encoding="utf-8")
     (root / "src" / "odessy").mkdir(parents=True)
     (root / "src" / "odessy" / "__init__.py").write_text("", encoding="utf-8")
     (root / "src" / "odessy" / "__main__.py").write_text("", encoding="utf-8")
-    settings = {"schema_version": 1, "status": "ready", "runtime_dir": str(root / "runtime"),
+    settings = {"schema_version": 1, "status": "ready", "runtime_dir": str(root.parent / "runtime"),
                 "dependency_dir": str(root / "dependencies"), "python": sys.executable,
                 "runtime_versions": {}, "source_sha256": {}, "tool_sha256": "0" * 64}
     if record:
         settings["harness"] = {
             "runtime_dir": str(runtime), "executable": str(executable),
-            "node_executable": str(node), "node_tools_dir": str(root / "application" / "tools")}
+            "node_executable": str(node), "node_tools_dir": str(root / "tools")}
     (root / "odessy-application.json").write_text(json.dumps(settings), encoding="utf-8")
     return root
 
@@ -368,21 +369,21 @@ def test_the_installed_launcher_exports_the_staged_layout(tmp_path, monkeypatch,
 
     exported = _launch_and_capture(root, monkeypatch)
 
-    assert exported["ODESSY_HARNESS_RUNTIME_DIR"] == str(root / "runtime" / "harness-runtime")
-    assert exported["ODESSY_HARNESS_NODE"] == str(root / "runtime" / "node-runtime" / "node.exe")
-    assert exported["ODESSY_NODE_TOOLS_DIR"] == str(root / "application" / "tools")
+    assert exported["ODESSY_HARNESS_RUNTIME_DIR"] == str(root.parent / "runtime" / "harness-runtime")
+    assert exported["ODESSY_HARNESS_NODE"] == str(root.parent / "runtime" / "node-runtime" / "node.exe")
+    assert exported["ODESSY_NODE_TOOLS_DIR"] == str(root / "tools")
 
 
 def test_the_runtime_resolution_alone_agrees_with_the_launcher(tmp_path, monkeypatch):
     """Given only the runtime directory, both resolvers name the same installed files."""
 
     root = _launcher_root(tmp_path, record=True)
-    environ = {"ODESSY_HARNESS_RUNTIME_DIR": str(root / "runtime" / "harness-runtime")}
+    environ = {"ODESSY_HARNESS_RUNTIME_DIR": str(root.parent / "runtime" / "harness-runtime")}
 
-    assert resources.installed_node(environ) == root / "runtime" / "node-runtime" / "node.exe"
-    assert resources.installed_node_tools_dir(environ) == root / "application" / "tools"
+    assert resources.installed_node(environ) == root.parent / "runtime" / "node-runtime" / "node.exe"
+    assert resources.installed_node_tools_dir(environ) == root / "tools"
     assert _launch_and_capture(root, monkeypatch)["ODESSY_NODE_TOOLS_DIR"] == str(
-        root / "application" / "tools")
+        root / "tools")
 
 
 def test_the_engine_finds_the_staged_tool_server_without_the_override(tmp_path):

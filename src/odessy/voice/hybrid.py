@@ -584,14 +584,16 @@ class HybridAudioAdapter:
             raise RuntimeError("speech recognition is not available")
         # Capture already ended (the session or the push-to-talk path marked it); the
         # interval to the transcript is recognition, measured on its own.
+        generation = self.timing.generation
         path = self._audio_path("utterance")
         path.write_bytes(pcm_to_wav(pcm))
         try:
             result = await self._run_blocking(stt.transcribe, path)
         finally:
             _unlink(path)
-        self.timing.mark_stt_done()
-        self._report_timing()
+        if generation == self.timing.generation:
+            self.timing.mark_stt_done()
+            self._report_timing()
         if result.status == "empty":
             return ""
         if result.status != "ok":

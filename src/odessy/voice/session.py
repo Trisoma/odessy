@@ -706,7 +706,14 @@ class VoiceSession:
             with contextlib.suppress(RuntimeError):  # The loop closed under a late thread.
                 loop.call_soon_threadsafe(deliver, sentence)
 
-        stream = SpeechStream(emit)
+        timing = self.timing
+        generation = timing.generation if timing is not None else None
+
+        def on_text() -> None:
+            if timing is not None and timing.generation == generation:
+                timing.mark_first_text()
+
+        stream = SpeechStream(emit, on_text=on_text)
 
         async def speak_sentences() -> None:
             while (sentence := await queue.get()) is not None:
@@ -774,6 +781,7 @@ class VoiceSession:
             if self.vad.is_speech(vad_frame):
                 self.vad.reset()
                 self._vad_frames.reset()
+                self._begin_capture()
                 self.segmenter.begin()
                 self.state = "RECORDING"
                 return True

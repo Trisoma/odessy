@@ -195,7 +195,7 @@ async def test_the_voice_session_speaks_engine_sentences_once(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_a_stopped_turn_says_stopped_and_drops_pending_sentences(monkeypatch):
+async def test_local_speech_suppression_says_stopped_and_drops_pending_sentences(monkeypatch):
     spoken: list[str] = []
     engine = FakeEngine(
         [_delta("This is never heard. ")], answer="This is never heard."
@@ -676,3 +676,55 @@ def voice_session(controller: SessionController, spoken: list[str]) -> VoiceSess
         options=SessionOptions(),
         stream_speech=True,
     )
+
+
+@pytest.mark.parametrize('answer,max_chars', [('你好。再见。',160), ('abcdefghij',4)])
+def test_chunk_boundaries_do_not_repeat_the_settled_answer(answer, max_chars):
+    spoken=[]
+    stream=SpeechStream(spoken.append,max_chars=max_chars)
+    stream.begin();stream.feed(answer);stream.end()
+    assert len(spoken)>1
+    assert stream.unspoken(answer)==''
+    assert stream.unspoken(answer+' extra')=='extra'
+
+
+def test_last_reply_is_not_repeated_after_tool_preamble():
+    stream=SpeechStream(lambda text:None)
+    stream.begin();stream.feed('Checking. ');stream.hold();stream.end()
+    stream.begin();stream.feed('Done.');stream.end()
+    assert stream.unspoken('Done.')==''
+
+
+@pytest.mark.anyio
+async def test_text_only_deltas_still_mark_first_text(monkeypatch):
+    controller=build_controller(monkeypatch,FakeEngine([_delta('hello')],answer='hello'))
+    timing=VoiceTiming().begin('typed')
+    controller.bind_turn_timing(timing)
+    await controller.run_turn('hi')
+    assert timing.public()['first_text_source']==DELTA_SOURCE
+
+
+@pytest.mark.anyio
+async def test_old_recognition_cannot_mark_new_capture(tmp_path):
+    adapter=HybridAudioAdapter(config=_config(tmp_path),submit_voice=lambda *args:None)
+    adapter._stt=_STT()
+    async def transcribe(*args):
+        adapter.begin_capture('new')
+        return SimpleNamespace(status='ok',text='old',error='')
+    adapter._run_blocking=transcribe
+    adapter.begin_capture('old')
+    await adapter._transcribe(b'\x00\x00'*400)
+    assert adapter.timing.turn=='new'
+    assert adapter.timing.stt_done is None
+
+
+def test_legacy_stream_marks_text_before_playback(monkeypatch):
+    controller=build_controller(monkeypatch,FakeEngine([]))
+    session=voice_session(controller,[])
+    session.timing=VoiceTiming().begin('legacy')
+    async def run():
+        stream,speaker,finish=session._start_streaming(session._turn_id)
+        stream.begin();stream.feed('Hello. ');stream.end()
+        assert session.timing.first_text is not None
+        await finish()
+    asyncio.run(run())

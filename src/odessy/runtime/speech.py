@@ -34,8 +34,10 @@ class SpeechStream:
     call, which the session compares with the turn's answer to avoid saying it twice.
     """
 
-    def __init__(self, emit: Callable[[str], None], *, max_chars: int = DEFAULT_MAX_SENTENCE_CHARS) -> None:
+    def __init__(self, emit: Callable[[str], None], *, max_chars: int = DEFAULT_MAX_SENTENCE_CHARS, on_text: Callable[[], None] | None = None) -> None:
         self._emit = emit
+        self.on_text = on_text
+        self._spoken_raw: list[str] = []
         self._max = max_chars
         self._buffer = ""
         self._reply: list[str] = []
@@ -58,6 +60,8 @@ class SpeechStream:
     def feed(self, delta: str) -> None:
         if self._held or not delta:
             return
+        if self.on_text is not None:
+            self.on_text()
         self._reply.append(delta)
         self._buffer += delta
         while (cut := _sentence_end(self._buffer, self._max)) is not None:
@@ -87,18 +91,22 @@ class SpeechStream:
         it is new and is returned unchanged.
         """
 
-        spoken = " ".join(self.spoken).split()
-        if not spoken:
+        if same_text(self.last_text, answer):
+            return ""
+        spoken = "".join(self._spoken_raw)
+        if not spoken.strip():
             return answer.strip()
-        if answer.split()[:len(spoken)] != spoken:
-            return answer.strip()
-        pattern = r"\s*".join(re.escape(word) for word in spoken)
+        # Match original chunk text without inserting word boundaries. Whitespace
+        # may be normalized when the runtime commits its final answer.
+        pattern = r"\s*".join(re.escape(char) for char in spoken if not char.isspace())
         match = re.match(r"\s*" + pattern + r"\s*", answer)
         return answer[match.end():].strip() if match else answer.strip()
 
     def _say(self, text: str) -> None:
+        raw = text
         text = text.strip()
         if text:
+            self._spoken_raw.append(raw)
             self.emitted += 1
             self.spoken.append(text)
             self._emit(text)

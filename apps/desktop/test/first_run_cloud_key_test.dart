@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_client/odessy_client.dart';
@@ -10,6 +11,7 @@ import 'package:odessy_desktop/features/settings/presentation/model_credential_p
 class FirstRunBackend implements SetupBackend {
   FirstRunBackend({this.secureStorage = true});
 
+  Completer<void>? saveGate;
   final bool secureStorage;
   final requests = <SetupRequest>[];
   String source = 'none';
@@ -21,6 +23,7 @@ class FirstRunBackend implements SetupBackend {
     if (request.operation == 'model-credential') {
       final action = request.parameters['action'];
       if (action == 'set') {
+        await saveGate?.future;
         source = request.parameters['storage'] as String? ?? 'session';
       }
       if (action == 'remove') source = 'none';
@@ -112,6 +115,47 @@ Future<void> _openRemote(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('setup waits for the credential write before continuing',
+      (tester) async {
+    final backend = FirstRunBackend()..saveGate = Completer<void>();
+    final c = await _controller(backend);
+    addTearDown(c.dispose);
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: GetStartedPage(controller: c, onStart: () {}))));
+    await tester.pumpAndSettle();
+    await _openRemote(tester);
+    await tester.enterText(
+        find.byKey(const Key('get-started-remote-model')), 'model');
+    await tester.enterText(
+        find.byKey(const ValueKey('model-api-key')), 'fixture-key');
+    await tester.ensureVisible(find.text('Save securely'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save securely'));
+    await tester.pump();
+    expect(
+        tester
+            .widget<FilledButton>(
+                find.widgetWithText(FilledButton, 'Save and continue'))
+            .onPressed,
+        isNull);
+    expect(
+        tester
+            .widget<SegmentedButton<String>>(
+                find.byType(SegmentedButton<String>))
+            .onSelectionChanged,
+        isNull);
+    expect(backend.configuredSelection, isNull);
+    backend.saveGate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Saved securely.'), findsOneWidget);
+    expect(
+        tester
+            .widget<FilledButton>(
+                find.widgetWithText(FilledButton, 'Save and continue'))
+            .onPressed,
+        isNotNull);
+  });
+
   testWidgets(
       'a fresh install can save a cloud key without environment variables',
       (tester) async {
@@ -232,9 +276,17 @@ void main() {
     expect(find.textContaining('changed since this status was read'),
         findsOneWidget);
 
+    await tester.enterText(
+        find.byKey(const ValueKey('model-api-key')), 'unsaved-draft');
     await tester.tap(find.text('Refresh key status'));
     await tester.pumpAndSettle();
     final reads = backend.operations('model-credential');
+    expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('model-api-key')))
+            .controller!
+            .text,
+        'unsaved-draft');
     expect(reads, hasLength(2));
     expect(reads.last.parameters['endpoint'], 'http://127.0.0.1:9');
   });

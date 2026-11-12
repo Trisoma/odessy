@@ -20,7 +20,7 @@ def staged_harness(root, record):
     """
     if isinstance(record,dict) and record.get('executable'):
         return record
-    runtime=Path(root)/'runtime'/'harness-runtime'
+    runtime=Path(root).parent/'runtime'/'harness-runtime'
     if not runtime.is_dir():
         return {}
     try:
