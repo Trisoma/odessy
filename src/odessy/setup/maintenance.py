@@ -431,7 +431,7 @@ class ManagedInstallation:
             atomic(self.root/'installation.json',record)
             return {'active':version,'service_started':False}
 
-    def uninstall(self,*,confirm,expected_state=None,expected_operation=...,cancelled=lambda:False):
+    def uninstall(self,*,confirm,expected_state=None,expected_operation=...,cancelled=lambda:False,cleanup=None):
         if Path(sys.executable).resolve().is_relative_to(self.root): raise ValueError('run uninstall from the external setup bootstrap')
         with self.lock():
             record=self.record()
@@ -484,10 +484,11 @@ class ManagedInstallation:
                 record['versions']=remaining_versions
                 if 'runtimes' in record: record['runtimes']=remaining_runtimes
                 record['active']=None;atomic(self.root/'installation.json',record)
+                details=cleanup(progress) if cleanup is not None else {}
                 journal.update(finished_at=time.time(),status='completed',removed_files=len(removed),retained_files=len(retained));progress.flush(force=True)
             except BaseException as error:
                 journal['finished_at']=time.time()
                 journal.update(status='interrupted',removed_files=len(removed),retained_files=len(retained),error='cancelled' if isinstance(error,KeyboardInterrupt) else 'failed; inspect before retrying')
                 atomic(self.root/'operation.json',journal)
                 raise
-            return {'removed':removed,'retained':retained,'models_removed':False,'settings_removed':False}
+            return {'removed':removed,'retained':retained,'models_removed':False,'settings_removed':False,**details}

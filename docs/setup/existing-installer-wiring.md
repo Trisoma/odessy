@@ -124,3 +124,16 @@ archive hashes on Windows, Linux and macOS. This is bootstrap acceptance;
 it does not qualify a signed desktop installer or Windows-to-Jetson monitoring.
 The monitor uses the explicitly declared `httpx2` dependency, matching the
 pinned Windows closure; a development-only `httpx` install is insufficient evidence.
+
+## Uninstall progress and maintenance-copy cleanup
+
+The uninstall operation stays running until installed-file removal, shortcut and
+registration removal, and maintenance-copy cleanup finish. The desktop polls the
+operation journal through its separate read-only bridge and names each phase.
+Windows cache verification overlaps at most four recorded files at a time; every
+path and checksum is still checked before deletion. Cancellation joins the current
+batch, records an interrupted operation, and requires a fresh review before retry.
+Linux retains serial cleanup with the same progress and cancellation contract.
+Modified or unrecorded files remain. A running maintenance helper retains its own
+copy without scheduling self-deletion; the completion notice explains this case.
+These changes do not sweep unrelated temporary directories or implement updates.

@@ -194,6 +194,118 @@ def test_helper_cleanup_rejects_another_installations_cache(helper_cache):
     assert (path/'owned').exists()
 
 
+@pytest.mark.skipif(w.os.name != 'nt', reason='Windows helper cleanup')
+def test_uninstall_stays_running_until_maintenance_cache_is_removed(helper_cache, monkeypatch):
+    from odessy.setup.lifecycle import dispatch
+    helper, cache_record = helper_cache
+    root = helper.parents[2] / 'installed app'
+    record = installation(root)
+    record['windows_registration'] = cache_record['windows_registration']
+    w.atomic(root/'installation.json', record)
+    original_digest = w.digest
+    observations = []
+
+    def inspect_progress(path):
+        if path == helper/'owned':
+            journal = json.loads((root/'operation.json').read_text())
+            observations.append(journal)
+            assert journal['status'] == 'running'
+            assert journal['stage'] == 'maintenance-cache'
+            assert journal['files_done'] < journal['files_total']
+        return original_digest(path)
+
+    monkeypatch.setattr(w, 'digest', inspect_progress)
+    preview = dispatch({'action': 'uninstall-plan', 'root': str(root)})
+    result = dispatch({'action': 'uninstall', 'root': str(root), 'confirm': preview['plan_id']})
+    assert observations
+    assert result['helper_cleanup']['state'] == 'removed'
+    journal = json.loads((root/'operation.json').read_text())
+    assert journal['status'] == 'completed'
+    assert journal['files_done'] == journal['files_total']
+
+
+@pytest.mark.skipif(w.os.name != 'nt', reason='Windows helper cleanup')
+def test_uninstall_can_cancel_cache_cleanup_and_resume_after_fresh_review(helper_cache):
+    from odessy.setup.lifecycle import dispatch
+    helper, cache_record = helper_cache
+    root = helper.parents[2] / 'installed app'
+    record = installation(root)
+    record['windows_registration'] = cache_record['windows_registration']
+    w.atomic(root/'installation.json', record)
+
+    def cancel_during_cache():
+        path = root/'operation.json'
+        return path.exists() and json.loads(path.read_text()).get('stage') == 'maintenance-cache'
+
+    preview = dispatch({'action': 'uninstall-plan', 'root': str(root)})
+    with pytest.raises(KeyboardInterrupt):
+        dispatch({'action': 'uninstall', 'root': str(root), 'confirm': preview['plan_id']},
+                 cancelled=cancel_during_cache)
+    assert (helper/'owned').is_file()
+    assert json.loads((root/'operation.json').read_text())['status'] == 'interrupted'
+    with pytest.raises(ValueError):
+        dispatch({'action': 'uninstall', 'root': str(root), 'confirm': preview['plan_id']})
+    fresh = dispatch({'action': 'uninstall-plan', 'root': str(root)})
+    result = dispatch({'action': 'uninstall', 'root': str(root), 'confirm': fresh['plan_id']})
+    assert result['helper_cleanup']['state'] == 'removed'
+
+
+@pytest.mark.skipif(w.os.name != 'nt', reason='Windows helper cleanup')
+def test_helper_cleanup_overlaps_checksum_reads_and_preserves_changed_content(helper_cache, monkeypatch):
+    import threading
+    helper, record = helper_cache
+    (helper/'second').write_bytes(b'second')
+    record['windows_registration']['helper_files']['second'] = w.digest(helper/'second')
+    # The installed digest belongs to the old contents, so this file must survive.
+    (helper/'owned').write_text('user modification')
+    original_digest = w.digest
+    readers = threading.Barrier(2)
+    checked = set()
+    lock = threading.Lock()
+
+    def concurrent_digest(path):
+        with lock:
+            checked.add(path.name)
+        readers.wait(timeout=3)
+        return original_digest(path)
+
+    monkeypatch.setattr(w, 'digest', concurrent_digest)
+    result = w.helper_cleanup(record)
+    assert checked == {'owned', 'second'}
+    assert result['state'] == 'retained'
+    assert (helper/'owned').read_text() == 'user modification'
+    assert not (helper/'second').exists()
+
+
+@pytest.mark.skipif(w.os.name != 'nt', reason='Windows helper cleanup')
+def test_cache_cancellation_joins_only_the_current_bounded_batch(helper_cache, monkeypatch):
+    import threading
+    helper, record = helper_cache
+    inventory = record['windows_registration']['helper_files']
+    for number in range(11):
+        member = helper / f'file-{number}'
+        member.write_bytes(b'owned')
+        inventory[member.name] = inventory['owned']
+    original_digest = w.digest
+    lock = threading.Lock()
+    checked = []
+
+    def track_read(path):
+        value = original_digest(path)
+        with lock:
+            checked.append(path)
+        return value
+
+    monkeypatch.setattr(w, 'digest', track_read)
+    with pytest.raises(KeyboardInterrupt):
+        w.helper_cleanup(record, cancelled=lambda: len(checked) >= 4)
+    assert len(checked) == 4
+    assert sum(member.is_file() for member in helper.iterdir()) == 8
+    # All worker threads have joined before cancellation returns to the caller.
+    result = w.helper_cleanup(record)
+    assert result['state'] == 'removed'
+
+
 @pytest.mark.skipif(w.os.name!='nt',reason='Windows registration')
 def test_registration_records_helper_ownership_inventory(tmp_path,helper_cache,monkeypatch):
     helper,_=helper_cache

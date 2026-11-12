@@ -275,7 +275,7 @@ def unregister(root,record):
     return retained
 
 
-def helper_cleanup(record):
+def helper_cleanup(record,*,progress=None,cancelled=lambda:False):
     """Remove only recorded, unchanged cache files; never schedule self-deletion."""
     resources=record.get('linux_registration') or {}
     helper=resources.get('helper')
@@ -294,9 +294,14 @@ def helper_cleanup(record):
     inventory=resources.get('helper_files')
     if not isinstance(inventory,dict) or not inventory or len(inventory)>100001:
         return {'state':'retained','reason':'cache has no recorded ownership inventory'}
+    if progress is not None:
+        progress.journal.update(cache_files_total=len(inventory),cache_files_done=0)
+        progress.journal['files_total']+=len(inventory)
+        progress.flush(force=True)
     files=[];directories={path}
     try:
         for name,sha in inventory.items():
+            if cancelled():raise KeyboardInterrupt()
             if (not isinstance(name,str) or not name or name.startswith('/') or '..' in Path(name).parts
                     or not _DIGEST.fullmatch(str(sha))):
                 raise ValueError('invalid cache ownership inventory')
@@ -308,13 +313,19 @@ def helper_cleanup(record):
         return {'state':'retained','reason':'unsafe cache ownership inventory'}
     removed=[];retained=[]
     for target,sha in files:
+        if cancelled():raise KeyboardInterrupt()
         try:
             guard(target)
             if target.is_file() and digest(target)==sha:
                 target.unlink();removed.append(str(target.relative_to(path)))
             elif target.exists(): retained.append(str(target.relative_to(path)))
         except (OSError,ValueError): retained.append(str(target.relative_to(path)))
+        if progress is not None:
+            progress.journal['cache_files_done']+=1
+            progress.journal['files_done']+=1
+            progress.flush()
     for directory in sorted(directories,key=lambda p:len(p.parts),reverse=True):
+        if cancelled():raise KeyboardInterrupt()
         try: guard(directory).rmdir()
         except (OSError,ValueError): pass  # Nonempty directories contain retained files.
     return {'state':'retained' if path.exists() else 'removed','removed':removed,

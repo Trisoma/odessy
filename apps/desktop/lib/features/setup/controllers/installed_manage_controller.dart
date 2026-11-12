@@ -33,27 +33,39 @@ class InstalledManageController extends ChangeNotifier {
   bool _disposed = false;
   Timer? _progressPoll;
   bool _polling = false;
+  bool _watchingUninstall = false;
 
   /// The last bounded registration counters, when the service reports them.
   Json registrationProgress = const {};
+  Json _uninstallProgress = const {};
+
+  Json get _visibleProgress =>
+      _uninstallProgress.isNotEmpty ? _uninstallProgress : registrationProgress;
 
   /// Copy progress while the maintenance cache is prepared, or null when unknown.
   double? get progress {
-    if (registrationProgress['status'] != 'running') return null;
-    final done = registrationProgress['files_done'];
-    final total = registrationProgress['files_total'];
+    if (_visibleProgress['status'] != 'running') return null;
+    final done = _visibleProgress['files_done'];
+    final total = _visibleProgress['files_total'];
     if (done is! int || total is! int || total <= 0) return null;
     return (done / total).clamp(0.0, 1.0);
   }
 
   String get progressLabel {
-    if (registrationProgress['status'] != 'running') return '';
-    final done = registrationProgress['files_done'];
-    final total = registrationProgress['files_total'];
+    if (_visibleProgress['status'] != 'running') return '';
+    final done = _visibleProgress['files_done'];
+    final total = _visibleProgress['files_total'];
+    final label = _uninstallProgress.isEmpty
+        ? 'Preparing the maintenance copy'
+        : switch (_uninstallProgress['stage']) {
+            'maintenance-cache' => 'Removing the maintenance copy',
+            'unregister' => 'Removing shortcuts and registration',
+            _ => 'Removing installed files',
+          };
     if (done is int && total is int && total > 0) {
-      return 'Preparing the maintenance copy: $done of $total files.';
+      return '$label: $done of $total files.';
     }
-    return 'Preparing the maintenance copy.';
+    return '$label.';
   }
 
   String get root => (spec['root'] as String?) ?? '';
@@ -108,6 +120,8 @@ class InstalledManageController extends ChangeNotifier {
     _confirmation = null;
     _reviewParameters = const {};
     review = const {};
+    _uninstallProgress = const {};
+    registrationProgress = const {};
     busy = true;
     notifyListeners();
   }
@@ -119,8 +133,9 @@ class InstalledManageController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _startProgress() {
+  void _startProgress({bool uninstall = false}) {
     _stopProgress();
+    _watchingUninstall = uninstall;
     if (identical(progressBackend, backend)) return;
     registrationProgress = const {};
     _progressPoll = Timer.periodic(
@@ -143,11 +158,18 @@ class InstalledManageController extends ChangeNotifier {
           selection: const {},
           parameters: {'action': 'package-status', 'root': root}));
       if (_disposed) return;
+      final operation = reply.ok ? reply.result['operation'] : null;
+      if (_watchingUninstall &&
+          operation is Map<String, dynamic> &&
+          operation['operation'] == 'uninstall') {
+        _uninstallProgress = operation;
+      }
       final value = reply.ok ? reply.result['registration_progress'] : null;
       if (value is Map<String, dynamic>) {
         registrationProgress = value;
         notifyListeners();
       }
+      if (_uninstallProgress.isNotEmpty) notifyListeners();
     } catch (_) {
       // A failed progress read must never fail the operation it observes.
     } finally {
@@ -325,6 +347,7 @@ class InstalledManageController extends ChangeNotifier {
     if (busy || _disposed) return;
     final epoch = ++_epoch;
     _begin();
+    if (mutating == 'package-uninstall') _startProgress(uninstall: true);
     try {
       final value = await _execute(mutating, {
         ...parameters,
@@ -336,6 +359,12 @@ class InstalledManageController extends ChangeNotifier {
         uninstalled = true;
         notice =
             'Odessy was uninstalled from this computer. Models, credentials, settings and unrelated files were preserved.';
+        final cleanup = value['helper_cleanup'];
+        if (cleanup is Map<String, dynamic> && cleanup['state'] == 'retained') {
+          final why = cleanup['reason'];
+          notice +=
+              ' The maintenance copy was retained${why is String && why.isNotEmpty ? ': $why' : ''}.';
+        }
       } else {
         notice = _completedNotice(mutating);
         if (mutating == 'package-configure') {
