@@ -31,6 +31,9 @@ def main():
     monitor = root / 'build' / 'local-desktop' / 'bin' / 'odessy-monitor.exe'
     link = root / 'build' / 'odessy-link' / 'odessy-link.exe'
     if monitor.is_file() and link.is_file():
+        # Binaries are available even before the local link identity exists, so a
+        # fresh user can inspect/test SSH and explicitly enable monitoring later.
+        os.environ.update(ODESSY_MONITOR_BIN=str(monitor), ODESSY_LINK_BIN=str(link))
         flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         identity = state / 'link' / 'identity'
         initialized = (identity / 'identity.dpapi').is_file() or (identity / 'identity.json').is_file()
@@ -39,8 +42,7 @@ def main():
                 stderr=subprocess.DEVNULL, timeout=15, creationflags=flags)
             initialized = result.returncode == 0
         if initialized:
-            os.environ.update(ODESSY_MONITORING='on', ODESSY_MONITOR_LOCAL='on',
-                              ODESSY_MONITOR_BIN=str(monitor), ODESSY_LINK_BIN=str(link))
+            os.environ.update(ODESSY_MONITORING='on', ODESSY_MONITOR_LOCAL='on')
     from odessy.application.serve import run_server
     asyncio.run(run_server(port=args.port, workspace=workspace, backend='lfm', watch_stdin=True,
                            token=os.environ['ODESSY_API_TOKEN']))
