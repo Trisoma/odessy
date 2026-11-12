@@ -181,6 +181,56 @@ func TestSnapshotPaginationSurvivesConcurrentRevoke(t *testing.T) {
 	}
 }
 
+func TestSSHAndPairedHostsSharePagination(t *testing.T) {
+	ids := []string{hostID('a'), hostID('b'), hostID('c')}
+	h := newHarness(t, ids...)
+	h.applyInventory(t, baseTime,
+		identity(ids[0], "ssh:g1", protocol.TrustSSH),
+		identity(ids[1], "g1", protocol.TrustPaired),
+		identity(ids[2], "g1", protocol.TrustPaired))
+
+	var seen []string
+	cursor := ""
+	for page := 0; page < 3; page++ {
+		target := "/internal/v1/hosts?limit=2"
+		if cursor != "" {
+			target += "&cursor=" + cursor
+		}
+		rec := h.do(t, http.MethodGet, target, "", testToken)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("page %d failed: %d %s", page, rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Hosts      []map[string]any `json:"hosts"`
+			NextCursor *string          `json:"next_cursor"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		for _, host := range body.Hosts {
+			seen = append(seen, host["host_id"].(string))
+		}
+		if body.NextCursor == nil {
+			break
+		}
+		cursor = *body.NextCursor
+	}
+	if len(seen) != 3 {
+		t.Fatalf("pagination omitted hosts: %v", seen)
+	}
+	for _, id := range ids {
+		found := false
+		for _, got := range seen {
+			if got == id {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing %s in %v", id, seen)
+		}
+	}
+}
+
 func TestHistoryEnforcesQueryLimits(t *testing.T) {
 	id := hostID('a')
 	h := newHarness(t, id)

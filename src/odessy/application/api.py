@@ -109,8 +109,8 @@ def _factory_runtime_keyword(factory):
 
 
 def create_app(controller_factory, *, config=None, settings=None, jobs=None, token=None,
-               config_path=None, profiles=None, monitoring=None, runtime_configuration=None, desktop_voice=None,
-               usage_history=None):
+               config_path=None, profiles=None, monitoring=None,
+               runtime_configuration=None, desktop_voice=None, usage_history=None):
     """Build an app; the caller owns loopback-only binding and displaying its token."""
     try:
         from fastapi import FastAPI, Request, HTTPException
@@ -166,7 +166,10 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     if not isinstance(app.state.auth_token, str) or not app.state.auth_token:
         raise ValueError('Bearer token must be a nonempty string')
     from odessy.monitoring.api import register as register_monitoring
-    register_monitoring(app, monitoring)
+    monitor_settings = getattr(monitoring, 'settings', None)
+    register_monitoring(app, monitoring,
+                        ssh_host_id=getattr(monitor_settings, 'ssh_host_id', ''),
+                        ssh_alias=getattr(monitor_settings, 'ssh_alias', ''))
     app.state.monitoring = monitoring
     app.state.sessions, app.state.turn_tasks = sessions, tasks
     from .lan_connections import register as register_lan_connections

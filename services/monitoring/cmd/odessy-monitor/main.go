@@ -91,7 +91,12 @@ func run() error {
 		f.MarkDegraded("history database unavailable")
 	}
 
-	worker, err := link.StartProcess(context.Background(), frame.LinkBinary)
+	var worker link.Link
+	if frame.SSH != nil {
+		worker, err = link.StartSSH(*frame.SSH)
+	} else {
+		worker, err = link.StartProcess(context.Background(), frame.LinkBinary)
+	}
 	if err != nil {
 		return fmt.Errorf("telemetry worker unavailable: %w", err)
 	}
