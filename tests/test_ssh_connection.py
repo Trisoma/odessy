@@ -61,6 +61,14 @@ def test_ssh_settings_use_a_go_compatible_host_id_and_opt_in():
     assert len(settings.ssh_host_id) == 5 + 64
     assert settings.ssh_host_id in settings.host_ids
 
+    both = MonitoringSettings.from_env({
+        "ODESSY_SSH_MONITORING": "on",
+        "ODESSY_SSH_ALIAS": "jetson",
+        "ODESSY_LINK_BIN": "/usr/bin/odessy-link",
+    })
+    assert both.link_binary == "/usr/bin/odessy-link"
+    assert both.ssh_alias == "jetson"
+
     connection_only = MonitoringSettings.from_env({
         "ODESSY_SSH_COMPUTER": "on",
         "ODESSY_SSH_ALIAS": "jetson",

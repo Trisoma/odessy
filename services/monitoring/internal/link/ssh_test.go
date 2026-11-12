@@ -141,7 +141,7 @@ func TestSSHConfigRejectsInjectionAndInvalidHostIDs(t *testing.T) {
 	}
 }
 
-func TestBootstrapAcceptsSSHWithoutALinkBinary(t *testing.T) {
+func TestBootstrapAcceptsSSHWithALinkBinary(t *testing.T) {
 	cfg := testSSHConfig()
 	frame := protocol.BootstrapFrame{
 		SchemaVersion: protocol.SchemaVersion,
@@ -154,7 +154,7 @@ func TestBootstrapAcceptsSSHWithoutALinkBinary(t *testing.T) {
 		t.Fatalf("SSH bootstrap rejected: %v", err)
 	}
 	frame.LinkBinary = "/usr/bin/odessy-link"
-	if _, err := protocol.ValidateBootstrap(frame); err == nil {
-		t.Fatal("link_binary and ssh must be mutually exclusive")
+	if _, err := protocol.ValidateBootstrap(frame); err != nil {
+		t.Fatalf("coexisting link+SSH bootstrap rejected: %v", err)
 	}
 }

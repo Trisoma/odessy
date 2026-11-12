@@ -550,14 +550,17 @@ func ValidateBootstrap(f BootstrapFrame) (Settings, error) {
 		return Settings{}, invalid("internal token must be at least 32 characters")
 	}
 	if f.SSH != nil {
-		if f.LinkBinary != "" {
-			return Settings{}, invalid("link_binary and ssh are mutually exclusive")
-		}
 		if err := ValidateSSHConfig(*f.SSH); err != nil {
 			return Settings{}, err
 		}
-	} else if err := ValidateLinkBinary(f.LinkBinary); err != nil {
-		return Settings{}, err
+	}
+	if f.LinkBinary != "" {
+		if err := ValidateLinkBinary(f.LinkBinary); err != nil {
+			return Settings{}, err
+		}
+	}
+	if f.SSH == nil && f.LinkBinary == "" {
+		return Settings{}, invalid("one monitoring provider is required")
 	}
 	return f.Settings.Normalized()
 }

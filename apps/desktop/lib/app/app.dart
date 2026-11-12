@@ -14,6 +14,7 @@ import '../features/monitoring/controllers/monitor_controller.dart';
 import '../features/devices/presentation/devices_hub.dart';
 import '../features/devices/presentation/execution_hosts_page.dart';
 import 'execution_hosts_controller.dart';
+import 'ssh_connection_controller.dart';
 import '../features/workspaces/presentation/workspace_page.dart';
 import '../widgets/component_state_banner.dart';
 import 'navigation.dart';
@@ -84,6 +85,7 @@ class OdessyApp extends StatefulWidget {
 class _OdessyAppState extends State<OdessyApp> {
   late final DesktopSession controller;
   ExecutionHostsController? executionHosts;
+  SshConnectionController? sshConnections;
   late final VoiceController voice;
   final monitoring = MonitorController();
   final deviceInventory = DeviceMonitoringController();
@@ -105,6 +107,16 @@ class _OdessyAppState extends State<OdessyApp> {
           onConnected: controller.reloadExecutionTarget);
     }
     return executionHosts!;
+  }
+
+  SshConnectionController _sshConnectionController() {
+    final api = controller.api;
+    final sshApi = api is SshConnectionApi ? api as SshConnectionApi : null;
+    if (sshConnections == null || !identical(sshConnections!.api, sshApi)) {
+      sshConnections?.dispose();
+      sshConnections = SshConnectionController(sshApi);
+    }
+    return sshConnections!;
   }
 
   void _observeConnection() {
@@ -413,6 +425,7 @@ class _OdessyAppState extends State<OdessyApp> {
     handoffs.dispose();
     controller.removeListener(_observeConnection);
     executionHosts?.dispose();
+    sshConnections?.dispose();
     voice.dispose();
     readiness.dispose();
     componentSettings.dispose();
@@ -640,7 +653,8 @@ class _OdessyAppState extends State<OdessyApp> {
                             MaintenancePage(controller: maintenance),
                           'Pairing' => ExecutionHostsPage(
                               key: const ValueKey('execution-hosts'),
-                              controller: _executionHostController()),
+                              controller: _executionHostController(),
+                              ssh: _sshConnectionController()),
                           'Local pairing' => MaintenancePage(
                               key: const ValueKey('pairing'),
                               controller: pairing,

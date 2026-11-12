@@ -38,6 +38,8 @@ an implicit request target. There are no direct provider/native calls in widgets
 | Monitoring inventory/detail | GET `/v1/monitoring/hosts`, GET `/v1/monitoring/hosts/{id}` |
 | Monitoring metrics/history | GET `/v1/monitoring/hosts/{id}/metrics`, GET `/v1/monitoring/hosts/{id}/history` |
 | Monitoring events | GET `/v1/monitoring/events`, `Last-Event-ID: epoch:sequence` |
+| SSH connection actions | GET `/v1/ssh/aliases`, GET `/v1/ssh/target`, POST `/v1/ssh/inspect`, POST `/v1/ssh/test`, POST/DELETE `/v1/ssh/target` |
+| SSH typed readiness | GET `/v1/ssh/computer` |
 
 Stop returns HTTP 200 with a body that says what was actually established, not merely that the
 request was accepted:
@@ -111,6 +113,8 @@ The Python public route preserves all repeated `series` values when forwarding
 to the Go service; other query fields retain their existing handling.
 These routes add no pairing, trust or configuration mutations. HTTP 503 stays
 unavailable while conversation APIs remain usable; it never activates demo data.
+SSH actions only inspect/test/save/remove one user-selected alias; they write no
+`known_hosts` or key file, and no SSH execution route exists in this slice.
 
 A `run` session event carries the same snapshot as GET: `steps` are the agents and
 `transfers` the data moving between them. Runs do not survive a service restart.

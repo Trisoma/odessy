@@ -4,6 +4,64 @@ from pathlib import Path
 import hashlib
 import os
 import re
+import shutil
+
+
+def _first_file(candidates):
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return str(Path(candidate))
+    return ''
+
+
+def resolve_monitor_binary(env=None) -> str:
+    """Find the packaged/source monitor without requiring an environment edit."""
+
+    env = os.environ if env is None else env
+    explicit = env.get('ODESSY_MONITOR_BIN', '').strip()
+    if explicit:
+        return explicit
+    found = shutil.which('odessy-monitor')
+    if found:
+        return found
+    root = Path(__file__).resolve().parents[3]
+    candidates = [
+        root / 'build' / 'local-desktop' / 'bin' / 'odessy-monitor.exe',
+        root / 'build' / 'local-desktop' / 'bin' / 'odessy-monitor',
+        root / 'monitor' / 'odessy-monitor.exe',
+        root / 'monitor' / 'odessy-monitor',
+    ]
+    portable = env.get('ODESSY_PORTABLE_ROOT', '').strip()
+    if portable:
+        candidates.extend([Path(portable) / 'monitor' / 'odessy-monitor.exe',
+                           Path(portable) / 'monitor' / 'odessy-monitor'])
+    return _first_file(candidates)
+
+
+def resolve_link_binary(env=None) -> str:
+    env = os.environ if env is None else env
+    explicit = env.get('ODESSY_LINK_BIN', '').strip()
+    if explicit:
+        return explicit
+    try:
+        from odessy.tools.paired import link_binary
+        path = link_binary(env)
+    except (ValueError, OSError):
+        path = None
+    if path is not None and path.is_file():
+        return str(path)
+    root = Path(__file__).resolve().parents[3]
+    candidates = [
+        root / 'link' / 'odessy-link.exe',
+        root / 'link' / 'odessy-link',
+        root / 'build' / 'odessy-link' / 'odessy-link.exe',
+        root / 'build' / 'odessy-link' / 'odessy-link',
+    ]
+    portable = env.get('ODESSY_PORTABLE_ROOT', '').strip()
+    if portable:
+        candidates.extend([Path(portable) / 'link' / 'odessy-link.exe',
+                           Path(portable) / 'link' / 'odessy-link'])
+    return _first_file(candidates)
 
 
 @dataclass(frozen=True)
@@ -56,8 +114,8 @@ class MonitoringSettings:
         return cls(
             enabled=enabled, host_ids=hosts,
             include_local=flag('ODESSY_MONITOR_LOCAL'), preset=preset,
-            binary=env.get('ODESSY_MONITOR_BIN', ''),
-            link_binary=env.get('ODESSY_LINK_BIN', ''),
+            binary=resolve_monitor_binary(env),
+            link_binary=resolve_link_binary(env),
             state_dir=env.get('ODESSY_MONITOR_STATE_DIR', str(Path.home() / '.odessy' / 'monitoring')),
             ssh_alias=alias, ssh_host_id=host_id,
             ssh_display_name=env.get('ODESSY_SSH_DISPLAY_NAME', '').strip() or alias,

@@ -256,6 +256,24 @@ abstract interface class ExecutionHostsApi {
   Future<void> disconnectExecutionHost();
 }
 
+/// One SSH computer, using the user's existing OpenSSH configuration.
+abstract interface class SshConnectionApi {
+  Future<Json> sshAliases();
+  Future<Json> sshTarget();
+  Future<Json> inspectSshAlias(String alias);
+  Future<Json> testSshAlias(String alias);
+  Future<Json> saveSshTarget(String alias, {String displayName = ''});
+  Future<Json> removeSshTarget();
+  Future<Json> sshComputer();
+}
+
+class SshConnectionFailure implements Exception {
+  const SshConnectionFailure(this.status);
+  final int status;
+  @override
+  String toString() => 'SSH connection request failed ($status)';
+}
+
 class ExecutionConnectionFailure implements Exception {
   const ExecutionConnectionFailure(this.message);
   final String message;
@@ -300,7 +318,8 @@ class LocalApi
         ModelProfileLimitsApi,
         RuntimeConfigurationApi,
         DesktopVoiceApi,
-        ExecutionHostsApi {
+        ExecutionHostsApi,
+        SshConnectionApi {
   LocalApi(this.base, String token) : _token = token {
     if (!['http', 'https'].contains(base.scheme) ||
         !['localhost', '127.0.0.1', '::1'].contains(base.host) ||
@@ -423,6 +442,39 @@ class LocalApi
   Future<Json> scanExecutionHosts() => _json('/v1/execution-hosts');
   @override
   Future<Json> executionHostStatus() => _json('/v1/execution-hosts/status');
+
+  Future<Json> _sshJson(String path,
+      [String method = 'GET',
+      Json? data,
+      Duration timeout = const Duration(seconds: 12)]) async {
+    try {
+      return await _json(path, method, data, timeout);
+    } on ApiFailure catch (error) {
+      throw SshConnectionFailure(error.status);
+    }
+  }
+
+  @override
+  Future<Json> sshAliases() => _sshJson('/v1/ssh/aliases');
+  @override
+  Future<Json> sshTarget() => _sshJson('/v1/ssh/target');
+  @override
+  Future<Json> inspectSshAlias(String alias) => _sshJson(
+      '/v1/ssh/inspect', 'POST', {'alias': alias}, const Duration(seconds: 25));
+  @override
+  Future<Json> testSshAlias(String alias) => _sshJson(
+      '/v1/ssh/test', 'POST', {'alias': alias}, const Duration(seconds: 25));
+  @override
+  Future<Json> saveSshTarget(String alias, {String displayName = ''}) =>
+      _sshJson(
+          '/v1/ssh/target',
+          'POST',
+          {'alias': alias, 'display_name': displayName},
+          const Duration(seconds: 25));
+  @override
+  Future<Json> removeSshTarget() => _sshJson('/v1/ssh/target', 'DELETE');
+  @override
+  Future<Json> sshComputer() => _sshJson('/v1/ssh/computer');
   @override
   Future<void> disconnectExecutionHost() async {
     await _json('/v1/execution-hosts/disconnect', 'POST');

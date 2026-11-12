@@ -7,6 +7,9 @@ the user already trusts, and builds the same non-interactive argv every call use
 
 from __future__ import annotations
 
+import base64
+import glob
+import hashlib
 import os
 import re
 import subprocess
@@ -189,11 +192,157 @@ def _last(values: dict[str, list[str]], key: str) -> str | None:
     return found[-1] if found else None
 
 
+def list_aliases(config_path: str | Path | None = None) -> tuple[str, ...]:
+    """Concrete host aliases from the user's OpenSSH config, without values."""
+
+    path = Path(config_path) if config_path is not None else Path.home() / ".ssh" / "config"
+    aliases: list[str] = []
+    seen: set[str] = set()
+    for name in _read_host_names(path, depth=0, visited=set()):
+        if name not in seen:
+            seen.add(name)
+            aliases.append(name)
+    return tuple(aliases)
+
+
+def _read_host_names(path: Path, *, depth: int, visited: set[Path]):
+    if depth > 3 or len(visited) >= 16:
+        return
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return
+    if resolved in visited or not resolved.is_file():
+        return
+    visited.add(resolved)
+    try:
+        text = resolved.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        keyword = parts[0].lower()
+        if keyword == "include" and len(parts) > 1:
+            for pattern in parts[1:]:
+                candidate = Path(os.path.expanduser(pattern))
+                if not candidate.is_absolute():
+                    candidate = resolved.parent / candidate
+                for match in glob.glob(str(candidate)):
+                    yield from _read_host_names(Path(match), depth=depth + 1, visited=visited)
+            continue
+        if keyword != "host" or len(parts) < 2:
+            continue
+        for token in parts[1:]:
+            if not token or token.startswith("!") or any(ch in token for ch in "*?["):
+                continue
+            if _ALIAS.fullmatch(token):
+                yield token
+
+
+def discovered_keys(host: SshHost, *, ssh_keyscan: str = "ssh-keyscan",
+                    timeout: float = 6) -> tuple[tuple[str, str], ...]:
+    """Unauthenticated keys advertised by the host, for review only."""
+
+    args = [ssh_keyscan, "-T", str(max(1, int(timeout))), "-p", str(host.port), host.hostname]
+    try:
+        completed = subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
+                                   errors="replace", timeout=timeout, check=False)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise SshError("SSH_KEYSCAN_UNAVAILABLE", f"cannot discover host keys: {error}") from error
+    if completed.returncode != 0:
+        raise SshError("SSH_KEYSCAN_FAILED",
+                       (completed.stderr or "ssh-keyscan failed").strip()[:400])
+    keys: list[tuple[str, str]] = []
+    for line in completed.stdout.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        key_type, encoded = parts[1], parts[2]
+        try:
+            blob = base64.b64decode(encoded, validate=True)
+        except Exception:
+            continue
+        digest = base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip("=")
+        keys.append((key_type.lower(), "SHA256:" + digest))
+    return tuple(keys)
+
+
+def inspect_alias(alias: str, *, ssh: str = "ssh", ssh_keygen: str = "ssh-keygen",
+                  ssh_keyscan: str = "ssh-keyscan",
+                  config_path: str | None = None) -> dict[str, object]:
+    """Resolve identity and compare trusted vs advertised keys; no trust write."""
+
+    host = resolve_host(alias, ssh=ssh, config_path=config_path)
+    known: tuple[tuple[str, str], ...] = ()
+    known_error = ""
+    try:
+        known = read_identity(host, ssh_keygen=ssh_keygen, ssh=ssh).fingerprints
+    except SshError as error:
+        if error.code != "SSH_HOST_KEY_UNKNOWN":
+            known_error = str(error)
+    discovered: tuple[tuple[str, str], ...] = ()
+    discover_error = ""
+    try:
+        discovered = discovered_keys(host, ssh_keyscan=ssh_keyscan)
+    except SshError as error:
+        discover_error = str(error)
+    known_set = {fingerprint for _, fingerprint in known}
+    discovered_set = {fingerprint for _, fingerprint in discovered}
+    return {
+        "alias": alias,
+        "hostname": host.hostname,
+        "user": host.user,
+        "port": host.port,
+        "endpoint": host.endpoint,
+        "known": bool(known),
+        "known_fingerprints": [value for _, value in known],
+        "discovered_fingerprints": [value for _, value in discovered],
+        "changed": bool(known and discovered and not (known_set & discovered_set)),
+        "discovery": "ssh-keyscan (unauthenticated)" if discovered else "",
+        "known_error": known_error,
+        "discover_error": discover_error,
+    }
+
+
+def probe_connection(host: SshHost, *, ssh: str = "ssh", timeout: float = 8) -> dict[str, object]:
+    """One bounded, read-only login. It does not read or write trust files."""
+
+    import time
+
+    started = time.monotonic()
+    try:
+        completed = subprocess.run(ssh_argv(host, "printf odessy-connect-ok", ssh=ssh),
+                                   capture_output=True, text=True, encoding="utf-8",
+                                   errors="replace", timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "code": "SSH_TIMEOUT", "message": f"no answer within {timeout:.0f} s",
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 1)}
+    elapsed = round((time.monotonic() - started) * 1000, 1)
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "SSH authentication failed").strip()
+        return {"ok": False, "code": "SSH_AUTH_FAILED", "message": message[:400],
+                "elapsed_ms": elapsed}
+    if "odessy-connect-ok" not in completed.stdout:
+        return {"ok": False, "code": "SSH_UNEXPECTED_OUTPUT",
+                "message": "SSH returned unexpected output", "elapsed_ms": elapsed}
+    return {"ok": True, "code": "SSH_OK", "message": "", "elapsed_ms": elapsed}
+
+
+
 __all__ = [
     "SSH_OPTIONS",
     "SshError",
     "SshHost",
     "SshIdentity",
+    "discovered_keys",
+    "inspect_alias",
+    "list_aliases",
+    "probe_connection",
     "read_identity",
     "resolve_host",
     "ssh_argv",

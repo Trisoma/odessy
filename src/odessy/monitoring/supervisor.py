@@ -33,6 +33,8 @@ class MonitoringSupervisor:
         self.token = secrets.token_urlsafe(32)
         self._stderr = None
         self.runtime_sink = None
+        self.ssh_error = ''
+        self.link_error = ''
 
     async def start(self):
         if not self.settings.enabled or self.process is not None:
@@ -40,14 +42,26 @@ class MonitoringSupervisor:
         binary = Path(self.settings.binary)
         if not binary.is_absolute() or not binary.is_file():
             raise MonitorUnavailable('Configure an absolute monitoring binary path')
+        self.ssh_error = ''
+        self.link_error = ''
         link = None
         ssh = None
+        if self.settings.link_binary:
+            candidate = Path(self.settings.link_binary)
+            if candidate.is_absolute() and candidate.is_file():
+                link = candidate
+            else:
+                self.link_error = 'Configured link binary is unavailable'
         if getattr(self.settings, 'ssh_alias', ''):
-            ssh = await self._ssh_config()
-        else:
-            link = Path(self.settings.link_binary)
-            if not link.is_absolute() or not link.is_file():
-                raise MonitorUnavailable('Configure absolute monitoring and link binary paths')
+            try:
+                ssh = await self._ssh_config()
+            except MonitorUnavailable as error:
+                self.ssh_error = str(error)
+                if link is None:
+                    raise
+        if link is None and ssh is None:
+            raise MonitorUnavailable(self.link_error or self.ssh_error or
+                                     'Configure monitoring or an SSH computer')
         import httpx
         options = {'creationflags': subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else {'start_new_session': True}
         self.process = await asyncio.create_subprocess_exec(str(binary), stdin=asyncio.subprocess.PIPE,
@@ -76,6 +90,14 @@ class MonitoringSupervisor:
         except Exception:
             await self.close()
             raise MonitorUnavailable('Monitoring startup failed') from None
+
+    async def reconfigure(self, settings):
+        """Replace the selected SSH/bootstrap settings without leaving an old poller."""
+        await self.close()
+        self.settings = settings
+        if settings.enabled:
+            await self.start()
+        return self
 
     async def _ssh_config(self):
         """Verify the selected alias/known_hosts once, then let Go own polling."""

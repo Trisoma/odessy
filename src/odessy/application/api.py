@@ -134,8 +134,9 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             monitor_settings = MonitoringSettings.from_env()
         except ValueError:
             monitor_settings = MonitoringSettings()
-        if monitor_settings.enabled:
-            monitoring = MonitoringSupervisor(monitor_settings)
+        # Keep a disabled supervisor for SSH alias discovery. It starts no process
+        # and starts only when the user explicitly enables/saves monitoring.
+        monitoring = MonitoringSupervisor(monitor_settings)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -166,11 +167,10 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     if not isinstance(app.state.auth_token, str) or not app.state.auth_token:
         raise ValueError('Bearer token must be a nonempty string')
     from odessy.monitoring.api import register as register_monitoring
-    monitor_settings = getattr(monitoring, 'settings', None)
-    register_monitoring(app, monitoring,
-                        ssh_host_id=getattr(monitor_settings, 'ssh_host_id', ''),
-                        ssh_alias=getattr(monitor_settings, 'ssh_alias', ''))
+    register_monitoring(app, monitoring)
     app.state.monitoring = monitoring
+    from .ssh_connections import register as register_ssh_connections
+    register_ssh_connections(app, monitoring)
     app.state.sessions, app.state.turn_tasks = sessions, tasks
     from .lan_connections import register as register_lan_connections
     register_lan_connections(app)

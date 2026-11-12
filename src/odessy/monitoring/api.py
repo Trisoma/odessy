@@ -13,9 +13,14 @@ import re
 from .supervisor import MonitorHTTPError, MonitorUnavailable
 
 
-def register(app, monitor, ssh_host_id='', ssh_alias=''):
+def register(app, monitor):
     from fastapi import Request
     from fastapi.responses import JSONResponse, StreamingResponse
+
+    def current_ssh():
+        settings = getattr(monitor, 'settings', None)
+        return (getattr(settings, 'ssh_host_id', '') or '',
+                getattr(settings, 'ssh_alias', '') or '')
 
     async def failure(code='MONITOR_UNAVAILABLE', status=503):
         return JSONResponse(
@@ -27,6 +32,7 @@ def register(app, monitor, ssh_host_id='', ssh_alias=''):
         if not isinstance(host, dict):
             return host
         host = dict(host)
+        ssh_host_id, ssh_alias = current_ssh()
         trust = host.get('trust')
         trust_state = trust if isinstance(trust, str) else (trust or {}).get('state')
         if isinstance(trust, str):
@@ -98,10 +104,13 @@ def register(app, monitor, ssh_host_id='', ssh_alias=''):
                   '/hosts/{host_id}/history', '/events'):
         app.add_api_route('/v1/monitoring' + route, serve, methods=['GET'])
 
-    if ssh_host_id:
+    if monitor is not None:
         async def ssh_computer(request):
+            ssh_id, ssh_alias = current_ssh()
+            if not ssh_id:
+                return await failure('HOST_NOT_FOUND', 404)
             try:
-                result = await monitor.request('GET', f'/internal/v1/hosts/{ssh_host_id}')
+                result = await monitor.request('GET', f'/internal/v1/hosts/{ssh_id}')
             except MonitorHTTPError as error:
                 return await failure('HOST_NOT_FOUND' if error.status in (403, 404) else error.code,
                                      error.status if error.status in (403, 404) else 503)
@@ -124,7 +133,7 @@ def register(app, monitor, ssh_host_id='', ssh_alias=''):
             return JSONResponse({
                 'schema_version': 1,
                 'computer': {
-                    'host_id': ssh_host_id,
+                    'host_id': ssh_id,
                     'display_name': host.get('display_name') or ssh_alias,
                     'method': 'ssh',
                     'connection': {

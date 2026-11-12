@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 import os
+import re
+import tempfile
+import threading
+from collections.abc import Iterable, Mapping
 from pathlib import Path
+
+_KEY = re.compile(r'[A-Za-z_][A-Za-z0-9_]*\Z')
+_LOCKS: dict[str, threading.Lock] = {}
+_LOCKS_GUARD = threading.Lock()
 
 #: Env var naming one config file to load instead of the default pair.
 CONFIG_FILE_ENV = "ODESSY_CONFIG_FILE"
@@ -68,3 +76,110 @@ def _strip_quotes(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         return value[1:-1]
     return value
+
+
+def validate_env_key(key: str) -> None:
+    if not isinstance(key, str) or not _KEY.fullmatch(key):
+        raise ValueError('Config key must be a plain environment name')
+
+
+def validate_env_value(value: str) -> None:
+    """Only representations that read_env_file() returns unchanged are accepted."""
+
+    if not isinstance(value, str):
+        raise ValueError('Config value must be text')
+    if not value or value != value.strip():
+        raise ValueError('Config value must be non-empty without surrounding whitespace')
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7f for ch in value):
+        raise ValueError('Config value must not contain control characters')
+    if value[0] in {"'", '"'} or value[-1] in {"'", '"'}:
+        raise ValueError('Config value must not start or end with a quote')
+    if '$' in value:
+        raise ValueError('Config value must not contain environment expansion syntax')
+
+
+def _lock_for(path: Path) -> threading.Lock:
+    key = str(path.resolve())
+    with _LOCKS_GUARD:
+        return _LOCKS.setdefault(key, threading.Lock())
+
+
+def _atomic_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=path.name + '.', suffix='.tmp', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if path.exists():
+            os.chmod(temporary, path.stat().st_mode)
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def read_env_text(path: Path) -> str | None:
+    target = Path(path)
+    if target.is_symlink():
+        raise ValueError('Config file must not be a symbolic link')
+    return target.read_text(encoding='utf-8') if target.exists() else None
+
+
+def restore_env_text(path: Path, text: str | None) -> None:
+    """Restore a previously captured file as one atomic operation."""
+
+    target = Path(path)
+    if target.is_symlink():
+        raise ValueError('Config file must not be a symbolic link')
+    with _lock_for(target):
+        if text is None:
+            if target.exists():
+                target.unlink()
+            return
+        _atomic_text(target, text)
+
+
+def update_env_values(path: Path, values: Mapping[str, str],
+                      *, remove: Iterable[str] = ()) -> Path:
+    """Update only the named keys in a user config file, preserving comments/order.
+
+    This is the existing config store, not a second registry. It refuses a symlink,
+    validates every key/value before touching the file, serializes writers and uses
+    a collision-safe temporary file.
+    """
+
+    target = Path(path)
+    if target.is_symlink():
+        raise ValueError('Config file must not be a symbolic link')
+    normalized = dict(values)
+    drop = set(remove)
+    for key in (*normalized.keys(), *drop):
+        validate_env_key(key)
+    for value in normalized.values():
+        validate_env_value(value)
+    with _lock_for(target):
+        existing = target.read_text(encoding='utf-8').splitlines() if target.exists() else []
+        keys = {key for key in normalized}
+        seen: set[str] = set()
+        output: list[str] = []
+        for raw in existing:
+            stripped = raw.strip()
+            if not stripped or stripped.startswith('#') or '=' not in stripped:
+                output.append(raw)
+                continue
+            key = stripped.split('=', 1)[0].strip()
+            if key in drop:
+                continue
+            if key in normalized:
+                output.append(f'{key}={normalized[key]}')
+                seen.add(key)
+            else:
+                output.append(raw)
+        for key in sorted(keys - seen):
+            output.append(f'{key}={normalized[key]}')
+        _atomic_text(target, '\n'.join(output).rstrip() + '\n')
+    return target
