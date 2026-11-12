@@ -158,6 +158,16 @@ notices. Accepting the resulting licence set for distribution is the publisher's
 
 - A rebuild of wheel, payload and NSIS from this tree, and the click-through of the green
   setup window from that EXE (owner asked not to rerun the installation in this pass).
+  *Update 2026-11-11 (final packaging pass):* the wheel, payload and native setup were
+  rebuilt from this tree and audited — wheel `odessy-0.5.0.dev0-py3-none-any.whl`
+  (1 770 514 B, `633b0712…`), payload `odessy-setup-windows-x64-r5.zip` (180 105 297 B,
+  `fb231edd12565518aae88616d0ecf7bcbaa24eed063f41f233d8cbc3eb6bf8cb`, components
+  `python, desktop, node, tools, harness`, `unknown_license_metadata: []`), setup
+  `OdessySetup-r5.exe` (125 073 078 B,
+  `b4d1a7dd82ca31ad55f96b5e244b28ee1f390565576dc5ab8f64c61f2ba8199b`). Launching that
+  EXE stages the payload and starts `desktop/odessy_desktop.exe --setup --payload
+  "<staging>"` (verified without UI automation). The setup-window click-through is still
+  unperformed; report 14.rev4 is the current record.
 - A real `package-register` run against a fresh isolated installation (Start-menu entry,
   Installed-apps record, launch, repair, unregister): the code path is covered by the unit
   tests above, not yet by an installed run.

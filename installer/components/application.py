@@ -137,7 +137,7 @@ def register_installed_source(dependencies: Path, target: Path) -> Path:
     return path
 
 
-def assemble(runtime: Path,dependencies: Path,bundle_dir: Path,target: Path,*,repo: Path=REPO_ROOT,harness_dir: Path|None=None,
+def assemble(runtime: Path,dependencies: Path,bundle_dir: Path,target: Path,*,repo: Path=REPO_ROOT,harness_dir: Path|None=None,install_root: Path|None=None,
              run=run_step,validate=validate_runtimes,dependency_check=validate_dependencies) -> dict:
     for path in (runtime,dependencies,bundle_dir):
         if not path.is_absolute():
@@ -155,7 +155,7 @@ def assemble(runtime: Path,dependencies: Path,bundle_dir: Path,target: Path,*,re
         if not harness_dir.is_absolute():
             raise ValueError('Component paths must be absolute.')
         staged=harness.verify(harness_dir)
-        staged_harness={**harness.installed_paths(target.parent),'version':staged['version'],
+        staged_harness={**harness.installed_paths(install_root or target.parent),'version':staged['version'],
                         'source_tag':staged['source_tag'],'files_verified':staged['files_verified']}
     snapshot=source_snapshot(repo)
     payload=sum(map(len,snapshot.values()))+tool['unpacked_bytes']

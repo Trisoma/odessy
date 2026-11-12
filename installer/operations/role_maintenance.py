@@ -32,6 +32,9 @@ def plan(root,bundle,executable=None,*,probe=None,folders=None,validate_base=Tru
     if probe and probe(root):raise ValueError('close installed processes before maintenance')
     state=read_state(root)
     if state['status']!='completed' or Path(state['plan']['install_dir']).resolve()!=root:raise ValueError('maintenance needs a completed owned installation')
+    # A stage this installation recorded is required; a legacy record that never staged the
+    # Harness payload is not. 'Missing' therefore means 'lost', not 'predates the component'.
+    recorded={step['name'] for step in state['steps'] if step.get('result') is not None}
     selection=SetupSelection.from_dict(state['plan']['selection'])
     new=role_aware.build_plan(root,Path(state['plan']['cache_dir']),bundle,selection)
     if validate_base:
@@ -39,7 +42,7 @@ def plan(root,bundle,executable=None,*,probe=None,folders=None,validate_base=Tru
         for name in ('runtime','harness_runtime','dependencies'):
             step=steps.get(name)
             if step is None:raise ValueError('the installer workflow is missing the '+name+' stage')
-            if name=='harness_runtime' and not (root/'runtime/harness-runtime').exists():continue
+            if name=='harness_runtime' and 'harness_runtime' not in recorded:continue
             if step.validate() is None:raise ValueError('base component needs repair: '+name)
     _,tool=application.validate_bundle(bundle)
     required=2*(sum(map(len,application.source_snapshot(workflow.REPO_ROOT).values()))+tool['unpacked_bytes'])+RESERVE_BYTES

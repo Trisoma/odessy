@@ -40,7 +40,7 @@ def catalog(parameters):
     from odessy.credentials import Scope, resolve
     key = resolve(Scope(provider, address, reference))
     if not key and provider != 'custom':
-        return dict(result, status='credentials_missing', error='Configure the provider API key in Settings, then fetch again.')
+        return dict(result, status='credentials_missing', error='Enter the provider API key on this screen, or in Settings, then fetch again.')
     headers = {'Accept': 'application/json'}
     if key:
         if provider == 'claude':

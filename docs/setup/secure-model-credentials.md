@@ -36,6 +36,11 @@ Native/platform acceptance and exact test evidence are recorded below.
 
 ## Use the feature
 
+The same masked field appears on the first-run **Get started** screen, so a new
+installation does not need an environment variable: choose **Remote or cloud**,
+save the key, then fetch or name a model. The key belongs to the selected provider
+and endpoint; changing the endpoint means saving the key again for the new one.
+
 Open Settings → Models and connections. Select the provider and its endpoint,
 enter the key in the masked **API key** field, and choose **Save securely**.
 The key is stored separately from the model configuration. Save changed model

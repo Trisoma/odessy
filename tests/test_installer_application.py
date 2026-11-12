@@ -55,6 +55,16 @@ class ApplicationTests(unittest.TestCase):
         kwargs.update(options)
         return assemble(self.runtime,self.deps,self.bundle,self.root/'app',**kwargs)
 
+    def test_harness_record_uses_final_install_root_during_staging(self):
+        from installer.components import harness
+        final_root=self.root/'installed'
+        staged=final_root/'runtime/harness-runtime'
+        with patch.object(harness,'verify',return_value={
+                'version':'fixture','source_tag':'fixture','files_verified':1}):
+            settings=self.assemble(harness_dir=staged,install_root=final_root)
+        self.assertEqual(settings['harness']['runtime_dir'],str(staged))
+        self.assertNotIn(str(self.root/'app'),settings['harness']['executable'])
+
     def test_assembly_keeps_source_layout_and_generated_launchers(self):
         settings=self.assemble()
         app=self.root/'app'

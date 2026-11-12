@@ -15,6 +15,14 @@ class DesktopAudio:
         self.errors=[]
         self.adapter.report_audio_error=lambda stage,message:self.errors.append(stage)
 
+    @property
+    def timing(self):
+        """The phase marks shared by push-to-talk and wake capture (prompt 13)."""
+        return self.adapter.timing
+
+    def report_timing_to(self, callback):
+        self.adapter.report_timing=callback
+
     async def start(self):
         if self.reader is not None and not self.reader.done():raise RuntimeError('Previous capture is still draining')
         await self.cancel()
@@ -25,6 +33,7 @@ class DesktopAudio:
         stream=recorder(self.config,command_factory=CommandAudioStream)
         self.stream=stream
         await asyncio.to_thread(stream.start)
+        self.adapter.begin_capture('push-to-talk')
         self.reader=asyncio.create_task(self._read(stream))
 
     async def _read(self,stream):
@@ -51,6 +60,8 @@ class DesktopAudio:
     async def finish(self):
         await self._stop_reader()
         if self.errors:raise RuntimeError('Microphone capture failed')
+        # Recording ended; recognition is the next phase and is timed separately.
+        self.adapter.note_capture_end()
         pcm=bytes(self.buffer);self.buffer.clear()
         if not pcm:return ''
         return await self.adapter.transcribe_pcm(pcm)
@@ -67,7 +78,8 @@ class DesktopAudio:
     def make_wake(self,**options):
         return HybridAudioAdapter(self.config,options['submit_voice'],listen=True,
             stop_turn=options['stop_turn'],interactions=options['interactions'],
-            report_status=options['report_status'],report_audio_error=options['report_audio_error'])
+            report_status=options['report_status'],report_audio_error=options['report_audio_error'],
+            report_timing=options.get('report_timing',lambda snapshot:None),timing=self.timing)
 
     async def close(self):
         with contextlib.suppress(Exception):await self.cancel()

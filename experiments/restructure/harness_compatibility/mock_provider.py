@@ -59,6 +59,11 @@ def _chunks_for(prompt: str) -> tuple[list[str], int, dict | None]:
             "description": "Write a marker outside the workspace",
             "command": command,
         }})
+    if "slow sentences" in prompt.lower():
+        # Two complete sentences, then a long tail without sentence ends: the voice path
+        # speaks what arrived before a Stop and nothing after it (prompt 13).
+        return (["The first sentence is spoken. ", "The second one too. "]
+                + [f"tail{i} " for i in range(40)], 250, None)
     if "slow survive" in prompt.lower():
         # 5 s: still running after the other turn is cancelled and observed.
         return ([f"token{i} " for i in range(20)], 250, None)
@@ -216,6 +221,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             finally:
                 self.close_connection = True
+                with _LOCK:
+                    event = self.server.stream_completions.setdefault(prompt, threading.Event())
+                    event.set()
             return
 
         message: dict = {"role": "assistant", "content": "".join(chunks)}
@@ -316,6 +324,7 @@ def serve(log_dir: Path, port: int = 0) -> tuple[ThreadingHTTPServer, int]:
     log_dir.mkdir(parents=True, exist_ok=True)
     handler = type("BoundHandler", (Handler,), {"log_dir": log_dir})
     server = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    server.stream_completions = {}
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, server.server_address[1]

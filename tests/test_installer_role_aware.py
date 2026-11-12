@@ -34,6 +34,26 @@ def test_a_workflow_missing_a_required_stage_is_refused(monkeypatch):
         role_aware.steps_for(plan)
 
 
+def test_the_shared_workflow_really_offers_every_role_stage(tmp_path):
+    """No stand-in for ``workflow.steps_for``: the real stage list is what matters.
+
+    The monkeypatched tests above would keep passing if the shared workflow renamed a stage
+    or dropped it from its own list. This one builds the real steps and selects them, which
+    is the exact expression that used to slice positionally.
+    """
+
+    plan = {'install_dir': str(tmp_path / 'install'), 'cache_dir': str(tmp_path / 'cache'),
+            'tool_bundle': str(tmp_path / 'bundle'), 'endpoint': 'http://127.0.0.1:11435',
+            'model': None}
+
+    steps = role_aware._workflow_steps(plan, cancelled=lambda: False,
+                                       emit_progress=lambda value: None)
+
+    assert [step.name for step in steps] == list(role_aware.ROLE_STEPS)
+    assert set(role_aware.ROLE_STEPS) <= set(role_aware.workflow.STEP_NAMES)
+    assert 'application' in [step.name for step in steps]
+
+
 class _Artifact:
     def __init__(self, name, size, sha='0' * 64):
         self.id, self.size_bytes, self.sha256 = name, size, sha

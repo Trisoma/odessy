@@ -32,7 +32,7 @@ class MaintenanceTests(unittest.TestCase):
                    launcher=dict(schema_version=1,install_dir=str(root),executable=str(root/'launcher/OdessyLauncher.exe'),sha256=digest(exe),links=[],link_sha256={}))
         value['plan_sha256']=fingerprint(value);return value
 
-    def assemble(self,runtime,deps,bundle,target):
+    def assemble(self,runtime,deps,bundle,target,**options):
         self.prepared.append(target);target.mkdir();(target/'new.txt').write_text('new application')
         return dict(python='private-python')
 
@@ -46,6 +46,17 @@ class MaintenanceTests(unittest.TestCase):
         return maintenance.execute(self.root,self.bundle,self.exe,preview['plan_sha256'],probe=lambda root:[],
             planner=self.planner,assemble=self.assemble,verify=kwargs.pop('verify',self.verify),
             final_check=kwargs.pop('final_check',lambda app:None),**kwargs)
+
+    def test_repaired_harness_is_selected_after_repair_and_uses_final_root(self):
+        original_assemble=self.assemble
+        def repair(root,folder,preview,data):
+            (root/'runtime/harness-runtime').mkdir(parents=True)
+        def assemble(runtime,deps,bundle,target,**options):
+            self.assertEqual(options['harness_dir'],self.root/'runtime/harness-runtime')
+            self.assertEqual(options['install_root'],self.root)
+            return original_assemble(runtime,deps,bundle,target,**options)
+        self.assemble=assemble
+        self.apply(repair=repair)
 
     def test_new_application_is_verified_before_old_components_move(self):
         result=self.apply();self.assertEqual(result['status'],'completed')
