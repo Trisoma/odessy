@@ -218,20 +218,22 @@ void main() {
       (tester) async {
     final session = DesktopSession(DemoApi(delay: Duration.zero));
     addTearDown(session.dispose);
-    await session.start();
-    await mountMonitoring(
+    await tester.runAsync(session.start);
+    await tester.runAsync(() async {
+      await mountMonitoring(
         tester,
         DevicePage(
             device: 'host_a',
             host: monitoringHostFixture(
                 id: 'host_a', name: 'Workstation', trust: 'local'),
             controller: session));
+    });
     expect(find.text('Local coordinator on this computer'), findsNWidgets(2));
     expect(find.text('Connection: online'), findsOneWidget);
     expect(find.text('Telemetry: allowed'), findsOneWidget);
     expect(find.text(monitoringExecutionNote), findsOneWidget);
     expect(find.text(monitoringWorkspaceNote), findsOneWidget);
     expect(find.byKey(const ValueKey('device-telemetry-chip')), findsOneWidget);
-    await session.shutdown();
+    await tester.runAsync(session.shutdown);
   });
 }
