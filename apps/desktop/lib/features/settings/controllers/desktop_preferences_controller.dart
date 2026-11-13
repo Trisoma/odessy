@@ -48,7 +48,7 @@ class DesktopPreferencesController extends ChangeNotifier {
       dirty;
 
   Future<void> load() async {
-    if (_disposed || _loading) return;
+    if (_disposed || _loading || _saving) return;
     _loading = true;
     error = '';
     status = '';
@@ -62,6 +62,8 @@ class DesktopPreferencesController extends ChangeNotifier {
       _conflict = false;
     } on FormatException {
       if (_disposed) return;
+      _snapshot = null;
+      _draft = null;
       _loaded = false;
       _conflict = false;
       error =
@@ -92,9 +94,9 @@ class DesktopPreferencesController extends ChangeNotifier {
   }
 
   Future<void> discard() async {
-    if (_disposed || _draft == null) return;
+    if (_disposed || _loading || _saving || _draft == null) return;
     _draft = null;
-    error = '';
+    if (_loaded && !_conflict) error = '';
     status = '';
     notifyListeners();
   }

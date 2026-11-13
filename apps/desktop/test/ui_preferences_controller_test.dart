@@ -35,6 +35,39 @@ class FakeStore implements DesktopPreferencesStore {
 }
 
 void main() {
+  test('failed reload shows defaults and discard retains load error', () async {
+    final store = FakeStore(snapshot: const PreferencesSnapshot(
+        DesktopPreferences(theme: DesktopTheme.light), 3));
+    final controller = DesktopPreferencesController(store);
+    addTearDown(controller.dispose);
+    await controller.load();
+    store.loadError = const FormatException('invalid');
+    await controller.load();
+    expect(controller.value.theme, DesktopTheme.dark);
+    expect(controller.revision, isNull);
+    controller.edit(const DesktopPreferences(theme: DesktopTheme.light));
+    await controller.discard();
+    expect(controller.error, isNotEmpty);
+    expect(controller.canSave, isFalse);
+  });
+
+  test('load and discard cannot race an admitted save', () async {
+    final store = FakeStore()..saveGate = Completer<PreferencesSnapshot>();
+    final controller = DesktopPreferencesController(store);
+    addTearDown(controller.dispose);
+    await controller.load();
+    controller.edit(const DesktopPreferences(theme: DesktopTheme.light));
+    final pending = controller.save();
+    await controller.discard();
+    await controller.load();
+    expect(store.loads, 1);
+    expect(controller.dirty, isTrue);
+    store.saveGate!.completeError(StateError('disk'));
+    expect(await pending, isFalse);
+    expect(controller.value.theme, DesktopTheme.light);
+    expect(controller.dirty, isTrue);
+  });
+
   test('load exposes the saved value and revision without writing', () async {
     final store = FakeStore(
         snapshot: const PreferencesSnapshot(
