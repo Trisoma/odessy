@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:odessy_client/odessy_client.dart';
 import '../../../app/theme.dart';
+import '../../monitoring/presentation/metric_presentation.dart';
 
 /// Read-only presentation of supplied reports. This widget performs no I/O.
 class MonitoringDetails extends StatelessWidget {
@@ -13,12 +14,18 @@ class MonitoringDetails extends StatelessWidget {
       this.error,
       this.demo = false,
       this.showHeader = true,
-      this.onRefresh});
+      this.onRefresh,
+      this.clock});
   final MonitoringHost? host;
   final Json? report;
   final bool loading, retained, demo, showHeader;
   final String? error;
   final VoidCallback? onRefresh;
+
+  /// Injectable so tests can assert freshness wording without waiting.
+  final DateTime Function()? clock;
+
+  DateTime get _now => (clock ?? DateTime.now)();
 
   Map _map(Object? value) => value is Map ? value : const {};
   bool get _mismatched =>
@@ -32,6 +39,21 @@ class MonitoringDetails extends StatelessWidget {
       : report != null
           ? _map(report!['sample'])
           : _map(host?.sample);
+
+  /// Age of the reported observation, or null when it reported no time.
+  Duration? get _sampleAge {
+    final raw = _sample['observed_at'];
+    final parsed = raw is String ? DateTime.tryParse(raw) : null;
+    if (parsed == null) return null;
+    final age = _now.toUtc().difference(parsed.toUtc());
+    return age.isNegative ? Duration.zero : age;
+  }
+
+  String get _sourceLabel => sampleSourceLabel(
+      hasReport: report != null || host?.sample != null,
+      restricted: _restricted,
+      live: !_historical && !_mismatched && error == null,
+      retained: _historical);
   bool _stale(String group) =>
       _historical ||
       (report?['stale_groups'] is List &&
@@ -141,16 +163,36 @@ class MonitoringDetails extends StatelessWidget {
                                   _notice(context, 'Monitoring needs attention',
                                       error!),
                                 _card(context, 'Device state', [
+                                  _row(context, 'Connection method',
+                                      connectionMethodLabel(host!.trust)),
                                   _row(context, 'Connection',
                                       '${_status(host!.connectivity)}${_historical ? ' · last report' : ''}'),
                                   _row(context, 'Trust',
                                       '${_status(host!.trust)}${_historical ? ' · last report' : ''}'),
                                   _row(context, 'Telemetry access',
                                       '${_status(host!.access)}${_historical ? ' · last report' : ''}'),
+                                  _row(
+                                      context, 'Readings source', _sourceLabel),
+                                  _row(
+                                      context,
+                                      'Sample freshness',
+                                      _restricted || _mismatched
+                                          ? 'Not applicable · no readings'
+                                          : freshnessLabel(_sampleAge)),
+                                  _row(context, 'Execution / workspace',
+                                      'Not granted by monitoring'),
                                 ]),
                                 if (_restricted)
-                                  _notice(context, 'Telemetry unavailable',
-                                      'No readings are displayed for this access or trust state.')
+                                  _notice(
+                                      context,
+                                      'Telemetry unavailable',
+                                      host!.trust == 'revoked'
+                                          ? 'The pairing was revoked, so no readings are displayed. Execution and workspace access were never granted by monitoring.'
+                                          : host!.access == 'denied'
+                                              ? 'Monitoring permission was denied, so no readings are displayed. An authenticated connection to this host does not grant telemetry.'
+                                              : host!.access == 'unsupported'
+                                                  ? 'This host does not support telemetry collection, so no readings are displayed.'
+                                                  : 'Telemetry is disabled for this host, so no readings are displayed.')
                                 else if (!_mismatched) ...[
                                   _metrics(context),
                                   _gpu(context),
@@ -215,9 +257,13 @@ class MonitoringDetails extends StatelessWidget {
         const SizedBox(height: 12),
         Text('Collector: ${_status(group['status'])}'),
         if (_stale(name)) const Text('Historical / stale reading'),
+        if (group.isEmpty) const Text('Not reported by this collector'),
         const SizedBox(height: 4),
         Text(_time(group['observed_at'] ?? _sample['observed_at']),
             style: Theme.of(context).textTheme.bodySmall),
+        if (!_readable(group))
+          Text('No value is shown; an unreported metric is not zero.',
+              style: Theme.of(context).textTheme.bodySmall),
       ]);
 
   Widget _gpu(BuildContext context) {

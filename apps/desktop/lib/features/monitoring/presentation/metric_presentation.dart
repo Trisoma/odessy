@@ -91,6 +91,49 @@ String statusLabel(String status) => switch (status) {
       _ => 'Unknown',
     };
 
+/// How the monitoring service reached this host. Only the trust projection is
+/// exposed to the desktop client; no additional transport is inferred from it.
+String connectionMethodLabel(String trust) => switch (trust) {
+      'local' => 'Local coordinator on this computer',
+      'paired' => 'Paired identity · separate permissions',
+      'revoked' => 'Pairing revoked · telemetry unavailable',
+      _ => 'Unknown · no verified connection method',
+    };
+
+/// Where the displayed readings came from, stated without claiming liveness.
+String sampleSourceLabel({
+  required bool hasReport,
+  required bool restricted,
+  required bool live,
+  required bool retained,
+}) {
+  if (restricted) return 'None · telemetry permission withheld';
+  if (!hasReport) return 'None reported yet';
+  if (live) return 'Collector report · current target';
+  if (retained) return 'Retained earlier report · not current';
+  return 'Collector report · freshness unconfirmed';
+}
+
+/// Age wording for a sample. An absent observation time stays unknown.
+String freshnessLabel(Duration? age) {
+  if (age == null) return 'Unknown · no observation time reported';
+  if (age.inSeconds < 2) return 'Under 2 seconds old';
+  if (age.inSeconds < 90) return '${age.inSeconds}s old';
+  if (age.inMinutes < 90) return '${age.inMinutes} min old';
+  if (age.inHours < 48) {
+    final minutes = age.inMinutes - age.inHours * 60;
+    return '${age.inHours}h ${minutes}m old';
+  }
+  return '${age.inDays} days old';
+}
+
+/// Explicit capability wording. Monitoring never grants execution or a
+/// workspace, regardless of how the host is connected.
+const String monitoringExecutionNote =
+    'Execution is granted by the conversation session, never by monitoring.';
+const String monitoringWorkspaceNote =
+    'Workspace access is not granted by monitoring.';
+
 String _observed(Map value) {
   final raw = value['observed_at'];
   final parsed = raw is String ? DateTime.tryParse(raw) : null;
