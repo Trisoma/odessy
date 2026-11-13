@@ -3,6 +3,8 @@ import '../../../app/ux_copy.dart';
 import 'package:odessy_client/odessy_client.dart';
 import '../../../app/setup/native_picker.dart';
 import '../controllers/component_settings_controller.dart';
+import '../controllers/desktop_preferences_controller.dart';
+import 'appearance_preferences.dart';
 import 'component_settings_pane.dart';
 import 'settings_navigation.dart';
 import 'model_profiles.dart';
@@ -66,11 +68,13 @@ class SettingsPage extends StatefulWidget {
     this.voiceEnabled = false,
     this.themeMode = ThemeMode.dark,
     this.onToggleTheme,
+    this.preferencesController,
   });
 
   final DesktopSession controller;
   final SetupBackend? configurationBackend;
   final ComponentSettingsController? componentController;
+  final DesktopPreferencesController? preferencesController;
   final ReadinessController? readiness;
   final VoidCallback? onRestartSaved;
   final SettingsFormController<int>? formController;
@@ -280,10 +284,35 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!await confirmSettingsNavigation(context, components) || !mounted) {
         return;
       }
+      if (!await _confirmAppearanceDiscard() || !mounted) return;
       setState(() => section = name);
     } finally {
       changingSection = false;
     }
+  }
+
+  /// Appearance is a separate local owner with its own draft; leaving the
+  /// section must not silently save or drop it.
+  Future<bool> _confirmAppearanceDiscard() async {
+    final preferences = widget.preferencesController;
+    if (preferences == null || !preferences.dirty) return true;
+    final discard = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+                title: const Text('Discard appearance changes?'),
+                content: const Text(
+                    'The appearance draft has not been saved to this device.'),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Keep editing')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Discard changes')),
+                ]));
+    if (discard != true) return false;
+    await preferences.discard();
+    return true;
   }
 
   @override
@@ -383,6 +412,8 @@ class _SettingsPageState extends State<SettingsPage> {
                           ? 'Use light theme'
                           : 'Use dark theme'))),
           ]),
+          if (widget.preferencesController != null)
+            AppearancePreferences(controller: widget.preferencesController!),
           _card(context, 'Collaboration', [_collaborationForm(context)]),
         ],
         if (section == SettingsSections.models) ...[
