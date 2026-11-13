@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:odessy_client/odessy_client.dart';
 
 import '../../../app/session_controller.dart';
 import '../../../app/theme.dart';
+import '../../monitoring/presentation/metric_presentation.dart';
 
 enum _DeviceSection { overview, settings, history }
 
@@ -11,11 +13,16 @@ class DevicePage extends StatefulWidget {
       {super.key,
       required this.device,
       required this.controller,
+      this.host,
       this.monitoringOverview,
       this.monitoringHistory,
       this.onManagePairing,
       this.onPair});
   final String device;
+
+  /// Verified inventory entry for [device]. Null keeps the demo/placeholder
+  /// view, which never claims a live device state.
+  final MonitoringHost? host;
   final DesktopSession controller;
   final Widget? monitoringOverview, monitoringHistory;
   final VoidCallback? onManagePairing, onPair;
@@ -31,10 +38,30 @@ class _DevicePageState extends State<DevicePage> {
   void didUpdateWidget(covariant DevicePage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.device != widget.device ||
+        oldWidget.host?.id != widget.host?.id ||
         oldWidget.controller != widget.controller) {
       section = _DeviceSection.overview;
     }
   }
+
+  MonitoringHost? get host => widget.host;
+  bool get _restricted =>
+      host != null && (host!.access != 'allowed' || host!.trust == 'revoked');
+
+  /// Wire enum wording, kept literal so nothing unknown reads as healthy.
+  String _statusWord(String raw) => switch (raw) {
+        'online' => 'Online',
+        'stale' => 'Stale',
+        'offline' => 'Offline',
+        'allowed' => 'Allowed',
+        'denied' => 'Denied',
+        'unsupported' => 'Unsupported',
+        'disabled' => 'Disabled',
+        'local' => 'Local',
+        'paired' => 'Paired',
+        'revoked' => 'Revoked',
+        _ => 'Unknown',
+      };
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
@@ -137,9 +164,13 @@ class _DevicePageState extends State<DevicePage> {
                       BorderRadius.circular(OdessyTokens.radiusMedium),
                 ),
                 child: Icon(
-                  widget.device == 'Jetson'
-                      ? Icons.memory_outlined
-                      : Icons.computer_outlined,
+                  host != null
+                      ? (host!.trust == 'local'
+                          ? Icons.laptop_windows_outlined
+                          : Icons.dns_outlined)
+                      : widget.device == 'Jetson'
+                          ? Icons.memory_outlined
+                          : Icons.computer_outlined,
                   size: 28,
                   color: Theme.of(context).colorScheme.onPrimaryContainer,
                 ),
@@ -158,7 +189,9 @@ class _DevicePageState extends State<DevicePage> {
                     ),
                     const SizedBox(height: OdessyTokens.spaceSmall),
                     Text(
-                      'Device details and available settings.',
+                      host == null
+                          ? 'Device details and available settings.'
+                          : connectionMethodLabel(host!.trust),
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
@@ -184,6 +217,21 @@ class _DevicePageState extends State<DevicePage> {
                       : 'Read-only device view',
                 ),
               ),
+              if (host != null)
+                Chip(
+                  avatar: Icon(
+                      host!.connectivity == 'online'
+                          ? Icons.wifi
+                          : Icons.wifi_off_outlined,
+                      size: 16),
+                  label: Text('Connection: ${host!.connectivity}'),
+                ),
+              if (host != null)
+                Chip(
+                  key: const ValueKey('device-telemetry-chip'),
+                  avatar: const Icon(Icons.monitor_heart_outlined, size: 16),
+                  label: Text('Telemetry: ${host!.access}'),
+                ),
             ],
           ),
           const SizedBox(height: OdessyTokens.spaceCompact),
@@ -255,18 +303,26 @@ class _DevicePageState extends State<DevicePage> {
                   child: _statusCard(
                     context,
                     'Device connection',
-                    'Unknown',
-                    'No connection report is available for this device.',
-                    Icons.wifi_off_outlined,
+                    host == null ? 'Unknown' : _statusWord(host!.connectivity),
+                    host == null
+                        ? 'No connection report is available for this device.'
+                        : 'Reported separately from trust and from telemetry access.',
+                    host != null && host!.connectivity == 'online'
+                        ? Icons.wifi
+                        : Icons.wifi_off_outlined,
                   ),
                 ),
                 SizedBox(
                   width: width,
                   child: _statusCard(
                     context,
-                    'Device access',
-                    'Not verified',
-                    'Pairing and permissions have not been verified here.',
+                    'Telemetry access',
+                    host == null ? 'Not verified' : _statusWord(host!.access),
+                    host == null
+                        ? 'Monitoring permission has not been verified here.'
+                        : _restricted
+                            ? 'No readings are shown while monitoring access is withheld.'
+                            : 'Read-only collection only; it grants no execution or workspace.',
                     Icons.shield_outlined,
                   ),
                 ),
@@ -281,7 +337,15 @@ class _DevicePageState extends State<DevicePage> {
             'Coordinator',
             c.api.isDemo ? 'Demo session' : c.api.identity,
           ),
+          if (host != null) ...[
+            _detail(context, 'Device identity', host!.id),
+            _detail(context, 'Connection method',
+                connectionMethodLabel(host!.trust)),
+            _detail(context, 'Monitoring trust', _statusWord(host!.trust)),
+          ],
           _detail(context, 'Execution target', 'Managed by backend policy'),
+          _detail(context, 'Execution capability', monitoringExecutionNote),
+          _detail(context, 'Workspace capability', monitoringWorkspaceNote),
           _detail(
             context,
             'Activity',
@@ -312,15 +376,34 @@ class _DevicePageState extends State<DevicePage> {
         const SizedBox(height: OdessyTokens.spaceRegular),
         _sectionCard(context, 'Device metrics', Icons.monitor_heart_outlined, [
           Text(
-            'Metrics unavailable',
+            widget.monitoringOverview != null
+                ? 'Reported readings are shown in Overview.'
+                : 'Metrics unavailable',
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: OdessyTokens.spaceCompact),
-          const Text('No device metrics are available in this view.'),
+          Text(widget.monitoringOverview != null
+              ? 'Select a collector group there for its status, source and sample time. This page never infers a value.'
+              : 'No device metrics are available in this view.'),
           const SizedBox(height: OdessyTokens.spaceRegular),
-          _detail(context, 'CPU', 'Unavailable'),
-          _detail(context, 'Memory', 'Unavailable'),
-          _detail(context, 'GPU', 'Unavailable'),
+          _detail(
+              context,
+              'CPU',
+              widget.monitoringOverview != null
+                  ? 'See collector report'
+                  : 'Unavailable'),
+          _detail(
+              context,
+              'Memory',
+              widget.monitoringOverview != null
+                  ? 'See collector report'
+                  : 'Unavailable'),
+          _detail(
+              context,
+              'GPU',
+              widget.monitoringOverview != null
+                  ? 'See collector report'
+                  : 'Unavailable'),
           const SizedBox(height: OdessyTokens.spaceCompact),
           Text(
             'Missing readings do not mean zero usage.',
@@ -344,7 +427,8 @@ class _DevicePageState extends State<DevicePage> {
           ]),
           const SizedBox(height: OdessyTokens.spaceRegular),
           _sectionCard(context, 'Pairing & access', Icons.shield_outlined, [
-            _detail(context, 'Access status', 'Not verified'),
+            _detail(context, 'Access status',
+                host == null ? 'Not verified' : _statusWord(host!.access)),
             const Text(
                 'Pairing and permissions are managed on this computer. Verify the peer identity before changing access; selecting this device does not identify or authorize a peer.'),
             const SizedBox(height: OdessyTokens.spaceRegular),

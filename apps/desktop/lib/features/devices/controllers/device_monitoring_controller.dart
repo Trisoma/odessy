@@ -56,6 +56,66 @@ class DeviceMonitoringController extends ChangeNotifier {
   }
 
   MonitoringHost? get inspectedHost => _verified;
+
+  /// Telemetry permission of the verified target, independent of connectivity
+  /// and of the conversation's execution grants.
+  bool get readingsRestricted =>
+      _verified != null &&
+      (_verified!.access != 'allowed' || _verified!.trust == 'revoked');
+
+  /// True only while a fresh report from the verified, allowed, online target
+  /// is displayed. Anything else is historical, not a live health claim.
+  bool get readingsLive =>
+      metrics != null &&
+      !metricsRetained &&
+      metricsError == null &&
+      _verified != null &&
+      _verified!.access == 'allowed' &&
+      _verified!.trust != 'revoked' &&
+      _verified!.connectivity == 'online';
+
+  /// Observation time the collector reported, or null when it reported none.
+  DateTime? get sampleObservedAt {
+    final sample = metrics?['sample'];
+    final raw = sample is Map ? sample['observed_at'] : null;
+    return raw is String ? DateTime.tryParse(raw)?.toUtc() : null;
+  }
+
+  /// Age of the displayed sample against this controller's clock.
+  Duration? get sampleAge {
+    final at = sampleObservedAt;
+    if (at == null) return null;
+    final age = clock().toUtc().difference(at);
+    return age.isNegative ? Duration.zero : age;
+  }
+
+  /// Collector groups that must not be presented as current values.
+  Set<String> get staleGroups {
+    final groups = <String>{};
+    final reported = metrics?['stale_groups'];
+    if (reported is List) {
+      for (final group in reported) {
+        if (group is String) {
+          groups.add(group);
+        }
+      }
+    }
+    if (!readingsLive) {
+      groups.addAll(const [
+        'cpu',
+        'memory',
+        'disks',
+        'disk_io',
+        'network',
+        'gpu',
+        'thermal',
+        'power',
+        'services'
+      ]);
+    }
+    return groups;
+  }
+
   bool _current(MonitoringClient client, int binding) =>
       !_disposed && identical(client, _client) && binding == _binding;
   void _notify() {
