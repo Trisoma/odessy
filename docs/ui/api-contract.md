@@ -8,6 +8,7 @@ an implicit request target. There are no direct provider/native calls in widgets
 |---|---|
 | List profiles | GET `/v1/profiles` |
 | Create/refresh/close | POST `/v1/sessions`, GET/DELETE `/v1/sessions/{sid}` |
+| Discover current live sessions | GET `/v1/sessions?limit=50&offset=0` |
 | Next-turn selection | PUT `/v1/sessions/{sid}/model`, `{profile}` |
 | Submit once | POST `/v1/sessions/{sid}/turns`, `{text}` |
 | Stop | POST `/v1/sessions/{sid}/stop` |
@@ -61,6 +62,23 @@ Session snapshots include `available_profiles`, the model names accepted by that
 session's model selector. The desktop falls back to the global profiles endpoint
 for older services that omit this field. Existing sessions keep their configuration
 snapshot; profile edits apply to newly created sessions.
+
+The additive `SessionDirectoryApi` lists only sessions already owned by the current
+service. Its response is `{service_instance_id, sessions: [{id, engine,
+selected_profile, running}], next_offset}`. Limits are 1–100 and offset 0–100000;
+invalid ranges return 400. Pagination is live insertion order, not a frozen
+snapshot. Clients deduplicate IDs and reject a changed service instance across
+pages. Listing never starts an engine or returns history, credentials or roots.
+Session IDs expire with that service process; this is not durable conversation
+resume. Existing create/close semantics remain unchanged until grouped navigation
+is integrated explicitly. `SessionDirectoryApi` is optional for older/custom clients.
+
+Desktop appearance persistence is separate from HTTP/runtime configuration.
+`lib/app/preferences/` stores only theme, bounded text scale and reduced
+transparency under the user's Odessy desktop configuration directory. Revision
+conflicts and malformed/future files fail visibly and preserve the stored file;
+there is no credential, endpoint, engine or permission storage in that document.
+The foundation is not yet connected to the production settings/shell.
 
 Usage history is a read-only, bearer-authenticated view of provider-reported cloud
 API calls recorded by this service. Allowed ranges are 7, 30, 90 and 0 (all time)
