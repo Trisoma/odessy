@@ -124,6 +124,8 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     settings_revision = 0
     app.state.runtime_configuration = json.loads(json.dumps(runtime_configuration))
     app.state.service_instance_id = secrets.token_hex(16)
+    from odessy.application.session_directory import register as register_sessions
+    register_sessions(app)
     restart_reservation = None
     pending_admissions = 0
 
