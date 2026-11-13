@@ -87,7 +87,7 @@ Initial full runs exposed preference loading/section navigation and fixture stor
 - `doc/ui/tastecode-wired/README.md`
 - `doc/ui/tastecode-wired/*.png`
 
-Pack control-inventory updated with row-level integration status; this report copied into repository doc/ui/tastecode-wired for committed review. Screenshots and reproducible capture command: [README](../../../../odessy-wt-integration/doc/ui/tastecode-wired/README.md).
+Pack control-inventory updated with row-level integration status; this report copied into repository doc/ui/tastecode-wired for committed review. Screenshots and reproducible capture command: [README](../../../../odessy/doc/ui/tastecode-wired/README.md).
 
 ## Remaining gates / narrow recommendation
 
@@ -96,3 +96,7 @@ Source is suitable for review on the integration branch; do not call this the co
 No execution/provider/permission grants were added by opening UI. No runtime dependency closure or security rules changed. Fixtures remain test-only. Hosted CI results after push remain unobserved.
 
 Final commit dc423c9 was pushed and remote hash verified on feat/ui-wiring-integration. All four worker branches were also pushed. develop was not updated. UI visual adaptation remains incomplete: the integration retains much of the old production page styling rather than the approved demo layout/typography; the user explicitly flagged this discrepancy. Do not treat passing functional tests as visual parity.
+
+## Branch consolidation (2026-11-14)
+
+The active checkout is now the original odessy folder on feat/ui-wiring-integration. All four worker tips are ancestors of this branch. Their redundant local and remote branches and the four odessy-wt-* working folders were removed after clean-state and exact-tip verification. develop and existing stashes were preserved. Recovery bundle: C:/Users/13647/Documents/Codex/2026-11-12/this-x20/outputs/ui-consolidation-20261114/ui-workers.bundle. Historical worktree paths above describe the audit environment, not current launch locations. Use the screenshot README in this folder.
