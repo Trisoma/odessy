@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:test/test.dart';
 import 'package:odessy_client/odessy_client.dart';
-import 'package:odessy_client/src/workspace_inspector.dart';
 
 final hash = 'a' * 64;
 Json context(String sid) => {

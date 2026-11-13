@@ -1,9 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:odessy_client/odessy_client.dart';
-// Isolated worker contract; Prompt 05 owns the public barrel export.
-// ignore: implementation_imports
-import 'package:odessy_client/src/workspace_inspector.dart';
 
 enum InspectorPanel { files, terminal, changes }
 

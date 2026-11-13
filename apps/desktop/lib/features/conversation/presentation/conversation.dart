@@ -7,16 +7,19 @@ import '../../../widgets/pixel_boat.dart';
 import '../controllers/voice_controller.dart';
 import 'interaction_card.dart';
 import 'message_content.dart';
+import '../../workspaces/controllers/workspace_inspector_controller.dart';
 
 class ConversationPage extends StatefulWidget {
   const ConversationPage(
       {super.key,
       required this.controller,
       this.readiness,
+      this.inspector,
       this.voice,
       this.draftController,
       this.onOpenModels});
   final DesktopSession controller;
+  final WorkspaceInspectorController? inspector;
   final ReadinessController? readiness;
   final VoiceController? voice;
   final TextEditingController? draftController;
@@ -149,10 +152,30 @@ class _ConversationPageState extends State<ConversationPage> {
     final text = input.text, c = widget.controller;
     setState(() => submitting = true);
     try {
-      if (await c.send(text)) {
+      final owner = widget.inspector, sid = c.session?.id, api = c.api;
+      final attachments = owner?.attachments.toList() ?? [];
+      final contextText =
+          attachments.isEmpty ? '' : await owner!.reviewedAttachmentText();
+      if (!mounted ||
+          !identical(c.api, api) ||
+          c.session?.id != sid ||
+          input.text != text ||
+          !c.connected) {
+        return;
+      }
+      if (await c.send(contextText.isEmpty ? text : '$text\n\n$contextText')) {
+        for (final attachment in attachments) {
+          owner!.removeAttachment(attachment.file.path);
+        }
         if (!mounted) return;
         if (input.text == text) input.clear();
         _latest();
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                'Attachment changed or is unavailable. Review it again; your draft is kept.')));
       }
     } finally {
       if (mounted) setState(() => submitting = false);

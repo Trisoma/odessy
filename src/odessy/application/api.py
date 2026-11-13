@@ -126,6 +126,42 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     app.state.service_instance_id = secrets.token_hex(16)
     from odessy.application.session_directory import register as register_sessions
     register_sessions(app)
+    from odessy.application.workspace_inspector import (
+        WorkspaceBinding, WorkspaceInspector, InspectorError, register as register_inspector)
+    workspace_bindings = {}
+    def resolve_workspace(sid):
+        controller = sessions.get(sid)
+        if controller is None:
+            workspace_bindings.pop(sid, None)
+            raise InspectorError(404, 'Session not found')
+        factory = getattr(controller, '_workspace_policy_factory', None)
+        if factory is None:
+            raise InspectorError(503, 'Verified local workspace owner unavailable')
+        def authorized():
+            resources = getattr(controller, 'resources', None)
+            return (sessions.get(sid) is controller and not controller._closed and
+                    resources is not None and not resources.task.done() and
+                    not resources.closing.is_set() and
+                    getattr(controller, '_workspace_authorized', lambda: False)())
+        if not authorized():
+            raise InspectorError(403, 'Workspace owner closed')
+        try:
+            policy = factory()  # Re-read policy on every use; invalid config fails closed.
+        except (Exception, SystemExit):
+            raise InspectorError(503, 'Workspace policy unavailable') from None
+        binding = workspace_bindings.get(sid)
+        if binding is None:
+            binding = WorkspaceBinding(app.state.service_instance_id, sid,
+                secrets.token_hex(16), controller._workspace_root.name or 'Workspace',
+                policy, authorized, True, proposed_changes=controller.engine == 'legacy')
+            workspace_bindings[sid] = binding
+        import copy
+        current = copy.copy(binding)
+        object.__setattr__(current, 'policy', policy)
+        return current
+    workspace_inspector = WorkspaceInspector(resolve_workspace)
+    app.state.workspace_inspector = workspace_inspector
+    register_inspector(app, workspace_inspector)
     restart_reservation = None
     pending_admissions = 0
 
@@ -769,6 +805,7 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     @app.post('/v1/sessions', status_code=201)
     async def new_session():
         controller = await make_controller()
+        controller._workspace_inspector = workspace_inspector
         sessions[controller.id] = controller
         return snapshot(controller)
 

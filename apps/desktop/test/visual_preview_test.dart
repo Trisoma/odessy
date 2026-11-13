@@ -5,6 +5,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_desktop/app/app.dart';
+import 'package:odessy_desktop/app/preferences/desktop_preferences.dart';
 
 void main() {
   testWidgets('render desktop preview artifacts', (tester) async {
@@ -20,8 +21,8 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final key = GlobalKey();
-    await tester
-        .pumpWidget(RepaintBoundary(key: key, child: const OdessyApp()));
+    await tester.pumpWidget(RepaintBoundary(
+        key: key, child: OdessyApp(preferencesStore: _CapturePreferences())));
     // Bounded pumps: screens with ongoing activity (audio/probe state) never
     // settle, so pumpAndSettle would time out and hide real failures.
     Future<void> settle() async {
@@ -59,4 +60,15 @@ void main() {
     await settle();
     await tester.runAsync(() => capture('settings-tts-dark'));
   });
+}
+
+class _CapturePreferences implements DesktopPreferencesStore {
+  PreferencesSnapshot value =
+      const PreferencesSnapshot(DesktopPreferences(), 0);
+  @override
+  Future<PreferencesSnapshot> load() async => value;
+  @override
+  Future<PreferencesSnapshot> save(DesktopPreferences next,
+          {required int revision}) async =>
+      value = PreferencesSnapshot(next, revision + 1);
 }

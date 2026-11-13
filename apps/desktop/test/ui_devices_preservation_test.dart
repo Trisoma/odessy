@@ -221,12 +221,12 @@ void main() {
     await tester.runAsync(session.start);
     await tester.runAsync(() async {
       await mountMonitoring(
-        tester,
-        DevicePage(
-            device: 'host_a',
-            host: monitoringHostFixture(
-                id: 'host_a', name: 'Workstation', trust: 'local'),
-            controller: session));
+          tester,
+          DevicePage(
+              device: 'host_a',
+              host: monitoringHostFixture(
+                  id: 'host_a', name: 'Workstation', trust: 'local'),
+              controller: session));
     });
     expect(find.text('Local coordinator on this computer'), findsNWidgets(2));
     expect(find.text('Connection: online'), findsOneWidget);

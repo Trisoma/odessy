@@ -7,6 +7,8 @@ import 'dart:io';
 import 'src/models.dart';
 import 'src/session_directory.dart';
 export 'src/session_directory.dart';
+import 'src/workspace_inspector.dart';
+export 'src/workspace_inspector.dart';
 import 'src/monitoring/client.dart';
 export 'src/models.dart';
 export 'src/credentials.dart';
@@ -87,12 +89,13 @@ abstract interface class HandoffRunsApi {
 
 /// Read-only, service-owned local history of provider-reported API usage.
 abstract interface class UsageHistoryApi {
-  Future<Json> usageHistory(
-      {int days = 30,
-      String? provider,
-      String? model,
-      int limit = 50,
-      int offset = 0});
+  Future<Json> usageHistory({
+    int days = 30,
+    String? provider,
+    String? model,
+    int limit = 50,
+    int offset = 0,
+  });
 }
 
 /// Validate untrusted history before presentation or caching, including fakes.
@@ -104,8 +107,14 @@ Json validateUsageHistory(Json value) {
   bool optionalCost(Object? v) =>
       v == null || (v is num && v.isFinite && v >= 0);
   bool aggregate(Map row) =>
-      const ['requests', 'prompt', 'cached', 'completion', 'cost', 'currency']
-          .every(row.containsKey) &&
+      const [
+        'requests',
+        'prompt',
+        'cached',
+        'completion',
+        'cost',
+        'currency',
+      ].every(row.containsKey) &&
       count(row['requests']) &&
       optionalCount(row['prompt']) &&
       optionalCount(row['cached']) &&
@@ -141,7 +150,7 @@ Json validateUsageHistory(Json value) {
   }
   for (final row in [
     ...(value['groups'] as List),
-    ...(value['providers'] as List)
+    ...(value['providers'] as List),
   ]) {
     if (!aggregate(row) ||
         !optionalText(row['provider']) ||
@@ -158,7 +167,7 @@ Json validateUsageHistory(Json value) {
           'cached',
           'completion',
           'cost',
-          'currency'
+          'currency',
         ].every(row.containsKey) ||
         !count(row['id']) ||
         row['recorded_at'] is! String ||
@@ -272,6 +281,7 @@ class LocalApi
     implements
         OdessyApi,
         SessionDirectoryApi,
+        WorkspaceInspectorApi,
         UsageHistoryApi,
         ProfileMetadataApi,
         JobsApi,
@@ -332,14 +342,29 @@ class LocalApi
   @override
   String get identity => base.origin;
   @override
-  Future<SessionDirectoryPage> listSessions(
-      {int limit = 50, int offset = 0}) async {
+  Future<SessionDirectoryPage> listSessions({
+    int limit = 50,
+    int offset = 0,
+  }) async {
     if (limit < 1 || limit > 100 || offset < 0 || offset > 100000) {
       throw ArgumentError('Invalid session page');
     }
     return SessionDirectoryPage.fromJson(
-        await _json('/v1/sessions?limit=$limit&offset=$offset'));
+      await _json('/v1/sessions?limit=$limit&offset=$offset'),
+    );
   }
+
+  late final WorkspaceInspectorClient _workspaceInspector =
+      WorkspaceInspectorClient((path) => _json(path));
+  @override
+  Future<WorkspaceDescriptor> workspace(String sid) =>
+      _workspaceInspector.workspace(sid);
+  @override
+  Future<WorkspaceTree> listWorkspace(String sid, {String path = '.'}) =>
+      _workspaceInspector.listWorkspace(sid, path: path);
+  @override
+  Future<WorkspaceTextFile> readWorkspaceFile(String sid, String path) =>
+      _workspaceInspector.readWorkspaceFile(sid, path);
 
   Future<HttpClientResponse> _open(
     String path,
@@ -391,12 +416,13 @@ class LocalApi
   }
 
   @override
-  Future<Json> usageHistory(
-      {int days = 30,
-      String? provider,
-      String? model,
-      int limit = 50,
-      int offset = 0}) async {
+  Future<Json> usageHistory({
+    int days = 30,
+    String? provider,
+    String? model,
+    int limit = 50,
+    int offset = 0,
+  }) async {
     if (![0, 7, 30, 90].contains(days) ||
         limit < 1 ||
         limit > 100 ||
@@ -406,16 +432,20 @@ class LocalApi
         (model != null && (model.isEmpty || model.length > 200))) {
       throw ArgumentError('Invalid usage history filters');
     }
-    return validateUsageHistory(await _json(Uri(
-      path: '/v1/usage/history',
-      queryParameters: {
-        'days': '$days',
-        'limit': '$limit',
-        'offset': '$offset',
-        if (provider != null) 'provider': provider,
-        if (model != null) 'model': model,
-      },
-    ).toString()));
+    return validateUsageHistory(
+      await _json(
+        Uri(
+          path: '/v1/usage/history',
+          queryParameters: {
+            'days': '$days',
+            'limit': '$limit',
+            'offset': '$offset',
+            if (provider != null) 'provider': provider,
+            if (model != null) 'model': model,
+          },
+        ).toString(),
+      ),
+    );
   }
 
   @override
@@ -581,8 +611,14 @@ class LocalApi
       throw const FormatException('Invalid handoff request');
     }
     // Waits for the approval the service asks for before anything starts.
-    return parseRunSnapshot(await _json(
-        '${_session(sid)}/runs', 'POST', request, const Duration(minutes: 5)));
+    return parseRunSnapshot(
+      await _json(
+        '${_session(sid)}/runs',
+        'POST',
+        request,
+        const Duration(minutes: 5),
+      ),
+    );
   }
 
   @override
@@ -593,18 +629,33 @@ class LocalApi
       parseRunArtifact(await _json('${_run(sid, runId)}/artifact'));
   @override
   Future<Json> continueRun(
-      String sid, String runId, String artifactSha256) async {
+    String sid,
+    String runId,
+    String artifactSha256,
+  ) async {
     if (!isArtifactSha256(artifactSha256)) {
       throw const FormatException('Invalid artifact hash');
     }
-    return parseRunSnapshot(await _json('${_run(sid, runId)}/continue', 'POST',
-        {'artifact_sha256': artifactSha256}, const Duration(minutes: 5)));
+    return parseRunSnapshot(
+      await _json(
+          '${_run(sid, runId)}/continue',
+          'POST',
+          {
+            'artifact_sha256': artifactSha256,
+          },
+          const Duration(minutes: 5)),
+    );
   }
 
   @override
-  Future<Json> cancelRun(String sid, String runId) async =>
-      parseRunSnapshot(await _json('${_run(sid, runId)}/cancel', 'POST', null,
-          const Duration(minutes: 2)));
+  Future<Json> cancelRun(String sid, String runId) async => parseRunSnapshot(
+        await _json(
+          '${_run(sid, runId)}/cancel',
+          'POST',
+          null,
+          const Duration(minutes: 2),
+        ),
+      );
 
   @override
   Future<VoiceSnapshot> voiceState(String sid) async =>
@@ -1087,12 +1138,13 @@ class _OwnedMonitoringClient extends MonitoringClient {
 /// Explicitly fictional data for the standalone dashboard preview.
 class UsagePreviewApi extends DemoApi implements UsageHistoryApi {
   @override
-  Future<Json> usageHistory(
-      {int days = 30,
-      String? provider,
-      String? model,
-      int limit = 50,
-      int offset = 0}) async {
+  Future<Json> usageHistory({
+    int days = 30,
+    String? provider,
+    String? model,
+    int limit = 50,
+    int offset = 0,
+  }) async {
     final now = DateTime.now().toUtc();
     final all = List<Json>.generate(62, (index) {
       final deepseek = index % 3 != 0;
@@ -1118,13 +1170,19 @@ class UsagePreviewApi extends DemoApi implements UsageHistoryApi {
       {'provider': 'openai', 'model': 'gpt-example'},
     ];
     final records = all
-        .where((row) =>
-            (days == 0 ||
-                DateTime.parse(row['recorded_at'] as String).isAfter(
-                    DateTime.utc(now.year, now.month, now.day).subtract(
-                        Duration(days: days - 1, microseconds: 1)))) &&
-            (provider == null || row['provider'] == provider) &&
-            (model == null || row['model'] == model))
+        .where(
+          (row) =>
+              (days == 0 ||
+                  DateTime.parse(row['recorded_at'] as String).isAfter(
+                    DateTime.utc(
+                      now.year,
+                      now.month,
+                      now.day,
+                    ).subtract(Duration(days: days - 1, microseconds: 1)),
+                  )) &&
+              (provider == null || row['provider'] == provider) &&
+              (model == null || row['model'] == model),
+        )
         .toList();
     Json aggregate(List<Json> rows) => {
           'requests': rows.length,
@@ -1149,21 +1207,20 @@ class UsagePreviewApi extends DemoApi implements UsageHistoryApi {
         .toList()
       ..sort((a, b) => (a['day'] as String).compareTo(b['day'] as String));
     final groups = byModel.values
-        .map((rows) => {
-              'provider': rows.first['provider'],
-              'model': rows.first['model'],
-              ...aggregate(rows),
-            })
+        .map(
+          (rows) => {
+            'provider': rows.first['provider'],
+            'model': rows.first['model'],
+            ...aggregate(rows),
+          },
+        )
         .toList();
     final byProvider = <String, List<Json>>{};
     for (final row in records) {
       byProvider.putIfAbsent(row['provider'] as String, () => []).add(row);
     }
     final providers = byProvider.entries
-        .map((entry) => {
-              'provider': entry.key,
-              ...aggregate(entry.value),
-            })
+        .map((entry) => {'provider': entry.key, ...aggregate(entry.value)})
         .toList();
     return {
       'schema_version': 1,
@@ -1175,7 +1232,7 @@ class UsagePreviewApi extends DemoApi implements UsageHistoryApi {
       'total': records.length,
       'limit': limit,
       'offset': offset,
-      'options': options
+      'options': options,
     };
   }
 }

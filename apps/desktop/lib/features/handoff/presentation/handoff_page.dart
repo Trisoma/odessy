@@ -157,15 +157,43 @@ class _HandoffPageState extends State<HandoffPage> {
                                                 : null),
                                         const SizedBox(height: 8),
                                         Text('Step 1 $first; step 2 $second.'),
-                                        _field(fromParticipant,
-                                            'Step 1 participant', editable),
-                                        _field(
-                                            fromTask, 'Step 1 task', editable,
-                                            lines: true),
-                                        _field(toParticipant,
-                                            'Step 2 participant', editable),
-                                        _field(toTask, 'Step 2 task', editable,
-                                            lines: true),
+                                        LayoutBuilder(builder: (context, box) {
+                                          final steps = [
+                                            _stepCard(
+                                                '1 · Prepare',
+                                                first,
+                                                fromParticipant,
+                                                fromTask,
+                                                editable,
+                                                1),
+                                            _stepCard(
+                                                '2 · Continue',
+                                                second,
+                                                toParticipant,
+                                                toTask,
+                                                editable,
+                                                2),
+                                          ];
+                                          return box.maxWidth < 650
+                                              ? Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment
+                                                          .stretch,
+                                                  children: steps)
+                                              : Row(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                      Expanded(child: steps[0]),
+                                                      const SizedBox(width: 16),
+                                                      Expanded(child: steps[1])
+                                                    ]);
+                                        }),
+                                        const SizedBox(height: 16),
+                                        Text('Review and request',
+                                            style: theme.textTheme.titleSmall),
+                                        const Text(
+                                            'Review both steps before requesting approval. The service still owns every execution and transfer decision.'),
                                         const SizedBox(height: 12),
                                         Align(
                                             alignment: Alignment.centerLeft,
@@ -213,6 +241,27 @@ class _HandoffPageState extends State<HandoffPage> {
 
   static String _participant(Json run, int index) =>
       ((run['steps'] as List)[index] as Map)['participant'] as String;
+
+  Widget _stepCard(
+          String title,
+          String description,
+          TextEditingController participant,
+          TextEditingController task,
+          bool editable,
+          int step) =>
+      Card.outlined(
+          child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(title, style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 8),
+                    Text(description),
+                    _field(participant, 'Step $step participant', editable),
+                    const SizedBox(height: 12),
+                    _field(task, 'Step $step task', editable, lines: true),
+                  ])));
 
   Widget _field(TextEditingController field, String label, bool enabled,
           {bool lines = false}) =>

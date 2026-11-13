@@ -4,6 +4,35 @@ import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/app/session_controller.dart';
 
 void main() {
+  test('resume selects a live session without create delete or replay',
+      () async {
+    final api = ResumeApi();
+    final c = DesktopSession(api);
+    await c.start();
+    expect(await c.resumeSession('other'), isTrue);
+    expect(c.session!.id, 'other');
+    expect(api.creates, 1);
+    expect(api.deletes, 0);
+    api.fail = true;
+    expect(await c.resumeSession('missing'), isFalse);
+    expect(c.session!.id, 'other');
+    await c.shutdown();
+    expect(api.deleted, ['owned']);
+    c.dispose();
+  });
+  test('grouped new sessions retain their prior runtime owner until shutdown',
+      () async {
+    final api = ResumeApi();
+    final c = DesktopSession(api);
+    await c.start();
+    await c.newSession(retainCurrent: true);
+    expect(api.deletes, 0);
+    expect(api.creates, 2);
+    await c.shutdown();
+    expect(api.deleted.toSet(), {'owned', 'owned2'});
+    c.dispose();
+  });
+
   test(
       'explicit new session closes the previous session without closing transport',
       () async {
@@ -253,4 +282,24 @@ class MetadataApi extends DemoApi implements ProfileMetadataApi {
   Future<List<Profile>> profileMetadata() async => [
         Profile('current', {'provider': 'deepseek', 'model': 'deepseek-flash'})
       ];
+}
+
+class ResumeApi extends LifecycleApi {
+  int creates = 0;
+  bool fail = false;
+  final deleted = <String>[];
+  @override
+  Future<Session> createSession() async =>
+      Session(++creates == 1 ? 'owned' : 'owned2', selectedProfile: 'local');
+  @override
+  Future<Session> snapshot(String sid) async {
+    if (fail) throw const ApiFailure(404);
+    return Session(sid, selectedProfile: 'local');
+  }
+
+  @override
+  Future<void> deleteSession(String sid) async {
+    deleted.add(sid);
+    await super.deleteSession(sid);
+  }
 }

@@ -36,8 +36,9 @@ class FakeStore implements DesktopPreferencesStore {
 
 void main() {
   test('failed reload shows defaults and discard retains load error', () async {
-    final store = FakeStore(snapshot: const PreferencesSnapshot(
-        DesktopPreferences(theme: DesktopTheme.light), 3));
+    final store = FakeStore(
+        snapshot: const PreferencesSnapshot(
+            DesktopPreferences(theme: DesktopTheme.light), 3));
     final controller = DesktopPreferencesController(store);
     addTearDown(controller.dispose);
     await controller.load();

@@ -182,8 +182,7 @@ void main() {
     expect(find.text('Advanced'), findsWidgets);
     await open(SettingsSections.installation);
     expect(find.text('Installed copy'), findsOneWidget);
-    expect(
-        find.textContaining('Repair, install a newer local package'),
+    expect(find.textContaining('Repair, install a newer local package'),
         findsOneWidget);
 
     await open(SettingsSections.general);

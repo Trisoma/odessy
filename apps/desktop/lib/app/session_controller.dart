@@ -23,6 +23,7 @@ class DesktopSession extends ChangeNotifier {
   String status = 'Connecting', error = '', route = '';
   bool connected = false, busy = false, stopping = false, _disposed = false;
 
+  final _ownedSessions = <String>{};
   int _epoch = 0;
   Future<void>? _shutdown;
   Json? _consultationVersion;
@@ -62,6 +63,7 @@ class DesktopSession extends ChangeNotifier {
       if (_disposed || epoch != _epoch) return;
       profiles = values;
       profileDetails = {for (final detail in details) detail.name: detail};
+      _ownedSessions.add(fresh.id);
       session = fresh;
       connected = true;
       status = 'Ready';
@@ -340,14 +342,14 @@ class DesktopSession extends ChangeNotifier {
     _retry = null;
     await _subscription?.cancel();
     final previous = api;
-    final sid = session?.id;
-    if (sid != null) {
+    for (final sid in _ownedSessions.toList()) {
       try {
         await previous.deleteSession(sid);
       } catch (_) {
         /* Closing the client never retries work. */
       }
     }
+    _ownedSessions.clear();
     previous.close();
     if (_disposed || transition != _epoch) {
       next.close();
@@ -362,7 +364,7 @@ class DesktopSession extends ChangeNotifier {
   }
 
   /// Explicitly end this idle session and load a new configuration snapshot.
-  Future<void> newSession() async {
+  Future<void> newSession({bool retainCurrent = false}) async {
     if (_disposed ||
         busy ||
         stopping ||
@@ -380,7 +382,10 @@ class DesktopSession extends ChangeNotifier {
     _notify();
     try {
       await _subscription?.cancel();
-      await transport.deleteSession(sid);
+      if (!retainCurrent) {
+        await transport.deleteSession(sid);
+        _ownedSessions.remove(sid);
+      }
       if (_disposed || epoch != _epoch || !identical(api, transport)) return;
       session = null;
       profiles = [];
@@ -398,6 +403,49 @@ class DesktopSession extends ChangeNotifier {
     }
   }
 
+  /// Select a live session without replay, creation or deletion.
+  Future<bool> resumeSession(String sid) async {
+    if (_disposed ||
+        busy ||
+        stopping ||
+        !connected ||
+        session?.running == true) {
+      return false;
+    }
+    if (sid == session?.id) return true;
+    final transport = api, epoch = _epoch;
+    busy = true;
+    error = '';
+    _notify();
+    try {
+      final fresh = await transport.snapshot(sid);
+      if (_disposed || epoch != _epoch || !identical(transport, api)) {
+        return false;
+      }
+      if (fresh.id != sid || fresh.running || fresh.pending.isNotEmpty) {
+        throw StateError(
+            'Select an idle session with no pending interactions.');
+      }
+      ++_epoch;
+      _retry?.cancel();
+      _retry = null;
+      await _subscription?.cancel();
+      if (_disposed || !identical(transport, api)) return false;
+      session = fresh;
+      profiles = fresh.availableProfiles ?? profiles;
+      route = '';
+      status = 'Ready';
+      _listen(_epoch);
+      return true;
+    } catch (e) {
+      error = e is StateError ? e.message.toString() : _safeError(e);
+      return false;
+    } finally {
+      busy = false;
+      _notify();
+    }
+  }
+
   Future<void> shutdown() => _shutdown ??= _close();
 
   Future<void> _close() async {
@@ -405,12 +453,17 @@ class DesktopSession extends ChangeNotifier {
     connected = false;
     ++_epoch;
     _retry?.cancel();
-    final transport = api, sid = session?.id;
+    final transport = api;
     try {
       await _subscription?.cancel();
-      if (sid != null) {
-        await transport.deleteSession(sid).timeout(const Duration(seconds: 3));
+      for (final sid in _ownedSessions.toList()) {
+        try {
+          await transport
+              .deleteSession(sid)
+              .timeout(const Duration(seconds: 3));
+        } catch (_) {/* Best effort per owned session. */}
       }
+      _ownedSessions.clear();
     } catch (_) {
       // Cleanup failure never replays work or prevents transport closure.
     } finally {

@@ -6,9 +6,6 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_client/odessy_client.dart';
-// Isolated contract awaiting the integration owner's public export.
-// ignore: implementation_imports
-import 'package:odessy_client/src/workspace_inspector.dart';
 import 'package:odessy_desktop/features/workspaces/controllers/workspace_inspector_controller.dart';
 import 'package:odessy_desktop/features/workspaces/presentation/workspace_inspector.dart';
 import 'package:odessy_desktop/app/theme.dart';

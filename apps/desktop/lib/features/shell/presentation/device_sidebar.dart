@@ -37,7 +37,9 @@ class DeviceSidebar extends StatelessWidget {
       this.conversationLabel = 'Conversation',
       this.navigationFocus,
       this.primaryDestinations = const [],
+      this.projectNavigation,
       this.destinations = const []});
+  final Widget? projectNavigation;
   final List<MonitoringHost> hosts;
   final ValueChanged<String> onInspect;
   final VoidCallback onConversation, onSettings;
@@ -72,6 +74,7 @@ class DeviceSidebar extends StatelessWidget {
               for (final destination in primaryDestinations)
                 _navigation(context, destination.label, destination.icon,
                     destination.selected, destination.onTap),
+              if (projectNavigation != null) projectNavigation!,
               const SizedBox(height: 20),
               Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
