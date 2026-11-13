@@ -5,6 +5,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'src/models.dart';
+import 'src/session_directory.dart';
+export 'src/session_directory.dart';
 import 'src/monitoring/client.dart';
 export 'src/models.dart';
 export 'src/credentials.dart';
@@ -269,6 +271,7 @@ class ApiFailure implements Exception {
 class LocalApi
     implements
         OdessyApi,
+        SessionDirectoryApi,
         UsageHistoryApi,
         ProfileMetadataApi,
         JobsApi,
@@ -328,6 +331,16 @@ class LocalApi
   bool get isDemo => false;
   @override
   String get identity => base.origin;
+  @override
+  Future<SessionDirectoryPage> listSessions(
+      {int limit = 50, int offset = 0}) async {
+    if (limit < 1 || limit > 100 || offset < 0 || offset > 100000) {
+      throw ArgumentError('Invalid session page');
+    }
+    return SessionDirectoryPage.fromJson(
+        await _json('/v1/sessions?limit=$limit&offset=$offset'));
+  }
+
   Future<HttpClientResponse> _open(
     String path,
     String method, [
