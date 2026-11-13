@@ -141,3 +141,32 @@ def test_serve_refuses_without_a_launcher_token(tmp_path, monkeypatch):
     monkeypatch.delenv('ODESSY_API_TOKEN', raising=False)
     with pytest.raises(ValueError, match='token'):
         installed.serve(['--root', str(root), '--port', '8765'])
+
+
+def test_service_restart_loads_saved_ssh_target_before_monitoring(tmp_path, monkeypatch):
+    from odessy.setup import service_entry
+    from odessy.setup.contracts import SetupSelection
+    from odessy.monitoring.settings import MonitoringSettings
+
+    config = tmp_path / 'odessy.env'
+    host_id = 'host_' + 'a' * 64
+    config.write_text('ODESSY_SSH_COMPUTER=on\nODESSY_SSH_MONITORING=on\n'
+                      f'ODESSY_SSH_ALIAS=saved-host\nODESSY_SSH_HOST_ID={host_id}\n')
+    monkeypatch.setenv('ODESSY_CONFIG_FILE', str(config))
+    for name in ('ODESSY_SSH_COMPUTER', 'ODESSY_SSH_MONITORING',
+                 'ODESSY_SSH_ALIAS', 'ODESSY_SSH_HOST_ID'):
+        monkeypatch.delenv(name, raising=False)
+    # Shell values retain precedence over saved settings.
+    monkeypatch.setenv('ODESSY_SSH_ALIAS', 'shell-host')
+    observed = []
+
+    async def server(**kwargs):
+        observed.append(MonitoringSettings.from_env())
+
+    monkeypatch.setattr('odessy.application.serve.run_server', server)
+    selection = SetupSelection.from_dict({'role': 'combined', 'model': {
+        'provider': 'ollama', 'name': 'fixture'}})
+    service_entry.run(selection, workspace=tmp_path, token='fixture')
+    assert observed[0].ssh_alias == 'shell-host'
+    assert observed[0].ssh_host_id == host_id
+    assert observed[0].ssh_monitoring

@@ -1,5 +1,6 @@
 """Current-user Windows integration with conservative ownership cleanup."""
 from __future__ import annotations
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -322,7 +323,7 @@ def unregister(root, record):
     return retained
 
 
-def helper_cleanup(record):
+def helper_cleanup(record,*,progress=None,cancelled=lambda:False):
     """Remove only recorded, unchanged cache files; never schedule self-deletion."""
     if os.name!='nt': return {'state':'unsupported'}
     resources=record.get('windows_registration') or {}
@@ -343,9 +344,14 @@ def helper_cleanup(record):
     inventory=resources.get('helper_files')
     if not isinstance(inventory,dict) or not inventory or len(inventory)>100001:
         return {'state':'retained','reason':'cache has no recorded ownership inventory'}
+    if progress is not None:
+        progress.journal.update(cache_files_total=len(inventory),cache_files_done=0)
+        progress.journal['files_total']+=len(inventory)
+        progress.flush(force=True)
     files=[];directories={path}
     try:
         for name,sha in inventory.items():
+            if cancelled():raise KeyboardInterrupt()
             if (not isinstance(name,str) or not name or '\\' in name or ':' in name
                     or name.startswith('/') or '..' in Path(name).parts
                     or not re.fullmatch('[a-f0-9]{64}',str(sha))):
@@ -356,15 +362,31 @@ def helper_cleanup(record):
             directories.update(parent for parent in target.parents if parent.is_relative_to(path))
     except (OSError,ValueError):
         return {'state':'retained','reason':'unsafe cache ownership inventory'}
-    removed=[];retained=[]
-    for target,sha in files:
+    def remove_owned(item):
+        target,sha=item
         try:
             guard(target)
             if target.is_file() and digest(target)==sha:
-                target.unlink();removed.append(str(target.relative_to(path)))
-            elif target.exists():retained.append(str(target.relative_to(path)))
-        except (OSError,ValueError):retained.append(str(target.relative_to(path)))
+                target.unlink();return 'removed',str(target.relative_to(path))
+            if target.exists():return 'retained',str(target.relative_to(path))
+        except (OSError,ValueError):return 'retained',str(target.relative_to(path))
+        return 'absent',str(target.relative_to(path))
+    removed=[];retained=[]
+    # Windows file-open latency dominates cache verification. Overlap only four
+    # files at a time; never skip hashes/guards or queue an unbounded inventory.
+    # All inventory paths above are validated before any deletion can start.
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for offset in range(0,len(files),4):
+            if cancelled():raise KeyboardInterrupt()
+            for state,name in pool.map(remove_owned,files[offset:offset+4]):
+                if state=='removed':removed.append(name)
+                elif state=='retained':retained.append(name)
+                if progress is not None:
+                    progress.journal['cache_files_done']+=1
+                    progress.journal['files_done']+=1
+                    progress.flush()
     for directory in sorted(directories,key=lambda p:len(p.parts),reverse=True):
+        if cancelled():raise KeyboardInterrupt()
         try:guard(directory).rmdir()
         except (OSError,ValueError):pass  # Nonempty directories contain retained/unowned files.
     return {'state':'retained' if path.exists() else 'removed','removed':removed,

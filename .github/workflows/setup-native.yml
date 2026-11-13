@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - 'src/odessy/setup/**'
+      - 'src/odessy/monitoring/**'
+      - 'services/monitoring/**'
+      - 'native/odessy-link/**'
       - 'tool/*setup*'
       - 'tests/test_setup*'
       - 'pyproject.toml'
@@ -20,14 +23,36 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 12
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: pip
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+          cache: false
       - run: python -m pip install setuptools wheel pytest
+      - name: Build monitoring helpers from the checked-out revision
+        shell: python
+        run: |
+          import os
+          import shutil
+          import subprocess
+          from pathlib import Path
+          suffix = '.exe' if os.name == 'nt' else ''
+          stage = Path('setup-helpers').resolve()
+          (stage/'monitor').mkdir(parents=True)
+          (stage/'link').mkdir()
+          subprocess.run(['go','build','-trimpath','-o',str(stage/'monitor'/('odessy-monitor'+suffix)),
+                          './cmd/odessy-monitor'],cwd='services/monitoring',check=True)
+          subprocess.run(['cargo','build','--release','--locked',
+                          '--manifest-path','native/odessy-link/Cargo.toml'],check=True)
+          shutil.copy2(Path('native/odessy-link/target/release')/('odessy-link'+suffix),stage/'link')
+          shutil.copy2('LICENSE',stage/'monitor/LICENSE')
+          shutil.copy2('LICENSE',stage/'link/LICENSE')
       - run: python -m pip wheel . --no-build-isolation --no-deps --wheel-dir wheelhouse
       - name: Resolve native dependency wheels at build time
         shell: bash
@@ -43,7 +68,22 @@ jobs:
           from pathlib import Path
           manifest=json.loads(Path('wheelhouse/manifest.json').read_text())
           Path('licenses.json').write_text(json.dumps({a['file']:a['license'] for a in manifest['artifacts']}))
-          subprocess.run([sys.executable,'tool/build_setup_bundle.py','--wheelhouse','wheelhouse','--licenses','licenses.json','--output','odessy-setup-${{ runner.os }}-${{ runner.arch }}.zip'],check=True)
+          subprocess.run([sys.executable,'tool/build_setup_bundle.py','--wheelhouse','wheelhouse','--licenses','licenses.json','--monitor','setup-helpers/monitor','--rust','setup-helpers/link','--output','odessy-setup-${{ runner.os }}-${{ runner.arch }}.zip'],check=True)
+      - name: Verify helper inventory in the acceptance archive
+        shell: python
+        run: |
+          import hashlib
+          import json
+          import os
+          import zipfile
+          from pathlib import Path
+          suffix = '.exe' if os.name == 'nt' else ''
+          with zipfile.ZipFile(next(Path('.').glob('odessy-setup-*.zip'))) as archive:
+              manifest = json.loads(archive.read('setup-context.json'))
+              assert {'monitor','link'} <= set(manifest['components'])
+              for component, executable in [('monitor','odessy-monitor'),('link','odessy-link')]:
+                  name = component+'/'+executable+suffix
+                  assert hashlib.sha256(archive.read(name)).hexdigest() == manifest['files'][name]
       - uses: actions/upload-artifact@v4
         with:
           name: setup-${{ runner.os }}-${{ runner.arch }}

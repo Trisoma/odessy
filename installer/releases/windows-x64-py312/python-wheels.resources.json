@@ -7,7 +7,7 @@
   "download_manifest_sha256": "6375010d11357762ca502554479f8011878016407efe94af709a11f6b6163341",
   "lock_file": "requirements-windows-x64-py312.txt",
   "lock_sha256": "d313dc8d47c96d3a79528e4231cff048be6213856b95327adc3f3f7c8b36e22d",
-  "dependency_spec_sha256": "fa609e22a307d76c5186103427288cef679dde30ed7553182d398a3fbbf08f81",
+  "dependency_spec_sha256": "bce63ff38603f587e5fe47295e3aec95883f8d287e27b889a086e170b427b4d4",
   "layout": {
     "annotated-doc": {
       "destination": "app",

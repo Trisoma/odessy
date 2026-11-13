@@ -109,8 +109,8 @@ def _factory_runtime_keyword(factory):
 
 
 def create_app(controller_factory, *, config=None, settings=None, jobs=None, token=None,
-               config_path=None, profiles=None, monitoring=None, runtime_configuration=None, desktop_voice=None,
-               usage_history=None):
+               config_path=None, profiles=None, monitoring=None,
+               runtime_configuration=None, desktop_voice=None, usage_history=None):
     """Build an app; the caller owns loopback-only binding and displaying its token."""
     try:
         from fastapi import FastAPI, Request, HTTPException
@@ -134,8 +134,9 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             monitor_settings = MonitoringSettings.from_env()
         except ValueError:
             monitor_settings = MonitoringSettings()
-        if monitor_settings.enabled:
-            monitoring = MonitoringSupervisor(monitor_settings)
+        # Keep a disabled supervisor for SSH alias discovery. It starts no process
+        # and starts only when the user explicitly enables/saves monitoring.
+        monitoring = MonitoringSupervisor(monitor_settings)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -168,6 +169,8 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     from odessy.monitoring.api import register as register_monitoring
     register_monitoring(app, monitoring)
     app.state.monitoring = monitoring
+    from .ssh_connections import register as register_ssh_connections
+    register_ssh_connections(app, monitoring)
     app.state.sessions, app.state.turn_tasks = sessions, tasks
     from .lan_connections import register as register_lan_connections
     register_lan_connections(app)

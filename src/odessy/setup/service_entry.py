@@ -12,6 +12,11 @@ from .planning import build_plan
 def run(selection,*,workspace,host='127.0.0.1',port=8765,token=None,watch_stdin=False,configuration_owner=None):
     if selection.role=='execution' or selection.model is None:
         raise ValueError('coordinator service requires an explicitly configured model')
+    # Installed startup bypasses the CLI, which normally loads saved settings.
+    # Restore connector choices before monitoring reads its environment, while
+    # retaining explicit shell values and the recorded model selection.
+    from odessy.config.config_file import load_config_env
+    load_config_env()
     # Reuse the same validated export rules, without persisting credential contents.
     plan=build_plan(selection)
     environment_text(plan)

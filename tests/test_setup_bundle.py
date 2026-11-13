@@ -284,3 +284,28 @@ def test_a_build_derives_an_unreviewed_placeholder_from_the_wheel_and_refuses_a_
     licenses.write_text(json.dumps({wheel.name: 'GPL-3.0-only'}))
     with pytest.raises(ValueError, match='contradicts its metadata'):
         builder().build(wheels, licenses, tmp_path/'contradiction.zip')
+
+def test_monitor_and_link_payload_is_verified_and_role_selected(tmp_path):
+    from odessy.setup.package_context import context, validate_components
+    wheels=tmp_path/'wheels';wheels.mkdir()
+    name='odessy-0.5.0-py3-none-any.whl';(wheels/name).write_bytes(b'wheel')
+    licenses=tmp_path/'licenses.json';licenses.write_text(json.dumps({name:'Apache-2.0'}))
+    monitor=tmp_path/'monitor';monitor.mkdir();(monitor/'odessy-monitor.exe').write_bytes(b'monitor')
+    link=tmp_path/'link';link.mkdir();(link/'odessy-link.exe').write_bytes(b'link')
+    output=tmp_path/'candidate.zip'
+    builder().build(wheels,licenses,output,monitor=monitor,rust=link)
+    extracted=tmp_path/'payload'
+    with zipfile.ZipFile(output) as archive:
+        archive.extractall(extracted)
+        manifest=json.loads(archive.read('setup-context.json'))
+    assert {'monitor','link'} <= set(context(payload=extracted,root=tmp_path/'app')['components'])
+    # This fixture has no desktop: include that inventory solely for role selection.
+    manifest['components'].remove('python')  # bootstrap fixture has no bundled runtime
+    manifest['components'].append('desktop')
+    manifest['files']['desktop/odessy_desktop.exe']='a'*64
+    assert {'monitor','link'} <= set(validate_components(manifest,'coordinator')['copy'])
+    execution=validate_components(manifest,'execution')['copy']
+    assert 'link' in execution and 'monitor' not in execution
+    (extracted/'monitor/odessy-monitor.exe').write_bytes(b'changed')
+    with pytest.raises(ValueError,match='checksum mismatch'):
+        context(payload=extracted,root=tmp_path/'app')

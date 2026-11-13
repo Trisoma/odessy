@@ -25,6 +25,8 @@ class BlockingBackend implements SetupBackend {
 
 /// A second, read-only helper that reports the bounded registration counters.
 class ProgressBackend implements SetupBackend {
+  ProgressBackend({this.operation});
+  final Json? operation;
   int statusReads = 0;
 
   @override
@@ -35,6 +37,7 @@ class ProgressBackend implements SetupBackend {
       'id': request.id,
       'status': 'ok',
       'result': {
+        if (operation != null) 'operation': operation,
         'registration_progress': {
           'status': 'running',
           'stage': 'cache',
@@ -54,7 +57,58 @@ class ProgressBackend implements SetupBackend {
   Future<void> close() async {}
 }
 
+class UninstallBackend extends BlockingBackend {
+  @override
+  Future<SetupReply> execute(SetupRequest request) {
+    if (request.parameters['action'] == 'package-uninstall-review') {
+      return Future.value(SetupReply.fromJson({
+        'id': request.id,
+        'status': 'ok',
+        'result': {'plan_id': 'reviewed-uninstall'},
+      }, request.id));
+    }
+    return super.execute(request);
+  }
+}
+
 void main() {
+  test('uninstall polls real operation progress through cache cleanup',
+      () async {
+    final backend = UninstallBackend();
+    final progress = ProgressBackend(operation: {
+      'operation': 'uninstall',
+      'status': 'running',
+      'stage': 'maintenance-cache',
+      'files_done': 3,
+      'files_total': 6,
+    });
+    final c = InstalledManageController(backend,
+        progressBackend: progress, spec: {'root': 'C:/App'});
+    addTearDown(c.dispose);
+    await c.reviewUninstall();
+    final finished = c.confirm();
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    expect(progress.statusReads, greaterThan(0));
+    expect(c.progress, 0.5);
+    expect(c.progressLabel, contains('Removing the maintenance copy'));
+    expect(c.progressLabel, contains('3 of 6 files'));
+    expect(c.uninstalled, isFalse);
+    backend.pending.complete(SetupReply.fromJson({
+      'id': backend.requests.single.id,
+      'status': 'ok',
+      'result': {
+        'helper_cleanup': {
+          'state': 'retained',
+          'reason': 'maintenance helper is running'
+        }
+      },
+    }, backend.requests.single.id));
+    await finished;
+    expect(c.uninstalled, isTrue);
+    expect(c.notice, contains('maintenance copy was retained'));
+    expect(c.notice, contains('maintenance helper is running'));
+  });
+
   test('finished registration counters do not describe later operations', () {
     final c = InstalledManageController(BlockingBackend());
     addTearDown(c.dispose);
@@ -72,7 +126,13 @@ void main() {
   test('registration reports bounded copy progress and can be cancelled',
       () async {
     final backend = BlockingBackend();
-    final progress = ProgressBackend();
+    final progress = ProgressBackend(operation: {
+      'operation': 'uninstall',
+      'status': 'completed',
+      'stage': 'maintenance-cache',
+      'files_done': 6,
+      'files_total': 6,
+    });
     final c = InstalledManageController(backend,
         progressBackend: progress, spec: {'root': 'C:/App'});
     addTearDown(c.dispose);
@@ -84,6 +144,7 @@ void main() {
     expect(c.busy, isTrue);
     expect(c.progress, 0.5);
     expect(c.progressLabel, contains('2 of 4 files'));
+    expect(c.progressLabel, contains('Preparing the maintenance copy'));
 
     await c.cancel();
     expect(c.busy, isTrue);

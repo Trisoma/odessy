@@ -64,6 +64,6 @@ def unregister(root,record):
     return _require('desktop registration').unregister(root,record)
 
 
-def helper_cleanup(record):
+def helper_cleanup(record,**options):
     """Remove only recorded, unchanged maintenance-cache files."""
-    return _require('maintenance cleanup').helper_cleanup(record)
+    return _require('maintenance cleanup').helper_cleanup(record,**options)

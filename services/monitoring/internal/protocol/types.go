@@ -61,6 +61,7 @@ type TrustState string
 const (
 	TrustLocal   TrustState = "local"
 	TrustPaired  TrustState = "paired"
+	TrustSSH     TrustState = "ssh"
 	TrustRevoked TrustState = "revoked"
 	TrustUnknown TrustState = "unknown"
 )
@@ -145,8 +146,10 @@ type HostIdentity struct {
 
 // Inventory is the authoritative result of an inventory refresh.
 type Inventory struct {
-	Revision string         `json:"revision"`
-	Hosts    []HostIdentity `json:"hosts"`
+	// RefreshError reports a partial local provider failure; it is never a wire field.
+	RefreshError string         `json:"-"`
+	Revision     string         `json:"revision"`
+	Hosts        []HostIdentity `json:"hosts"`
 }
 
 // Heartbeat proves authenticated contact; no metric collection is required.
@@ -574,14 +577,33 @@ const (
 	OpCancel    = "cancel"
 )
 
+// SSHConfig is the selected OpenSSH transport for one computer. The alias and
+// fingerprint are already reviewed by the application; this service carries no
+// private key and never edits ssh_config or known_hosts.
+type SSHConfig struct {
+	Hostname          string `json:"hostname"`
+	User              string `json:"user"`
+	Port              int    `json:"port"`
+	HostKey           string `json:"host_key"`
+	Binary            string `json:"binary"`
+	Alias             string `json:"alias"`
+	HostID            string `json:"host_id"`
+	DisplayName       string `json:"display_name,omitempty"`
+	FingerprintSHA256 string `json:"fingerprint_sha256"`
+	Generation        string `json:"generation"`
+	ConfigPath        string `json:"config_path,omitempty"`
+	Monitoring        bool   `json:"monitoring"`
+}
+
 // BootstrapFrame is the first private stdin frame from Python.
 type BootstrapFrame struct {
-	SchemaVersion int      `json:"schema_version"`
-	Op            string   `json:"op"`
-	Token         string   `json:"token"`
-	StateDir      string   `json:"state_dir"`
-	LinkBinary    string   `json:"link_binary"`
-	Settings      Settings `json:"settings"`
+	SchemaVersion int        `json:"schema_version"`
+	Op            string     `json:"op"`
+	Token         string     `json:"token"`
+	StateDir      string     `json:"state_dir"`
+	LinkBinary    string     `json:"link_binary"`
+	SSH           *SSHConfig `json:"ssh,omitempty"`
+	Settings      Settings   `json:"settings"`
 }
 
 // ReadyFrame is the single stdout readiness frame.

@@ -1,10 +1,13 @@
 """Owned Go process and bounded private HTTP transport. No automatic replay."""
 import asyncio
+import base64
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import signal
 import subprocess
 from urllib.parse import urlsplit
@@ -32,22 +35,47 @@ class MonitoringSupervisor:
         self.token = secrets.token_urlsafe(32)
         self._stderr = None
         self.runtime_sink = None
+        self.ssh_error = ''
+        self.link_error = ''
 
     async def start(self):
         if not self.settings.enabled or self.process is not None:
             return
         binary = Path(self.settings.binary)
-        link = Path(self.settings.link_binary)
-        if not binary.is_absolute() or not binary.is_file() or not link.is_absolute() or not link.is_file():
-            raise MonitorUnavailable('Configure absolute monitoring and link binary paths')
-        import httpx
+        if not binary.is_absolute() or not binary.is_file():
+            raise MonitorUnavailable('Configure an absolute monitoring binary path')
+        self.ssh_error = ''
+        self.link_error = ''
+        link = None
+        ssh = None
+        if self.settings.link_binary:
+            candidate = Path(self.settings.link_binary)
+            if candidate.is_absolute() and candidate.is_file():
+                link = candidate
+            else:
+                self.link_error = 'Configured link binary is unavailable'
+        if getattr(self.settings, 'ssh_alias', ''):
+            try:
+                ssh = await self._ssh_config()
+            except MonitorUnavailable as error:
+                self.ssh_error = str(error)
+                if link is None:
+                    raise
+        if link is None and ssh is None:
+            raise MonitorUnavailable(self.link_error or self.ssh_error or
+                                     'Configure monitoring or an SSH computer')
+        import httpx2
         options = {'creationflags': subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else {'start_new_session': True}
         self.process = await asyncio.create_subprocess_exec(str(binary), stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=65536, **options)
         self._stderr = asyncio.create_task(self._drain_stderr())
         try:
             config = {'schema_version': 1, 'op': 'configure', 'token': self.token,
-                      'state_dir': self.settings.state_dir, 'link_binary': str(link), 'settings': self.settings.wire()}
+                      'state_dir': self.settings.state_dir,
+                      'link_binary': str(link) if link is not None else '',
+                      'settings': self.settings.wire()}
+            if ssh is not None:
+                config['ssh'] = ssh
             self.process.stdin.write(json.dumps(config).encode() + b'\n')
             await self.process.stdin.drain()
             raw = await asyncio.wait_for(self.process.stdout.readline(), timeout=10)
@@ -56,7 +84,7 @@ class MonitoringSupervisor:
             if ready.get('schema_version') != 1 or ready.get('op') != 'ready' or parsed.scheme != 'http' or parsed.hostname != '127.0.0.1' or not parsed.port or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in ('', '/'):
                 raise MonitorUnavailable('Invalid monitor readiness')
             self.base_url = ready['base_url'].rstrip('/')
-            self.client = httpx.AsyncClient(base_url=self.base_url, headers={'Authorization': 'Bearer ' + self.token},
+            self.client = httpx2.AsyncClient(base_url=self.base_url, headers={'Authorization': 'Bearer ' + self.token},
                                             timeout=5, follow_redirects=False, trust_env=False)
         except asyncio.CancelledError:
             await self.close()
@@ -65,6 +93,55 @@ class MonitoringSupervisor:
             await self.close()
             raise MonitorUnavailable('Monitoring startup failed') from None
 
+    async def reconfigure(self, settings):
+        """Replace the selected SSH/bootstrap settings without leaving an old poller."""
+        # Controllers retain this forwarding sink across process replacement.
+        sink, self.runtime_sink = self.runtime_sink, None
+        try:
+            await self.close()
+            self.settings = settings
+            if settings.enabled:
+                await self.start()
+        finally:
+            self.runtime_sink = sink
+        return self
+
+    async def _ssh_config(self):
+        """Verify the selected alias/known_hosts once, then let Go own polling."""
+        from odessy.ssh.identity import SshError, read_identity, resolve_host
+
+        binary = self.settings.ssh_binary or shutil.which('ssh')
+        if not binary:
+            raise MonitorUnavailable('OpenSSH client is not available')
+        try:
+            host = await asyncio.to_thread(
+                resolve_host, self.settings.ssh_alias, ssh=binary,
+                config_path=self.settings.ssh_config or None)
+            identity = await asyncio.to_thread(
+                read_identity, host, ssh=binary)
+        except SshError as error:
+            raise MonitorUnavailable(f'SSH identity unavailable: {error}') from None
+        if not identity.known:
+            raise MonitorUnavailable('SSH host key is not in known_hosts')
+        key = next((value for value in identity.public_keys
+                    if 'SHA256:' + base64.b64encode(hashlib.sha256(
+                        base64.b64decode(value[1])).digest()).decode().rstrip('=')
+                    == identity.primary_fingerprint), None)
+        if key is None:
+            raise MonitorUnavailable('SSH trusted public key cannot be pinned; review the target again')
+        return {
+            'hostname': host.hostname, 'user': host.user, 'port': host.port,
+            'host_key': ' '.join(key),
+            'binary': str(Path(binary).resolve()),
+            'alias': self.settings.ssh_alias,
+            'host_id': self.settings.ssh_host_id,
+            'display_name': self.settings.ssh_display_name or self.settings.ssh_alias,
+            'fingerprint_sha256': identity.primary_fingerprint,
+            'generation': 'ssh:' + identity.primary_fingerprint,
+            'config_path': self.settings.ssh_config,
+            'monitoring': bool(self.settings.ssh_monitoring),
+        }
+
     async def _drain_stderr(self):
         # Discard rather than retain untrusted child diagnostics/credentials.
         while await self.process.stderr.read(4096):
@@ -72,6 +149,8 @@ class MonitoringSupervisor:
 
     async def local_identity(self):
         """Read the Rust-owned identity; never inspect its SQLite/private key files."""
+        if not self.settings.link_binary:
+            raise MonitorUnavailable('Local identity requires odessy-link')
         proc = await asyncio.create_subprocess_exec(self.settings.link_binary, 'telemetry', 'worker',
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL, limit=256 * 1024,
@@ -97,6 +176,8 @@ class MonitoringSupervisor:
                 from .runtime import RuntimeObservationSink
                 local = await self.local_identity()
                 async def send(value):
+                    if not self.settings.enabled or not self.settings.include_local:
+                        return
                     current = await self.local_identity()
                     value['host_id'], value['generation'] = current['host_id'], current['generation']
                     value['services'] = {'coordinator': {'status': 'healthy', 'observed_at': value['observed_at'], 'source': 'runtime'}}

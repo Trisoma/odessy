@@ -104,10 +104,12 @@ def main() -> int:
                                     "selection": selection}})
     check("the payload reviews before installing", bool(review.get("plan_id")),
           json.dumps(review.get("components")))
+    declared = json.loads((payload / "setup-context.json").read_text(encoding="utf-8"))
     check("the reviewed components are the shipped ones",
-          set(review.get("components") or []) == {"desktop", "harness", "node", "runtime",
-                                                  "tools"},
-          json.dumps(review.get("components")))
+          {("runtime" if value == "python" else value) for value in (review.get("components") or [])}
+          == {("runtime" if value == "python" else value) for value in (declared.get("components") or [])},
+          json.dumps({"reviewed": review.get("components"),
+                      "declared": declared.get("components")}))
 
     installed = bridge(interpreter, payload,
                        {"id": "p14-install", "operation": "manage",

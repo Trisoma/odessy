@@ -30,4 +30,4 @@ jobs:
       - run: go vet ./...
         working-directory: services/monitoring
       - run: cargo test --manifest-path native/odessy-link/Cargo.toml --locked
-      - run: python -m pytest tests/test_monitoring_contract.py tests/test_monitoring_runtime.py tests/test_monitoring_api.py tests/test_monitoring_supervisor.py -q
+      - run: python -m pytest tests/test_monitoring_contract.py tests/test_monitoring_runtime.py tests/test_monitoring_api.py tests/test_monitoring_supervisor.py tests/test_monitoring_installed_transport.py -q

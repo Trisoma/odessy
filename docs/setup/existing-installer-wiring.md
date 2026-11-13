@@ -91,7 +91,8 @@ python -m installer.components.harness --prepare          # once per machine, do
 python tool/build_setup_bundle.py --wheelhouse <wheelhouse> --licenses <licenses.json> ^
     --python-runtime <python-3.12-prefix> --desktop-bundle <flutter-release-dir> ^
     --node-runtime <node-dir> --toolserver <tool-server-dir> ^
-    --harness-runtime <staged-harness-dir> --output <payload.zip>
+    --harness-runtime <staged-harness-dir> --monitor <staged-monitor-dir> ^
+    --rust <staged-link-dir> --output <payload.zip>
 python tool/audit_setup_artifact.py <payload.zip>
 python tool/package_native_setup.py --payload <payload.zip> --platform windows --output <OdessySetup.exe>
 ```
@@ -112,3 +113,27 @@ a release is recorded in `installer/releases/windows-x64-py312/wheel-licenses.js
 `tool/audit_setup_artifact.py` reports wheel by wheel together with the metadata field each
 license came from. Roles that also want the Node tool server or odessy-link report those as
 absent components rather than failing.
+
+For an SSH monitoring candidate, stage `odessy-monitor` from
+`services/monitoring/cmd/odessy-monitor` and `odessy-link` from
+`native/odessy-link`, using the same source revision as the wheel and desktop.
+Pass both directories above, retaining their licence notices. Omitting these
+optional inputs produces a payload without the corresponding capability.
+The authored Native setup acceptance workflow builds both helpers and checks their
+archive hashes on Windows, Linux and macOS. This is bootstrap acceptance;
+it does not qualify a signed desktop installer or Windows-to-Jetson monitoring.
+The monitor uses the explicitly declared `httpx2` dependency, matching the
+pinned Windows closure; a development-only `httpx` install is insufficient evidence.
+
+## Uninstall progress and maintenance-copy cleanup
+
+The uninstall operation stays running until installed-file removal, shortcut and
+registration removal, and maintenance-copy cleanup finish. The desktop polls the
+operation journal through its separate read-only bridge and names each phase.
+Windows cache verification overlaps at most four recorded files at a time; every
+path and checksum is still checked before deletion. Cancellation joins the current
+batch, records an interrupted operation, and requires a fresh review before retry.
+Linux retains serial cleanup with the same progress and cancellation contract.
+Modified or unrecorded files remain. A running maintenance helper retains its own
+copy without scheduling self-deletion; the completion notice explains this case.
+These changes do not sweep unrelated temporary directories or implement updates.

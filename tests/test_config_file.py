@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from pathlib import Path
 
-from odessy.config.config_file import load_config_env, read_env_file
+from odessy.config.config_file import load_config_env, read_env_file, update_env_values
 from odessy.voice.config import VoiceConfig
 
 
@@ -60,3 +62,48 @@ def test_voice_config_reads_from_config_file(tmp_path: Path, monkeypatch) -> Non
 
     assert config.whisper_bin.endswith("whisper-cli")
     assert config.ollama_model == "lfm2.5-thinking:1.2b-q8_0"
+
+def test_update_env_values_rejects_newline_injection(tmp_path: Path) -> None:
+    path = tmp_path / "odessy.env"
+    path.write_text("# keep me\nODESSY_OTHER=1\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        update_env_values(path, {"ODESSY_SSH_DISPLAY_NAME": "ok\nODESSY_SSH_COMPUTER=on"})
+    assert path.read_text(encoding="utf-8") == "# keep me\nODESSY_OTHER=1\n"
+
+
+def test_update_env_values_rejects_unsupported_keys_and_control_characters(tmp_path: Path) -> None:
+    path = tmp_path / "odessy.env"
+    for values in ({"BAD KEY": "x"}, {"ODESSY_X": "a\x00b"},
+                   {"ODESSY_X": "a\rb"}, {"ODESSY_X": " a "},
+                   {"ODESSY_X": "\"quoted\""}, {"ODESSY_X": "$HOME"}):
+        with pytest.raises(ValueError):
+            update_env_values(path, values)
+    assert not path.exists()
+
+
+def test_update_env_values_preserves_comments_and_serializes_concurrent_writes(tmp_path: Path) -> None:
+    import concurrent.futures
+    path = tmp_path / "odessy.env"
+    path.write_text("# header\nODESSY_KEEP=yes\n", encoding="utf-8")
+
+    def write(index: int) -> None:
+        update_env_values(path, {f"ODESSY_TEST_{index}": str(index)})
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(write, range(24)))
+
+    values = read_env_file(path)
+    assert values["ODESSY_KEEP"] == "yes"
+    assert {values[f"ODESSY_TEST_{i}"] for i in range(24)} == {str(i) for i in range(24)}
+    assert "# header" in path.read_text(encoding="utf-8")
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_unicode_line_separators_cannot_inject_settings(tmp_path):
+    import pytest
+    from odessy.config.config_file import update_env_values
+    path = tmp_path / 'settings.env'
+    for separator in ('\u0085', '\u2028', '\u2029'):
+        with pytest.raises(ValueError):
+            update_env_values(path, {'ODESSY_SSH_ALIAS': 'safe' + separator + 'INJECTED=yes'})
+        assert not path.exists()
