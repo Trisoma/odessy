@@ -295,6 +295,7 @@ class _SettingsPageState extends State<SettingsPage> {
   /// section must not silently save or drop it.
   Future<bool> _confirmAppearanceDiscard() async {
     final preferences = widget.preferencesController;
+    if (preferences?.saving == true || preferences?.loading == true) return false;
     if (preferences == null || !preferences.dirty) return true;
     final discard = await showDialog<bool>(
         context: context,
@@ -312,7 +313,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ]));
     if (discard != true) return false;
     await preferences.discard();
-    return true;
+    return !preferences.dirty;
   }
 
   @override
