@@ -129,7 +129,11 @@ def claude_reply(
         ("kimi", "MOONSHOT_API_KEY", "https://api.moonshot.cn/v1"),
     ],
 )
-def test_each_provider_builds_from_its_own_key(provider: str, key_env: str, base_url: str) -> None:
+def test_each_provider_builds_from_its_own_key(provider: str, key_env: str, base_url: str, monkeypatch) -> None:
+    # Provider-key fixtures must not consult a contributor's actual OS vault.
+    from odessy import credentials
+    monkeypatch.setattr(credentials, "_backend",
+                        lambda: SimpleNamespace(get_password=lambda *_: None))
     model = build_cloud_model(provider, {key_env: "k-123"})
 
     assert model.provider == provider

@@ -201,7 +201,7 @@ func (f *Fleet) ApplyInventory(inv protocol.Inventory, at time.Time) error {
 
 	f.leaseOK = true
 	f.lastRefresh = at
-	f.lastErr = ""
+	f.lastErr = inv.RefreshError
 	for _, ev := range events {
 		f.publish(ev)
 	}

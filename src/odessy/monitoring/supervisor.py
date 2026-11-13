@@ -1,5 +1,7 @@
 """Owned Go process and bounded private HTTP transport. No automatic replay."""
 import asyncio
+import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -93,10 +95,15 @@ class MonitoringSupervisor:
 
     async def reconfigure(self, settings):
         """Replace the selected SSH/bootstrap settings without leaving an old poller."""
-        await self.close()
-        self.settings = settings
-        if settings.enabled:
-            await self.start()
+        # Controllers retain this forwarding sink across process replacement.
+        sink, self.runtime_sink = self.runtime_sink, None
+        try:
+            await self.close()
+            self.settings = settings
+            if settings.enabled:
+                await self.start()
+        finally:
+            self.runtime_sink = sink
         return self
 
     async def _ssh_config(self):
@@ -116,7 +123,15 @@ class MonitoringSupervisor:
             raise MonitorUnavailable(f'SSH identity unavailable: {error}') from None
         if not identity.known:
             raise MonitorUnavailable('SSH host key is not in known_hosts')
+        key = next((value for value in identity.public_keys
+                    if 'SHA256:' + base64.b64encode(hashlib.sha256(
+                        base64.b64decode(value[1])).digest()).decode().rstrip('=')
+                    == identity.primary_fingerprint), None)
+        if key is None:
+            raise MonitorUnavailable('SSH trusted public key cannot be pinned; review the target again')
         return {
+            'hostname': host.hostname, 'user': host.user, 'port': host.port,
+            'host_key': ' '.join(key),
             'binary': str(Path(binary).resolve()),
             'alias': self.settings.ssh_alias,
             'host_id': self.settings.ssh_host_id,
@@ -161,6 +176,8 @@ class MonitoringSupervisor:
                 from .runtime import RuntimeObservationSink
                 local = await self.local_identity()
                 async def send(value):
+                    if not self.settings.enabled or not self.settings.include_local:
+                        return
                     current = await self.local_identity()
                     value['host_id'], value['generation'] = current['host_id'], current['generation']
                     value['services'] = {'coordinator': {'status': 'healthy', 'observed_at': value['observed_at'], 'source': 'runtime'}}

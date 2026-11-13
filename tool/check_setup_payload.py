@@ -106,7 +106,8 @@ def main() -> int:
           json.dumps(review.get("components")))
     declared = json.loads((payload / "setup-context.json").read_text(encoding="utf-8"))
     check("the reviewed components are the shipped ones",
-          set(review.get("components") or []) == set(declared.get("components") or []),
+          {("runtime" if value == "python" else value) for value in (review.get("components") or [])}
+          == {("runtime" if value == "python" else value) for value in (declared.get("components") or [])},
           json.dumps({"reviewed": review.get("components"),
                       "declared": declared.get("components")}))
 

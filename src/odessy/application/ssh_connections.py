@@ -127,7 +127,23 @@ class SshConnections:
 
     async def save(self, alias: str, display_name: str = '') -> dict[str, object]:
         async with self._lock:
-            return await self._save(alias, display_name)
+            return await self._coordinated(self._save(alias, display_name))
+
+    async def _coordinated(self, operation):
+        # Keep the lock until file writes and runtime transition have settled.
+        task = asyncio.create_task(operation)
+        cancelled = False
+        while True:
+            try:
+                result = await asyncio.shield(task)
+                break
+            except asyncio.CancelledError:
+                if task.cancelled():
+                    raise
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
 
     async def _save(self, alias: str, display_name: str) -> dict[str, object]:
         settings = self._settings()
@@ -142,7 +158,8 @@ class SshConnections:
             raise SshConnectionError(f'Invalid display name: {error}', status=400) from None
         result = await self.test(alias)
         host_id = self.host_id(alias)
-        hosts = tuple(value for value in settings.host_ids if value != host_id)
+        hosts = tuple(value for value in settings.host_ids
+                      if value not in {host_id, settings.ssh_host_id})
         if host_id not in hosts:
             hosts = (*hosts, host_id)
         ssh_settings = replace(
@@ -185,13 +202,13 @@ class SshConnections:
 
     async def remove(self) -> dict[str, object]:
         async with self._lock:
-            return await self._remove()
+            return await self._coordinated(self._remove())
 
     async def _remove(self) -> dict[str, object]:
         settings = self._settings()
         old = settings.ssh_host_id
         hosts = tuple(value for value in settings.host_ids if value != old)
-        enabled = bool(hosts) or settings.include_local or bool(settings.link_binary)
+        enabled = bool(hosts) or settings.include_local or bool(settings.link_binary and Path(settings.link_binary).is_file())
         ssh_settings = replace(
             settings, enabled=enabled, host_ids=hosts,
             ssh_alias='', ssh_host_id='', ssh_display_name='',

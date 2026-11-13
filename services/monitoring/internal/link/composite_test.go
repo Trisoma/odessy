@@ -134,3 +134,39 @@ func TestCompositeAllProvidersFailed(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestCompositeFailureCannotRefreshCachedTrust(t *testing.T) {
+	a := &fakeProvider{id: "a", inv: providerInventory("a")}
+	b := &fakeProvider{id: "b", inv: providerInventory("b")}
+	source := Compose(a, b)
+	defer source.Close()
+	if _, err := source.Inventory(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	a.fail = true
+	for i := 0; i < 3; i++ {
+		inv, err := source.Inventory(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.RefreshError == "" {
+			t.Fatal("partial provider failure was hidden")
+		}
+		for _, host := range inv.Hosts {
+			if host.HostID == hostIDFor("a") && host.TrustState != protocol.TrustUnknown {
+				t.Fatal("cached provider renewed trust")
+			}
+			if host.HostID == hostIDFor("b") && host.TrustState != protocol.TrustPaired {
+				t.Fatal("healthy provider lost trust")
+			}
+		}
+	}
+	a.fail = false
+	inv, err := source.Inventory(context.Background())
+	if err != nil || inv.RefreshError != "" {
+		t.Fatalf("recovery: %+v %v", inv, err)
+	}
+	if inv.Hosts[0].TrustState != protocol.TrustPaired {
+		t.Fatal("recovery did not restore trust")
+	}
+}

@@ -126,6 +126,68 @@ class FakeSsh implements SshConnectionApi {
 }
 
 void main() {
+  test('load owns busy until the saved target status finishes', () async {
+    final gate = Completer<Json>();
+    final api = _DelayedComputerSsh();
+    api.currentTarget = {'alias': 'jetson', 'host_id': sshHostId};
+    api.nextComputer = gate.future;
+    final controller = SshConnectionController(api);
+    final pending = controller.load();
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.busy, isTrue);
+    gate.complete({
+      'computer': {'readiness': 'ready'}
+    });
+    await pending;
+    expect(controller.busy, isFalse);
+    controller.dispose();
+  });
+
+  test('new target clears the previous successful observation', () async {
+    final gate = Completer<Json>();
+    final api = _SlowSaveSsh(gate);
+    api.currentTarget = {'alias': 'jetson', 'host_id': sshHostId};
+    final controller = SshConnectionController(api);
+    await controller.load();
+    expect(controller.status, isNotNull);
+    await controller.select('other');
+    api.computerError = SshConnectionFailure(503);
+    final pending = controller.save();
+    gate.complete({
+      'target': {'alias': 'other', 'host_id': 'different-host'}
+    });
+    await pending;
+    expect(controller.status, isNull);
+    controller.dispose();
+  });
+
+  test('load clears another alias identity before failed inspection', () async {
+    final api = _FailInspectSsh();
+    final controller = SshConnectionController(api);
+    await controller.load();
+    await controller.select('other');
+    expect(controller.known, isTrue);
+    api.currentTarget = {'alias': 'jetson', 'host_id': sshHostId};
+    api.failInspect = true;
+    await controller.load();
+    expect(controller.identity, isNull);
+    expect(controller.test, isNull);
+    controller.dispose();
+  });
+
+  test('cancel ignores delayed loading failure', () async {
+    final gate = Completer<Json>();
+    final controller = SshConnectionController(_SlowLoadSsh(gate));
+    final pending = controller.load();
+    controller.cancel();
+    final message = controller.message;
+    gate.completeError(SshConnectionFailure(503));
+    await pending;
+    expect(controller.message, message);
+    expect(controller.error, isEmpty);
+    controller.dispose();
+  });
+
   testWidgets('SSH happy path offers alias, review, test and save',
       (tester) async {
     final api = FakeSsh();
@@ -299,7 +361,7 @@ void main() {
     final controller = SshConnectionController(api);
     await controller.load();
     expect(controller.status?['readiness'], 'ready');
-    api.computerError = const SshConnectionFailure(503);
+    api.computerError = SshConnectionFailure(503);
     await controller.refreshStatus();
     expect(
         controller.statusError, contains('monitoring service is not running'));
@@ -453,4 +515,20 @@ class _SlowSaveSsh extends FakeSsh {
     currentTarget = result['target'];
     return result;
   }
+}
+
+class _FailInspectSsh extends FakeSsh {
+  bool failInspect = false;
+  @override
+  Future<Json> inspectSshAlias(String alias) {
+    if (failInspect) return Future.error(SshConnectionFailure(503));
+    return super.inspectSshAlias(alias);
+  }
+}
+
+class _SlowLoadSsh extends FakeSsh {
+  _SlowLoadSsh(this.gate);
+  final Completer<Json> gate;
+  @override
+  Future<Json> sshTarget() => gate.future;
 }

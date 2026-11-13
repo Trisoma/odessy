@@ -28,6 +28,12 @@ def _binary_roots():
     roots = [here.parents[3]]
     if len(here.parents) > 4:
         roots.append(here.parents[4])
+    # POSIX venvs insert lib/python3.x before site-packages.
+    for parent in here.parents:
+        if (parent.name == 'site-packages' and parent.parent.name.startswith('python3.')
+                and parent.parent.parent.name in {'lib', 'lib64'}):
+            roots.append(parent.parent.parent.parent)
+            break
     return roots
 
 

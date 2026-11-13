@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -219,3 +220,60 @@ def test_ssh_helpers_pin_stdin_to_null(monkeypatch):
     assert identity.probe_connection(host)["ok"] is True
     assert seen and all(kwargs.get("stdin") is identity.subprocess.DEVNULL
                         for kwargs in seen)
+
+
+def test_effective_known_host_paths_with_spaces_and_hostkeyalias(tmp_path):
+    import subprocess
+    from odessy.ssh.identity import read_identity
+    ssh, keygen = shutil.which('ssh'), shutil.which('ssh-keygen')
+    if not ssh or not keygen:
+        pytest.skip('OpenSSH tools unavailable')
+    home = tmp_path / 'Jane  Doe'
+    home.mkdir()
+    key = home / 'fixture-key'
+    subprocess.run([keygen, '-q', '-t', 'ed25519', '-N', '', '-f', str(key)],
+                   check=True, capture_output=True)
+    public = key.with_suffix('.pub').read_text().strip()
+    known = home / 'known hosts'
+    known.write_text('reviewed-name ' + public + '\n')
+    second = home / 'other known hosts'
+    second.write_text('')
+    config = tmp_path / 'config'
+    config.write_text('Host demo\n HostName 192.0.2.10\n User tester\n'
+                      ' HostKeyAlias reviewed-name\n UserKnownHostsFile "'
+                      + known.as_posix() + '" "' + second.as_posix() + '"\n')
+    before = known.read_bytes()
+    host = resolve_host('demo', ssh=ssh, config_path=str(config))
+    assert tuple(Path(value) for value in host.known_host_files) == (known, second)
+    assert host.host_key_alias == 'reviewed-name'
+    identity = read_identity(host, ssh=ssh, ssh_keygen=keygen)
+    assert identity.known and len(identity.public_keys) == 1
+    assert ' '.join(identity.public_keys[0]) == ' '.join(public.split()[:2])
+    assert known.read_bytes() == before
+
+
+def test_ambiguous_known_host_paths_are_refused(tmp_path, monkeypatch):
+    from odessy.ssh.identity import SshError, _known_host_paths
+    monkeypatch.chdir(tmp_path)
+    for name in ('a', 'b', 'a b'):
+        (tmp_path / name).write_text('')
+    with pytest.raises(SshError, match='Ambiguous'):
+        _known_host_paths('a b')
+
+
+def test_bootstrap_carries_trusted_endpoint_and_public_key(monkeypatch):
+    import base64
+    import hashlib
+    from odessy.ssh.identity import SshHost, SshIdentity
+    from odessy.monitoring.supervisor import MonitoringSupervisor
+    encoded = base64.b64encode(b'fixture-public-key').decode()
+    fingerprint = 'SHA256:' + base64.b64encode(hashlib.sha256(b'fixture-public-key').digest()).decode().rstrip('=')
+    host = SshHost('demo', '192.0.2.10', 'tester', port=2222)
+    identity = SshIdentity(host, (('ed25519', fingerprint),), public_keys=(('ssh-ed25519', encoded),))
+    monkeypatch.setattr('odessy.ssh.identity.resolve_host', lambda *a, **kw: host)
+    monkeypatch.setattr('odessy.ssh.identity.read_identity', lambda *a, **kw: identity)
+    monitor = MonitoringSupervisor(MonitoringSettings(ssh_alias='demo', ssh_binary='fixture-ssh'))
+    config = asyncio.run(monitor._ssh_config())
+    assert (config['hostname'], config['user'], config['port']) == ('192.0.2.10', 'tester', 2222)
+    assert config['host_key'] == 'ssh-ed25519 ' + encoded
+    assert config['fingerprint_sha256'] == fingerprint

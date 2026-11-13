@@ -151,3 +151,12 @@ class EnvironmentTests(unittest.TestCase):
 
 if __name__=='__main__':
     unittest.main()
+
+
+def test_committed_dependency_release_matches_runtime_requirements():
+    manifest, _ = load_resources(DEFAULT_RESOURCES)
+    versions = {artifact.id: artifact.version for artifact in manifest.artifacts}
+    from packaging.requirements import Requirement
+    for value in ('fastapi>=0.115,<1', 'httpx2>=2.13,<3'):
+        requirement = Requirement(value)
+        assert versions[requirement.name] in requirement.specifier

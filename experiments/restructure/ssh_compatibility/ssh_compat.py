@@ -42,6 +42,7 @@ SSH_OPTIONS: tuple[str, ...] = (
     "-T",
     "-o", "BatchMode=yes",
     "-o", "StrictHostKeyChecking=yes",
+    "-o", "UpdateHostKeys=no",
     "-o", "ForwardAgent=no",
     "-o", "ClearAllForwardings=yes",
     "-o", "ControlMaster=no",

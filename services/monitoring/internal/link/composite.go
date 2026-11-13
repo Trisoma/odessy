@@ -69,6 +69,11 @@ func (c *Composite) Inventory(ctx context.Context) (protocol.Inventory, error) {
 			failures = append(failures, fmt.Errorf("%T: %w", provider.link, err))
 			if provider.has {
 				inventory = provider.last
+				// Keep identity without reasserting stale authentication/consent.
+				inventory.Hosts = append([]protocol.HostIdentity(nil), inventory.Hosts...)
+				for i := range inventory.Hosts {
+					inventory.Hosts[i].TrustState = protocol.TrustUnknown
+				}
 			} else {
 				continue
 			}
@@ -94,6 +99,9 @@ func (c *Composite) Inventory(ctx context.Context) (protocol.Inventory, error) {
 	}
 	sort.Slice(hosts, func(i, j int) bool { return hosts[i].HostID < hosts[j].HostID })
 	merged := protocol.Inventory{Revision: strings.Join(revisions, "|"), Hosts: hosts}
+	if len(failures) > 0 {
+		merged.RefreshError = errors.Join(failures...).Error()
+	}
 	if err := protocol.ValidateInventory(merged); err != nil {
 		return protocol.Inventory{}, err
 	}

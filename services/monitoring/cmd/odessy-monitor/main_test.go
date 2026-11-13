@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -56,7 +58,10 @@ func TestBinaryBootstrapSmokeWithFakeChild(t *testing.T) {
 	token := "smoketoken0123456789abcdef0123456789"
 
 	stateDir := t.TempDir()
-	cmd := exec.Command(monitor)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	cmd := exec.CommandContext(ctx, monitor)
+	cmd.WaitDelay = time.Second
 	cmd.Env = append(os.Environ(), "FAKEWORKER_HOST_ID="+hostID)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -215,7 +220,10 @@ func TestBinaryBootstrapComposesPairedAndSSH(t *testing.T) {
 	pairedID := "host_" + strings.Repeat("a", 64)
 	sshID := "host_" + strings.Repeat("b", 64)
 	token := "composetoken0123456789abcdef0123456789"
-	cmd := exec.Command(monitor)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	cmd := exec.CommandContext(ctx, monitor)
+	cmd.WaitDelay = time.Second
 	cmd.Env = append(os.Environ(), "FAKEWORKER_HOST_ID="+pairedID)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -234,8 +242,9 @@ func TestBinaryBootstrapComposesPairedAndSSH(t *testing.T) {
 	go func() { exited <- cmd.Wait() }()
 
 	sshConfig := protocol.SSHConfig{
+		Hostname: "192.0.2.10", User: "tester", Port: 22, HostKey: fixtureKey(),
 		Binary: fakeSSH, Alias: "fixture-jetson", HostID: sshID,
-		DisplayName: "Fixture Jetson", FingerprintSHA256: "SHA256:fixture",
+		DisplayName: "Fixture Jetson", FingerprintSHA256: fixtureFingerprint(),
 		Generation: "ssh:SHA256:fixture", Monitoring: true,
 	}
 	frame := protocol.BootstrapFrame{
@@ -304,8 +313,9 @@ func TestStartTelemetryKeepsWorkingProviderWhenOtherFails(t *testing.T) {
 	fakeSSH := buildBinary(t, "./internal/testsupport/fakessh", strings.TrimSuffix(sshName, ".exe"))
 	sshID := "host_" + strings.Repeat("d", 64)
 	sshConfig := protocol.SSHConfig{
+		Hostname: "192.0.2.10", User: "tester", Port: 22, HostKey: fixtureKey(),
 		Binary: fakeSSH, Alias: "fixture", HostID: sshID,
-		FingerprintSHA256: "SHA256:fixture", Generation: "ssh:fixture", Monitoring: true,
+		FingerprintSHA256: fixtureFingerprint(), Generation: "ssh:fixture", Monitoring: true,
 	}
 	frame := protocol.BootstrapFrame{
 		SchemaVersion: protocol.SchemaVersion, Op: "configure",
@@ -334,8 +344,9 @@ func TestStartTelemetryKeepsPairedWhenSSHConfigFails(t *testing.T) {
 	workerPath := buildBinary(t, "./internal/testsupport/fakeworker", strings.TrimSuffix(workerName, ".exe"))
 	pairedID := "host_" + strings.Repeat("e", 64)
 	sshConfig := protocol.SSHConfig{
+		Hostname: "192.0.2.10", User: "tester", Port: 22, HostKey: fixtureKey(),
 		Binary: "/usr/bin/ssh", Alias: "fixture", HostID: "host_bad",
-		FingerprintSHA256: "SHA256:fixture", Generation: "ssh:fixture", Monitoring: true,
+		FingerprintSHA256: fixtureFingerprint(), Generation: "ssh:fixture", Monitoring: true,
 	}
 	frame := protocol.BootstrapFrame{
 		SchemaVersion: protocol.SchemaVersion, Op: "configure",
@@ -366,3 +377,14 @@ func leftoverChildren(t *testing.T, name string) bool {
 	}
 	return bytes.Contains(bytes.ToLower(out), bytes.ToLower([]byte(name)))
 }
+
+func fixtureSSHKey() (string, string) {
+	blob := append([]byte{0, 0, 0, 11}, []byte("ssh-ed25519")...)
+	blob = append(blob, 0, 0, 0, 32)
+	blob = append(blob, make([]byte, 32)...)
+	sum := sha256.Sum256(blob)
+	return "ssh-ed25519 " + base64.StdEncoding.EncodeToString(blob), "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])
+}
+
+func fixtureKey() string         { key, _ := fixtureSSHKey(); return key }
+func fixtureFingerprint() string { _, fp := fixtureSSHKey(); return fp }

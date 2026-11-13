@@ -17,7 +17,7 @@ class FakeMonitor:
     def __init__(self):
         self.settings = MonitoringSettings(
             enabled=True, host_ids=(), binary='monitor', link_binary='',
-            ssh_alias='', ssh_host_id='', ssh_monitoring=False)
+            ssh_alias='', ssh_host_id='', ssh_monitoring=False, ssh_binary='fixture-ssh')
         self.reconfigured = None
 
     async def reconfigure(self, settings):
@@ -253,4 +253,50 @@ def test_remove_restores_target_when_reconfigure_fails(env):
         assert env.read_text(encoding="utf-8") == "ODESSY_SSH_ALIAS=old\nODESSY_SSH_COMPUTER=on\n"
         assert monitor.settings.ssh_alias == "old"
 
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('paired', [False, True])
+def test_replacing_target_then_removing_preserves_only_paired_hosts(env, paired):
+    from dataclasses import replace
+    monitor = FakeMonitor()
+    link = env.parent / 'link'
+    link.write_bytes(b'fixture')
+    monitor.settings = replace(monitor.settings, host_ids=('paired-host',) if paired else (),
+                               link_binary=str(link) if paired else '')
+
+    async def run():
+        manager = SshConnections(monitor)
+        await manager.save('jetson')
+        await manager.save('other')
+        assert manager.host_id('jetson') not in monitor.settings.host_ids
+        assert monitor.settings.host_ids == (('paired-host',) if paired else ()) + (manager.host_id('other'),)
+        await manager.remove()
+        assert monitor.settings.host_ids == (('paired-host',) if paired else ())
+        assert monitor.settings.enabled is paired
+        assert monitor.settings.ssh_alias == ''
+    asyncio.run(run())
+
+
+def test_cancelled_mutation_keeps_lock_until_runtime_settles(env):
+    async def run():
+        monitor = FakeMonitor()
+        manager = SshConnections(monitor)
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def reconfigure(settings):
+            entered.set()
+            await release.wait()
+            monitor.settings = settings
+        monitor.reconfigure = reconfigure
+        task = asyncio.create_task(manager.save('jetson'))
+        await entered.wait()
+        task.cancel()
+        await asyncio.sleep(0)
+        assert manager._lock.locked()
+        assert not task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not manager._lock.locked()
+        assert monitor.settings.ssh_alias == 'jetson'
     asyncio.run(run())

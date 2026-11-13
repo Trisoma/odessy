@@ -2,6 +2,11 @@ package link
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,8 +18,9 @@ var testSSHHostID = "host_" + strings.Repeat("a", 64)
 
 func testSSHConfig() protocol.SSHConfig {
 	return protocol.SSHConfig{
+		Hostname: "192.0.2.10", User: "tester", Port: 22, HostKey: fixtureKey(),
 		Binary: "/usr/bin/ssh", Alias: "jetson", HostID: testSSHHostID,
-		DisplayName: "Jetson", FingerprintSHA256: "SHA256:test",
+		DisplayName: "Jetson", FingerprintSHA256: fixtureFingerprint(),
 		Generation: "ssh:SHA256:test", Monitoring: true,
 	}
 }
@@ -42,7 +48,7 @@ func TestSSHInventoryCarriesTheSelectedMethod(t *testing.T) {
 	host := inventory.Hosts[0]
 	if host.HostID != testSSHHostID || host.TrustState != protocol.TrustSSH ||
 		host.MonitoringAccess != protocol.AccessAllowed ||
-		host.FingerprintSHA256 != "SHA256:test" || host.Generation == "" {
+		host.FingerprintSHA256 != fixtureFingerprint() || host.Generation == "" {
 		t.Fatalf("unexpected host: %+v", host)
 	}
 
@@ -156,5 +162,83 @@ func TestBootstrapAcceptsSSHWithALinkBinary(t *testing.T) {
 	frame.LinkBinary = "/usr/bin/odessy-link"
 	if _, err := protocol.ValidateBootstrap(frame); err != nil {
 		t.Fatalf("coexisting link+SSH bootstrap rejected: %v", err)
+	}
+}
+
+func TestSSHSampleIDsSurviveCollectorRestart(t *testing.T) {
+	ids := make(map[string]bool)
+	for i := 0; i < 2; i++ {
+		source, err := StartSSH(testSSHConfig())
+		if err != nil {
+			t.Fatal(err)
+		}
+		source.runFn = func(context.Context, string) (string, time.Duration, error) {
+			return testSSHStatus, time.Millisecond, nil
+		}
+		ref := protocol.HostRef{HostID: testSSHHostID, Generation: testSSHConfig().Generation}
+		observation, err := source.Sample(context.Background(), ref, []string{protocol.GroupCPU})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ids[observation.Sample.ID] {
+			t.Fatal("restarted collector reused persisted sample ID")
+		}
+		ids[observation.Sample.ID] = true
+	}
+}
+
+func fixtureSSHKey() (string, string) {
+	blob := append([]byte{0, 0, 0, 11}, []byte("ssh-ed25519")...)
+	blob = append(blob, 0, 0, 0, 32)
+	blob = append(blob, make([]byte, 32)...)
+	sum := sha256.Sum256(blob)
+	return "ssh-ed25519 " + base64.StdEncoding.EncodeToString(blob), "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])
+}
+
+func fixtureKey() string         { key, _ := fixtureSSHKey(); return key }
+func fixtureFingerprint() string { _, fp := fixtureSSHKey(); return fp }
+
+func TestSSHRejectsKeyDifferentFromBootstrapFingerprint(t *testing.T) {
+	cfg := testSSHConfig()
+	cfg.FingerprintSHA256 = "SHA256:other-trusted-host"
+	if _, err := StartSSH(cfg); err == nil {
+		t.Fatal("mismatched bootstrap key accepted")
+	}
+}
+
+func TestSSHPollPinsReviewedEndpointDespiteAliasChange(t *testing.T) {
+	ssh, err := exec.LookPath("ssh")
+	if err != nil {
+		t.Skip("OpenSSH unavailable")
+	}
+	cfg := testSSHConfig()
+	cfg.Binary = ssh
+	cfg.ConfigPath = filepath.Join(t.TempDir(), "config")
+	text := "Host jetson\n HostName 192.0.2.99\n User other\n Port 2223\n HostKeyAlias other-host\n"
+	if err := os.WriteFile(cfg.ConfigPath, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	source, err := StartSSH(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	known := filepath.Join(t.TempDir(), "known hosts")
+	args := append([]string{"-G"}, source.commandArgs(known, "reviewed-key", "printf ok")...)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, ssh, args...).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := string(output)
+	for _, want := range []string{"hostname 192.0.2.10", "user tester", "port 22",
+		"hostkeyalias reviewed-key", "stricthostkeychecking true", "updatehostkeys false",
+		"hostkeyalgorithms ssh-ed25519", "globalknownhostsfile none"} {
+		if !strings.Contains(resolved, want) {
+			t.Fatalf("missing pinned option %q", want)
+		}
+	}
+	if !strings.Contains(resolved, filepath.ToSlash(known)) && !strings.Contains(resolved, known) {
+		t.Fatal("private trust path was split or lost")
 	}
 }

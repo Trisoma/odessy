@@ -90,7 +90,7 @@ def validate_env_value(value: str) -> None:
         raise ValueError('Config value must be text')
     if not value or value != value.strip():
         raise ValueError('Config value must be non-empty without surrounding whitespace')
-    if any(ord(ch) < 0x20 or ord(ch) == 0x7f for ch in value):
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7f or ch in "\u0085\u2028\u2029" for ch in value):
         raise ValueError('Config value must not contain control characters')
     if value[0] in {"'", '"'} or value[-1] in {"'", '"'}:
         raise ValueError('Config value must not start or end with a quote')

@@ -20,6 +20,7 @@ SSH_OPTIONS: tuple[str, ...] = (
     "-T",
     "-o", "BatchMode=yes",
     "-o", "StrictHostKeyChecking=yes",
+    "-o", "UpdateHostKeys=no",
     "-o", "ForwardAgent=no",
     "-o", "ClearAllForwardings=yes",
     "-o", "ControlMaster=no",
@@ -51,6 +52,7 @@ class SshHost:
     proxy_jump: str | None = None
     config_path: str | None = None
     known_host_files: tuple[str, ...] = ()
+    host_key_alias: str | None = None
 
     @property
     def endpoint(self) -> str:
@@ -65,6 +67,7 @@ class SshIdentity:
     host: SshHost
     fingerprints: tuple[tuple[str, str], ...] = ()
     version: str = ""
+    public_keys: tuple[tuple[str, str], ...] = ()
 
     @property
     def primary_fingerprint(self) -> str:
@@ -109,22 +112,25 @@ def resolve_host(alias: str, *, ssh: str = "ssh", config_path: str | None = None
     if not 1 <= port <= 65535:
         raise SshError("SSH_CONFIG_INVALID", f"{alias!r} resolves to an invalid port")
     jump = _last(values, "proxyjump")
-    known = tuple(_expand(path) for line in values.get("userknownhostsfile", ())
-                  for path in line.split())
+    known = tuple(path for line in values.get("userknownhostsfile", ())
+                  for path in _known_host_paths(line))
     return SshHost(alias=alias, hostname=hostname, user=user, port=port,
                    identity_files=tuple(values.get("identityfile", ())),
                    proxy_jump=None if jump in (None, "", "none") else jump,
-                   config_path=config_path, known_host_files=known)
+                   config_path=config_path, known_host_files=known,
+                   host_key_alias=_last(values, "hostkeyalias"))
 
 
 def read_identity(host: SshHost, *, ssh_keygen: str = "ssh-keygen",
                   ssh: str = "ssh", timeout: float = 10) -> SshIdentity:
     """Read the trusted host keys for this endpoint. Unknown means refusal."""
 
-    candidates = [host.hostname]
-    if host.port != 22:
-        candidates.append(f"[{host.hostname}]:{host.port}")
+    name = host.host_key_alias or host.hostname
+    candidates = [name]
+    if host.port != 22 and not host.host_key_alias:
+        candidates.append(f"[{name}]:{host.port}")
     files = host.known_host_files or (str(Path.home() / ".ssh" / "known_hosts"),)
+    public_keys: list[tuple[str, str]] = []
     found: list[tuple[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for path in files:
@@ -154,7 +160,28 @@ def read_identity(host: SshHost, *, ssh_keygen: str = "ssh-keygen",
             f"the host key for {host.hostname} is not in known_hosts; add it out of band, "
             "never by accepting an automatic prompt",
         )
-    return SshIdentity(host=host, fingerprints=tuple(found), version=_ssh_version(ssh, timeout))
+    # Capture the actual trusted public key, not an unauthenticated keyscan.
+    for path in files:
+        for name in candidates:
+            completed = subprocess.run([ssh_keygen, '-F', name, '-f', path],
+                stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                encoding='utf-8', errors='replace', timeout=timeout, check=False)
+            for line in completed.stdout.splitlines():
+                parts = line.split()
+                if len(parts) < 3 or parts[0].startswith(('#', '@')):
+                    continue
+                key_type, encoded = parts[1:3]
+                try:
+                    digest = base64.b64encode(hashlib.sha256(
+                        base64.b64decode(encoded, validate=True)).digest()).decode().rstrip('=')
+                except ValueError:
+                    continue
+                if any(fp == 'SHA256:' + digest for _, fp in found):
+                    key = (key_type, encoded)
+                    if key not in public_keys:
+                        public_keys.append(key)
+    return SshIdentity(host=host, fingerprints=tuple(found), version=_ssh_version(ssh, timeout),
+                       public_keys=tuple(public_keys))
 
 
 def ssh_argv(host: SshHost, remote_command: str, *, ssh: str = "ssh") -> tuple[str, ...]:
@@ -182,6 +209,41 @@ def _validate_alias(alias: str) -> None:
             "SSH_ALIAS_INVALID",
             "host alias must be 1-64 letters, digits, '.', '_' or '-' and not start with '-'",
         )
+
+
+def _known_host_paths(line: str) -> tuple[str, ...]:
+    """Recover existing files from OpenSSH's unquoted expanded path array.
+
+    Prefer interpretations covering the most tokens with existing files. Refuse
+    ambiguity rather than checking a different trust file. Missing files confer
+    no trust and may safely be ignored.
+    """
+    tokens = list(re.finditer(r"\S+", line))
+    if len(tokens) > 128:
+        raise SshError('SSH_CONFIG_INVALID', 'Too many known-host path tokens')
+    best = [(0, {()}) for _ in range(len(tokens) + 1)]
+    for start in range(len(tokens) - 1, -1, -1):
+        score, paths = best[start + 1]
+        paths = set(paths)
+        for end in range(start + 1, len(tokens) + 1):
+            candidate = _expand(line[tokens[start].start():tokens[end - 1].end()])
+            if not Path(candidate).is_file():
+                continue
+            suffix_score, suffixes = best[end]
+            total = end - start + suffix_score
+            choices = {(candidate, *suffix) for suffix in suffixes}
+            if total > score:
+                score, paths = total, choices
+            elif total == score:
+                paths.update(choices)
+            if len(paths) > 2:
+                paths = set(sorted(paths)[:2])
+        best[start] = score, paths
+    _, choices = best[0]
+    if len(choices) != 1:
+        raise SshError('SSH_CONFIG_INVALID', 'Ambiguous known-host filenames; use an unambiguous path')
+    # Keep explicit missing paths so read_identity cannot fall back to defaults.
+    return next(iter(choices)) or (_expand(line),)
 
 
 def _expand(path: str) -> str:

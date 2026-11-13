@@ -50,6 +50,7 @@ class FakeSupervisor:
 
 
 def test_fresh_default_aliases_then_explicit_save_then_status(monkeypatch):
+    monkeypatch.setenv("ODESSY_SSH_BIN", "fixture-ssh")
     for name in ('ODESSY_MONITORING', 'ODESSY_MONITOR_LOCAL', 'ODESSY_SSH_COMPUTER',
                  'ODESSY_SSH_MONITORING', 'ODESSY_SSH_ALIAS', 'ODESSY_SSH_HOST_ID',
                  'ODESSY_SSH_CONFIG', 'ODESSY_MONITOR_HOSTS'):

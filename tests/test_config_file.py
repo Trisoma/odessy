@@ -97,3 +97,13 @@ def test_update_env_values_preserves_comments_and_serializes_concurrent_writes(t
     assert {values[f"ODESSY_TEST_{i}"] for i in range(24)} == {str(i) for i in range(24)}
     assert "# header" in path.read_text(encoding="utf-8")
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_unicode_line_separators_cannot_inject_settings(tmp_path):
+    import pytest
+    from odessy.config.config_file import update_env_values
+    path = tmp_path / 'settings.env'
+    for separator in ('\u0085', '\u2028', '\u2029'):
+        with pytest.raises(ValueError):
+            update_env_values(path, {'ODESSY_SSH_ALIAS': 'safe' + separator + 'INJECTED=yes'})
+        assert not path.exists()

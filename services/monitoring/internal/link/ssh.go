@@ -2,8 +2,15 @@ package link
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -18,6 +25,7 @@ import (
 type SSHLink struct {
 	cfg      protocol.SSHConfig
 	bootID   string
+	runID    string
 	sequence atomic.Uint64
 	runFn    func(context.Context, string) (string, time.Duration, error)
 }
@@ -28,7 +36,32 @@ func StartSSH(cfg protocol.SSHConfig) (*SSHLink, error) {
 	if err := protocol.ValidateSSHConfig(cfg); err != nil {
 		return nil, err
 	}
-	link := &SSHLink{cfg: cfg, bootID: sshBootID(cfg.HostID)}
+	key := strings.Fields(cfg.HostKey)
+	if len(key) != 2 || strings.ContainsAny(cfg.HostKey, "\r\n") {
+		return nil, fmt.Errorf("SSH trusted public key is required")
+	}
+	blob, err := base64.StdEncoding.DecodeString(key[1])
+	if err != nil {
+		return nil, fmt.Errorf("invalid SSH public key")
+	}
+	if len(blob) < 4 || int(binary.BigEndian.Uint32(blob[:4])) > len(blob)-4 ||
+		string(blob[4:4+int(binary.BigEndian.Uint32(blob[:4]))]) != key[0] ||
+		!(key[0] == "ssh-ed25519" || key[0] == "ssh-rsa" || strings.HasPrefix(key[0], "ecdsa-sha2-")) {
+		return nil, fmt.Errorf("unsupported SSH public key encoding")
+	}
+	digest := sha256.Sum256(blob)
+	if "SHA256:"+base64.RawStdEncoding.EncodeToString(digest[:]) != cfg.FingerprintSHA256 {
+		return nil, fmt.Errorf("SSH public key does not match reviewed fingerprint")
+	}
+	if cfg.Hostname == "" || cfg.User == "" || cfg.Port < 1 || cfg.Port > 65535 ||
+		strings.ContainsAny(cfg.Hostname+cfg.User, " \t\r\n\"") || strings.HasPrefix(cfg.Hostname, "-") {
+		return nil, fmt.Errorf("SSH endpoint is invalid")
+	}
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return nil, fmt.Errorf("SSH collector identity: %w", err)
+	}
+	link := &SSHLink{cfg: cfg, bootID: sshBootID(cfg.HostID), runID: hex.EncodeToString(nonce[:])}
 	link.runFn = link.run
 	return link, nil
 }
@@ -84,7 +117,7 @@ func (s *SSHLink) Sample(ctx context.Context, ref protocol.HostRef, groups []str
 	seq := s.sequence.Add(1)
 	sample := protocol.Sample{
 		SchemaVersion: protocol.SchemaVersion,
-		ID:            fmt.Sprintf("ssh-%d", seq),
+		ID:            fmt.Sprintf("ssh-%s-%d", s.runID, seq),
 		BootID:        s.bootID,
 		Sequence:      seq,
 		ObservedAt:    now,
@@ -113,7 +146,7 @@ func (s *SSHLink) Sample(ctx context.Context, ref protocol.HostRef, groups []str
 				CollectionDurationMS: &latency},
 			Disks: []protocol.DiskEntry{{
 				ID: "/", TotalBytes: &total, UsedBytes: &used,
-				AvailableBytes: &available,
+				AvailableBytes:     &available,
 				UtilizationPercent: &status.utilization,
 			}},
 		}
@@ -143,29 +176,56 @@ func (s *SSHLink) Sample(ctx context.Context, ref protocol.HostRef, groups []str
 
 func (s *SSHLink) Close() error { return nil }
 
-func (s *SSHLink) run(ctx context.Context, remote string) (string, time.Duration, error) {
+func (s *SSHLink) commandArgs(knownPath, keyAlias, remote string) []string {
+	algorithm := strings.Fields(s.cfg.HostKey)[0]
+	if algorithm == "ssh-rsa" {
+		algorithm = "rsa-sha2-512,rsa-sha2-256"
+	}
 	args := []string{"-T",
-		"-o", "BatchMode=yes",
-		"-o", "StrictHostKeyChecking=yes",
-		"-o", "ForwardAgent=no",
-		"-o", "ClearAllForwardings=yes",
-		"-o", "ControlMaster=no",
-		"-o", "ConnectTimeout=10",
-		"-o", "ServerAliveInterval=15",
-		"-o", "ServerAliveCountMax=2",
-		"-o", "LogLevel=ERROR",
+		"-o", "HostName=" + s.cfg.Hostname, "-o", "User=" + s.cfg.User,
+		"-p", strconv.Itoa(s.cfg.Port), "-o", "HostKeyAlias=" + keyAlias,
+		"-o", "HostKeyAlgorithms=" + algorithm,
+		"-o", "UserKnownHostsFile=\"" + filepath.ToSlash(knownPath) + "\"",
+		"-o", "GlobalKnownHostsFile=none", "-o", "KnownHostsCommand=none", "-o", "VerifyHostKeyDNS=no",
+		"-o", "CheckHostIP=no", "-o", "ControlPath=none",
+		"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+		"-o", "UpdateHostKeys=no", "-o", "ForwardAgent=no",
+		"-o", "ClearAllForwardings=yes", "-o", "ControlMaster=no",
+		"-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15",
+		"-o", "ServerAliveCountMax=2", "-o", "LogLevel=ERROR",
 	}
 	if s.cfg.ConfigPath != "" {
 		args = append([]string{"-F", s.cfg.ConfigPath}, args...)
 	}
-	args = append(args, s.cfg.Alias, remote)
+	return append(args, s.cfg.Alias, remote)
+}
+
+func (s *SSHLink) run(ctx context.Context, remote string) (string, time.Duration, error) {
+	// A private per-request trust file pins the reviewed key even if the alias
+	// or the user's trust store changes. It contains only a public host key.
+	known, err := os.CreateTemp("", "odessy-ssh-known-*")
+	if err != nil {
+		return "", 0, err
+	}
+	defer os.Remove(known.Name())
+	keyAlias := "odessy-" + s.runID
+	_, writeErr := fmt.Fprintln(known, keyAlias+" "+s.cfg.HostKey)
+	closeErr := known.Close()
+	if writeErr != nil {
+		return "", 0, writeErr
+	}
+	if closeErr != nil {
+		return "", 0, closeErr
+	}
+	args := s.commandArgs(known.Name(), keyAlias, remote)
 	cmd := exec.CommandContext(ctx, s.cfg.Binary, args...)
+	cmd.WaitDelay = time.Second
 	stdout := &boundedBuffer{limit: 32 << 10}
 	stderr := &boundedBuffer{limit: 4096}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	started := time.Now()
-	err := cmd.Run()
+	err = cmd.Run()
 	elapsed := time.Since(started)
 	if ctx.Err() == context.DeadlineExceeded {
 		return "", elapsed, &Failure{Code: "ssh_timeout", Message: "SSH request deadline exceeded", Retryable: true}
@@ -189,10 +249,10 @@ func (s *SSHLink) run(ctx context.Context, remote string) (string, time.Duration
 const statusCommand = "cat /proc/loadavg; printf '\\n---\\n'; df -P -k /; printf '\\n---\\n'; uname -s; uname -m"
 
 type sshStatus struct {
-	load1, load5, load15              float64
+	load1, load5, load15                  float64
 	totalBytes, usedBytes, availableBytes int64
-	utilization                      float64
-	osName, architecture             string
+	utilization                           float64
+	osName, architecture                  string
 }
 
 func parseSSHStatus(raw string) (sshStatus, error) {

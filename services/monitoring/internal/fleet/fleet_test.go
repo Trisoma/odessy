@@ -368,3 +368,19 @@ func TestPollableHonoursMonitoredHostsAndAccess(t *testing.T) {
 		t.Fatalf("expected access denial, got %v", err)
 	}
 }
+
+func TestPartialInventoryExposesFailureAndBlocksUnknownHost(t *testing.T) {
+	id := hostID('a')
+	f, _ := newFleet(t, id)
+	inventory := inv("r1", identity(id, "g1", protocol.TrustUnknown))
+	inventory.RefreshError = "paired provider unavailable"
+	if err := f.ApplyInventory(inventory, t0); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Pollable(t0)) != 0 {
+		t.Fatal("cached unknown host remained pollable")
+	}
+	if f.Snapshot(t0).Health.LastInventoryError == "" {
+		t.Fatal("provider failure was hidden")
+	}
+}

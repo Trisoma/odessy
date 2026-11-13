@@ -74,7 +74,9 @@ class SshConnectionController extends ChangeNotifier {
     try {
       final saved = await client.sshTarget();
       if (_disposed || epoch != _epoch) return;
+      final previousHost = targetHostId;
       target = saved;
+      if (previousHost != targetHostId) status = null;
       ++_statusEpoch;
       statusError = '';
       final aliasesResult = await client.sshAliases();
@@ -88,21 +90,24 @@ class SshConnectionController extends ChangeNotifier {
           ? '${(saved['target'] as Map)['alias']}'
           : null;
       if (savedAlias != null && savedAlias.isNotEmpty) {
+        if (selected != savedAlias) identity = test = null;
         selected = savedAlias;
-        await inspect(savedAlias);
+        await inspect(savedAlias, manageBusy: false);
         if (_disposed || epoch != _epoch) return;
         await refreshStatus();
         if (_disposed || epoch != _epoch) return;
         _startPolling();
       } else if (aliases.isNotEmpty &&
           (selected == null || !aliases.contains(selected))) {
+        identity = test = null;
         selected = aliases.first;
-        await inspect(selected!);
+        await inspect(selected!, manageBusy: false);
       }
       message = aliases.isEmpty
           ? 'No SSH aliases found. Add a Host entry to your OpenSSH config, then refresh.'
           : '';
     } catch (failure) {
+      if (_disposed || epoch != _epoch) return;
       _fail(failure);
     } finally {
       if (!_disposed && epoch == _epoch) {
@@ -125,12 +130,14 @@ class SshConnectionController extends ChangeNotifier {
     await inspect(alias);
   }
 
-  Future<void> inspect(String alias) async {
+  Future<void> inspect(String alias, {bool manageBusy = true}) async {
     final client = api;
     if (client == null || _disposed) return;
     final epoch = _epoch;
-    busy = true;
-    busyAction = 'inspect';
+    if (manageBusy) {
+      busy = true;
+      busyAction = 'inspect';
+    }
     _notify();
     try {
       final result = await client.inspectSshAlias(alias);
@@ -151,7 +158,7 @@ class SshConnectionController extends ChangeNotifier {
       if (_disposed || epoch != _epoch || selected != alias) return;
       _fail(failure);
     } finally {
-      if (!_disposed && epoch == _epoch) {
+      if (manageBusy && !_disposed && epoch == _epoch) {
         busy = false;
         busyAction = '';
         _notify();
@@ -204,7 +211,9 @@ class SshConnectionController extends ChangeNotifier {
     try {
       final result = await client.saveSshTarget(alias);
       if (_disposed || epoch != _epoch || selected != alias) return;
+      final previousHost = targetHostId;
       target = result;
+      if (previousHost != targetHostId) status = null;
       ++_statusEpoch;
       statusError = '';
       test = result['test'] is Map
