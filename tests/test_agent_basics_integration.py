@@ -300,7 +300,14 @@ def test_storage_failure_refuses_model_and_context_seam_is_real(tmp_path):
             assert seen==[]
             store._fault=None
             class Provider:
+                allowed = True
+                validated = False
+                async def validate_sources(self, cid):
+                    if not self.allowed:
+                        raise PermissionError('source revoked')
+                    self.validated = True
                 def prepare(self,cid,*,query,max_chars=24000):
+                    assert self.validated
                     return PreparedContext(cid,0,turns=(ConversationTurn('earlier','answer'),),
                         summary='old summary',facts=({'id':'m','text':'boat preference','revision':1},),
                         citations=())
@@ -308,6 +315,11 @@ def test_storage_failure_refuses_model_and_context_seam_is_real(tmp_path):
             await controller.run_turn('next')
             assert 'boat preference' in seen[-1].turns[0].user
             assert seen[-1].turns[-1].user=='earlier'
+            app.state.basics_composition.context_provider.allowed = False
+            count = len(seen)
+            with pytest.raises(PermissionError, match='source revoked'):
+                await controller.run_turn('revoked source must never reach model')
+            assert len(seen) == count
             await client.delete('/v1/sessions/'+live['id'])
         store.close()
     asyncio.run(run())

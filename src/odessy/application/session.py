@@ -497,6 +497,9 @@ class SessionController:
             provider = getattr(composition, 'context_provider', None)
             if provider is not None and self.engine == 'legacy' and kwargs.get('context') is None:
                 from odessy.runtime.types import ConversationContext, ConversationTurn
+                validator = getattr(provider, 'validate_sources', None)
+                if validator is not None:
+                    await validator(self._conversation_id)
                 prepared = composition.prepare_context(self, self._public(text))
                 if prepared.conversation_id != self._conversation_id:
                     raise RuntimeError('Prepared context belongs to another conversation')
