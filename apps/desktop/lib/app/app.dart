@@ -194,10 +194,12 @@ class _OdessyAppState extends State<OdessyApp> {
     }
   }
 
-  Future<void> _openInspector() async {
+  Future<void> _openInspector(
+      [InspectorPanel panel = InspectorPanel.files]) async {
     final owner = inspector, sid = controller.session?.id;
     final instance = readiness.current?.serviceInstance;
     if (owner == null || sid == null || instance == null) return;
+    owner.show(panel);
     setState(() => inspectorOpen = true);
     await owner.bind(sessionId: sid, serviceInstanceId: instance);
     if (controller.session case final snapshot?) {
@@ -635,7 +637,7 @@ class _OdessyAppState extends State<OdessyApp> {
                         body: Row(children: [
                           if (!narrow && !sidebarCollapsed)
                             SizedBox(
-                                width: 236,
+                                width: 264,
                                 child: GlassSurface(
                                     radius: 0,
                                     reduceTransparency:
@@ -647,7 +649,7 @@ class _OdessyAppState extends State<OdessyApp> {
                               child: Column(children: [
                             Padding(
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 30, vertical: 18),
+                                    horizontal: 16, vertical: 10),
                                 child: Row(children: [
                                   if (!narrow)
                                     IconButton(
@@ -904,58 +906,37 @@ class _OdessyAppState extends State<OdessyApp> {
                                         page = 'Settings';
                                       }),
                                   onOpenManagement: widget.installed == null ? null : () => setState(() => page = 'Manage installation')),
-                              _ => Column(children: [
-                                  Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 24),
-                                      child: Wrap(spacing: 8, children: [
-                                        Text(readiness.current?.configuration
-                                                ?.workspace ??
-                                            'Workspace not reported'),
-                                        const Chip(
-                                            label: Text(
-                                                'Permissions reviewed by service')),
-                                        if (inspector != null)
-                                          ListenableBuilder(
-                                              listenable: inspector!,
-                                              builder: (context, _) =>
-                                                  Wrap(children: [
-                                                    for (final attachment
-                                                        in inspector!
-                                                            .attachments)
-                                                      InputChip(
-                                                          label: Text(attachment
-                                                              .file.path),
-                                                          onDeleted: () => inspector!
-                                                              .removeAttachment(
-                                                                  attachment
-                                                                      .file
-                                                                      .path)),
-                                                  ])),
-                                        OutlinedButton.icon(
-                                            onPressed: inspector == null
-                                                ? null
-                                                : _openInspector,
-                                            icon: const Icon(Icons.folder_open),
-                                            label: const Text(
-                                                'Files · Output · Changes')),
-                                      ])),
-                                  Expanded(
-                                      child: inspectorOpen && inspector != null
+                              _ => LayoutBuilder(builder: (context, box) {
+                                  final sideBySide = box.maxWidth >= 1000;
+                                  final conversation = ConversationPage(
+                                      draftController: conversationDraft,
+                                      voice: voice,
+                                      inspector: inspector,
+                                      controller: controller,
+                                      readiness: readiness,
+                                      onOpenInspector: inspector == null
+                                          ? null
+                                          : _openInspector,
+                                      onOpenModels: () => _openSettings(
+                                          SettingsSections.models));
+                                  final panel =
+                                      inspectorOpen && inspector != null
                                           ? WorkspaceInspector(
                                               controller: inspector!,
                                               onClose: () => setState(
                                                   () => inspectorOpen = false))
-                                          : ConversationPage(
-                                              draftController:
-                                                  conversationDraft,
-                                              voice: voice,
-                                              inspector: inspector,
-                                              controller: controller,
-                                              readiness: readiness,
-                                              onOpenModels: () => _openSettings(
-                                                  SettingsSections.models))),
-                                ]),
+                                          : null;
+                                  if (panel == null) return conversation;
+                                  return Row(children: [
+                                    if (sideBySide)
+                                      Expanded(child: conversation),
+                                    if (sideBySide)
+                                      const VerticalDivider(width: 1),
+                                    SizedBox(
+                                        width: sideBySide ? 390 : box.maxWidth,
+                                        child: panel),
+                                  ]);
+                                }),
                             }),
                           ])),
                         ]));
@@ -969,8 +950,19 @@ class _OdessyAppState extends State<OdessyApp> {
   }
 
   Widget _sidebar(BuildContext context) => DeviceSidebar(
+          onNewSession: controller.busy || controller.session?.running == true
+              ? null
+              : () => _newSession(context),
           hosts: deviceInventory.hosts,
           projectNavigation: projects == null ? null : _projectNavigation(),
+          sessionSearch: projects == null
+              ? null
+              : TextField(
+                  decoration: const InputDecoration(
+                      hintText: 'Find a session',
+                      prefixIcon: Icon(Icons.search, size: 18),
+                      isDense: true),
+                  onChanged: projects!.search),
           conversationLabel: 'Assistant',
           navigationFocus: navigationFocus,
           selectedHostId:
@@ -1005,8 +997,6 @@ class _OdessyAppState extends State<OdessyApp> {
                 icon: Icons.insights_outlined,
                 selected: page == 'Activity & usage',
                 onTap: () => _navigate('Activity & usage')),
-          ],
-          destinations: [
             SidebarDestination(
                 label: 'Jobs',
                 icon: Icons.work_outline,
@@ -1017,6 +1007,8 @@ class _OdessyAppState extends State<OdessyApp> {
                 icon: Icons.swap_horiz,
                 selected: page == 'Handoffs',
                 onTap: () => _navigate('Handoffs')),
+          ],
+          destinations: [
             SidebarDestination(
                 label: 'Installation',
                 icon: Icons.settings_outlined,
@@ -1052,12 +1044,10 @@ class _OdessyAppState extends State<OdessyApp> {
                 : () => _openSession(row.id));
         return ExpansionTile(
             initiallyExpanded: true,
-            title: const Text('Projects & sessions'),
+            tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+            title: const Text('Projects & sessions',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
             children: [
-              TextField(
-                  decoration:
-                      const InputDecoration(labelText: 'Find a session'),
-                  onChanged: c.search),
               TextButton.icon(
                   onPressed: c.loading ? null : c.refresh,
                   icon: const Icon(Icons.refresh),

@@ -25,6 +25,7 @@ class DeviceSidebar extends StatelessWidget {
       required this.onConversation,
       required this.onSettings,
       this.onRefresh,
+      this.onNewSession,
       this.onPair,
       this.selectedHostId,
       this.conversationSelected = false,
@@ -38,12 +39,13 @@ class DeviceSidebar extends StatelessWidget {
       this.navigationFocus,
       this.primaryDestinations = const [],
       this.projectNavigation,
+      this.sessionSearch,
       this.destinations = const []});
-  final Widget? projectNavigation;
+  final Widget? projectNavigation, sessionSearch;
   final List<MonitoringHost> hosts;
   final ValueChanged<String> onInspect;
   final VoidCallback onConversation, onSettings;
-  final VoidCallback? onRefresh, onPair;
+  final VoidCallback? onRefresh, onPair, onNewSession;
   final String? selectedHostId, error;
   final bool conversationSelected, settingsSelected, loading, retained, demo;
   final String connectionLabel;
@@ -56,19 +58,32 @@ class DeviceSidebar extends StatelessWidget {
   Widget build(BuildContext context) => SafeArea(
           child: Column(children: [
         Padding(
-            padding: const EdgeInsets.fromLTRB(20, 20, 16, 20),
+            padding: const EdgeInsets.fromLTRB(24, 20, 16, 20),
             child: Row(children: [
               const PixelBoat(size: 30),
               const SizedBox(width: 9),
               Expanded(
                   child: Text('Odessy',
-                      style: Theme.of(context).textTheme.titleMedium)),
+                      style: const TextStyle(
+                          fontSize: 23,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -.7))),
             ])),
         Expanded(
             child: ListView(
                 key: const Key('device-sidebar-scroll'),
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 children: [
+              if (sessionSearch != null)
+                Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: sessionSearch!),
+              Padding(
+                  padding: const EdgeInsets.only(bottom: 20, top: 4),
+                  child: FilledButton.icon(
+                      onPressed: onNewSession,
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text('New session'))),
               _navigation(context, conversationLabel, Icons.chat_bubble_outline,
                   conversationSelected, onConversation),
               for (final destination in primaryDestinations)
@@ -82,7 +97,7 @@ class DeviceSidebar extends StatelessWidget {
                     Expanded(
                         child: Semantics(
                             header: true,
-                            child: Text('DEVICES',
+                            child: Text('Computers',
                                 style: Theme.of(context)
                                     .textTheme
                                     .labelMedium
@@ -199,11 +214,14 @@ class DeviceSidebar extends StatelessWidget {
       focusNode: focus,
       selected: selected,
       dense: true,
-      selectedTileColor:
-          Theme.of(context).colorScheme.primary.withValues(alpha: .12),
+      minVerticalPadding: 10,
+      selectedTileColor: Theme.of(context).colorScheme.secondaryContainer,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       leading: Icon(icon, size: 19),
-      title: Text(title),
+      title: Text(title,
+          style: TextStyle(
+              fontSize: 13,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500)),
       onTap: onTap == null
           ? null
           : () {

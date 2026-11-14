@@ -122,7 +122,7 @@ void main() {
           DevicePage(device: 'Accessible workstation', controller: c),
           'Accessible workstation'
         ),
-        (ConversationPage(controller: c), 'Session'),
+        (ConversationPage(controller: c), 'odessy / assistant'),
         (SettingsPage(controller: c), 'Preferences'),
         (
           SingleChildScrollView(
@@ -143,7 +143,7 @@ void main() {
                   onInspect: (_) {},
                   onConversation: () {},
                   onSettings: () {})),
-          'DEVICES'
+          'Computers'
         ),
       ];
       for (final scene in scenes) {

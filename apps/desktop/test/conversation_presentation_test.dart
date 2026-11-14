@@ -101,6 +101,19 @@ Future<void> mountConversation(WidgetTester tester, DesktopSession c,
 }
 
 void main() {
+  testWidgets('current running model stays distinct from next-turn selection',
+      (tester) async {
+    final api = ConversationFixtureApi()..running = true;
+    final c = DesktopSession(api);
+    addTearDown(c.dispose);
+    await c.start();
+    await mountConversation(tester, c);
+    expect(find.text('Connected'), findsOneWidget);
+    expect(find.text('Active model: local'), findsOneWidget);
+    expect(find.text('Next-turn model'), findsOneWidget);
+    expect(find.byTooltip('Stop current turn'), findsOneWidget);
+  });
+
   testWidgets('model picker shows provider metadata but keeps profile identity',
       (tester) async {
     final c = DesktopSession(MetadataApi());

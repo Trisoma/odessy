@@ -242,8 +242,14 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Widget _rail(BuildContext context) => SizedBox(
-      width: 236,
+      width: 206,
       child: ListView(shrinkWrap: true, children: [
+        Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 0, 18),
+            child: Semantics(
+                header: true,
+                child: Text('Preferences',
+                    style: Theme.of(context).textTheme.bodySmall))),
         for (final name in SettingsSections.all)
           ListTile(
               key: ValueKey('settings-section-$name'),
@@ -254,6 +260,19 @@ class _SettingsPageState extends State<SettingsPage> {
               selectedColor: Theme.of(context).colorScheme.onSecondaryContainer,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10)),
+              minVerticalPadding: 18,
+              leading: Icon(
+                  switch (name) {
+                    SettingsSections.general => Icons.tune,
+                    SettingsSections.models => Icons.hub_outlined,
+                    SettingsSections.stt => Icons.hearing_outlined,
+                    SettingsSections.tts => Icons.record_voice_over_outlined,
+                    SettingsSections.voice => Icons.mic_none,
+                    SettingsSections.devices => Icons.shield_outlined,
+                    SettingsSections.advanced => Icons.code,
+                    _ => Icons.inventory_2_outlined
+                  },
+                  size: 19),
               title: Text(name, style: Theme.of(context).textTheme.labelLarge),
               onTap: () => _selectSection(name)),
       ]));
@@ -324,7 +343,7 @@ class _SettingsPageState extends State<SettingsPage> {
         if (widget.readiness != null) widget.readiness!
       ]),
       builder: (context, _) => SettingsScaffold(
-          title: DesktopCopy.settingsTitle,
+          title: section,
           description: DesktopCopy.settingsDescription,
           navigation: _rail(context),
           compactNavigation: _narrowPicker(context),

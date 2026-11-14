@@ -273,7 +273,7 @@ void main() {
     await tester.tap(find.text('Output'));
     await tester.pumpAndSettle();
     expect(find.text('Recorded fixture output\n'), findsOneWidget);
-    await tester.tap(find.text('Changes'));
+    await tester.tap(find.text('Changes (0)'));
     await tester.pumpAndSettle();
     expect(find.textContaining('No bound pending'), findsOneWidget);
     await tester.tap(find.byTooltip('Close workspace panel'));

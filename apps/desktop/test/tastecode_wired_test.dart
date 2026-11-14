@@ -15,9 +15,21 @@ import 'component_settings_test.dart' show SavedComponents;
 import 'conversation_presentation_test.dart'
     show ConversationFixtureApi, interactionFixture;
 import 'project_catalog_test.dart' show CatalogApi;
+import 'handoff_page_test.dart' show HandoffFixtureApi, runFixture;
+import 'voice_controller_test.dart' show AudioApi;
 
 class CaptureProjects implements ProjectCatalogStore {
-  ProjectCatalogSnapshot value = ProjectCatalogSnapshot([], 0);
+  ProjectCatalogSnapshot value = ProjectCatalogSnapshot([
+    ProjectRecord.fromJson({
+      'id': 'fixture-project',
+      'label': 'Odessy',
+      'configuration_owner': 'b' * 64,
+      'workspace': r'C:\configured',
+      'service_origin': 'http://127.0.0.1:9000',
+      'service_instance_id': 'a' * 32,
+      'session_ids': ['demo'],
+    })
+  ], 0);
   @override
   Future<ProjectCatalogSnapshot> load() async => value;
   @override
@@ -31,8 +43,60 @@ class WiredCaptureApi extends ConversationFixtureApi
         SessionDirectoryApi,
         RuntimeConfigurationApi,
         WorkspaceInspectorApi,
-        UsageHistoryApi {
+        UsageHistoryApi,
+        JobsApi,
+        HandoffRunsApi,
+        DesktopVoiceApi {
   final catalog = CatalogApi();
+  final handoffFixture = HandoffFixtureApi(), audioFixture = AudioApi();
+  @override
+  Future<VoiceSnapshot> voiceState(String sid) => audioFixture.voiceState(sid);
+  @override
+  Future<VoiceSnapshot> voiceCommand(String sid, String action,
+          {String? captureId, String? interactionId}) =>
+      audioFixture.voiceCommand(sid, action,
+          captureId: captureId, interactionId: interactionId);
+  @override
+  Future<Json> listJobs(String sid, {String? after, int limit = 50}) async => {
+        'jobs': [
+          {
+            'job_id': 'a' * 32,
+            'participant': 'offline-fixture',
+            'mode': 'advice',
+            'state': 'completed',
+            'remote_state_unknown': false
+          }
+        ],
+        'next_cursor': null
+      };
+  @override
+  Future<Json> readJob(String sid, String id) async => {
+        'job_id': id,
+        'state': 'completed',
+        'result': 'Offline fixture; no agent ran.'
+      };
+  @override
+  Future<Json> submitJob(String sid, Json request) async =>
+      throw StateError('Capture does not submit jobs');
+  @override
+  Future<Json> cancelJob(String sid, String id) async =>
+      throw StateError('Capture does not cancel jobs');
+  @override
+  Future<Json> startRun(String sid, Json request) =>
+      handoffFixture.startRun(sid, request);
+  @override
+  Future<Json> readRun(String sid, String id) =>
+      handoffFixture.readRun(sid, id);
+  @override
+  Future<Json> readRunArtifact(String sid, String id) =>
+      handoffFixture.readRunArtifact(sid, id);
+  @override
+  Future<Json> continueRun(String sid, String id, String sha) =>
+      handoffFixture.continueRun(sid, id, sha);
+  @override
+  Future<Json> cancelRun(String sid, String id) =>
+      handoffFixture.cancelRun(sid, id);
+
   @override
   Future<Json> usageHistory(
           {int days = 30,
@@ -119,6 +183,10 @@ void main() {
     ]) {
       await (FontLoader(family)..addFont(rootBundle.load(asset))).load();
     }
+    await (FontLoader('OdessySans')
+          ..addFont(rootBundle.load('assets/fonts/roboto-regular.ttf'))
+          ..addFont(rootBundle.load('assets/fonts/roboto-bold.ttf')))
+        .load();
     tester.view.physicalSize = const Size(1600, 1050);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -133,6 +201,9 @@ void main() {
     api.pending = [
       {
         ...interactionFixture(),
+        'authoritative_prompt': 'Apply this exact reviewed file change?',
+        'tool': 'filesystem.write',
+        'arguments': {'path': 'readme.txt', 'content': 'Hello Odessy!\n'},
         'proposed_change': {
           'session_id': 'demo',
           'path': 'readme.txt',
@@ -143,6 +214,7 @@ void main() {
         }
       }
     ];
+    final reviewFixture = api.pending.single;
     api.activity = [
       SessionEvent(1, 'command_output', {
         'session_id': 'demo',
@@ -164,6 +236,14 @@ void main() {
             setupBackend: SavedComponents())));
     await tester.pumpAndSettle();
     Future<void> capture(String name) async {
+      final sidebar = find.byKey(const Key('device-sidebar-scroll'));
+      if (sidebar.evaluate().isNotEmpty) {
+        final state = tester.state<ScrollableState>(find
+            .descendant(of: sidebar, matching: find.byType(Scrollable))
+            .first);
+        state.position.jumpTo(0);
+        await tester.pumpAndSettle();
+      }
       expect(tester.takeException(), isNull, reason: name);
       if (!const bool.fromEnvironment('CAPTURE_WIRED')) return;
       await tester.runAsync(() async {
@@ -171,7 +251,7 @@ void main() {
             key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
         final frame = await boundary.toImage(pixelRatio: 1);
         final bytes = await frame.toByteData(format: ui.ImageByteFormat.png);
-        final dir = Directory('../../doc/ui/tastecode-wired');
+        final dir = Directory('../../docs/view');
         await dir.create(recursive: true);
         await File('${dir.path}/$name.png')
             .writeAsBytes(bytes!.buffer.asUint8List());
@@ -181,6 +261,14 @@ void main() {
 
     Future<void> nav(String name) async {
       final f = find.byKey(ValueKey('nav-$name'));
+      if (f.evaluate().isEmpty || f.hitTestable().evaluate().isEmpty) {
+        await tester.scrollUntilVisible(f, -200,
+            scrollable: find
+                .descendant(
+                    of: find.byKey(const Key('device-sidebar-scroll')),
+                    matching: find.byType(Scrollable))
+                .first);
+      }
       await tester.ensureVisible(f);
       await tester.pumpAndSettle();
       expect(f.hitTestable(), findsOneWidget);
@@ -188,7 +276,32 @@ void main() {
       await tester.pumpAndSettle();
     }
 
+    await tester.ensureVisible(find.byWidgetPredicate((w) =>
+        w is ExpansionTile &&
+        w.title is Text &&
+        (w.title as Text).data == 'Odessy'));
+    await tester.tap(find.byWidgetPredicate((w) =>
+        w is ExpansionTile &&
+        w.title is Text &&
+        (w.title as Text).data == 'Odessy'));
+    await tester.pumpAndSettle();
+    final transcript = find.byKey(const Key('conversation-transcript'));
+    tester
+        .state<ScrollableState>(find
+            .descendant(of: transcript, matching: find.byType(Scrollable))
+            .first)
+        .position
+        .jumpTo(0);
+    await tester.pumpAndSettle();
     await capture('01-assistant-approval');
+    await tester.tap(find.text('Activity & provenance'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('command_output'));
+    await tester.pumpAndSettle();
+    expect(find.text('Inspect recorded output'), findsOneWidget);
+    await capture('01b-activity-expanded');
+    await tester.tap(find.text('Activity & provenance'));
+    await tester.pumpAndSettle();
     expect(find.text('Activity & usage'), findsOneWidget);
     await tester.enterText(
         find.byKey(const Key('composer')), 'My retained draft');
@@ -196,13 +309,17 @@ void main() {
     await tester.tap(find.text('Voice options'));
     await tester.pumpAndSettle();
     await capture('02-composer-voice');
-    await tester.tap(find.text('Files · Output · Changes'));
+    await tester.tap(find.byTooltip('Files · Output · Changes').last);
     await tester.pumpAndSettle();
     final panel =
         tester.widget<WorkspaceInspector>(find.byType(WorkspaceInspector));
     await panel.controller.open('readme.txt', directory: false);
     await tester.pumpAndSettle();
     await capture('03-files');
+    expect(find.byType(ConversationPage), findsOneWidget);
+    await tester.tap(find.text('Attach reviewed text'));
+    await tester.pumpAndSettle();
+    await capture('03b-attachment');
     panel.controller.show(InspectorPanel.terminal);
     await tester.pumpAndSettle();
     await capture('04-output');
@@ -213,6 +330,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('My retained draft'), findsOneWidget);
     api.pending = [];
+    api.activity = [...api.activity, SessionEvent(2, 'run', runFixture())];
     await tester
         .widget<ConversationPage>(find.byType(ConversationPage))
         .controller
@@ -229,8 +347,13 @@ void main() {
     await capture('09-device-performance');
     await tester.tap(find.widgetWithText(ChoiceChip, 'Overview'));
     await tester.pumpAndSettle();
-    await tester
-        .ensureVisible(find.byKey(const ValueKey('inspect-host_demo_jetson')));
+    await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('inspect-host_demo_jetson')), 180,
+        scrollable: find
+            .descendant(
+                of: find.byKey(const Key('device-sidebar-scroll')),
+                matching: find.byType(Scrollable))
+            .first);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('inspect-host_demo_jetson')));
     await tester.pumpAndSettle();
@@ -246,10 +369,14 @@ void main() {
       await tester.tap(f);
       await tester.pumpAndSettle();
       await capture('settings-${i + 1}');
+      if (i == 0) {
+        await tester.tap(find.byTooltip('Toggle light / dark theme'));
+        await tester.pumpAndSettle();
+        await capture('settings-light');
+        await tester.tap(find.byTooltip('Toggle light / dark theme'));
+        await tester.pumpAndSettle();
+      }
     }
-    await tester.ensureVisible(find.text('Tools & installation'));
-    await tester.tap(find.text('Tools & installation'));
-    await tester.pumpAndSettle();
     for (final name in ['Jobs', 'Handoffs']) {
       await nav(name);
       await capture(name.toLowerCase());
@@ -260,6 +387,29 @@ void main() {
     await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pumpAndSettle();
     await capture('narrow-navigation');
+    await tester.tap(find.byKey(const ValueKey('nav-Assistant')));
+    await tester.pumpAndSettle();
+    await capture('narrow-assistant');
+    api.pending = [reviewFixture];
+    await tester
+        .widget<ConversationPage>(find.byType(ConversationPage))
+        .controller
+        .refresh();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Files · Output · Changes').last);
+    await tester.pumpAndSettle();
+    final narrowPanel =
+        tester.widget<WorkspaceInspector>(find.byType(WorkspaceInspector));
+    narrowPanel.controller.show(InspectorPanel.changes);
+    await tester.pumpAndSettle();
+    await capture('narrow-diff');
+    await tester.tap(find.byTooltip('Close workspace panel'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Open navigation menu'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('nav-Settings')));
+    await tester.pumpAndSettle();
+    await capture('narrow-settings');
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
   });

@@ -7,6 +7,7 @@ import '../../../widgets/pixel_boat.dart';
 import '../controllers/voice_controller.dart';
 import 'interaction_card.dart';
 import 'message_content.dart';
+import 'session_activity.dart';
 import '../../workspaces/controllers/workspace_inspector_controller.dart';
 
 class ConversationPage extends StatefulWidget {
@@ -17,13 +18,15 @@ class ConversationPage extends StatefulWidget {
       this.inspector,
       this.voice,
       this.draftController,
-      this.onOpenModels});
+      this.onOpenModels,
+      this.onOpenInspector});
   final DesktopSession controller;
   final WorkspaceInspectorController? inspector;
   final ReadinessController? readiness;
   final VoiceController? voice;
   final TextEditingController? draftController;
   final VoidCallback? onOpenModels;
+  final void Function([InspectorPanel panel])? onOpenInspector;
   @override
   State<ConversationPage> createState() => _ConversationPageState();
 }
@@ -206,8 +209,55 @@ class _ConversationPageState extends State<ConversationPage> {
             (box.maxWidth < 600 &&
                 MediaQuery.textScalerOf(context).scale(14) > 20);
         final header = Padding(
-            padding: EdgeInsets.fromLTRB(inset, 16, inset, 12),
-            child: _content(_header(context)));
+            padding: EdgeInsets.fromLTRB(inset, 4, inset, 4),
+            child: _content(Row(children: [
+              Expanded(
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Semantics(
+                        header: true,
+                        child: Text('odessy / assistant',
+                            style: Theme.of(context).textTheme.bodySmall)),
+                    Text(
+                        widget.controller.busy &&
+                                widget.controller.session == null
+                            ? 'Connecting'
+                            : widget.controller.connected
+                                ? 'Connected'
+                                : 'Offline',
+                        style: Theme.of(context).textTheme.bodySmall),
+                    if (widget.controller.session?.running == true &&
+                        widget.controller.session?.activeProfile != null)
+                      Text(
+                          'Active model: ${widget.controller.session!.activeProfile}',
+                          style: Theme.of(context).textTheme.bodySmall),
+                  ])),
+              IconButton(
+                  tooltip: 'Session details',
+                  icon: const Icon(Icons.info_outline, size: 18),
+                  onPressed: () => showDialog<void>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                              title: const Text('Session details'),
+                              content: SelectableText(
+                                  'Coordinator: ${widget.controller.api.identity}'),
+                              actions: [
+                                TextButton(
+                                    onPressed: () => Navigator.pop(context),
+                                    child: const Text('Close'))
+                              ]))),
+              IconButton(
+                  tooltip: 'Refresh session',
+                  onPressed:
+                      widget.controller.busy ? null : widget.controller.refresh,
+                  icon: const Icon(Icons.refresh, size: 18)),
+              if (widget.onOpenInspector != null)
+                IconButton(
+                    tooltip: 'Files · Output · Changes',
+                    onPressed: () => widget.onOpenInspector!(),
+                    icon: const Icon(Icons.folder_open_outlined, size: 18))
+            ])));
         final composer = Padding(
             padding: EdgeInsets.fromLTRB(inset, 8, inset, 16),
             child: _content(_composer(context, narrow: box.maxWidth < 600)));
@@ -269,9 +319,27 @@ class _ConversationPageState extends State<ConversationPage> {
         _welcome(context),
       for (final message in s?.messages ?? [])
         _content(_message(context, message.role, message.text)),
+      if (s != null && s.events.isNotEmpty)
+        _content(Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+                border: Border.all(color: Theme.of(context).dividerColor),
+                borderRadius: BorderRadius.circular(10)),
+            child: SessionActivity(
+                events: s.events,
+                showUsage: false,
+                onOpenOutput: widget.onOpenInspector == null
+                    ? null
+                    : () => widget.onOpenInspector!(InspectorPanel.terminal)))),
       for (final entry in s?.pending ?? [])
         _content(InteractionCard(
-            key: ValueKey(entry['id']), entry: entry, controller: c)),
+            key: ValueKey(entry['id']),
+            entry: entry,
+            controller: c,
+            onInspectDiff: entry['proposed_change'] is Map &&
+                    widget.onOpenInspector != null
+                ? () => widget.onOpenInspector!(InspectorPanel.changes)
+                : null)),
       if (s?.running == true && s!.pending.isEmpty)
         _content(Padding(
             padding: const EdgeInsets.symmetric(vertical: 16),
@@ -314,46 +382,8 @@ class _ConversationPageState extends State<ConversationPage> {
           constraints: const BoxConstraints(maxWidth: 760),
           child: SizedBox(width: double.infinity, child: child)));
 
-  Widget _header(BuildContext context) {
+  Widget _modelPicker(BuildContext context) {
     final c = widget.controller, s = c.session;
-    final details =
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Wrap(
-          spacing: 12,
-          runSpacing: 4,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            Semantics(
-                header: true,
-                child: Text('Session',
-                    style: Theme.of(context).textTheme.titleMedium)),
-            Text(
-                c.busy && s == null
-                    ? 'Connecting'
-                    : c.connected
-                        ? 'Connected'
-                        : 'Offline',
-                style: Theme.of(context).textTheme.bodySmall),
-            IconButton(
-                tooltip: 'Session details',
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.info_outline, size: 18),
-                onPressed: () => showDialog<void>(
-                    context: context,
-                    builder: (context) => AlertDialog(
-                            title: const Text('Session details'),
-                            content: SelectableText(
-                                'Coordinator: ${c.api.identity}'),
-                            actions: [
-                              TextButton(
-                                  onPressed: () => Navigator.pop(context),
-                                  child: const Text('Close'))
-                            ]))),
-          ]),
-      if (s?.running == true && s?.activeProfile != null)
-        Text('Active model: ${s!.activeProfile}',
-            style: Theme.of(context).textTheme.bodySmall),
-    ]);
     final model = DropdownButtonFormField<String>(
       key: ValueKey((c.api, s?.selectedProfile)),
       initialValue:
@@ -376,19 +406,7 @@ class _ConversationPageState extends State<ConversationPage> {
               if (value != null) unawaited(c.select(value));
             },
     );
-    return LayoutBuilder(builder: (context, box) {
-      if (box.maxWidth < 600 ||
-          MediaQuery.textScalerOf(context).scale(14) > 20) {
-        return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [details, const SizedBox(height: 12), model]);
-      }
-      return Row(children: [
-        Expanded(child: details),
-        const SizedBox(width: 24),
-        SizedBox(width: 200, child: model)
-      ]);
-    });
+    return model;
   }
 
   Widget _message(BuildContext context, String role, String text) {
@@ -481,82 +499,162 @@ class _ConversationPageState extends State<ConversationPage> {
 
   Widget _composer(BuildContext context, {required bool narrow}) {
     final c = widget.controller, running = c.session?.running == true;
+    final scheme = Theme.of(context).colorScheme;
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      if (c.route.isNotEmpty)
-        Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Text(c.route, style: Theme.of(context).textTheme.bodySmall)),
-      Card(
-          child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-              child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Expanded(
-                    child: CallbackShortcuts(
-                        bindings: {
-                      const SingleActivator(LogicalKeyboardKey.enter,
-                          shift: true): _newLine,
-                      const SingleActivator(LogicalKeyboardKey.numpadEnter,
-                          shift: true): _newLine,
-                      const SingleActivator(LogicalKeyboardKey.enter): () =>
-                          unawaited(send()),
-                      const SingleActivator(LogicalKeyboardKey.numpadEnter):
-                          () => unawaited(send()),
-                    },
-                        child: TextField(
-                            key: const Key('composer'),
-                            controller: input,
-                            minLines: 1,
-                            maxLines: narrow ? 3 : 5,
-                            textInputAction: TextInputAction.newline,
-                            enabled: c.connected &&
-                                !running &&
-                                !c.busy &&
-                                !c.stopping &&
-                                !submitting,
-                            decoration: const InputDecoration(
-                                hintText: 'Message Odessy…',
-                                labelText: 'Message',
-                                filled: false,
-                                border: InputBorder.none,
-                                enabledBorder: InputBorder.none)))),
-                IconButton(
-                    tooltip: voice.recording
-                        ? 'Finish recording and submit speech'
-                        : 'Record on the coordinator computer',
-                    onPressed: voice.supported &&
-                            !voice.busy &&
-                            voice.snapshot?.mode != 'wake'
-                        ? () => voice.command(voice.recording
-                            ? 'finish_capture'
-                            : 'start_capture')
-                        : null,
-                    icon: Icon(
-                        voice.recording
-                            ? Icons.stop_circle_outlined
-                            : Icons.mic_none,
-                        size: 20)),
-                if (voice.snapshot?.captureId != null)
-                  IconButton(
-                      tooltip: 'Cancel recording without submitting',
-                      onPressed: () => voice.command('cancel_capture'),
-                      icon: const Icon(Icons.close)),
-                IconButton.filled(
-                    key: const Key('send-or-stop'),
-                    tooltip: running ? 'Stop current turn' : 'Send message',
-                    onPressed: !c.connected || c.stopping
-                        ? null
-                        : running
-                            ? c.stop
-                            : canSend
-                                ? send
-                                : null,
-                    icon: Icon(
-                        running
-                            ? Icons.stop_rounded
-                            : Icons.arrow_upward_rounded,
-                        size: 20)),
-              ]))),
+      Container(
+          decoration: BoxDecoration(
+              color: scheme.surfaceContainer,
+              border: Border.all(color: Theme.of(context).dividerColor),
+              borderRadius: BorderRadius.circular(12)),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                child: Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Icon(Icons.folder_outlined,
+                          size: 16, color: scheme.secondary),
+                      Text(
+                          widget.readiness?.current?.configuration?.workspace ??
+                              'Workspace not reported',
+                          style: Theme.of(context).textTheme.bodySmall),
+                      const Text('· Coordinator computer',
+                          style: TextStyle(fontSize: 11)),
+                    ])),
+            const Divider(height: 1),
+            if (widget.inspector != null)
+              ListenableBuilder(
+                  listenable: widget.inspector!,
+                  builder: (context, _) => Wrap(spacing: 6, children: [
+                        for (final a in widget.inspector!.attachments)
+                          InputChip(
+                              label: Text(a.file.path),
+                              onDeleted: () => widget.inspector!
+                                  .removeAttachment(a.file.path))
+                      ])),
+            CallbackShortcuts(
+                bindings: {
+                  const SingleActivator(LogicalKeyboardKey.enter, shift: true):
+                      _newLine,
+                  const SingleActivator(LogicalKeyboardKey.numpadEnter,
+                      shift: true): _newLine,
+                  const SingleActivator(LogicalKeyboardKey.enter): () =>
+                      unawaited(send()),
+                  const SingleActivator(LogicalKeyboardKey.numpadEnter): () =>
+                      unawaited(send()),
+                },
+                child: TextField(
+                    key: const Key('composer'),
+                    controller: input,
+                    minLines: 2,
+                    maxLines: narrow ? 3 : 5,
+                    textInputAction: TextInputAction.newline,
+                    enabled: c.connected &&
+                        !running &&
+                        !c.busy &&
+                        !c.stopping &&
+                        !submitting,
+                    decoration: const InputDecoration(
+                        hintText:
+                            'Ask a question, explore a file, or describe a change…',
+                        labelText: 'Message',
+                        filled: false,
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none))),
+            Padding(
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                child: LayoutBuilder(builder: (context, box) {
+                  final actions =
+                      Row(mainAxisSize: MainAxisSize.min, children: [
+                    IconButton(
+                        tooltip: voice.recording
+                            ? 'Finish recording and submit speech'
+                            : 'Record on the coordinator computer',
+                        onPressed: voice.supported &&
+                                !voice.busy &&
+                                voice.snapshot?.mode != 'wake'
+                            ? () => voice.command(voice.recording
+                                ? 'finish_capture'
+                                : 'start_capture')
+                            : null,
+                        icon: Icon(
+                            voice.recording
+                                ? Icons.stop_circle_outlined
+                                : Icons.mic_none,
+                            size: 20)),
+                    if (voice.snapshot?.captureId != null)
+                      IconButton(
+                          tooltip: 'Cancel recording without submitting',
+                          onPressed: () => voice.command('cancel_capture'),
+                          icon: const Icon(Icons.close)),
+                    IconButton.filled(
+                        key: const Key('send-or-stop'),
+                        tooltip: running ? 'Stop current turn' : 'Send message',
+                        onPressed: !c.connected || c.stopping
+                            ? null
+                            : running
+                                ? c.stop
+                                : canSend
+                                    ? send
+                                    : null,
+                        icon: Icon(
+                            running
+                                ? Icons.stop_rounded
+                                : Icons.arrow_upward_rounded,
+                            size: 20)),
+                  ]);
+                  final contextControls = Wrap(
+                      spacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        if (widget.onOpenInspector != null)
+                          IconButton(
+                              tooltip: 'Files · Output · Changes',
+                              onPressed: () => widget.onOpenInspector!(),
+                              icon: const Icon(Icons.attach_file, size: 20)),
+                        Tooltip(
+                            message:
+                                'Permissions are decided by the service. Opening a panel grants nothing.',
+                            child:
+                                Row(mainAxisSize: MainAxisSize.min, children: [
+                              Icon(Icons.shield_outlined,
+                                  size: 15, color: scheme.tertiary),
+                              const SizedBox(width: 6),
+                              const Flexible(
+                                  child: Text('Service permissions',
+                                      style: TextStyle(fontSize: 11)))
+                            ])),
+                      ]);
+                  final model = SizedBox(
+                      width: box.maxWidth < 420 ? box.maxWidth : 180,
+                      child: _modelPicker(context));
+                  if (box.maxWidth < 500 ||
+                      MediaQuery.textScalerOf(context).scale(14) > 20) {
+                    return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          contextControls,
+                          const SizedBox(height: 6),
+                          model,
+                          Align(
+                              alignment: Alignment.centerRight, child: actions)
+                        ]);
+                  }
+                  return Row(children: [
+                    Expanded(child: contextControls),
+                    model,
+                    const SizedBox(width: 8),
+                    actions
+                  ]);
+                })),
+          ])),
       const SizedBox(height: 8),
+      if (c.route.isNotEmpty)
+        Text(c.route, style: Theme.of(context).textTheme.bodySmall),
       Wrap(spacing: 16, runSpacing: 4, children: [
         Text(c.status, style: Theme.of(context).textTheme.bodySmall),
         Text(

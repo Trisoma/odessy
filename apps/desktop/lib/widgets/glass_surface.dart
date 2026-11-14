@@ -27,13 +27,13 @@ class GlassSurface extends StatelessWidget {
         (media?.highContrast ?? false) ||
         (media?.disableAnimations ?? false);
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final base = dark ? const Color(0xff24282b) : const Color(0xfff8faf9);
+    final base = dark ? const Color(0xff15252e) : const Color(0xfff8faf9);
     final panel = DecoratedBox(
       decoration: BoxDecoration(
         color: base.withValues(alpha: opaque ? 1 : .86),
         borderRadius: BorderRadius.circular(radius),
         border: Border.all(
-          color: dark ? const Color(0xff454b4e) : const Color(0xffd6ded9),
+          color: dark ? const Color(0xff36515e) : const Color(0xffd6ded9),
         ),
       ),
       child: Material(

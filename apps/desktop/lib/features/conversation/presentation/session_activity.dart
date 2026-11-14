@@ -9,8 +9,10 @@ class SessionActivity extends StatelessWidget {
       {super.key,
       required this.events,
       this.expandUsage = false,
+      this.onOpenOutput,
       this.showUsage = true});
   final List<SessionEvent> events;
+  final VoidCallback? onOpenOutput;
   final bool expandUsage;
   final bool showUsage;
 
@@ -52,6 +54,19 @@ class SessionActivity extends StatelessWidget {
               subtitle: Text('Event #${event.id} · ${event.type}'),
               expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if ((event.type == 'command_output' ||
+                        (event.type == 'result' &&
+                            event.data['tool_observations'] is List &&
+                            (event.data['tool_observations'] as List).any((o) =>
+                                o is Map &&
+                                o['request'] is Map &&
+                                const ['terminal.run', 'laptop.terminal.run']
+                                    .contains(o['request']['name'])))) &&
+                    onOpenOutput != null)
+                  TextButton.icon(
+                      onPressed: onOpenOutput,
+                      icon: const Icon(Icons.terminal, size: 18),
+                      label: const Text('Inspect recorded output')),
                 if (event.data['message'] is String)
                   Padding(
                       padding: const EdgeInsets.only(bottom: 8),

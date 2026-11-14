@@ -80,7 +80,12 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Toggle light / dark theme'));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Tools & installation'));
+    await tester.scrollUntilVisible(find.text('Tools & installation'), 180,
+        scrollable: find
+            .descendant(
+                of: find.byKey(const Key('device-sidebar-scroll')),
+                matching: find.byType(Scrollable))
+            .first);
     await tester.tap(find.text('Tools & installation'));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(find.text('Installation'), 160,

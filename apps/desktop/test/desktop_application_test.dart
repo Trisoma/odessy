@@ -90,7 +90,7 @@ void main() {
         find.descendant(
             of: find.byType(ConversationPage),
             matching: find.text('Activity & provenance')),
-        findsNothing);
+        findsOneWidget);
     await tester.tap(find.text('Activity & usage'));
     await tester.pumpAndSettle();
     expect(find.text('API usage and estimated cost'), findsOneWidget);

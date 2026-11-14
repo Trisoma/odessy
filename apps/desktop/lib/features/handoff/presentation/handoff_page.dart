@@ -5,8 +5,8 @@ import '../../jobs/presentation/jobs_page.dart' show JobUsage;
 import '../controllers/handoff_controller.dart';
 
 const _flowLabels = {
-  'document_to_code': 'Document → code',
-  'code_to_review': 'Code → review',
+  'document_to_code': 'Document to code',
+  'code_to_review': 'Code to review',
 };
 
 /// Plain words for every run, step and transfer state the service reports.
@@ -233,7 +233,7 @@ class _HandoffPageState extends State<HandoffPage> {
                                 title: Text(
                                     '${_flowLabels[run['flow']]} · ${handoffStateLabel(run['state'])}'),
                                 subtitle: Text(
-                                    '${_participant(run, 0)} → ${_participant(run, 1)} · ${run['run_id']}'),
+                                    '${_participant(run, 0)} to ${_participant(run, 1)} · ${run['run_id']}'),
                                 onTap: () => c.select(run['run_id'] as String)),
                           if (c.selected != null) _RunDetails(controller: c),
                         ]))));
@@ -319,7 +319,7 @@ class _RunDetails extends StatelessWidget {
                         '${offer['kind'] == 'diff' ? 'Code changes' : 'Document'} · '
                         '${offer['bytes']} bytes · goes to ${steps[1]['participant']}'),
                     SelectableText('SHA-256 ${offer['sha256']}',
-                        style: const TextStyle(fontFamily: 'monospace')),
+                        style: const TextStyle(fontFamily: 'OdessyMono')),
                     const SizedBox(height: 8),
                     Container(
                         constraints: const BoxConstraints(maxHeight: 360),
@@ -331,8 +331,8 @@ class _RunDetails extends StatelessWidget {
                             child: SelectableText(
                                 (c.artifact?['text'] ?? offer['preview'])
                                     as String,
-                                style:
-                                    const TextStyle(fontFamily: 'monospace')))),
+                                style: const TextStyle(
+                                    fontFamily: 'OdessyMono')))),
                     if (c.artifact == null)
                       const Text('Showing the start of the output.'),
                     if (c.artifact != null)
@@ -508,7 +508,7 @@ class _StepNode extends StatelessWidget {
                         borderRadius: BorderRadius.circular(8)),
                     child: SingleChildScrollView(
                         child: SelectableText(answer,
-                            style: const TextStyle(fontFamily: 'monospace')))),
+                            style: const TextStyle(fontFamily: 'OdessyMono')))),
               ],
             ])));
   }

@@ -11,7 +11,7 @@ class WorkspaceInspector extends StatelessWidget {
       scrollDirection: Axis.horizontal,
       child: SelectableText(text,
           style: const TextStyle(
-              fontFamily: 'OdessyMono', fontSize: 12, height: 1.6)));
+              fontFamily: 'OdessyMono', fontSize: 12, height: 1.85)));
 
   void _attach(BuildContext context) {
     try {
@@ -29,7 +29,7 @@ class WorkspaceInspector extends StatelessWidget {
       builder: (context, _) {
         final c = controller;
         return Material(
-            color: Theme.of(context).colorScheme.surface,
+            color: Theme.of(context).colorScheme.surfaceContainerLow,
             child: Column(children: [
               Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 4, 8),
@@ -63,7 +63,8 @@ class WorkspaceInspector extends StatelessWidget {
                           child: Text(switch (panel) {
                             InspectorPanel.files => 'Files',
                             InspectorPanel.terminal => 'Output',
-                            InspectorPanel.changes => 'Changes'
+                            InspectorPanel.changes =>
+                              'Changes (${c.changes.length})'
                           })))
               ]),
               const Divider(height: 1),
