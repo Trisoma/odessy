@@ -1,0 +1,246 @@
+{
+ "schema_version": 1,
+ "suite": "flutter test --no-pub test (apps/desktop)",
+ "run_at": "2026-11-14T13:14+08:00",
+ "summary": {
+  "passed": 527,
+  "skipped": 13,
+  "failed": 53
+ },
+ "owned_files_failing": [],
+ "failure_counts": {
+  "settings_shell_guard_test.dart": 12,
+  "app_shell_layout_test.dart": 9,
+  "navigation_layout_test.dart": 8,
+  "desktop_application_test.dart": 6,
+  "usage_dashboard_test.dart": 3,
+  "gui_audit_regressions_test.dart": 2,
+  "source_setup_wiring_test.dart": 2,
+  "conversation_presentation_test.dart": 1,
+  "conversation_visual_test.dart": 1,
+  "device_visual_test.dart": 1,
+  "device_page_test.dart": 1,
+  "desktop_visual_test.dart": 1,
+  "navigation_ux_test.dart": 1,
+  "monitoring_app_integration_test.dart": 1,
+  "presentation_accessibility_test.dart": 1,
+  "settings_visual_test.dart": 1,
+  "setup_usability_test.dart": 1,
+  "visual_preview_test.dart": 1
+ },
+ "failures": [
+  {
+   "file": "app_shell_layout_test.dart",
+   "test": "short shell keeps footer reachable at Size(1200.0, 480.0), DPR 1.0"
+  },
+  {
+   "file": "desktop_application_test.dart",
+   "test": "malformed history from a fake is shown as unavailable"
+  },
+  {
+   "file": "app_shell_layout_test.dart",
+   "test": "short shell keeps footer reachable at Size(720.0, 480.0), DPR 1.0"
+  },
+  {
+   "file": "desktop_application_test.dart",
+   "test": "session cost remains available when history endpoint fails"
+  },
+  {
+   "file": "conversation_presentation_test.dart",
+   "test": "voice options stay accessible and active playback can stop"
+  },
+  {
+   "file": "conversation_visual_test.dart",
+   "test": "render conversation and interaction screenshots"
+  },
+  {
+   "file": "device_visual_test.dart",
+   "test": "render device screenshots in both themes"
+  },
+  {
+   "file": "device_page_test.dart",
+   "test": "app opens local pairing from device settings"
+  },
+  {
+   "file": "desktop_visual_test.dart",
+   "test": "render desktop screenshots"
+  },
+  {
+   "file": "app_shell_layout_test.dart",
+   "test": "short shell keeps footer reachable at Size(1200.0, 360.0), DPR 1.0"
+  },
+  {
+   "file": "desktop_application_test.dart",
+   "test": "unsent conversation draft survives viewing activity"
+  },
+  {
+   "file": "desktop_application_test.dart",
+   "test": "activity button opens usage page and preserves conversation"
+  },
+  {
+   "file": "app_shell_layout_test.dart",
+   "test": "short shell keeps footer reachable at Size(360.0, 480.0), DPR 1.0"
+  },
+  {
+   "file": "app_shell_layout_test.dart",
+   "test": "short shell keeps footer reachable at Size(1200.0, 480.0), DPR 1.25"
+  },
+  {
+   "file": "gui_audit_regressions_test.dart",
+   "test": "dirty navigation autofocuses safe action and restores focus at 1280.0"
+  },
+  {
+   "file": "desktop_application_test.dart",
+   "test": "activity stays accessible in the narrow navigation drawer"
+  },
+  {
+   "file": "app_shell_layout_test.dart",
+   "test": "short shell keeps footer reachable at Size(720.0, 480.0), DPR 1.25"
+  },
+  {
+   "file": "gui_audit_regressions_test.dart",
+   "test": "dirty navigation autofocuses safe action and restores focus at 840.0"
+  },
+  {
+   "file": "app_shell_layout_test.dart",
+   "test": "short shell keeps footer reachable at Size(720.0, 480.0), DPR 1.5"
+  },
+  {
+   "file": "app_shell_layout_test.dart",
+   "test": "short shell keeps footer reachable at Size(1200.0, 480.0), DPR 2.0"
+  },
+  {
+   "file": "desktop_application_test.dart",
+   "test": "desktop sends, stops and opens device settings"
+  },
+  {
+   "file": "app_shell_layout_test.dart",
+   "test": "short shell keeps footer reachable at Size(720.0, 480.0), DPR 2.0"
+  },
+  {
+   "file": "navigation_layout_test.dart",
+   "test": "keyboard navigation and maintenance entry preserve existing routes"
+  },
+  {
+   "file": "navigation_ux_test.dart",
+   "test": "everyday navigation groups existing operations without changing session"
+  },
+  {
+   "file": "monitoring_app_integration_test.dart",
+   "test": "real loopback monitoring composes into app without demo fallback or mutations"
+  },
+  {
+   "file": "navigation_layout_test.dart",
+   "test": "long workspace paths stay editable and do not mutate on inspection"
+  },
+  {
+   "file": "presentation_accessibility_test.dart",
+   "test": "screen and request titles are screen-reader headings"
+  },
+  {
+   "file": "navigation_layout_test.dart",
+   "test": "connection dialog cancellation returns focus without replacing service"
+  },
+  {
+   "file": "navigation_layout_test.dart",
+   "test": "navigation stays usable while session loading or failed"
+  },
+  {
+   "file": "settings_shell_guard_test.dart",
+   "test": "return to Assistant keeps the existing unsaved-draft guard"
+  },
+  {
+   "file": "navigation_layout_test.dart",
+   "test": "narrow drawer and settings support text scale 1.0"
+  },
+  {
+   "file": "settings_visual_test.dart",
+   "test": "render global settings screenshots"
+  },
+  {
+   "file": "settings_shell_guard_test.dart",
+   "test": "pending initial read blocks departure until the form settles"
+  },
+  {
+   "file": "setup_usability_test.dart",
+   "test": "native adapters instance guard refuses a second window for the same mode"
+  },
+  {
+   "file": "navigation_layout_test.dart",
+   "test": "narrow drawer and settings support text scale 1.5"
+  },
+  {
+   "file": "settings_shell_guard_test.dart",
+   "test": "same-page navigation and theme changes preserve dirty draft"
+  },
+  {
+   "file": "navigation_layout_test.dart",
+   "test": "narrow drawer and settings support text scale 2.0"
+  },
+  {
+   "file": "settings_shell_guard_test.dart",
+   "test": "outer navigation protects 4 draft and explicit discard"
+  },
+  {
+   "file": "source_setup_wiring_test.dart",
+   "test": "a failed owned start can be retried after configuring a key"
+  },
+  {
+   "file": "navigation_layout_test.dart",
+   "test": "capture foundational shell with readable fonts at supported sizes"
+  },
+  {
+   "file": "settings_shell_guard_test.dart",
+   "test": "outer navigation protects 33 draft and explicit discard"
+  },
+  {
+   "file": "source_setup_wiring_test.dart",
+   "test": "restored source settings show configured even when backend is offline"
+  },
+  {
+   "file": "settings_shell_guard_test.dart",
+   "test": "rejected device selection and settings-owned navigation confirm once"
+  },
+  {
+   "file": "settings_shell_guard_test.dart",
+   "test": "connection cancellation preserves draft and old transport"
+  },
+  {
+   "file": "settings_shell_guard_test.dart",
+   "test": "pending save blocks navigation and exit; failed save keeps draft"
+  },
+  {
+   "file": "usage_dashboard_test.dart",
+   "test": "a single request uses the full 30-day axis and explains missing cost"
+  },
+  {
+   "file": "settings_shell_guard_test.dart",
+   "test": "saved draft and unchanged form leave without confirmation"
+  },
+  {
+   "file": "visual_preview_test.dart",
+   "test": "render desktop preview artifacts"
+  },
+  {
+   "file": "usage_dashboard_test.dart",
+   "test": "usage preview filters history and returns to conversation"
+  },
+  {
+   "file": "settings_shell_guard_test.dart",
+   "test": "rapid requests share one decision and cancellation does not shutdown"
+  },
+  {
+   "file": "usage_dashboard_test.dart",
+   "test": "dashboard is readable in both themes and a scaled narrow drawer"
+  },
+  {
+   "file": "settings_shell_guard_test.dart",
+   "test": "narrow drawer cancellation retains settings draft"
+  },
+  {
+   "file": "settings_shell_guard_test.dart",
+   "test": "installed exit cancellation does not stop startup or owned API"
+  }
+ ],
+ "explanation": "Every failure is in a test file outside prompt 03's write set and encodes the pre-redesign shell: sidebar ListTile labels, inline voice toggle text, host cards inside the chat sidebar, and older wide-shell footer expectations. The owned suites (agent_basics_layout_test.dart, layout_preferences_test.dart, tastecode_wired_test.dart, design_glass_test.dart) pass. COMMON.md makes these read/run-only for 03; the machine-readable list is the reconciliation input for 06."
+}
