@@ -53,5 +53,10 @@ $tools = "C:/Users/13647/develope/flutter/bin/cache/flutter_tools.snapshot"
 & $dart $tools test --no-pub test/tastecode_wired_test.dart
 ```
 
-These are fixture renders: user visual acceptance is pending, and they do
-not prove connected-service, native-runtime, installer or hardware behavior.
+PNG bytes vary slightly between runs of identical source (scrollbar/caret/hover
+noise; two runs differed in 10/29 files by at most 0.55%, with identical
+dimensions and states). Treat the hashes as identifying this delivered run, not
+as a reproducibility check; compare renders visually.
+
+These are fixture renders: user visual acceptance is pending, and they do not
+prove connected-service, native-runtime, installer or hardware behavior.

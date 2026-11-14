@@ -191,6 +191,29 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets(
+      'drawer-style rail without a shared focus map activates by keyboard',
+      (tester) async {
+    var selected = false;
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: AppIconRail(onSettings: () {}, destinations: [
+      SidebarDestination(
+          label: 'Jobs',
+          icon: Icons.work_outline,
+          onTap: () => selected = true),
+    ]))));
+    await tester.pumpAndSettle();
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    expect(FocusManager.instance.primaryFocus, isNotNull);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(selected, isTrue);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   for (final scale in [1.0, 1.3, 1.6]) {
     testWidgets(
         'narrow production inspector retains composer draft at scale $scale',
@@ -205,6 +228,10 @@ void main() {
           projectStore: CaptureProjects(),
           setupBackend: SavedComponents()));
       await tester.pumpAndSettle();
+      final media =
+          MediaQuery.of(tester.element(find.byKey(const Key('composer'))));
+      expect(media.textScaler.scale(14), closeTo(14 * scale, 0.001),
+          reason: 'persisted text scale $scale must reach the composer');
       await tester.enterText(
           find.byKey(const Key('composer')), 'retained narrow draft');
       await tester.tap(find.byTooltip('Open workspace inspector'));

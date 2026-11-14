@@ -1,6 +1,6 @@
 {
  "schema_version": 1,
- "captured_at": "2026-11-14T12:52+08:00",
+ "captured_at": "2026-11-14T13:12+08:00",
  "generator": "dart flutter_tools.snapshot test --no-pub test/tastecode_wired_test.dart",
  "fixture": "Production OdessyApp with WiredCaptureApi, CaptureProjects and SavedComponents injected offline; no backend, network, model, provider or installer is used.",
  "viewports": {
@@ -9,6 +9,7 @@
   "narrow": "720x900"
  },
  "caveats": "Offline fixture renders. Not connected-service evidence, not native launch evidence, not user visual acceptance.",
+ "reproducibility": "PNG bytes are not bit-identical across capture runs: two runs of the same source differed in 10/29 files by <=0.55% (scrollbar/caret/hover noise), with identical dimensions and fixture states. Hashes identify this exact delivered run; compare renders visually, not by hash.",
  "source_hashes": {
   "apps/desktop/lib/app/app.dart": "af0b3c755ef9b69847406a110627ce3c3a78d3e4027c0b93ccc68dc4a6510c2a",
   "apps/desktop/lib/app/preferences/shell_layout.dart": "123c7877e9cd28d4faa7c205b23afc7235f80c0d62847865e518475659c31f63",
