@@ -115,6 +115,23 @@ void main() {
     expect(controller.error, isEmpty);
   });
 
+  test('theme shortcut saves only theme and preserves the appearance draft',
+      () async {
+    final store = FakeStore();
+    final controller = DesktopPreferencesController(store);
+    addTearDown(controller.dispose);
+    await controller.load();
+    controller.edit(
+        const DesktopPreferences(textScale: 1.5, reduceTransparency: true));
+    expect(await controller.saveTheme(DesktopTheme.light), isTrue);
+    expect(store.snapshot.value.theme, DesktopTheme.light);
+    expect(store.snapshot.value.textScale, 1);
+    expect(store.snapshot.value.reduceTransparency, isFalse);
+    expect(controller.value.textScale, 1.5);
+    expect(controller.value.reduceTransparency, isTrue);
+    expect(controller.dirty, isTrue);
+  });
+
   test('conflict keeps the draft and blocks saving until reload', () async {
     final store = FakeStore();
     final controller = DesktopPreferencesController(store);

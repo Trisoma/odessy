@@ -108,22 +108,14 @@ class _OdessyAppState extends State<OdessyApp> {
   final sessionDrafts = <String, String>{};
 
   ThemeMode get preferenceMode => switch (preferences.value.theme) {
-    DesktopTheme.system => ThemeMode.system,
-    DesktopTheme.light => ThemeMode.light,
-    DesktopTheme.dark => ThemeMode.dark,
-  };
+        DesktopTheme.system => ThemeMode.system,
+        DesktopTheme.light => ThemeMode.light,
+        DesktopTheme.dark => ThemeMode.dark,
+      };
   void _toggleTheme() {
-    final value = preferences.value;
-    preferences.edit(
-      DesktopPreferences(
-        theme: preferenceMode == ThemeMode.dark
-            ? DesktopTheme.light
-            : DesktopTheme.dark,
-        textScale: value.textScale,
-        reduceTransparency: value.reduceTransparency,
-      ),
-    );
-    unawaited(preferences.save());
+    unawaited(preferences.saveTheme(
+      preferenceMode == ThemeMode.dark ? DesktopTheme.light : DesktopTheme.dark,
+    ));
   }
 
   void _bindWorkspaceOwners() {
@@ -365,7 +357,9 @@ class _OdessyAppState extends State<OdessyApp> {
     } catch (e) {
       if (mounted) {
         setState(
-          () => connectionNotice = e is StateError ? e.message.toString() : 'Restart failed. Inspect the saved configuration and local service before retrying.',
+          () => connectionNotice = e is StateError
+              ? e.message.toString()
+              : 'Restart failed. Inspect the saved configuration and local service before retrying.',
         );
       }
     } finally {
@@ -420,9 +414,8 @@ class _OdessyAppState extends State<OdessyApp> {
   late final MaintenanceController maintenance, pairing, installerEngine;
   InstalledManageController? installManagement;
   final CredentialStore credentials = MemoryCredentialStore();
-  final CredentialStore? credentialVault = Platform.isWindows
-      ? WindowsCredentialStore()
-      : null;
+  final CredentialStore? credentialVault =
+      Platform.isWindows ? WindowsCredentialStore() : null;
   late final AppLifecycleListener lifecycle;
   ThemeMode get mode => preferenceMode;
   String page = 'Conversation';
@@ -453,8 +446,8 @@ class _OdessyAppState extends State<OdessyApp> {
       () => connectionNotice = setup.error.isNotEmpty
           ? setup.error
           : controller.connected
-          ? ''
-          : 'No saved model is available. Choose a model in Settings first.',
+              ? ''
+              : 'No saved model is available. Choose a model in Settings first.',
     );
   }
 
@@ -669,422 +662,450 @@ class _OdessyAppState extends State<OdessyApp> {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: preferences,
-    builder: (context, _) => MaterialApp(
-      navigatorKey: navigatorKey,
-      title: 'Odessy',
-      debugShowCheckedModeBanner: false,
-      theme: odessyTheme(Brightness.light),
-      darkTheme: odessyTheme(Brightness.dark),
-      themeMode: preferenceMode,
-      builder: (context, child) {
-        final media = MediaQuery.of(context),
-            scale = preferences.value.textScale;
-        return MediaQuery(
-          data: media.copyWith(
-            textScaler: _PreferenceTextScaler(media.textScaler, scale),
-          ),
-          child: child!,
-        );
-      },
-      home: ListenableBuilder(
-        listenable: Listenable.merge([
-          controller,
-          setup,
-          componentSettings,
-          readiness,
-          voice,
-          deviceInventory,
-        ]),
-        builder: (context, _) => LayoutBuilder(
-          builder: (context, constraints) {
-            final narrow = constraints.maxWidth < 900;
-            final sidebar = _sidebar(context);
-
-            return Scaffold(
-              key: scaffoldKey,
-              drawer: narrow ? Drawer(child: sidebar) : null,
-              appBar: narrow ? AppBar(title: const Text('Odessy')) : null,
-              body: Row(
-                children: [
-                  if (!narrow && !sidebarCollapsed)
-                    SizedBox(
-                      width: 264,
-                      child: GlassSurface(
-                        radius: 0,
-                        reduceTransparency:
-                            preferences.value.reduceTransparency,
-                        child: sidebar,
-                      ),
-                    ),
-                  if (!narrow && !sidebarCollapsed)
-                    const VerticalDivider(width: 1),
-                  Expanded(
-                    child: Column(
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 10,
-                          ),
-                          child: Row(
-                            children: [
-                              if (!narrow)
-                                IconButton(
-                                  tooltip: sidebarCollapsed
-                                      ? 'Expand sidebar'
-                                      : 'Collapse sidebar',
-                                  onPressed: () => setState(
-                                    () => sidebarCollapsed = !sidebarCollapsed,
-                                  ),
-                                  icon: Icon(
-                                    sidebarCollapsed
-                                        ? Icons.menu
-                                        : Icons.menu_open,
-                                  ),
-                                ),
-                              if (DesktopNavigation.parent(page) != page)
-                                IconButton(
-                                  tooltip:
-                                      'Back to ${DesktopNavigation.title(DesktopNavigation.parent(page))}',
-                                  onPressed: () =>
-                                      _navigate(DesktopNavigation.parent(page)),
-                                  icon: const Icon(Icons.arrow_back, size: 20),
-                                ),
-                              Text(
-                                DesktopNavigation.title(page),
-                                style: Theme.of(context).textTheme.titleMedium,
-                              ),
-                              const Spacer(),
-                              _badge(
-                                context,
-                                controller.api is DisconnectedApi
-                                    ? (setup.saved ||
-                                              setup.activeSelection != null
-                                          ? 'OFFLINE'
-                                          : 'NOT CONFIGURED')
-                                    : controller.api.isDemo
-                                    ? 'DEMO'
-                                    : controller.connected
-                                    ? 'CONNECTED'
-                                    : 'DISCONNECTED',
-                                controller.api.isDemo
-                                    ? Colors.amber
-                                    : controller.connected
-                                    ? Colors.green
-                                    : Colors.grey,
-                              ),
-                              const SizedBox(width: 10),
-                              if (widget.localDesktop ||
-                                  controller.api is SessionDirectoryApi)
-                                IconButton(
-                                  tooltip: 'Start new session',
-                                  icon: const Icon(
-                                    Icons.add_comment_outlined,
-                                    size: 20,
-                                  ),
-                                  onPressed:
-                                      controller.busy ||
-                                          controller.session?.running == true
-                                      ? null
-                                      : () => _newSession(context),
-                                ),
-                              IconButton(
-                                tooltip: 'Connect local service',
-                                icon: const Icon(
-                                  Icons.cable_outlined,
-                                  size: 20,
-                                ),
-                                onPressed: controller.session?.running == true
-                                    ? null
-                                    : () => _connect(context),
-                              ),
-                              IconButton(
-                                tooltip: 'Toggle light / dark theme',
-                                icon: Icon(
-                                  preferenceMode == ThemeMode.dark
-                                      ? Icons.light_mode_outlined
-                                      : Icons.dark_mode_outlined,
-                                  size: 20,
-                                ),
-                                onPressed: _toggleTheme,
-                              ),
-                            ],
-                          ),
-                        ),
-                        const Divider(height: 1),
-                        if ([
-                          'preparing',
-                          'recording',
-                          'transcribing',
-                          'speaking',
-                          'cancelling',
-                        ].contains(voice.snapshot?.state))
-                          ComponentStateBanner(
-                            message:
-                                'Audio ${voice.snapshot!.state} on ${voice.snapshot!.host}. Cancel stops audio; completed actions remain completed.',
-                            actions: [
-                              TextButton(
-                                onPressed: () => voice.command(
-                                  voice.snapshot?.captureId == null
-                                      ? 'stop_playback'
-                                      : 'cancel_capture',
-                                ),
-                                child: const Text('Cancel audio'),
-                              ),
-                            ],
-                          ),
-                        if (controller.api is DisconnectedApi)
-                          ComponentStateBanner(
-                            message: connectionNotice.isNotEmpty
-                                ? connectionNotice
-                                : setup.saved || setup.activeSelection != null
-                                ? DesktopCopy.offline
-                                : DesktopCopy.unconfigured,
-                            actions: [
-                              TextButton(
-                                onPressed: () =>
-                                    _openSettings(SettingsSections.models),
-                                child: const Text('Configure model'),
-                              ),
-                              TextButton(
-                                onPressed:
-                                    setup.busy ||
-                                        setup.completing ||
-                                        controller.session?.running == true ||
-                                        (widget.installed != null &&
-                                            widget.onConfigured == null)
-                                    ? null
-                                    : _activateSaved,
-                                child: const Text(
-                                  'Connect saved configuration',
-                                ),
-                              ),
-                            ],
-                          ),
-                        if (controller.error.isNotEmpty &&
-                            page != 'Conversation')
-                          ComponentStateBanner(
-                            message:
-                                modelErrorGuidance(controller.error) ??
-                                controller.error,
-                            tone: BannerTone.error,
-                            actions: [
-                              TextButton(
-                                onPressed: controller.refresh,
-                                child: const Text('Refresh'),
-                              ),
-                            ],
-                          ),
-                        if (connectionNotice.isNotEmpty &&
-                            controller.api is! DisconnectedApi)
-                          ComponentStateBanner(
-                            message: connectionNotice,
-                            tone: BannerTone.error,
-                          ),
-                        Expanded(
-                          child: switch (page) {
-                            'Device details' => _devicePage(),
-                            'Jobs' => JobsPage(controller: jobs),
-                            'Handoffs' => HandoffPage(controller: handoffs),
-                            'Activity & usage' =>
-                              controller.api is UsageHistoryApi
-                                  ? UsageHistoryDashboard(session: controller)
-                                  : ActivityUsagePage(
-                                      events:
-                                          controller.session?.events ??
-                                          const [],
-                                      connected: controller.connected,
-                                    ),
-                            'Monitor' || 'Devices' => DevicesHub(
-                              session: controller,
-                              monitoring: monitoring,
-                              devices: deviceInventory,
-                              onManagePairing: () => _navigate('Local pairing'),
-                              initialPerformance: page == 'Monitor',
-                              onConnect: () => _navigate('Pairing'),
-                            ),
-                            'Workspaces' when projects != null =>
-                              ProjectCatalogPage(
-                                controller: projects!,
-                                onOpenSession: (sid) =>
-                                    unawaited(_openSession(sid)),
-                                onConfigureWorkspace: () =>
-                                    _navigate('Workspace configuration'),
-                              ),
-                            'Workspaces' ||
-                            'Workspace configuration' => WorkspacePage(
-                              readiness: readiness,
-                              connected: controller.connected,
-                              componentController: componentSettings,
-                              backend: setup.backend,
-                              root: widget.installed?['root'] as String? ?? '',
-                              picker: const FileSelectorPicker(),
-                            ),
-                            'Setup' => SetupWizardPage(
-                              key: ValueKey(setupStep),
-                              controller: setup,
-                              initialStep: setupStep,
-                              picker: const FileSelectorPicker(),
-                            ),
-                            'Manage installation' => ManagePage(
-                              controller: installManagement!,
-                              external: runningOutsideInstallation(
-                                widget.installed?['root'] as String? ?? '',
-                              ),
-                              onOpenMaintenance: () =>
-                                  installManagement!.openMaintenance(),
-                            ),
-                            'Get started' => GetStartedPage(
-                              controller: installManagement!,
-                              picker: const FileSelectorPicker(),
-                              onStart:
-                                  widget.onConfigured ??
-                                  () => setState(() => page = 'Conversation'),
-                              onClose: () =>
-                                  setState(() => page = 'Conversation'),
-                            ),
-                            'Voice setup' => GetStartedPage(
-                              controller: installManagement!,
-                              picker: const FileSelectorPicker(),
-                              initialVoice: true,
-                              onStart: widget.onConfigured ?? () {},
-                              onClose: () =>
-                                  setState(() => page = 'Conversation'),
-                            ),
-                            'Installer' => MaintenancePage(
-                              key: const ValueKey('installer-engine'),
-                              controller: installerEngine,
-                              installer: true,
-                            ),
-                            'Maintenance' => MaintenancePage(
-                              controller: maintenance,
-                            ),
-                            'Pairing' => ExecutionHostsPage(
-                              key: const ValueKey('execution-hosts'),
-                              controller: _executionHostController(),
-                              ssh: _sshConnectionController(),
-                            ),
-                            'Local pairing' => MaintenancePage(
-                              key: const ValueKey('pairing'),
-                              controller: pairing,
-                              pairing: true,
-                            ),
-                            'Settings' => SettingsPage(
-                              preferencesController: preferences,
-                              onStartNewSession: () => _newSession(context),
-                              readiness: readiness,
-                              onRestartSaved:
-                                  ((configuredCoordinator != null ||
-                                          widget.onRestartSaved != null) &&
-                                      readiness.current?.configuration != null)
-                                  ? _restartSaved
-                                  : null,
-                              key: ValueKey((controller.api, settingsSection)),
-                              initialSection: settingsSection,
-                              controller: controller,
-                              componentController: componentSettings,
-                              configurationBackend: setup.backend,
-                              formController: _collaborationForm(),
-                              installationRoot:
-                                  widget.installed?['root'] as String? ?? '',
-                              installed: widget.installed != null,
-                              modelConfigured:
-                                  (widget.installed?['model_configured'] ==
-                                      true ||
-                                  (setup.activeSelection ??
-                                          (setup.saved
-                                              ? setup.selection
-                                              : const {}))['model'] !=
-                                      null),
-                              voiceEnabled:
-                                  (widget.installed?['voice_enabled'] == true ||
-                                  ((setup.activeSelection ??
-                                              (setup.saved
-                                                  ? setup.selection
-                                                  : const {}))['voice']
-                                          as Map?)?['enabled'] ==
-                                      true),
-                              themeMode: preferenceMode,
-                              onToggleTheme: _toggleTheme,
-                              onOpenDevices: () => _navigate('Devices'),
-                              onOpenConversation: () =>
-                                  _navigate('Conversation'),
-                              onConnectSaved:
-                                  setup.busy ||
-                                      setup.completing ||
-                                      controller.session?.running == true ||
-                                      (widget.installed != null &&
-                                          widget.onConfigured == null)
-                                  ? null
-                                  : _activateSaved,
-                              onOpenInstaller: () => _navigate('Installer'),
-                              onOpenMaintenance: () => _navigate('Maintenance'),
-                              maintenanceBlocked:
-                                  controller.session?.running == true,
-                              onOpenGetStarted: () => setState(() {
-                                page = 'Settings';
-                              }),
-                              onOpenVoice: () => setState(() {
-                                page = 'Settings';
-                              }),
-                              onOpenManagement: widget.installed == null
-                                  ? null
-                                  : () => setState(
-                                      () => page = 'Manage installation',
-                                    ),
-                            ),
-                            _ => LayoutBuilder(
-                              builder: (context, box) {
-                                final sideBySide = box.maxWidth >= 1000;
-                                final conversation = ConversationPage(
-                                  draftController: conversationDraft,
-                                  voice: voice,
-                                  inspector: inspector,
-                                  controller: controller,
-                                  readiness: readiness,
-                                  onOpenInspector: inspector == null
-                                      ? null
-                                      : _openInspector,
-                                  onOpenModels: () =>
-                                      _openSettings(SettingsSections.models),
-                                );
-                                final panel = inspectorOpen && inspector != null
-                                    ? WorkspaceInspector(
-                                        controller: inspector!,
-                                        onClose: () => setState(
-                                          () => inspectorOpen = false,
-                                        ),
-                                      )
-                                    : null;
-                                if (panel == null) return conversation;
-                                return Row(
-                                  children: [
-                                    if (sideBySide)
-                                      Expanded(child: conversation),
-                                    if (sideBySide)
-                                      const VerticalDivider(width: 1),
-                                    SizedBox(
-                                      width: sideBySide ? 390 : box.maxWidth,
-                                      child: panel,
-                                    ),
-                                  ],
-                                );
-                              },
-                            ),
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+        listenable: preferences,
+        builder: (context, _) => MaterialApp(
+          navigatorKey: navigatorKey,
+          title: 'Odessy',
+          debugShowCheckedModeBanner: false,
+          theme: odessyTheme(Brightness.light),
+          darkTheme: odessyTheme(Brightness.dark),
+          themeMode: preferenceMode,
+          builder: (context, child) {
+            final media = MediaQuery.of(context),
+                scale = preferences.value.textScale;
+            return MediaQuery(
+              data: media.copyWith(
+                textScaler: _PreferenceTextScaler(media.textScaler, scale),
               ),
+              child: child!,
             );
           },
+          home: ListenableBuilder(
+            listenable: Listenable.merge([
+              controller,
+              setup,
+              componentSettings,
+              readiness,
+              voice,
+              deviceInventory,
+            ]),
+            builder: (context, _) => LayoutBuilder(
+              builder: (context, constraints) {
+                final narrow = constraints.maxWidth < 900;
+                final sidebar = _sidebar(context);
+
+                return Scaffold(
+                  key: scaffoldKey,
+                  drawer: narrow ? Drawer(child: sidebar) : null,
+                  appBar: narrow ? AppBar(title: const Text('Odessy')) : null,
+                  body: Row(
+                    children: [
+                      if (!narrow && !sidebarCollapsed)
+                        SizedBox(
+                          width: 264,
+                          child: GlassSurface(
+                            radius: 0,
+                            reduceTransparency:
+                                preferences.value.reduceTransparency,
+                            child: sidebar,
+                          ),
+                        ),
+                      if (!narrow && !sidebarCollapsed)
+                        const VerticalDivider(width: 1),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 10,
+                              ),
+                              child: Row(
+                                children: [
+                                  if (!narrow)
+                                    IconButton(
+                                      tooltip: sidebarCollapsed
+                                          ? 'Expand sidebar'
+                                          : 'Collapse sidebar',
+                                      onPressed: () => setState(
+                                        () => sidebarCollapsed =
+                                            !sidebarCollapsed,
+                                      ),
+                                      icon: Icon(
+                                        sidebarCollapsed
+                                            ? Icons.menu
+                                            : Icons.menu_open,
+                                      ),
+                                    ),
+                                  if (DesktopNavigation.parent(page) != page)
+                                    IconButton(
+                                      tooltip:
+                                          'Back to ${DesktopNavigation.title(DesktopNavigation.parent(page))}',
+                                      onPressed: () => _navigate(
+                                          DesktopNavigation.parent(page)),
+                                      icon: const Icon(Icons.arrow_back,
+                                          size: 20),
+                                    ),
+                                  Text(
+                                    DesktopNavigation.title(page),
+                                    style:
+                                        Theme.of(context).textTheme.titleMedium,
+                                  ),
+                                  const Spacer(),
+                                  _badge(
+                                    context,
+                                    controller.api is DisconnectedApi
+                                        ? (setup.saved ||
+                                                setup.activeSelection != null
+                                            ? 'OFFLINE'
+                                            : 'NOT CONFIGURED')
+                                        : controller.api.isDemo
+                                            ? 'DEMO'
+                                            : controller.connected
+                                                ? 'CONNECTED'
+                                                : 'DISCONNECTED',
+                                    controller.api.isDemo
+                                        ? Colors.amber
+                                        : controller.connected
+                                            ? Colors.green
+                                            : Colors.grey,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  if (widget.localDesktop ||
+                                      controller.api is SessionDirectoryApi)
+                                    IconButton(
+                                      tooltip: 'Start new session',
+                                      icon: const Icon(
+                                        Icons.add_comment_outlined,
+                                        size: 20,
+                                      ),
+                                      onPressed: controller.busy ||
+                                              controller.session?.running ==
+                                                  true
+                                          ? null
+                                          : () => _newSession(context),
+                                    ),
+                                  IconButton(
+                                    tooltip: 'Connect local service',
+                                    icon: const Icon(
+                                      Icons.cable_outlined,
+                                      size: 20,
+                                    ),
+                                    onPressed:
+                                        controller.session?.running == true
+                                            ? null
+                                            : () => _connect(context),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Toggle light / dark theme',
+                                    icon: Icon(
+                                      preferenceMode == ThemeMode.dark
+                                          ? Icons.light_mode_outlined
+                                          : Icons.dark_mode_outlined,
+                                      size: 20,
+                                    ),
+                                    onPressed: _toggleTheme,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const Divider(height: 1),
+                            if ([
+                              'preparing',
+                              'recording',
+                              'transcribing',
+                              'speaking',
+                              'cancelling',
+                            ].contains(voice.snapshot?.state))
+                              ComponentStateBanner(
+                                message:
+                                    'Audio ${voice.snapshot!.state} on ${voice.snapshot!.host}. Cancel stops audio; completed actions remain completed.',
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => voice.command(
+                                      voice.snapshot?.captureId == null
+                                          ? 'stop_playback'
+                                          : 'cancel_capture',
+                                    ),
+                                    child: const Text('Cancel audio'),
+                                  ),
+                                ],
+                              ),
+                            if (controller.api is DisconnectedApi)
+                              ComponentStateBanner(
+                                message: connectionNotice.isNotEmpty
+                                    ? connectionNotice
+                                    : setup.saved ||
+                                            setup.activeSelection != null
+                                        ? DesktopCopy.offline
+                                        : DesktopCopy.unconfigured,
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        _openSettings(SettingsSections.models),
+                                    child: const Text('Configure model'),
+                                  ),
+                                  TextButton(
+                                    onPressed: setup.busy ||
+                                            setup.completing ||
+                                            controller.session?.running ==
+                                                true ||
+                                            (widget.installed != null &&
+                                                widget.onConfigured == null)
+                                        ? null
+                                        : _activateSaved,
+                                    child: const Text(
+                                      'Connect saved configuration',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            if (controller.error.isNotEmpty &&
+                                page != 'Conversation')
+                              ComponentStateBanner(
+                                message: modelErrorGuidance(controller.error) ??
+                                    controller.error,
+                                tone: BannerTone.error,
+                                actions: [
+                                  TextButton(
+                                    onPressed: controller.refresh,
+                                    child: const Text('Refresh'),
+                                  ),
+                                ],
+                              ),
+                            if (connectionNotice.isNotEmpty &&
+                                controller.api is! DisconnectedApi)
+                              ComponentStateBanner(
+                                message: connectionNotice,
+                                tone: BannerTone.error,
+                              ),
+                            Expanded(
+                              child: switch (page) {
+                                'Device details' => _devicePage(),
+                                'Jobs' => JobsPage(controller: jobs),
+                                'Handoffs' => HandoffPage(controller: handoffs),
+                                'Activity & usage' => controller.api
+                                        is UsageHistoryApi
+                                    ? UsageHistoryDashboard(session: controller)
+                                    : ActivityUsagePage(
+                                        events: controller.session?.events ??
+                                            const [],
+                                        connected: controller.connected,
+                                      ),
+                                'Monitor' || 'Devices' => DevicesHub(
+                                    session: controller,
+                                    monitoring: monitoring,
+                                    devices: deviceInventory,
+                                    onManagePairing: () =>
+                                        _navigate('Local pairing'),
+                                    initialPerformance: page == 'Monitor',
+                                    onConnect: () => _navigate('Pairing'),
+                                  ),
+                                'Workspaces' when projects != null =>
+                                  ProjectCatalogPage(
+                                    controller: projects!,
+                                    onOpenSession: (sid) =>
+                                        unawaited(_openSession(sid)),
+                                    onConfigureWorkspace: () =>
+                                        _navigate('Workspace configuration'),
+                                  ),
+                                'Workspaces' ||
+                                'Workspace configuration' =>
+                                  WorkspacePage(
+                                    readiness: readiness,
+                                    connected: controller.connected,
+                                    componentController: componentSettings,
+                                    backend: setup.backend,
+                                    root:
+                                        widget.installed?['root'] as String? ??
+                                            '',
+                                    picker: const FileSelectorPicker(),
+                                  ),
+                                'Setup' => SetupWizardPage(
+                                    key: ValueKey(setupStep),
+                                    controller: setup,
+                                    initialStep: setupStep,
+                                    picker: const FileSelectorPicker(),
+                                  ),
+                                'Manage installation' => ManagePage(
+                                    controller: installManagement!,
+                                    external: runningOutsideInstallation(
+                                      widget.installed?['root'] as String? ??
+                                          '',
+                                    ),
+                                    onOpenMaintenance: () =>
+                                        installManagement!.openMaintenance(),
+                                  ),
+                                'Get started' => GetStartedPage(
+                                    controller: installManagement!,
+                                    picker: const FileSelectorPicker(),
+                                    onStart: widget.onConfigured ??
+                                        () => setState(
+                                            () => page = 'Conversation'),
+                                    onClose: () =>
+                                        setState(() => page = 'Conversation'),
+                                  ),
+                                'Voice setup' => GetStartedPage(
+                                    controller: installManagement!,
+                                    picker: const FileSelectorPicker(),
+                                    initialVoice: true,
+                                    onStart: widget.onConfigured ?? () {},
+                                    onClose: () =>
+                                        setState(() => page = 'Conversation'),
+                                  ),
+                                'Installer' => MaintenancePage(
+                                    key: const ValueKey('installer-engine'),
+                                    controller: installerEngine,
+                                    installer: true,
+                                  ),
+                                'Maintenance' => MaintenancePage(
+                                    controller: maintenance,
+                                  ),
+                                'Pairing' => ExecutionHostsPage(
+                                    key: const ValueKey('execution-hosts'),
+                                    controller: _executionHostController(),
+                                    ssh: _sshConnectionController(),
+                                  ),
+                                'Local pairing' => MaintenancePage(
+                                    key: const ValueKey('pairing'),
+                                    controller: pairing,
+                                    pairing: true,
+                                  ),
+                                'Settings' => SettingsPage(
+                                    preferencesController: preferences,
+                                    onStartNewSession: () =>
+                                        _newSession(context),
+                                    readiness: readiness,
+                                    onRestartSaved: ((configuredCoordinator !=
+                                                    null ||
+                                                widget.onRestartSaved !=
+                                                    null) &&
+                                            readiness.current?.configuration !=
+                                                null)
+                                        ? _restartSaved
+                                        : null,
+                                    key: ValueKey(
+                                        (controller.api, settingsSection)),
+                                    initialSection: settingsSection,
+                                    controller: controller,
+                                    componentController: componentSettings,
+                                    configurationBackend: setup.backend,
+                                    formController: _collaborationForm(),
+                                    installationRoot:
+                                        widget.installed?['root'] as String? ??
+                                            '',
+                                    installed: widget.installed != null,
+                                    modelConfigured: (widget.installed?[
+                                                'model_configured'] ==
+                                            true ||
+                                        (setup.activeSelection ??
+                                                (setup.saved
+                                                    ? setup.selection
+                                                    : const {}))['model'] !=
+                                            null),
+                                    voiceEnabled: (widget
+                                                .installed?['voice_enabled'] ==
+                                            true ||
+                                        ((setup.activeSelection ??
+                                                    (setup.saved
+                                                        ? setup.selection
+                                                        : const {}))['voice']
+                                                as Map?)?['enabled'] ==
+                                            true),
+                                    themeMode: preferenceMode,
+                                    onToggleTheme: _toggleTheme,
+                                    onOpenDevices: () => _navigate('Devices'),
+                                    onOpenConversation: () =>
+                                        _navigate('Conversation'),
+                                    onConnectSaved: setup.busy ||
+                                            setup.completing ||
+                                            controller.session?.running ==
+                                                true ||
+                                            (widget.installed != null &&
+                                                widget.onConfigured == null)
+                                        ? null
+                                        : _activateSaved,
+                                    onOpenInstaller: () =>
+                                        _navigate('Installer'),
+                                    onOpenMaintenance: () =>
+                                        _navigate('Maintenance'),
+                                    maintenanceBlocked:
+                                        controller.session?.running == true,
+                                    onOpenGetStarted: () => setState(() {
+                                      page = 'Settings';
+                                    }),
+                                    onOpenVoice: () => setState(() {
+                                      page = 'Settings';
+                                    }),
+                                    onOpenManagement: widget.installed == null
+                                        ? null
+                                        : () => setState(
+                                              () =>
+                                                  page = 'Manage installation',
+                                            ),
+                                  ),
+                                _ => LayoutBuilder(
+                                    builder: (context, box) {
+                                      final sideBySide = box.maxWidth >= 1000;
+                                      final conversation = ConversationPage(
+                                        draftController: conversationDraft,
+                                        voice: voice,
+                                        inspector: inspector,
+                                        controller: controller,
+                                        readiness: readiness,
+                                        onOpenInspector: inspector == null
+                                            ? null
+                                            : _openInspector,
+                                        onOpenModels: () => _openSettings(
+                                            SettingsSections.models),
+                                      );
+                                      final panel =
+                                          inspectorOpen && inspector != null
+                                              ? WorkspaceInspector(
+                                                  controller: inspector!,
+                                                  onClose: () => setState(
+                                                    () => inspectorOpen = false,
+                                                  ),
+                                                )
+                                              : null;
+                                      return Stack(
+                                        fit: StackFit.expand,
+                                        children: [
+                                          Row(children: [
+                                            Expanded(
+                                              child: Visibility(
+                                                visible:
+                                                    panel == null || sideBySide,
+                                                maintainState: true,
+                                                child: conversation,
+                                              ),
+                                            ),
+                                            if (panel != null &&
+                                                sideBySide) ...[
+                                              const VerticalDivider(width: 1),
+                                              SizedBox(
+                                                  width: 390, child: panel),
+                                            ],
+                                          ]),
+                                          if (panel != null && !sideBySide)
+                                            panel,
+                                        ],
+                                      );
+                                    },
+                                  ),
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
         ),
-      ),
-    ),
-  );
+      );
   Future<void> _inspectDevice(String id) async {
     if (!await _mayNavigate() || !mounted) return;
     await voice.release();
@@ -1094,214 +1115,214 @@ class _OdessyAppState extends State<OdessyApp> {
   }
 
   Widget _sidebar(BuildContext context) => DeviceSidebar(
-    onNewSession: controller.busy || controller.session?.running == true
-        ? null
-        : () => _newSession(context),
-    hosts: deviceInventory.hosts,
-    projectNavigation: projects == null ? null : _projectNavigation(),
-    sessionSearch: projects == null
-        ? null
-        : TextField(
-            decoration: const InputDecoration(
-              hintText: 'Find a session',
-              prefixIcon: Icon(Icons.search, size: 18),
-              isDense: true,
-            ),
-            onChanged: projects!.search,
-          ),
-    conversationLabel: 'Assistant',
-    navigationFocus: navigationFocus,
-    selectedHostId: page == 'Device details'
-        ? deviceInventory.selectedId
-        : null,
-    conversationSelected: page == 'Conversation',
-    settingsSelected: page == 'Settings',
-    loading: deviceInventory.loadingInventory,
-    retained: deviceInventory.inventoryRetained,
-    error: deviceInventory.inventoryError,
-    demo: deviceInventory.demo,
-    connectionLabel: controller.api.isDemo
-        ? 'Demo · no tools execute'
-        : controller.api.identity,
-    onConversation: () => _navigate('Conversation'),
-    onSettings: _openSettings,
-    onInspect: _inspectDevice,
-    onRefresh: () => unawaited(deviceInventory.refresh()),
-    onPair: () => _navigate('Pairing'),
-    primaryDestinations: [
-      SidebarDestination(
-        label: 'Workspaces',
-        icon: Icons.folder_open_outlined,
-        selected: page == 'Workspaces',
-        onTap: () => _navigate('Workspaces'),
-      ),
-      SidebarDestination(
-        label: 'Devices',
-        icon: Icons.devices_outlined,
-        selected: page == 'Devices' || page == 'Monitor',
-        onTap: () => _navigate('Devices'),
-      ),
-      SidebarDestination(
-        label: 'Activity & usage',
-        icon: Icons.insights_outlined,
-        selected: page == 'Activity & usage',
-        onTap: () => _navigate('Activity & usage'),
-      ),
-      SidebarDestination(
-        label: 'Jobs',
-        icon: Icons.work_outline,
-        selected: page == 'Jobs',
-        onTap: () => _navigate('Jobs'),
-      ),
-      SidebarDestination(
-        label: 'Handoffs',
-        icon: Icons.swap_horiz,
-        selected: page == 'Handoffs',
-        onTap: () => _navigate('Handoffs'),
-      ),
-    ],
-    destinations: [
-      SidebarDestination(
-        label: 'Installation',
-        icon: Icons.settings_outlined,
-        selected: page == 'Installer' || page == 'Maintenance',
-        onTap: () => _openSettings(SettingsSections.installation),
-      ),
-      SidebarDestination(
-        label: 'Runtime maintenance',
-        icon: Icons.handyman_outlined,
-        selected: page == 'Maintenance',
-        onTap: controller.session?.running == true
+        onNewSession: controller.busy || controller.session?.running == true
             ? null
-            : () => _navigate('Maintenance'),
-      ),
-      SidebarDestination(
-        label: 'Local pairing tools',
-        icon: Icons.shield_outlined,
-        selected: page == 'Local pairing',
-        onTap: () => _navigate('Local pairing'),
-      ),
-    ],
-  );
-
-  Widget _projectNavigation() => ListenableBuilder(
-    listenable: projects!,
-    builder: (context, _) {
-      final c = projects!;
-      Widget sessionLink(SessionSummary row) => ListTile(
-        dense: true,
-        selected: controller.session?.id == row.id,
-        title: Text(row.id, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text('${row.engine} · ${row.selectedProfile}'),
-        onTap:
-            row.running ||
-                controller.busy ||
-                controller.session?.running == true
+            : () => _newSession(context),
+        hosts: deviceInventory.hosts,
+        projectNavigation: projects == null ? null : _projectNavigation(),
+        sessionSearch: projects == null
             ? null
-            : () => _openSession(row.id),
-      );
-      return ExpansionTile(
-        initiallyExpanded: true,
-        tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-        title: const Text(
-          'Projects & sessions',
-          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-        ),
-        children: [
-          TextButton.icon(
-            onPressed: c.loading ? null : c.refresh,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Refresh sessions'),
+            : TextField(
+                decoration: const InputDecoration(
+                  hintText: 'Find a session',
+                  prefixIcon: Icon(Icons.search, size: 18),
+                  isDense: true,
+                ),
+                onChanged: projects!.search,
+              ),
+        conversationLabel: 'Assistant',
+        navigationFocus: navigationFocus,
+        selectedHostId:
+            page == 'Device details' ? deviceInventory.selectedId : null,
+        conversationSelected: page == 'Conversation',
+        settingsSelected: page == 'Settings',
+        loading: deviceInventory.loadingInventory,
+        retained: deviceInventory.inventoryRetained,
+        error: deviceInventory.inventoryError,
+        demo: deviceInventory.demo,
+        connectionLabel: controller.api.isDemo
+            ? 'Demo · no tools execute'
+            : controller.api.identity,
+        onConversation: () => _navigate('Conversation'),
+        onSettings: _openSettings,
+        onInspect: _inspectDevice,
+        onRefresh: () => unawaited(deviceInventory.refresh()),
+        onPair: () => _navigate('Pairing'),
+        primaryDestinations: [
+          SidebarDestination(
+            label: 'Workspaces',
+            icon: Icons.folder_open_outlined,
+            selected: page == 'Workspaces',
+            onTap: () => _navigate('Workspaces'),
           ),
-          if (c.error != null) Text(c.error!),
-          for (final project in c.records)
-            ExpansionTile(
-              title: Text(project.label),
-              subtitle: Text(c.status(project)),
-              children: [
-                for (final row in c.filteredSessions.where(
-                  (s) =>
-                      c.matches(project) && project.sessionIds.contains(s.id),
-                ))
-                  sessionLink(row),
-              ],
-            ),
-          for (final row in c.filteredSessions.where(
-            (s) => !c.records.any(
-              (p) => c.matches(p) && p.sessionIds.contains(s.id),
-            ),
-          ))
-            sessionLink(row),
-          TextButton(
-            onPressed: () => _navigate('Workspaces'),
-            child: const Text('Manage workspaces'),
+          SidebarDestination(
+            label: 'Devices',
+            icon: Icons.devices_outlined,
+            selected: page == 'Devices' || page == 'Monitor',
+            onTap: () => _navigate('Devices'),
+          ),
+          SidebarDestination(
+            label: 'Activity & usage',
+            icon: Icons.insights_outlined,
+            selected: page == 'Activity & usage',
+            onTap: () => _navigate('Activity & usage'),
+          ),
+          SidebarDestination(
+            label: 'Jobs',
+            icon: Icons.work_outline,
+            selected: page == 'Jobs',
+            onTap: () => _navigate('Jobs'),
+          ),
+          SidebarDestination(
+            label: 'Handoffs',
+            icon: Icons.swap_horiz,
+            selected: page == 'Handoffs',
+            onTap: () => _navigate('Handoffs'),
+          ),
+        ],
+        destinations: [
+          SidebarDestination(
+            label: 'Installation',
+            icon: Icons.settings_outlined,
+            selected: page == 'Installer' || page == 'Maintenance',
+            onTap: () => _openSettings(SettingsSections.installation),
+          ),
+          SidebarDestination(
+            label: 'Runtime maintenance',
+            icon: Icons.handyman_outlined,
+            selected: page == 'Maintenance',
+            onTap: controller.session?.running == true
+                ? null
+                : () => _navigate('Maintenance'),
+          ),
+          SidebarDestination(
+            label: 'Local pairing tools',
+            icon: Icons.shield_outlined,
+            selected: page == 'Local pairing',
+            onTap: () => _navigate('Local pairing'),
           ),
         ],
       );
-    },
-  );
+
+  Widget _projectNavigation() => ListenableBuilder(
+        listenable: projects!,
+        builder: (context, _) {
+          final c = projects!;
+          Widget sessionLink(SessionSummary row) => ListTile(
+                dense: true,
+                selected: controller.session?.id == row.id,
+                title:
+                    Text(row.id, maxLines: 1, overflow: TextOverflow.ellipsis),
+                subtitle: Text('${row.engine} · ${row.selectedProfile}'),
+                onTap: row.running ||
+                        controller.busy ||
+                        controller.session?.running == true
+                    ? null
+                    : () => _openSession(row.id),
+              );
+          return ExpansionTile(
+            initiallyExpanded: true,
+            tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+            title: const Text(
+              'Projects & sessions',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+            ),
+            children: [
+              TextButton.icon(
+                onPressed: c.loading ? null : c.refresh,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Refresh sessions'),
+              ),
+              if (c.error != null) Text(c.error!),
+              for (final project in c.records)
+                ExpansionTile(
+                  title: Text(project.label),
+                  subtitle: Text(c.status(project)),
+                  children: [
+                    for (final row in c.filteredSessions.where(
+                      (s) =>
+                          c.matches(project) &&
+                          project.sessionIds.contains(s.id),
+                    ))
+                      sessionLink(row),
+                  ],
+                ),
+              for (final row in c.filteredSessions.where(
+                (s) => !c.records.any(
+                  (p) => c.matches(p) && p.sessionIds.contains(s.id),
+                ),
+              ))
+                sessionLink(row),
+              TextButton(
+                onPressed: () => _navigate('Workspaces'),
+                child: const Text('Manage workspaces'),
+              ),
+            ],
+          );
+        },
+      );
 
   Widget _devicePage() => DevicePage(
-    key: ValueKey(deviceInventory.selectedId),
-    device: deviceInventory.selectedHost?.name ?? '',
-    host: deviceInventory.inspectedHost,
-    controller: controller,
-    onManagePairing: () => _navigate('Local pairing'),
-    monitoringOverview: MonitoringDetails(
-      showHeader: false,
-      host: deviceInventory.inspectedHost,
-      report: deviceInventory.metrics,
-      loading:
-          deviceInventory.loadingMetrics || deviceInventory.loadingInventory,
-      retained: deviceInventory.metricsRetained,
-      error: deviceInventory.metricsError ?? deviceInventory.inventoryError,
-      demo: deviceInventory.demo,
-      onRefresh: () => unawaited(deviceInventory.refreshSelected()),
-    ),
-    monitoringHistory: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        DropdownButton<HistoryWindow>(
-          key: const Key('monitoring-history-window'),
-          isExpanded: true,
-          value: deviceInventory.window,
-          items: [
-            for (final item in HistoryWindow.values)
-              DropdownMenuItem(value: item, child: Text(item.label)),
-          ],
-          onChanged: (value) {
-            if (value != null) deviceInventory.setWindow(value);
-          },
-        ),
-        MonitoringHistory(
+        key: ValueKey(deviceInventory.selectedId),
+        device: deviceInventory.selectedHost?.name ?? '',
+        host: deviceInventory.inspectedHost,
+        controller: controller,
+        onManagePairing: () => _navigate('Local pairing'),
+        monitoringOverview: MonitoringDetails(
+          showHeader: false,
           host: deviceInventory.inspectedHost,
-          report: deviceInventory.history,
-          loading: deviceInventory.loadingHistory,
-          retained: deviceInventory.historyRetained,
-          error: deviceInventory.historyError,
-          degradation: deviceInventory.degradation,
+          report: deviceInventory.metrics,
+          loading: deviceInventory.loadingMetrics ||
+              deviceInventory.loadingInventory,
+          retained: deviceInventory.metricsRetained,
+          error: deviceInventory.metricsError ?? deviceInventory.inventoryError,
           demo: deviceInventory.demo,
-          onRefresh: () => unawaited(deviceInventory.refreshHistory()),
+          onRefresh: () => unawaited(deviceInventory.refreshSelected()),
         ),
-      ],
-    ),
-  );
+        monitoringHistory: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            DropdownButton<HistoryWindow>(
+              key: const Key('monitoring-history-window'),
+              isExpanded: true,
+              value: deviceInventory.window,
+              items: [
+                for (final item in HistoryWindow.values)
+                  DropdownMenuItem(value: item, child: Text(item.label)),
+              ],
+              onChanged: (value) {
+                if (value != null) deviceInventory.setWindow(value);
+              },
+            ),
+            MonitoringHistory(
+              host: deviceInventory.inspectedHost,
+              report: deviceInventory.history,
+              loading: deviceInventory.loadingHistory,
+              retained: deviceInventory.historyRetained,
+              error: deviceInventory.historyError,
+              degradation: deviceInventory.degradation,
+              demo: deviceInventory.demo,
+              onRefresh: () => unawaited(deviceInventory.refreshHistory()),
+            ),
+          ],
+        ),
+      );
   Widget _badge(BuildContext context, String text, Color color) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-    decoration: BoxDecoration(
-      borderRadius: BorderRadius.circular(6),
-      color: color.withValues(alpha: .1),
-    ),
-    child: Text(
-      text,
-      style: TextStyle(
-        color: color,
-        fontSize: 9,
-        fontWeight: FontWeight.w600,
-        letterSpacing: 1,
-      ),
-    ),
-  );
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(6),
+          color: color.withValues(alpha: .1),
+        ),
+        child: Text(
+          text,
+          style: TextStyle(
+            color: color,
+            fontSize: 9,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 1,
+          ),
+        ),
+      );
 
   Future<void> _newSession(BuildContext context) async {
     if (!await _mayNavigate(deferDiscard: true) || !context.mounted) return;
@@ -1358,8 +1379,7 @@ class _OdessyAppState extends State<OdessyApp> {
     }
     await controller.replace(DisconnectedApi());
     if (!mounted || epoch != configuredEpoch) return;
-    final child =
-        widget.coordinatorFactory?.call(spec) ??
+    final child = widget.coordinatorFactory?.call(spec) ??
         InstalledCoordinator(
           python: spec['python'] as String,
           root: '',

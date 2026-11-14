@@ -56,11 +56,13 @@ class WorkspaceInspectorController extends ChangeNotifier {
 
   Future<void> bind(
       {required String sessionId, required String serviceInstanceId}) async {
+    final sameSession = _sid == sessionId && _instance == serviceInstanceId;
+    final previous = sameSession ? descriptor : null;
     final epoch = ++_epoch;
     ++_readEpoch;
     _sid = sessionId;
     _instance = serviceInstanceId;
-    _clear();
+    if (!sameSession) _clear();
     loading = true;
     reading = deciding = false;
     error = null;
@@ -71,6 +73,11 @@ class WorkspaceInspectorController extends ChangeNotifier {
       if (context.sessionId != sessionId ||
           context.serviceInstanceId != serviceInstanceId) {
         throw StateError('Workspace context changed');
+      }
+      if (previous == null ||
+          !previous.sameContext(context) ||
+          !context.readFiles) {
+        _clear();
       }
       descriptor = context;
       if (context.readFiles) {

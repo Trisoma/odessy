@@ -259,6 +259,7 @@ class ReviewedWrite:
     session_id: str
     request_id: str
     path: str
+    request_path: str
     before_sha256: str
     after_sha256: str
     before_text: str
@@ -272,14 +273,15 @@ class ReviewedWrite:
         if not request_id or not isinstance(content, str) or len(content.encode('utf-8')) > MAX_FILE_BYTES:
             raise InspectorError(400, 'Invalid bounded write proposal')
         binding = inspector.binding(sid)
-        file = await inspector.file(sid, request.arguments['path'])
-        return cls(binding.identity(), sid, request_id, file['path'], file['sha256'],
+        request_path = request.arguments['path']
+        file = await inspector.file(sid, request_path)
+        return cls(binding.identity(), sid, request_id, file['path'], request_path, file['sha256'],
                    _hash(content.encode('utf-8')), file['text'], content)
 
     async def validate(self, inspector, sid, request_id, request):
         binding = inspector.binding(sid)
         if (binding.identity() != self.identity or sid != self.session_id or request_id != self.request_id or
-                request.name != 'filesystem.write' or request.arguments != {'path': self.path, 'content': self.after_text}):
+                request.name != 'filesystem.write' or request.arguments != {'path': self.request_path, 'content': self.after_text}):
             raise InspectorError(409, 'Write proposal changed; new review required')
         current = await inspector.file(sid, self.path)
         if current['sha256'] != self.before_sha256:
@@ -293,7 +295,7 @@ class ReviewedWrite:
         """
         binding = inspector.binding(self.session_id)
         if (binding.identity() != self.identity or request.name != 'filesystem.write' or
-                request.arguments != {'path': self.path, 'content': self.after_text}):
+                request.arguments != {'path': self.request_path, 'content': self.after_text}):
             raise PermissionError('Reviewed write context changed')
         data = inspector._read(binding, self.path)
         if _hash(data) != self.before_sha256:

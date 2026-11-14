@@ -122,6 +122,8 @@ void main() {
     await controller.open('readme.txt', directory: false);
     controller.attachCurrent();
     expect(await controller.reviewedAttachmentText(), contains('Hello Odessy'));
+    await controller.bind(sessionId: 'sid', serviceInstanceId: 'instance');
+    expect(await controller.reviewedAttachmentText(), contains('Hello Odessy'));
     controller.removeAttachment('readme.txt');
     expect(controller.attachments, isEmpty);
     expect(api.mutations, 0);

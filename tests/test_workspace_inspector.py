@@ -168,9 +168,11 @@ def test_tree_cap_local_only_and_changed_binding(owner):
 
 def test_exact_write_guard_stale_content_request_and_context(owner):
     async def run():
-        request = ToolRequest('filesystem.write', {'path': 'readme.txt', 'content': 'after\n'})
+        request = ToolRequest('filesystem.write', {'path': './readme.txt', 'content': 'after\n'})
         guard = await ReviewedWrite.capture(owner.inspector, 'sid', 'approval-1', request)
         assert guard.public()['before_text'] == 'Hello Odessy\n'
+        assert guard.public()['path'] == 'readme.txt'
+        guard.validate_dispatch(owner.inspector, request)
         await guard.validate(owner.inspector, 'sid', 'approval-1', request)
         for sid, rid, req in [('sid', 'foreign', request), ('sid', 'approval-1',
                 ToolRequest('filesystem.write', {'path': 'readme.txt', 'content': 'changed'})),

@@ -15,7 +15,7 @@ class VoiceApi extends DemoApi implements DesktopVoiceApi {
   final commands = <({String action, String? capture})>[];
   final stateCalls = <String>[];
   final snapshots = <String>[];
-  Completer<VoiceSnapshot>? pendingState;
+  Completer<VoiceSnapshot>? pendingState, pendingStart;
   List<SessionEvent> sessionEvents = [];
   String state = 'idle', mode = 'push_to_talk';
   String? capture;
@@ -61,6 +61,9 @@ class VoiceApi extends DemoApi implements DesktopVoiceApi {
       {String? captureId, String? interactionId}) async {
     commands.add((action: action, capture: captureId));
     if (fail) throw const ApiFailure(503);
+    if (action == 'start_capture' && pendingStart != null) {
+      return pendingStart!.future;
+    }
     switch (action) {
       case 'start_capture':
       case 'test_input':
@@ -220,6 +223,25 @@ void main() {
     expect(first.commands.map((c) => c.action), contains('cancel_capture'));
     expect(first.commands.last.capture, 'capture-one');
 
+    voice.dispose();
+    await session.shutdown();
+    session.dispose();
+  });
+
+  test('release cancels a capture whose start response arrives late', () async {
+    final api = VoiceApi('s1')..pendingStart = Completer<VoiceSnapshot>();
+    final session = await bound(api);
+    final voice = VoiceController(session);
+    await voice.refresh();
+    final start = voice.command('start_capture');
+    final release = voice.release();
+    api.state = 'recording';
+    api.capture = 'capture-s1';
+    api.pendingStart!.complete(api.value);
+    await Future.wait([start, release]);
+    expect(
+        api.commands.last, (action: 'cancel_capture', capture: 'capture-s1'));
+    expect(api.state, 'idle');
     voice.dispose();
     await session.shutdown();
     session.dispose();

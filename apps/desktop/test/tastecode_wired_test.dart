@@ -396,6 +396,7 @@ void main() {
         .controller
         .refresh();
     await tester.pumpAndSettle();
+    final conversationState = tester.state(find.byType(ConversationPage));
     await tester.tap(find.byTooltip('Files · Output · Changes').last);
     await tester.pumpAndSettle();
     final narrowPanel =
@@ -403,6 +404,8 @@ void main() {
     narrowPanel.controller.show(InspectorPanel.changes);
     await tester.pumpAndSettle();
     await capture('narrow-diff');
+    expect(tester.state(find.byType(ConversationPage, skipOffstage: false)),
+        same(conversationState));
     await tester.tap(find.byTooltip('Close workspace panel'));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Open navigation menu'));

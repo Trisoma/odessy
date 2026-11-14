@@ -101,9 +101,26 @@ class DesktopPreferencesController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<bool> save() async {
-    if (!canSave || _disposed) return false;
-    final draft = _draft!;
+  Future<bool> save() => _save();
+
+  Future<bool> saveTheme(DesktopTheme theme) => _save(theme: theme);
+
+  Future<bool> _save({DesktopTheme? theme}) async {
+    if (_disposed ||
+        !_loaded ||
+        _loading ||
+        _saving ||
+        _conflict ||
+        revision == null ||
+        (theme == null && !dirty)) return false;
+    final currentDraft = _draft;
+    final draft = theme == null
+        ? currentDraft!
+        : DesktopPreferences(
+            theme: theme,
+            textScale: saved.textScale,
+            reduceTransparency: saved.reduceTransparency,
+          );
     _saving = true;
     error = '';
     status = '';
@@ -112,7 +129,13 @@ class DesktopPreferencesController extends ChangeNotifier {
       final next = await store.save(draft, revision: revision!);
       if (_disposed) return false;
       _snapshot = next;
-      _draft = null;
+      _draft = theme != null && currentDraft != null
+          ? DesktopPreferences(
+              theme: theme,
+              textScale: currentDraft.textScale,
+              reduceTransparency: currentDraft.reduceTransparency,
+            )
+          : null;
       _loaded = true;
       _conflict = false;
       status = 'Saved to this device.';
