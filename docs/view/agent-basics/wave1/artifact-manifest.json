@@ -24,64 +24,64 @@
    "file": "01-assistant-approval.png",
    "width": 1600,
    "height": 1050,
-   "bytes": 97021,
-   "sha256": "827d25184ccb33b8310529ab1b44ec1153155b41c028044aa5b0f444426d1d0c",
+   "bytes": 97001,
+   "sha256": "abcffd50390eefca25ec3c1e31321d8cdf790edf73c2daf5764ae6d282e2cec0",
    "state": "conversation, assistant reply with a pending approval"
   },
   {
    "file": "01b-activity-expanded.png",
    "width": 1600,
    "height": 1050,
-   "bytes": 93129,
-   "sha256": "20579f37ff2322b2e944fd92ed0f195b9f94dcc7799601b805f555c31a8a5379",
+   "bytes": 93107,
+   "sha256": "4f0a7906cceda5bdc9b12defe05f04a837aca267d09f0719b8faf241e5e28ac3",
    "state": "conversation, expanded activity disclosure"
   },
   {
    "file": "02-composer-voice.png",
    "width": 1600,
    "height": 1050,
-   "bytes": 105389,
-   "sha256": "37270ed3bcfafcfd157ca882b8a4973c2577014d645ddd2484d0179a110690dc",
+   "bytes": 105400,
+   "sha256": "76653bbb7ff88a4d16408b5585a3bb0d018fe61b90ce3d8f99a87991c7ff44e1",
    "state": "conversation, voice menu anchored to the composer model row"
   },
   {
    "file": "03-files.png",
    "width": 1600,
    "height": 1050,
-   "bytes": 112631,
-   "sha256": "5cb6d8102bac379659e08ca58224e6202f2b1fa511de796ed8987ce0df50bedd",
+   "bytes": 112611,
+   "sha256": "c5974afc8cfff8144ab9cd480c37839477dc06ea0a506d2d92427228a0bf28ad",
    "state": "inspector open on Files"
   },
   {
    "file": "03b-attachment.png",
    "width": 1600,
    "height": 1050,
-   "bytes": 114197,
-   "sha256": "49ada5b9808303de489bb3338209dbbb20c372d9ff7e561ac8fe586e1dc69b70",
+   "bytes": 114178,
+   "sha256": "ee2c948ed667044beb416a0da6a64136fead33e84a27c32675d9131da966bb7a",
    "state": "inspector open on Files with attachment metadata"
   },
   {
    "file": "04-output.png",
    "width": 1600,
    "height": 1050,
-   "bytes": 113663,
-   "sha256": "574a72ad03ad6b9bd18c60c50200c2eb0d6b6bbb9c52b2cef4dd65d78c86edd7",
+   "bytes": 113639,
+   "sha256": "1e017522faf74c61b8040f361dd7a6e8baa3330a5f81f15a04b6bbbcf4a6c08d",
    "state": "inspector open on Terminal tab showing recorded output only"
   },
   {
    "file": "05-diff.png",
    "width": 1600,
    "height": 1050,
-   "bytes": 113723,
-   "sha256": "67a24487857f88ae892561aa3600c7f426017f4d2e0767a2810a01fcbd130948",
+   "bytes": 113701,
+   "sha256": "3a17b0ae53a5089b357765cdcd3f2ddeb0e5cb7f1161a39ce1e79276f678bbfe",
    "state": "inspector open on Changes with a preview diff"
   },
   {
    "file": "06-activity-usage.png",
    "width": 1600,
    "height": 1050,
-   "bytes": 116538,
-   "sha256": "0e38d58a7ef44ac628d076d8707a320178aeb93424ff17c6d86e98ed2839c727",
+   "bytes": 115898,
+   "sha256": "3ad8e6e53d62c4423e09f02b99f293e8ab34396a13b9e338ebb0824fb64809a0",
    "state": "Activity & usage page, offline usage fixtures"
   },
   {
@@ -104,8 +104,8 @@
    "file": "09-device-performance.png",
    "width": 1600,
    "height": 1050,
-   "bytes": 102002,
-   "sha256": "0197363cacb55db7ce02eb7671226b7586ea4d9cc1d81277b1c7f3610d8bd745",
+   "bytes": 101861,
+   "sha256": "629a836d2384777aa121fa0c736d5e68cec90038a84a39e90de8e2b70c3f5763",
    "state": "device performance inside the Devices hub"
   },
   {
@@ -120,8 +120,8 @@
    "file": "conversation-1280.png",
    "width": 1280,
    "height": 800,
-   "bytes": 75901,
-   "sha256": "e335e5638090e866f5713e7a8a9a2eee195053d69b3c1ac2c45f78d566616f8e",
+   "bytes": 75971,
+   "sha256": "8e17251617b923e41c2fa6cc8f3be6e412f8f0fbb04b90ae47f114eba5db1405",
    "state": "conversation at 1280x800"
   },
   {
@@ -252,5 +252,6 @@
    "sha256": "fbc7131646586b355f349d1e8a3c657fbfb0b37f0097844286e6292a783d2845",
    "state": "settings, light theme"
   }
- ]
+ ],
+ "audit_correction": "Closure audit: manifest rebound to the exact committed PNG bytes; previous manifest described another capture run (10 mismatches). No images regenerated or changed."
 }

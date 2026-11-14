@@ -60,3 +60,5 @@ as a reproducibility check; compare renders visually.
 
 These are fixture renders: user visual acceptance is pending, and they do not
 prove connected-service, native-runtime, installer or hardware behavior.
+
+Closure correction: artifact-manifest.json now hashes the actual committed PNGs (10 earlier mismatches corrected, no image changes). The 53 full-suite failures remain open for06; do not classify every failure as selector-only. At least the native instance-guard probe failed on missing dart.exe in PATH.

@@ -242,5 +242,11 @@
    "test": "installed exit cancellation does not stop startup or owned API"
   }
  ],
- "explanation": "Every failure is in a test file outside prompt 03's write set and encodes the pre-redesign shell: sidebar ListTile labels, inline voice toggle text, host cards inside the chat sidebar, and older wide-shell footer expectations. The owned suites (agent_basics_layout_test.dart, layout_preferences_test.dart, tastecode_wired_test.dart, design_glass_test.dart) pass. COMMON.md makes these read/run-only for 03; the machine-readable list is the reconciliation input for 06."
+ "explanation": "53 failures remain unresolved in out-of-scope tests. Many initial exceptions use removed text/ListTile selectors; this is not proof all are selector-only. setup_usability_test native instance probe demonstrably failed because dart.exe was absent from PATH and temporary cleanup failed. 06 must rerun with valid PATH, update selectors, and preserve the original behavior/assertions; report any remaining actual regressions. Owned suites pass.",
+ "known_environment_failure": {
+  "file": "setup_usability_test.dart",
+  "test": "native adapters instance guard refuses a second window for the same mode",
+  "cause": "ProcessException: dart.exe not found; subsequent temp cleanup WinError32",
+  "owner": "06; supply Dart SDK bin on PATH and rerun"
+ }
 }
