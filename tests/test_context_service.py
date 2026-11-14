@@ -37,6 +37,45 @@ def exchange(store, conversation_id, index, user, assistant):
                  payload={'text': assistant})
 
 
+def test_small_budget_omits_summary_and_long_prompt_is_supported(tmp_path):
+    store, _, conversation, _, _, _, context = setup(tmp_path)
+    for index in range(8):
+        exchange(store, conversation['id'], index, 'q' * 200, 'a' * 300)
+    prepared = context.prepare(conversation['id'], query='x' * 1500, max_chars=512)
+    assert wrapper_chars(prepared) <= 512
+    assert context.get_used(conversation['id'])['summary'] is None
+    store.close()
+
+
+def test_request_validation_excludes_changed_and_revoked_sources(tmp_path):
+    from odessy.application.context import build_wave2_services
+    from test_retrieval_service import ingest
+    store, project, conversation, workspace, _, _, _ = setup(
+        tmp_path, {'notes.md': 'alpha original'})
+    owner = type('Owner', (), {'id': 's1'})()
+    allowed = [True]
+
+    def scope(cid):
+        if not allowed[0]:
+            raise PermissionError('revoked')
+        return 'binding'
+
+    services = build_wave2_services(
+        store=store, resolve_conversation_owner=lambda cid: owner,
+        resolve_context_workspace=scope,
+        resolve_project_workspace=workspace.project_workspace,
+        read_context_file=workspace.read_file,
+        session_conversation=lambda sid: conversation['id'], service_instance_id='svc')
+    ingest(services.retrieval, project['id'], 'notes.md')
+    workspace.files['notes.md'] = 'beta replaced'
+    asyncio.run(services.context.validate_sources(conversation['id']))
+    assert not services.context.prepare(conversation['id'], query='alpha').citations
+    allowed[0] = False
+    with pytest.raises(PermissionError):
+        asyncio.run(services.context.validate_sources(conversation['id']))
+    store.close()
+
+
 def wrapper_chars(prepared):
     pieces = []
     if prepared.summary:

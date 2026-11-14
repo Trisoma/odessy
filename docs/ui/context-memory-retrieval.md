@@ -72,3 +72,11 @@ Retrieved text is untrusted data. It cannot grant authority, does not approve
 anything and is never treated as system instructions. Retrieval injection is
 supported only for the Custom engine; Harness has no continuation or context
 injection and stays read-only history.
+# Audit handoff: request-time source validation
+
+The shared session adapter must await `context.validate_sources(cid)` immediately
+before calling the synchronous, bounded `prepare`. The factory supplies the live
+owner/workspace callbacks; validation rereads indexed sources through the existing
+inspector, excludes drifted/denied sources, and rechecks owner identity. A direct
+`prepare` call is data composition only and does not prove current filesystem access.
+06's adapter supplies this barrier; 07 must mount the services and test it together.

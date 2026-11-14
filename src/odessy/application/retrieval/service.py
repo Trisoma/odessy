@@ -182,7 +182,7 @@ class RetrievalService:
         return self._fts
 
     def _drop_index(self, db, document_id):
-        if self._fts:
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='retrieval_chunks_fts'").fetchone():
             db.execute('DELETE FROM retrieval_chunks_fts WHERE document_id = ?',
                        (document_id,))
 
@@ -201,6 +201,10 @@ class RetrievalService:
         binding = await_binding(project_id, session_id, service_instance_id)
         conversation_id = self._conversation(session_id)
         value = await self.read_file(conversation_id, path)
+        current, current_cid = self._authorize(project_id, session_id, service_instance_id)
+        identity = lambda value: value.identity() if hasattr(value, 'identity') else value
+        if current_cid != conversation_id or identity(current) != identity(binding):
+            raise Conflict('Indexing authority changed during the read')
         text = _text_of(value)
         source_hash = _hash_of(value)
         if not isinstance(text, str) or not isinstance(source_hash, str):

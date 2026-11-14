@@ -17,7 +17,7 @@ import json
 import uuid
 
 from ..agent_basics import PreparedContext
-from ..conversations.store import (ConversationStore, Invalid, NotFound,
+from ..conversations.store import (Conflict, ConversationStore, Invalid, NotFound,
                                    _check_id, _check_int, utc_now)
 from ...runtime.types import ConversationTurn
 
@@ -64,11 +64,32 @@ def _extractive(turns):
 
 
 class ContextService:
-    def __init__(self, store: ConversationStore, *, memory, retrieval, clock=utc_now):
+    def __init__(self, store: ConversationStore, *, memory, retrieval, clock=utc_now,
+                 resolve_owner=None, resolve_workspace=None, service_instance_id=''):
         self.store = store
         self.memory = memory
         self.retrieval = retrieval
         self.clock = clock
+        self.resolve_owner = resolve_owner
+        self.resolve_workspace = resolve_workspace
+        self.service_instance_id = service_instance_id
+
+    async def validate_sources(self, conversation_id):
+        """Async pre-request authority/hash barrier; prepare remains data-only."""
+        if self.resolve_owner is None or self.resolve_workspace is None:
+            raise Conflict('Context source validation requires the shared live owner')
+        owner = self.resolve_owner(conversation_id)
+        project_id = self.store.get(conversation_id)['project_id']
+        if not self.retrieval.documents(project_id):
+            return
+        previous = self.resolve_workspace(conversation_id)
+        identity = previous.identity() if hasattr(previous, 'identity') else previous
+        await self.retrieval.verify_project(
+            project_id, session_id=owner.id, service_instance_id=self.service_instance_id)
+        current = self.resolve_workspace(conversation_id)
+        current_identity = current.identity() if hasattr(current, 'identity') else current
+        if self.resolve_owner(conversation_id) is not owner or current_identity != identity:
+            raise Conflict('Context source authority changed during validation')
 
     # -- summaries -------------------------------------------------------
 
@@ -123,8 +144,8 @@ class ContextService:
 
     def prepare(self, conversation_id, *, query, max_chars=DEFAULT_BUDGET) -> PreparedContext:
         _check_id(conversation_id)
-        if not isinstance(query, str) or not 1 <= len(query) <= 512:
-            raise Invalid('query must be 1-512 characters')
+        if not isinstance(query, str) or not query.strip():
+            raise Invalid('query must be nonempty text')
         max_chars = _check_int(max_chars, 'max_chars', 1)
         if max_chars < 512:
             raise Invalid('max_chars is too small to hold labelled context')
@@ -145,6 +166,9 @@ class ContextService:
             if len(piece) <= budget:
                 chunks.append(piece)
                 used[0] += len(piece) + 1
+            else:
+                summary_text = ''
+                summary_row = None
         facts = []
         for fact in self.memory.enabled_facts(row['project_id']):
             piece = FACT_LABEL + fact['text']
@@ -154,7 +178,7 @@ class ContextService:
             used[0] += len(piece) + 1
         citations = []
         try:
-            retrieved = self.retrieval.retrieve(row['project_id'], query, limit=5)
+            retrieved = self.retrieval.retrieve(row['project_id'], query[:512], limit=5)
         except (Invalid, NotFound):
             retrieved = {'citations': [], 'stale_document_ids': []}
         for citation in retrieved['citations']:

@@ -41,7 +41,10 @@ def build_wave2_services(*, store, resolve_conversation_owner, resolve_context_w
     retrieval = RetrievalService(store, project_workspace=resolve_project_workspace,
                                  read_file=read_context_file,
                                  session_conversation=session_conversation)
-    context = ContextService(store, memory=memory, retrieval=retrieval)
+    context = ContextService(store, memory=memory, retrieval=retrieval,
+                             resolve_owner=resolve_conversation_owner,
+                             resolve_workspace=resolve_context_workspace,
+                             service_instance_id=service_instance_id)
     return Wave2Services(
         context=context, memory=memory, retrieval=retrieval,
         registrars=(context_registrar(context), memory_registrar(memory),
