@@ -1,3 +1,5 @@
+import '../features/shell/presentation/app_icon_rail.dart';
+import 'preferences/shell_layout_store.dart';
 import 'dart:async';
 import 'dart:io';
 import '../features/devices/controllers/device_monitoring_controller.dart';
@@ -72,7 +74,9 @@ class OdessyApp extends StatefulWidget {
       this.setupBackend,
       this.coordinatorFactory,
       this.preferencesStore,
-      this.projectStore});
+      this.projectStore,
+      this.shellLayoutStore});
+  final ShellLayoutStore? shellLayoutStore;
   final DesktopPreferencesStore? preferencesStore;
   final ProjectCatalogStore? projectStore;
   final InstalledCoordinatorHandle Function(Json)? coordinatorFactory;
@@ -99,6 +103,89 @@ class _OdessyAppState extends State<OdessyApp> {
   ProjectCatalogController? projects;
   WorkspaceInspectorController? inspector;
   bool inspectorOpen = false, sidebarCollapsed = false;
+  double inspectorWidth = 390;
+  late ShellLayoutStore shellLayoutStore;
+  int shellLayoutRevision = 0;
+  Future<void> shellSave = Future.value();
+  late Future<void> shellLoad;
+  int shellEditEpoch = 0;
+  bool desiredInspectorOpen = false, restoringInspector = false;
+  void _restoreInspectorIfReady() {
+    if (!mounted ||
+        !desiredInspectorOpen ||
+        inspectorOpen ||
+        restoringInspector ||
+        inspector == null ||
+        controller.session == null ||
+        readiness.current == null) {
+      return;
+    }
+    restoringInspector = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (mounted && desiredInspectorOpen) {
+        await _openInspector();
+      }
+      restoringInspector = false;
+    });
+  }
+
+  String? shellLayoutError;
+  Future<void> _loadShellLayout() async {
+    final epoch = shellEditEpoch;
+    try {
+      final saved = await shellLayoutStore.load();
+      if (!mounted) return;
+      setState(() {
+        shellLayoutRevision = saved.revision;
+        if (epoch == shellEditEpoch) {
+          sidebarCollapsed = saved.layout.sidebarCollapsed;
+          inspectorWidth = saved.layout.inspectorWidth;
+          desiredInspectorOpen = saved.layout.inspectorOpen;
+        }
+      });
+      _restoreInspectorIfReady();
+    } catch (_) {
+      if (mounted) {
+        setState(
+            () => shellLayoutError = 'Layout preferences could not be loaded.');
+      }
+    }
+  }
+
+  void _saveShellLayout() {
+    shellEditEpoch++;
+    final value = ShellLayout(
+        sidebarCollapsed: sidebarCollapsed,
+        inspectorWidth: inspectorWidth,
+        inspectorOpen: desiredInspectorOpen);
+    shellSave = shellSave.then((_) async {
+      await shellLoad;
+      try {
+        final saved =
+            await shellLayoutStore.save(value, revision: shellLayoutRevision);
+        shellLayoutRevision = saved.revision;
+      } catch (_) {
+        if (mounted) {
+          setState(() =>
+              shellLayoutError = 'Layout preferences could not be saved.');
+        }
+      }
+    });
+  }
+
+  void _closeInspector() {
+    setState(() {
+      inspectorOpen = false;
+      desiredInspectorOpen = false;
+    });
+    _saveShellLayout();
+  }
+
+  void _toggleSidebar() {
+    setState(() => sidebarCollapsed = !sidebarCollapsed);
+    _saveShellLayout();
+  }
+
   final sessionDrafts = <String, String>{};
 
   ThemeMode get preferenceMode => switch (preferences.value.theme) {
@@ -191,6 +278,7 @@ class _OdessyAppState extends State<OdessyApp> {
       inspector?.invalidate();
       inspectorOpen = false;
       setState(() => page = 'Conversation');
+      _restoreInspectorIfReady();
     }
   }
 
@@ -198,10 +286,20 @@ class _OdessyAppState extends State<OdessyApp> {
       [InspectorPanel panel = InspectorPanel.files]) async {
     final owner = inspector, sid = controller.session?.id;
     final instance = readiness.current?.serviceInstance;
+    if (!mounted) return;
     if (owner == null || sid == null || instance == null) return;
     owner.show(panel);
-    setState(() => inspectorOpen = true);
+    setState(() {
+      inspectorOpen = true;
+      desiredInspectorOpen = true;
+    });
+    _saveShellLayout();
     await owner.bind(sessionId: sid, serviceInstanceId: instance);
+    if (!mounted ||
+        !identical(owner, inspector) ||
+        controller.session?.id != sid) {
+      return;
+    }
     if (controller.session case final snapshot?) {
       owner.acceptSnapshot(snapshot, serviceInstanceId: instance);
     }
@@ -238,6 +336,7 @@ class _OdessyAppState extends State<OdessyApp> {
       deviceInventory.bind(controller.api);
       _bindWorkspaceOwners();
     }
+    _restoreInspectorIfReady();
     final owner = inspector,
         snapshot = controller.session,
         instance = readiness.current?.serviceInstance;
@@ -495,6 +594,12 @@ class _OdessyAppState extends State<OdessyApp> {
   void initState() {
     super.initState();
     controller = DesktopSession(widget.api ?? DisconnectedApi());
+    shellLayoutStore = widget.shellLayoutStore ??
+        (controller.api.isDemo
+            ? MemoryShellLayoutStore()
+            : LocalShellLayoutStore.forUser());
+    shellLoad = _loadShellLayout();
+    unawaited(shellLoad);
     preferences = DesktopPreferencesController(widget.preferencesStore ??
         (controller.api.isDemo
             ? _DemoPreferencesStore()
@@ -503,6 +608,7 @@ class _OdessyAppState extends State<OdessyApp> {
     jobs = JobsController(controller);
     handoffs = HandoffController(controller);
     voice = VoiceController(controller);
+    readiness.addListener(_restoreInspectorIfReady);
     controller.addListener(_observeConnection);
     _observeConnection();
     setup = SetupController(widget.setupBackend ?? LocalSetupBackend(),
@@ -631,13 +737,21 @@ class _OdessyAppState extends State<OdessyApp> {
 
                     return Scaffold(
                         key: scaffoldKey,
-                        drawer: narrow ? Drawer(child: sidebar) : null,
-                        appBar:
-                            narrow ? AppBar(title: const Text('Odessy')) : null,
+                        drawer: narrow
+                            ? Drawer(
+                                child: Row(children: [
+                                _iconRail(context, drawer: true),
+                                Expanded(child: sidebar)
+                              ]))
+                            : null,
+                        appBar: null,
                         body: Row(children: [
+                          _iconRail(context),
+                          const VerticalDivider(width: 1),
                           if (!narrow && !sidebarCollapsed)
                             SizedBox(
-                                width: 264,
+                                key: const Key('project-chat-sidebar'),
+                                width: 280,
                                 child: GlassSurface(
                                     radius: 0,
                                     reduceTransparency:
@@ -651,17 +765,19 @@ class _OdessyAppState extends State<OdessyApp> {
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 16, vertical: 10),
                                 child: Row(children: [
-                                  if (!narrow)
-                                    IconButton(
-                                        tooltip: sidebarCollapsed
-                                            ? 'Expand sidebar'
-                                            : 'Collapse sidebar',
-                                        onPressed: () => setState(() =>
-                                            sidebarCollapsed =
-                                                !sidebarCollapsed),
-                                        icon: Icon(sidebarCollapsed
-                                            ? Icons.menu
-                                            : Icons.menu_open)),
+                                  IconButton(
+                                      tooltip: narrow
+                                          ? 'Open navigation menu'
+                                          : sidebarCollapsed
+                                              ? 'Expand sidebar'
+                                              : 'Collapse sidebar',
+                                      onPressed: narrow
+                                          ? () => scaffoldKey.currentState
+                                              ?.openDrawer()
+                                          : _toggleSidebar,
+                                      icon: Icon(sidebarCollapsed
+                                          ? Icons.menu
+                                          : Icons.menu_open)),
                                   if (DesktopNavigation.parent(page) != page)
                                     IconButton(
                                         tooltip:
@@ -670,31 +786,40 @@ class _OdessyAppState extends State<OdessyApp> {
                                             DesktopNavigation.parent(page)),
                                         icon: const Icon(Icons.arrow_back,
                                             size: 20)),
-                                  Text(DesktopNavigation.title(page),
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .titleMedium),
-                                  const Spacer(),
-                                  _badge(
-                                      context,
-                                      controller.api is DisconnectedApi
-                                          ? (setup.saved ||
-                                                  setup.activeSelection != null
-                                              ? 'OFFLINE'
-                                              : 'NOT CONFIGURED')
-                                          : controller.api.isDemo
-                                              ? 'DEMO'
-                                              : controller.connected
-                                                  ? 'CONNECTED'
-                                                  : 'DISCONNECTED',
-                                      controller.api.isDemo
-                                          ? Colors.amber
-                                          : controller.connected
-                                              ? Colors.green
-                                              : Colors.grey),
+                                  Expanded(
+                                      child: Semantics(
+                                          header: true,
+                                          child: Text(
+                                              DesktopNavigation.title(page),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .titleMedium))),
+                                  if (constraints.maxWidth >= 600)
+                                    _badge(
+                                        context,
+                                        controller.api is DisconnectedApi
+                                            ? (setup.saved ||
+                                                    setup.activeSelection !=
+                                                        null
+                                                ? 'OFFLINE'
+                                                : 'NOT CONFIGURED')
+                                            : controller.api.isDemo
+                                                ? 'DEMO'
+                                                : controller.connected
+                                                    ? 'CONNECTED'
+                                                    : 'DISCONNECTED',
+                                        controller.api.isDemo
+                                            ? Colors.amber
+                                            : controller.connected
+                                                ? Colors.green
+                                                : Colors.grey),
                                   const SizedBox(width: 10),
-                                  if (widget.localDesktop ||
-                                      controller.api is SessionDirectoryApi)
+                                  if (constraints.maxWidth >= 600 &&
+                                      (widget.localDesktop ||
+                                          controller.api
+                                              is SessionDirectoryApi))
                                     IconButton(
                                         tooltip: 'Start new session',
                                         icon: const Icon(
@@ -713,16 +838,41 @@ class _OdessyAppState extends State<OdessyApp> {
                                           controller.session?.running == true
                                               ? null
                                               : () => _connect(context)),
-                                  IconButton(
-                                      tooltip: 'Toggle light / dark theme',
-                                      icon: Icon(
-                                          preferenceMode == ThemeMode.dark
-                                              ? Icons.light_mode_outlined
-                                              : Icons.dark_mode_outlined,
-                                          size: 20),
-                                      onPressed: _toggleTheme),
+                                  if (constraints.maxWidth >= 600)
+                                    IconButton(
+                                        tooltip: 'Toggle light / dark theme',
+                                        icon: Icon(
+                                            preferenceMode == ThemeMode.dark
+                                                ? Icons.light_mode_outlined
+                                                : Icons.dark_mode_outlined,
+                                            size: 20),
+                                        onPressed: _toggleTheme),
+                                  if (page == 'Conversation')
+                                    IconButton(
+                                        tooltip: inspectorOpen
+                                            ? 'Close workspace inspector'
+                                            : 'Open workspace inspector',
+                                        onPressed: inspector == null
+                                            ? null
+                                            : () {
+                                                if (inspectorOpen) {
+                                                  _closeInspector();
+                                                } else {
+                                                  unawaited(_openInspector());
+                                                }
+                                              },
+                                        icon: Icon(
+                                            inspectorOpen
+                                                ? Icons.vertical_split
+                                                : Icons.vertical_split_outlined,
+                                            size: 20)),
                                 ])),
                             const Divider(height: 1),
+                            if (shellLayoutError != null)
+                              Text(shellLayoutError!,
+                                  style: TextStyle(
+                                      color:
+                                          Theme.of(context).colorScheme.error)),
                             if ([
                               'preparing',
                               'recording',
@@ -907,7 +1057,9 @@ class _OdessyAppState extends State<OdessyApp> {
                                       }),
                                   onOpenManagement: widget.installed == null ? null : () => setState(() => page = 'Manage installation')),
                               _ => LayoutBuilder(builder: (context, box) {
-                                  final sideBySide = box.maxWidth >= 1000;
+                                  final sideBySide = box.maxWidth >= 920;
+                                  final panelWidth = inspectorWidth.clamp(320.0,
+                                      (box.maxWidth - 480).clamp(320.0, 480.0));
                                   final conversation = ConversationPage(
                                       draftController: conversationDraft,
                                       voice: voice,
@@ -923,17 +1075,41 @@ class _OdessyAppState extends State<OdessyApp> {
                                       inspectorOpen && inspector != null
                                           ? WorkspaceInspector(
                                               controller: inspector!,
-                                              onClose: () => setState(
-                                                  () => inspectorOpen = false))
+                                              onClose: _closeInspector)
                                           : null;
                                   if (panel == null) return conversation;
                                   return Row(children: [
                                     if (sideBySide)
                                       Expanded(child: conversation),
                                     if (sideBySide)
-                                      const VerticalDivider(width: 1),
+                                      Semantics(
+                                          label: 'Resize workspace inspector',
+                                          child: MouseRegion(
+                                              cursor: SystemMouseCursors
+                                                  .resizeColumn,
+                                              child: GestureDetector(
+                                                  key: const Key(
+                                                      'inspector-resize-handle'),
+                                                  behavior:
+                                                      HitTestBehavior.opaque,
+                                                  onHorizontalDragUpdate:
+                                                      (event) => setState(() =>
+                                                          inspectorWidth =
+                                                              (inspectorWidth -
+                                                                      event
+                                                                          .delta
+                                                                          .dx)
+                                                                  .clamp(
+                                                                      320.0, 480.0)),
+                                                  onHorizontalDragEnd: (_) =>
+                                                      _saveShellLayout(),
+                                                  child: SizedBox(
+                                                      width: 8,
+                                                      child: Center(child: Container(width: 1, color: Theme.of(context).dividerColor)))))),
                                     SizedBox(
-                                        width: sideBySide ? 390 : box.maxWidth,
+                                        width: sideBySide
+                                            ? panelWidth
+                                            : box.maxWidth,
                                         child: panel),
                                   ]);
                                 }),
@@ -949,7 +1125,46 @@ class _OdessyAppState extends State<OdessyApp> {
     scaffoldKey.currentState?.closeDrawer();
   }
 
+  Widget _iconRail(BuildContext context, {bool drawer = false}) => AppIconRail(
+          navigationFocus: drawer ? null : navigationFocus,
+          settingsSelected: page == 'Settings',
+          onSettings: _openSettings,
+          destinations: [
+            SidebarDestination(
+                label: 'Assistant',
+                icon: Icons.chat_bubble_outline,
+                selected: page == 'Conversation',
+                onTap: () => _navigate('Conversation')),
+            SidebarDestination(
+                label: 'Activity & usage',
+                icon: Icons.insights_outlined,
+                selected: page == 'Activity & usage',
+                onTap: () => _navigate('Activity & usage')),
+            SidebarDestination(
+                label: 'Devices',
+                icon: Icons.devices_outlined,
+                selected:
+                    ['Devices', 'Monitor', 'Device details'].contains(page),
+                onTap: () => _navigate('Devices')),
+            SidebarDestination(
+                label: 'Jobs',
+                icon: Icons.work_outline,
+                selected: page == 'Jobs',
+                onTap: () => _navigate('Jobs')),
+            SidebarDestination(
+                label: 'Handoffs',
+                icon: Icons.swap_horiz,
+                selected: page == 'Handoffs',
+                onTap: () => _navigate('Handoffs')),
+            SidebarDestination(
+                label: 'Workspaces',
+                icon: Icons.folder_open_outlined,
+                selected: page == 'Workspaces',
+                onTap: () => _navigate('Workspaces')),
+          ]);
+
   Widget _sidebar(BuildContext context) => DeviceSidebar(
+          projectOnly: true,
           onNewSession: controller.busy || controller.session?.running == true
               ? null
               : () => _newSession(context),
@@ -959,7 +1174,7 @@ class _OdessyAppState extends State<OdessyApp> {
               ? null
               : TextField(
                   decoration: const InputDecoration(
-                      hintText: 'Find a session',
+                      hintText: 'Search chats',
                       prefixIcon: Icon(Icons.search, size: 18),
                       isDense: true),
                   onChanged: projects!.search),
@@ -1045,7 +1260,7 @@ class _OdessyAppState extends State<OdessyApp> {
         return ExpansionTile(
             initiallyExpanded: true,
             tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-            title: const Text('Projects & sessions',
+            title: const Text('Projects',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
             children: [
               TextButton.icon(
@@ -1063,6 +1278,11 @@ class _OdessyAppState extends State<OdessyApp> {
                           project.sessionIds.contains(s.id)))
                         sessionLink(row),
                     ]),
+              const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text('Recent', style: TextStyle(fontSize: 12)))),
               for (final row in c.filteredSessions.where((s) => !c.records
                   .any((p) => c.matches(p) && p.sessionIds.contains(s.id))))
                 sessionLink(row),

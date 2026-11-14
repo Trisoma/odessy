@@ -3,7 +3,14 @@ import '../controllers/workspace_inspector_controller.dart';
 
 class WorkspaceInspector extends StatelessWidget {
   const WorkspaceInspector(
-      {super.key, required this.controller, required this.onClose});
+      {super.key,
+      required this.controller,
+      required this.onClose,
+      this.onOpenTerminal});
+
+  /// Integrator supplies a typed terminal-controller command when supported.
+  /// Recorded Output remains separate and never launches a shell on tab open.
+  final VoidCallback? onOpenTerminal;
   final WorkspaceInspectorController controller;
   final VoidCallback onClose;
 
@@ -65,7 +72,10 @@ class WorkspaceInspector extends StatelessWidget {
                             InspectorPanel.terminal => 'Output',
                             InspectorPanel.changes =>
                               'Changes (${c.changes.length})'
-                          })))
+                          }))),
+                if (onOpenTerminal != null)
+                  TextButton(
+                      onPressed: onOpenTerminal, child: const Text('Terminal')),
               ]),
               const Divider(height: 1),
               if (c.loading || c.reading || c.deciding)

@@ -40,7 +40,9 @@ class DeviceSidebar extends StatelessWidget {
       this.primaryDestinations = const [],
       this.projectNavigation,
       this.sessionSearch,
+      this.projectOnly = false,
       this.destinations = const []});
+  final bool projectOnly;
   final Widget? projectNavigation, sessionSearch;
   final List<MonitoringHost> hosts;
   final ValueChanged<String> onInspect;
@@ -60,8 +62,8 @@ class DeviceSidebar extends StatelessWidget {
         Padding(
             padding: const EdgeInsets.fromLTRB(24, 20, 16, 20),
             child: Row(children: [
-              const PixelBoat(size: 30),
-              const SizedBox(width: 9),
+              if (!projectOnly) const PixelBoat(size: 30),
+              if (!projectOnly) const SizedBox(width: 9),
               Expanded(
                   child: Text('Odessy',
                       style: const TextStyle(
@@ -83,96 +85,106 @@ class DeviceSidebar extends StatelessWidget {
                   child: FilledButton.icon(
                       onPressed: onNewSession,
                       icon: const Icon(Icons.add, size: 18),
-                      label: const Text('New session'))),
-              _navigation(context, conversationLabel, Icons.chat_bubble_outline,
-                  conversationSelected, onConversation),
-              for (final destination in primaryDestinations)
-                _navigation(context, destination.label, destination.icon,
-                    destination.selected, destination.onTap),
+                      label: Text(projectOnly ? 'New chat' : 'New session'))),
+              if (!projectOnly) ...[
+                _navigation(
+                    context,
+                    conversationLabel,
+                    Icons.chat_bubble_outline,
+                    conversationSelected,
+                    onConversation),
+                for (final destination in primaryDestinations)
+                  _navigation(context, destination.label, destination.icon,
+                      destination.selected, destination.onTap),
+              ],
               if (projectNavigation != null) projectNavigation!,
-              const SizedBox(height: 20),
-              Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Row(children: [
-                    Expanded(
-                        child: Semantics(
-                            header: true,
-                            child: Text('Computers',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .labelMedium
-                                    ?.copyWith(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurfaceVariant)))),
-                    IconButton(
-                        tooltip: 'Refresh devices',
-                        icon: const Icon(Icons.refresh, size: 18),
-                        onPressed: loading && hosts.isEmpty ? null : onRefresh),
-                  ])),
-              if (demo)
-                const Padding(
-                    padding: EdgeInsets.fromLTRB(12, 0, 12, 12),
-                    child: Text('Demo devices · fixtures only')),
-              if (loading && hosts.isEmpty)
-                const LinearProgressIndicator(
-                    semanticsLabel: 'Loading devices'),
-              if (error != null)
-                Padding(padding: const EdgeInsets.all(12), child: Text(error!)),
-              if (_lastKnown)
-                const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: Text('Last known device list')),
-              if (hosts.isEmpty && !loading)
+              if (!projectOnly) ...[
+                const SizedBox(height: 20),
                 Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Text(error == null
-                        ? 'No devices reported'
-                        : 'Device list unavailable')),
-              for (final host in hosts)
-                Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: ListTile(
-                      key: ValueKey('inspect-${host.id}'),
-                      selected: selectedHostId == host.id,
-                      selectedTileColor: Theme.of(context)
-                          .colorScheme
-                          .primary
-                          .withValues(alpha: .12),
-                      shape: RoundedRectangleBorder(
-                          borderRadius:
-                              BorderRadius.circular(OdessyTokens.radiusSmall)),
-                      dense: true,
-                      contentPadding:
-                          const EdgeInsets.symmetric(horizontal: 12),
-                      leading: Icon(
-                          host.trust == 'local'
-                              ? Icons.computer_outlined
-                              : host.trust == 'revoked'
-                                  ? Icons.link_off
-                                  : Icons.devices_other_outlined,
-                          size: 20),
-                      title: Text(host.name,
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodyMedium),
-                      subtitle: Text(
-                          '${_label(host.connectivity)} · ${_label(host.trust)}${_lastKnown ? ' · last report' : ''}',
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodySmall
-                              ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant)),
-                      onTap: () => onInspect(host.id),
-                    )),
-              Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                      onPressed: onPair,
-                      icon: const Icon(Icons.add, size: 18),
-                      label: const Text('Pair a device'))),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Row(children: [
+                      Expanded(
+                          child: Semantics(
+                              header: true,
+                              child: Text('Computers',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelMedium
+                                      ?.copyWith(
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurfaceVariant)))),
+                      IconButton(
+                          tooltip: 'Refresh devices',
+                          icon: const Icon(Icons.refresh, size: 18),
+                          onPressed:
+                              loading && hosts.isEmpty ? null : onRefresh),
+                    ])),
+                if (demo)
+                  const Padding(
+                      padding: EdgeInsets.fromLTRB(12, 0, 12, 12),
+                      child: Text('Demo devices · fixtures only')),
+                if (loading && hosts.isEmpty)
+                  const LinearProgressIndicator(
+                      semanticsLabel: 'Loading devices'),
+                if (error != null)
+                  Padding(
+                      padding: const EdgeInsets.all(12), child: Text(error!)),
+                if (_lastKnown)
+                  const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: Text('Last known device list')),
+                if (hosts.isEmpty && !loading)
+                  Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Text(error == null
+                          ? 'No devices reported'
+                          : 'Device list unavailable')),
+                for (final host in hosts)
+                  Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: ListTile(
+                        key: ValueKey('inspect-${host.id}'),
+                        selected: selectedHostId == host.id,
+                        selectedTileColor: Theme.of(context)
+                            .colorScheme
+                            .primary
+                            .withValues(alpha: .12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(
+                                OdessyTokens.radiusSmall)),
+                        dense: true,
+                        contentPadding:
+                            const EdgeInsets.symmetric(horizontal: 12),
+                        leading: Icon(
+                            host.trust == 'local'
+                                ? Icons.computer_outlined
+                                : host.trust == 'revoked'
+                                    ? Icons.link_off
+                                    : Icons.devices_other_outlined,
+                            size: 20),
+                        title: Text(host.name,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodyMedium),
+                        subtitle: Text(
+                            '${_label(host.connectivity)} · ${_label(host.trust)}${_lastKnown ? ' · last report' : ''}',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant)),
+                        onTap: () => onInspect(host.id),
+                      )),
+                Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                        onPressed: onPair,
+                        icon: const Icon(Icons.add, size: 18),
+                        label: const Text('Pair a device'))),
+              ],
               if (destinations.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 ExpansionTile(
@@ -193,8 +205,9 @@ class DeviceSidebar extends StatelessWidget {
             child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _navigation(context, 'Settings', Icons.tune_outlined,
-                      settingsSelected, onSettings),
+                  if (!projectOnly)
+                    _navigation(context, 'Settings', Icons.tune_outlined,
+                        settingsSelected, onSettings),
                   const SizedBox(height: 8),
                   Tooltip(
                       message: connectionLabel,

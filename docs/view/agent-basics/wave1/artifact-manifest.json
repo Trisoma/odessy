@@ -1,0 +1,255 @@
+{
+ "schema_version": 1,
+ "captured_at": "2026-11-14T12:52+08:00",
+ "generator": "dart flutter_tools.snapshot test --no-pub test/tastecode_wired_test.dart",
+ "fixture": "Production OdessyApp with WiredCaptureApi, CaptureProjects and SavedComponents injected offline; no backend, network, model, provider or installer is used.",
+ "viewports": {
+  "desktop": "1600x1050",
+  "wide_edge": "1280x800",
+  "narrow": "720x900"
+ },
+ "caveats": "Offline fixture renders. Not connected-service evidence, not native launch evidence, not user visual acceptance.",
+ "source_hashes": {
+  "apps/desktop/lib/app/app.dart": "af0b3c755ef9b69847406a110627ce3c3a78d3e4027c0b93ccc68dc4a6510c2a",
+  "apps/desktop/lib/app/preferences/shell_layout.dart": "123c7877e9cd28d4faa7c205b23afc7235f80c0d62847865e518475659c31f63",
+  "apps/desktop/lib/app/preferences/shell_layout_store.dart": "204fe8710307e8cff061d99d1f3308f3fd04476c0e338ec9d5553409b8c68999",
+  "apps/desktop/lib/features/shell/presentation/app_icon_rail.dart": "01e0a8c26c89fa9040d004ffd387a5a7737742b70a92a64f449ba88b2abd4fee",
+  "apps/desktop/lib/features/shell/presentation/device_sidebar.dart": "39241ffc64735bfc54e6b9984cd66c1255b23b21f6cf3ee1ad295f3ae1ad8dde",
+  "apps/desktop/lib/features/conversation/presentation/conversation.dart": "454c21075d559ff1915dd6da843629a85905e5d46e1e9904d08c919725fef18d",
+  "apps/desktop/lib/features/workspaces/presentation/workspace_inspector.dart": "190d7443d5e0245817feab5d4e66b55832c75adb6adeb07c50ba3afba56d2e7e"
+ },
+ "captures": [
+  {
+   "file": "01-assistant-approval.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 97021,
+   "sha256": "827d25184ccb33b8310529ab1b44ec1153155b41c028044aa5b0f444426d1d0c",
+   "state": "conversation, assistant reply with a pending approval"
+  },
+  {
+   "file": "01b-activity-expanded.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 93129,
+   "sha256": "20579f37ff2322b2e944fd92ed0f195b9f94dcc7799601b805f555c31a8a5379",
+   "state": "conversation, expanded activity disclosure"
+  },
+  {
+   "file": "02-composer-voice.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 105389,
+   "sha256": "37270ed3bcfafcfd157ca882b8a4973c2577014d645ddd2484d0179a110690dc",
+   "state": "conversation, voice menu anchored to the composer model row"
+  },
+  {
+   "file": "03-files.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 112631,
+   "sha256": "5cb6d8102bac379659e08ca58224e6202f2b1fa511de796ed8987ce0df50bedd",
+   "state": "inspector open on Files"
+  },
+  {
+   "file": "03b-attachment.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 114197,
+   "sha256": "49ada5b9808303de489bb3338209dbbb20c372d9ff7e561ac8fe586e1dc69b70",
+   "state": "inspector open on Files with attachment metadata"
+  },
+  {
+   "file": "04-output.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 113663,
+   "sha256": "574a72ad03ad6b9bd18c60c50200c2eb0d6b6bbb9c52b2cef4dd65d78c86edd7",
+   "state": "inspector open on Terminal tab showing recorded output only"
+  },
+  {
+   "file": "05-diff.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 113723,
+   "sha256": "67a24487857f88ae892561aa3600c7f426017f4d2e0767a2810a01fcbd130948",
+   "state": "inspector open on Changes with a preview diff"
+  },
+  {
+   "file": "06-activity-usage.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 116538,
+   "sha256": "0e38d58a7ef44ac628d076d8707a320178aeb93424ff17c6d86e98ed2839c727",
+   "state": "Activity & usage page, offline usage fixtures"
+  },
+  {
+   "file": "07-workspaces.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 73723,
+   "sha256": "c8f8217645c2f6d4b9ed0f6d671dad4635cd4d1ac7cd73c4227a19b791f7c0a1",
+   "state": "Workspaces page"
+  },
+  {
+   "file": "08-devices.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 79900,
+   "sha256": "9edf4dc669a350a3500621ad7fa2ac289721dc0928aa92aa22a39d47efacfea5",
+   "state": "Devices hub"
+  },
+  {
+   "file": "09-device-performance.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 102002,
+   "sha256": "0197363cacb55db7ce02eb7671226b7586ea4d9cc1d81277b1c7f3610d8bd745",
+   "state": "device performance inside the Devices hub"
+  },
+  {
+   "file": "10-device-details.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 106182,
+   "sha256": "cf43bb42488bf4ca7812e8ab62ab6ad8fc511fe5d25b71fd43441d08f0d2c764",
+   "state": "device details reached through the Devices hub"
+  },
+  {
+   "file": "conversation-1280.png",
+   "width": 1280,
+   "height": 800,
+   "bytes": 75901,
+   "sha256": "e335e5638090e866f5713e7a8a9a2eee195053d69b3c1ac2c45f78d566616f8e",
+   "state": "conversation at 1280x800"
+  },
+  {
+   "file": "handoffs.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 109257,
+   "sha256": "998c4100969d2ad787ace24a8e3b8ac84d7a1acae9e7d12574db1eb7ae79bb99",
+   "state": "Handoffs page"
+  },
+  {
+   "file": "jobs.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 57604,
+   "sha256": "5db45050e3ca789909576c2d66c9fe024f4c5a26fdbb26b7aac1f167b14bcc71",
+   "state": "Jobs page"
+  },
+  {
+   "file": "narrow-assistant.png",
+   "width": 720,
+   "height": 900,
+   "bytes": 47160,
+   "sha256": "aa4cd6c4f2216a90af5a0f87dc25f951da693ea4f3f80e8e1f6df2c06356302e",
+   "state": "narrow 720x900 conversation with drawer closed"
+  },
+  {
+   "file": "narrow-diff.png",
+   "width": 720,
+   "height": 900,
+   "bytes": 29418,
+   "sha256": "8485f4392668c21b067a452f9eb8d88c9eb05486c4290d3aa96a6d2c76c242ee",
+   "state": "narrow 720x900 inspector overlay on Changes"
+  },
+  {
+   "file": "narrow-handoffs.png",
+   "width": 720,
+   "height": 900,
+   "bytes": 54837,
+   "sha256": "f3e468ef55fe74ec4c839ca95a0e8ea7035f6b8ff9d227e0bd2e5d7627632a55",
+   "state": "narrow 720x900 Handoffs page"
+  },
+  {
+   "file": "narrow-navigation.png",
+   "width": 720,
+   "height": 900,
+   "bytes": 41806,
+   "sha256": "46bb4a85a4f826b5a758bab7db6192fd0f6752d82913413d389ecbd927b78853",
+   "state": "narrow 720x900 navigation drawer with icon rail destinations"
+  },
+  {
+   "file": "narrow-settings.png",
+   "width": 720,
+   "height": 900,
+   "bytes": 54556,
+   "sha256": "06658ec271bf12a4c3aee3dd0cdc5272dbfaadab844dd7ddd8f9631a66978f98",
+   "state": "narrow 720x900 settings"
+  },
+  {
+   "file": "settings-1.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 116239,
+   "sha256": "b50afac5072632e063975231e505c28c13e4073c29403ac662962a01d294fbc4",
+   "state": "settings section 1 of 8, dark theme"
+  },
+  {
+   "file": "settings-2.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 143734,
+   "sha256": "d2787b3965574349a51f20d265c47049679abe26de891ee2861bbfc122e4955e",
+   "state": "settings section 2 of 8, dark theme"
+  },
+  {
+   "file": "settings-3.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 139037,
+   "sha256": "bd4485a7ac64875c928f8cfe80a3c01a6d1a0800bfc921fe2f87dd7698cc3052",
+   "state": "settings section 3 of 8, dark theme"
+  },
+  {
+   "file": "settings-4.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 132160,
+   "sha256": "5e52256b6e1cde944c955faec7c332e57ef8ead42c4b7152c5068ba43aea63c8",
+   "state": "settings section 4 of 8, dark theme"
+  },
+  {
+   "file": "settings-5.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 142819,
+   "sha256": "18fc19e703fdd9204d54f5d816b27ee221527615b54779ec6ff2bedd8b2e89c7",
+   "state": "settings section 5 of 8, dark theme"
+  },
+  {
+   "file": "settings-6.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 125811,
+   "sha256": "26f15f489a7440a62dff8dc6b698cc1d2df0164c82975a5e58bd50e5642b8415",
+   "state": "settings section 6 of 8, dark theme"
+  },
+  {
+   "file": "settings-7.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 79867,
+   "sha256": "51f92acdfac7bfe311d294bd37af73ae0ac78aad6cfb15ca58601950916d641a",
+   "state": "settings section 7 of 8, dark theme"
+  },
+  {
+   "file": "settings-8.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 77180,
+   "sha256": "41f3bcdba8fd0da75e078496f32c0dfd9a535102315c5f449fe9fc7ca0421a9e",
+   "state": "settings section 8 of 8, dark theme"
+  },
+  {
+   "file": "settings-light.png",
+   "width": 1600,
+   "height": 1050,
+   "bytes": 111744,
+   "sha256": "fbc7131646586b355f349d1e8a3c657fbfb0b37f0097844286e6292a783d2845",
+   "state": "settings, light theme"
+  }
+ ]
+}
