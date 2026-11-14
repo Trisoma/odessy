@@ -155,7 +155,7 @@ void main() {
       (tester) async {
     final (_, _, handoffs) = await connect(runs: [runFixture()]);
     await show(tester, handoffs);
-    expect(find.text('Document → code · Waiting for your decision'),
+    expect(find.text('Document to code · Waiting for your decision'),
         findsOneWidget);
     expect(
         find.bySemanticsLabel(RegExp('Step 1, claude, read-only, Completed')),
@@ -186,7 +186,7 @@ void main() {
     await tester.tap(find.text('Hand over to codex'));
     await settle(tester);
     expect(api.continued, [secondSha]);
-    expect(find.text('Document → code · Running'), findsOneWidget);
+    expect(find.text('Document to code · Running'), findsOneWidget);
     expect(find.text('Hand over to codex'), findsNothing);
     expect(find.textContaining('.odessy-handoff/t1.md'), findsOneWidget);
   });
@@ -276,7 +276,7 @@ void main() {
     await tester.tap(submit);
     await settle(tester);
     expect(api.starts, 2);
-    expect(find.text('Document → code · Running'), findsOneWidget);
+    expect(find.text('Document to code · Running'), findsOneWidget);
   });
 
   test('a reply older than an event does not replace it', () async {
@@ -311,7 +311,7 @@ void main() {
     await settle(tester);
     expect(api.cancels, 1);
     expect(find.text('Cancel run'), findsNothing);
-    expect(find.text('Document → code · Cancelled'), findsOneWidget);
+    expect(find.text('Document to code · Cancelled'), findsOneWidget);
   });
 
   testWidgets('narrow windows stack the flow vertically without overflow',
@@ -334,14 +334,14 @@ void main() {
         .cast<Json>();
     final (api, session, handoffs) = await connect(runs: [recorded.first]);
     await show(tester, handoffs);
-    expect(find.text('Document → code · Waiting for your decision'),
+    expect(find.text('Document to code · Waiting for your decision'),
         findsOneWidget);
     expect(find.text('Hand over to coder'), findsOneWidget);
     expect(find.text('Input tokens: Not reported'), findsOneWidget);
     api.emitRun(recorded.last);
     await session.refresh();
     await settle(tester);
-    expect(find.text('Document → code · Completed'), findsOneWidget);
+    expect(find.text('Document to code · Completed'), findsOneWidget);
     expect(find.textContaining('Changed: app.py'), findsOneWidget);
     expect(find.text('Hand over to coder'), findsNothing);
     expect(find.text('Cancel run'), findsNothing);

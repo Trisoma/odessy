@@ -25,6 +25,10 @@ jobs:
           python-version: '3.12'
       - run: python tool/check_desktop_contracts.py
       - run: python -m unittest discover -s tests -p test_desktop_settings_inventory.py -v
+      - name: Install existing backend test dependencies
+        run: python -m pip install -e ".[test,ui]"
+      - name: Select Python for the loopback service-view regression
+        run: echo "ODESSY_UI_TEST_PYTHON=$(command -v python)" >> "$GITHUB_ENV"
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.47.7'

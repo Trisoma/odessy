@@ -279,6 +279,8 @@ void main() {
         reason: 'Install stays disabled without a reviewed plan');
 
     backend.failureReason = '';
+    await tester.ensureVisible(find.text('Review again'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Review again'));
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(milliseconds: 50));

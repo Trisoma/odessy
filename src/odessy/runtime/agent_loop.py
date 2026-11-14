@@ -1148,6 +1148,9 @@ class OdessyAgent:
             plan = build_action_approval(action, decision, self._policy,
                 call_id=call_id or uuid.uuid4().hex,
                 execution_target=self._target_identity(action, registry))
+            bind_review = getattr(self, '_bind_action_review', None)
+            if bind_review is not None:
+                plan = await bind_review(plan, action)
 
         stop_event = getattr(self, '_turn_stop_event', None)
         def revalidate():

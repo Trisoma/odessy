@@ -67,8 +67,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Jetson'));
       await tester.pumpAndSettle();
-      expect(
-          find.text('Device details and available settings.'), findsOneWidget);
+      expect(find.byKey(const Key('device-detail-scroll')), findsOneWidget);
       if (compact) {
         await tester.tap(find.byTooltip('Open navigation menu'));
         await tester.pumpAndSettle();

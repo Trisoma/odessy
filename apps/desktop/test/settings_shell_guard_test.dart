@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/app/app.dart';
+import 'package:odessy_desktop/features/devices/presentation/devices_hub.dart';
 import 'package:odessy_desktop/app/setup/installed_startup.dart';
 import 'package:odessy_desktop/features/settings/presentation/settings.dart';
 import 'settings_presentation_test.dart';
@@ -224,7 +225,13 @@ void main() {
     expect(find.text('Unsaved collaboration setting'), findsOneWidget);
     await _answer(tester, 'Discard changes');
     expect(find.text('Unsaved collaboration setting'), findsNothing);
-    expect(find.text('Jetson'), findsOneWidget);
+    expect(
+        tester
+            .widget<DevicesHub>(find.byType(DevicesHub))
+            .devices!
+            .selectedHost!
+            .name,
+        'Jetson');
     expect(find.text('Preferences'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });

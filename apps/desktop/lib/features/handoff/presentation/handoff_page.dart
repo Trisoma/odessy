@@ -5,8 +5,8 @@ import '../../jobs/presentation/jobs_page.dart' show JobUsage;
 import '../controllers/handoff_controller.dart';
 
 const _flowLabels = {
-  'document_to_code': 'Document → code',
-  'code_to_review': 'Code → review',
+  'document_to_code': 'Document to code',
+  'code_to_review': 'Code to review',
 };
 
 /// Plain words for every run, step and transfer state the service reports.
@@ -157,15 +157,43 @@ class _HandoffPageState extends State<HandoffPage> {
                                                 : null),
                                         const SizedBox(height: 8),
                                         Text('Step 1 $first; step 2 $second.'),
-                                        _field(fromParticipant,
-                                            'Step 1 participant', editable),
-                                        _field(
-                                            fromTask, 'Step 1 task', editable,
-                                            lines: true),
-                                        _field(toParticipant,
-                                            'Step 2 participant', editable),
-                                        _field(toTask, 'Step 2 task', editable,
-                                            lines: true),
+                                        LayoutBuilder(builder: (context, box) {
+                                          final steps = [
+                                            _stepCard(
+                                                '1 · Prepare',
+                                                first,
+                                                fromParticipant,
+                                                fromTask,
+                                                editable,
+                                                1),
+                                            _stepCard(
+                                                '2 · Continue',
+                                                second,
+                                                toParticipant,
+                                                toTask,
+                                                editable,
+                                                2),
+                                          ];
+                                          return box.maxWidth < 650
+                                              ? Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment
+                                                          .stretch,
+                                                  children: steps)
+                                              : Row(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.start,
+                                                  children: [
+                                                      Expanded(child: steps[0]),
+                                                      const SizedBox(width: 16),
+                                                      Expanded(child: steps[1])
+                                                    ]);
+                                        }),
+                                        const SizedBox(height: 16),
+                                        Text('Review and request',
+                                            style: theme.textTheme.titleSmall),
+                                        const Text(
+                                            'Review both steps before requesting approval. The service still owns every execution and transfer decision.'),
                                         const SizedBox(height: 12),
                                         Align(
                                             alignment: Alignment.centerLeft,
@@ -205,7 +233,7 @@ class _HandoffPageState extends State<HandoffPage> {
                                 title: Text(
                                     '${_flowLabels[run['flow']]} · ${handoffStateLabel(run['state'])}'),
                                 subtitle: Text(
-                                    '${_participant(run, 0)} → ${_participant(run, 1)} · ${run['run_id']}'),
+                                    '${_participant(run, 0)} to ${_participant(run, 1)} · ${run['run_id']}'),
                                 onTap: () => c.select(run['run_id'] as String)),
                           if (c.selected != null) _RunDetails(controller: c),
                         ]))));
@@ -213,6 +241,27 @@ class _HandoffPageState extends State<HandoffPage> {
 
   static String _participant(Json run, int index) =>
       ((run['steps'] as List)[index] as Map)['participant'] as String;
+
+  Widget _stepCard(
+          String title,
+          String description,
+          TextEditingController participant,
+          TextEditingController task,
+          bool editable,
+          int step) =>
+      Card.outlined(
+          child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(title, style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 8),
+                    Text(description),
+                    _field(participant, 'Step $step participant', editable),
+                    const SizedBox(height: 12),
+                    _field(task, 'Step $step task', editable, lines: true),
+                  ])));
 
   Widget _field(TextEditingController field, String label, bool enabled,
           {bool lines = false}) =>
@@ -270,7 +319,7 @@ class _RunDetails extends StatelessWidget {
                         '${offer['kind'] == 'diff' ? 'Code changes' : 'Document'} · '
                         '${offer['bytes']} bytes · goes to ${steps[1]['participant']}'),
                     SelectableText('SHA-256 ${offer['sha256']}',
-                        style: const TextStyle(fontFamily: 'monospace')),
+                        style: const TextStyle(fontFamily: 'OdessyMono')),
                     const SizedBox(height: 8),
                     Container(
                         constraints: const BoxConstraints(maxHeight: 360),
@@ -282,8 +331,8 @@ class _RunDetails extends StatelessWidget {
                             child: SelectableText(
                                 (c.artifact?['text'] ?? offer['preview'])
                                     as String,
-                                style:
-                                    const TextStyle(fontFamily: 'monospace')))),
+                                style: const TextStyle(
+                                    fontFamily: 'OdessyMono')))),
                     if (c.artifact == null)
                       const Text('Showing the start of the output.'),
                     if (c.artifact != null)
@@ -459,7 +508,7 @@ class _StepNode extends StatelessWidget {
                         borderRadius: BorderRadius.circular(8)),
                     child: SingleChildScrollView(
                         child: SelectableText(answer,
-                            style: const TextStyle(fontFamily: 'monospace')))),
+                            style: const TextStyle(fontFamily: 'OdessyMono')))),
               ],
             ])));
   }

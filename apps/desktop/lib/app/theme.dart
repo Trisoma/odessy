@@ -3,9 +3,27 @@ import 'package:flutter/material.dart';
 ThemeData odessyTheme(Brightness brightness) {
   final dark = brightness == Brightness.dark;
   final scheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xff9bb9a7),
-      brightness: brightness,
-      surface: dark ? const Color(0xff17191b) : const Color(0xfffafaf8));
+          seedColor: const Color(0xff9ce4c3), brightness: brightness)
+      .copyWith(
+    primary: dark ? const Color(0xff9ce4c3) : const Color(0xff23684d),
+    onPrimary: dark ? const Color(0xff111d25) : Colors.white,
+    tertiary: dark ? const Color(0xffffd18a) : const Color(0xff785018),
+    tertiaryContainer: dark ? const Color(0xff544322) : const Color(0xffffe5b5),
+    secondary: dark ? const Color(0xff9bcff5) : const Color(0xff245e87),
+    surface: dark ? const Color(0xff111d25) : const Color(0xfff5f8f9),
+    onSurface: dark ? const Color(0xffedf5f4) : const Color(0xff172b35),
+    onSurfaceVariant: dark ? const Color(0xffb0c5cc) : const Color(0xff48616c),
+    surfaceContainerLow:
+        dark ? const Color(0xff15252e) : const Color(0xffedf3f5),
+    surfaceContainer: dark ? const Color(0xff1c303a) : Colors.white,
+    surfaceContainerHighest:
+        dark ? const Color(0xff243e49) : const Color(0xffdce9ee),
+    secondaryContainer:
+        dark ? const Color(0xff243e49) : const Color(0xffdce9ee),
+    onSecondaryContainer:
+        dark ? const Color(0xffedf5f4) : const Color(0xff172b35),
+    outlineVariant: dark ? const Color(0xff36515e) : const Color(0xffc2d3da),
+  );
   final base = ThemeData(brightness: brightness).textTheme;
   return ThemeData(
     useMaterial3: true,
@@ -20,35 +38,51 @@ ThemeData odessyTheme(Brightness brightness) {
             bodyMedium: base.bodyMedium?.copyWith(fontSize: 14, height: 1.5),
             bodySmall: base.bodySmall?.copyWith(fontSize: 12, height: 1.45),
             titleLarge: base.titleLarge?.copyWith(
-                fontSize: 25, fontWeight: FontWeight.w600, letterSpacing: -.6),
+                fontSize: 28, fontWeight: FontWeight.w600, letterSpacing: -.6),
             titleMedium: base.titleMedium
-                ?.copyWith(fontSize: 15, fontWeight: FontWeight.w600),
+                ?.copyWith(fontSize: 15, fontWeight: FontWeight.w700),
             labelLarge: base.labelLarge?.copyWith(fontSize: 13),
             labelMedium: base.labelMedium?.copyWith(fontSize: 12))
         .apply(
             fontFamily: 'OdessySans', fontFamilyFallback: const ['OdessySans']),
-    dividerColor: dark ? const Color(0xff303335) : const Color(0xffe0e2dc),
+    dividerColor: dark ? const Color(0xff36515e) : const Color(0xffc2d3da),
     inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: dark ? const Color(0xff202326) : Colors.white,
+        fillColor: dark ? const Color(0xff1c303a) : Colors.white,
         border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide.none),
-        contentPadding: const EdgeInsets.all(16)),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 14)),
     filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10)))),
+    textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+            foregroundColor: scheme.onSurfaceVariant,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(7)))),
+    iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(
+            foregroundColor: scheme.onSurfaceVariant,
+            minimumSize: const Size(40, 40))),
+    listTileTheme: ListTileThemeData(
+        iconColor: scheme.onSurfaceVariant,
+        selectedColor: scheme.primary,
+        selectedTileColor: scheme.secondaryContainer,
+        titleTextStyle: TextStyle(
+            fontFamily: 'OdessySans', fontSize: 13, color: scheme.onSurface)),
     cardTheme: CardThemeData(
         elevation: 0,
         margin: EdgeInsets.zero,
-        color: dark ? const Color(0xff202326) : Colors.white,
+        color: dark ? const Color(0xff1c303a) : Colors.white,
         shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(12),
             side: BorderSide(
                 color:
-                    dark ? const Color(0xff34383a) : const Color(0xffe0e2dc)))),
+                    dark ? const Color(0xff36515e) : const Color(0xffc2d3da)))),
   );
 }
 

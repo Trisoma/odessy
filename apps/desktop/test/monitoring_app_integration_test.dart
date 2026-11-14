@@ -1,6 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' as ui;
+import 'package:flutter/rendering.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/app/app.dart';
@@ -11,7 +14,14 @@ void main() {
   testWidgets(
       'real loopback monitoring composes into app without demo fallback or mutations',
       (tester) async {
-    tester.view.physicalSize = const Size(1400, 1800);
+    await (FontLoader('OdessySans')
+          ..addFont(rootBundle.load('assets/fonts/roboto-regular.ttf'))
+          ..addFont(rootBundle.load('assets/fonts/roboto-bold.ttf')))
+        .load();
+    await (FontLoader('MaterialIcons')
+          ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf')))
+        .load();
+    tester.view.physicalSize = const Size(1600, 1050);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -22,7 +32,8 @@ void main() {
           Uri.parse('http://127.0.0.1:${server.port}'), 'fixture-auth');
       final calls = <String>[];
       final queries = <Uri>[];
-      var monitoringDown = false;
+      var monitoringDown = false, denied = false;
+      final captureKey = GlobalKey();
       final host = {
         'host_id': 'host_fixture',
         'display_name': 'Server A',
@@ -42,8 +53,8 @@ void main() {
       server.listen((request) async {
         expect(request.headers.value('authorization'), 'Bearer fixture-auth');
         final path = request.uri.path;
-        if (monitoringDown && path.startsWith('/v1/monitoring')) {
-          request.response.statusCode = 503;
+        if ((monitoringDown || denied) && path.startsWith('/v1/monitoring')) {
+          request.response.statusCode = denied ? 403 : 503;
           request.response.write(
               '{"schema_version":1,"error":{"code":"MONITOR_UNAVAILABLE"}}');
           await request.response.close();
@@ -121,7 +132,8 @@ void main() {
       }
 
       try {
-        await tester.pumpWidget(OdessyApp(api: api));
+        await tester.pumpWidget(
+            RepaintBoundary(key: captureKey, child: OdessyApp(api: api)));
         await ready(() => find.text('Server A').evaluate().isNotEmpty);
         expect(find.text('DEMO'), findsNothing);
         expect(find.text('Jetson'), findsNothing);
@@ -157,6 +169,42 @@ void main() {
         expect(find.text('Ready'), findsOneWidget);
         expect(find.text('DEMO'), findsNothing);
         expect(find.text('Jetson'), findsNothing);
+
+        monitoringDown = false;
+        denied = true;
+        await tester.tap(find.byTooltip('Refresh devices'));
+        await ready(
+            () => find.textContaining('HTTP 403').evaluate().isNotEmpty);
+        await tester.ensureVisible(find.byKey(const ValueKey('nav-Devices')));
+        await tester.tap(find.byKey(const ValueKey('nav-Devices')));
+        await tester.pumpAndSettle();
+        expect(find.text('33.3%'), findsNothing);
+        expect(find.text('Server A'), findsNothing);
+        expect(find.text('DEMO'), findsNothing);
+        expect(tester.takeException(), isNull);
+        if (const bool.fromEnvironment('CAPTURE_WIRED')) {
+          tester
+              .state<ScrollableState>(find
+                  .descendant(
+                      of: find.byKey(const Key('device-sidebar-scroll')),
+                      matching: find.byType(Scrollable))
+                  .first)
+              .position
+              .jumpTo(0);
+          await tester.pumpAndSettle();
+          await tester.runAsync(() async {
+            final boundary = captureKey.currentContext!.findRenderObject()!
+                as RenderRepaintBoundary;
+            final frame = await boundary.toImage(pixelRatio: 1);
+            final bytes =
+                await frame.toByteData(format: ui.ImageByteFormat.png);
+            final dir = Directory('../../docs/view');
+            await dir.create(recursive: true);
+            await File('${dir.path}/11-devices-permission-denied.png')
+                .writeAsBytes(bytes!.buffer.asUint8List());
+            frame.dispose();
+          });
+        }
         api.close();
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pump();

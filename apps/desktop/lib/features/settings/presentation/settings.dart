@@ -3,6 +3,8 @@ import '../../../app/ux_copy.dart';
 import 'package:odessy_client/odessy_client.dart';
 import '../../../app/setup/native_picker.dart';
 import '../controllers/component_settings_controller.dart';
+import '../controllers/desktop_preferences_controller.dart';
+import 'appearance_preferences.dart';
 import 'component_settings_pane.dart';
 import 'settings_navigation.dart';
 import 'model_profiles.dart';
@@ -68,12 +70,14 @@ class SettingsPage extends StatefulWidget {
     this.voiceEnabled = false,
     this.themeMode = ThemeMode.dark,
     this.onToggleTheme,
+    this.preferencesController,
   });
 
   final DesktopSession controller;
   final VoidCallback? onStartNewSession;
   final SetupBackend? configurationBackend;
   final ComponentSettingsController? componentController;
+  final DesktopPreferencesController? preferencesController;
   final ReadinessController? readiness;
   final VoidCallback? onRestartSaved;
   final SettingsFormController<int>? formController;
@@ -241,8 +245,14 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Widget _rail(BuildContext context) => SizedBox(
-      width: 236,
+      width: 206,
       child: ListView(shrinkWrap: true, children: [
+        Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 0, 18),
+            child: Semantics(
+                header: true,
+                child: Text('Preferences',
+                    style: Theme.of(context).textTheme.bodySmall))),
         for (final name in SettingsSections.all)
           ListTile(
               key: ValueKey('settings-section-$name'),
@@ -253,6 +263,19 @@ class _SettingsPageState extends State<SettingsPage> {
               selectedColor: Theme.of(context).colorScheme.onSecondaryContainer,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(10)),
+              minVerticalPadding: 18,
+              leading: Icon(
+                  switch (name) {
+                    SettingsSections.general => Icons.tune,
+                    SettingsSections.models => Icons.hub_outlined,
+                    SettingsSections.stt => Icons.hearing_outlined,
+                    SettingsSections.tts => Icons.record_voice_over_outlined,
+                    SettingsSections.voice => Icons.mic_none,
+                    SettingsSections.devices => Icons.shield_outlined,
+                    SettingsSections.advanced => Icons.code,
+                    _ => Icons.inventory_2_outlined
+                  },
+                  size: 19),
               title: Text(name, style: Theme.of(context).textTheme.labelLarge),
               onTap: () => _selectSection(name)),
       ]));
@@ -283,10 +306,36 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!await confirmSettingsNavigation(context, components) || !mounted) {
         return;
       }
+      if (!await _confirmAppearanceDiscard() || !mounted) return;
       setState(() => section = name);
     } finally {
       changingSection = false;
     }
+  }
+
+  /// Appearance is a separate local owner with its own draft; leaving the
+  /// section must not silently save or drop it.
+  Future<bool> _confirmAppearanceDiscard() async {
+    final preferences = widget.preferencesController;
+    if (preferences?.saving == true) return false;
+    if (preferences == null || !preferences.dirty) return true;
+    final discard = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+                title: const Text('Discard appearance changes?'),
+                content: const Text(
+                    'The appearance draft has not been saved to this device.'),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Keep editing')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Discard changes')),
+                ]));
+    if (discard != true) return false;
+    await preferences.discard();
+    return !preferences.dirty;
   }
 
   @override
@@ -297,7 +346,7 @@ class _SettingsPageState extends State<SettingsPage> {
         if (widget.readiness != null) widget.readiness!
       ]),
       builder: (context, _) => SettingsScaffold(
-          title: DesktopCopy.settingsTitle,
+          title: section,
           description: DesktopCopy.settingsDescription,
           navigation: _rail(context),
           compactNavigation: _narrowPicker(context),
@@ -386,6 +435,8 @@ class _SettingsPageState extends State<SettingsPage> {
                           ? 'Use light theme'
                           : 'Use dark theme'))),
           ]),
+          if (widget.preferencesController != null)
+            AppearancePreferences(controller: widget.preferencesController!),
           _card(context, 'Collaboration', [_collaborationForm(context)]),
         ],
         if (section == SettingsSections.models) ...[

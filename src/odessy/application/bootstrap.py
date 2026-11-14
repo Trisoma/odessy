@@ -172,6 +172,7 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
         # the same engine explicitly; naming a different one is a refusal, never a switch.
         runtime_selection = restored_runtime_selection(runtime_selection, record)
     from odessy import cli
+    configured_workspace = workspace is not None
     workspace = Path(workspace or Path.cwd()).resolve()
     config = load_config()
     from odessy.models.usage import process_ledger
@@ -276,6 +277,13 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
         def agent_factory(chosen, confirm=None):
             agent = cli._build_agent(workspace, chosen, servers, mode=mode)
             agent._confirm_action = controller.confirm_action
+            inspector = getattr(controller, '_workspace_inspector', None)
+            if inspector is not None:
+                from odessy.application.workspace_inspector import bind_write_review
+                async def bind_review(plan, request):
+                    return await bind_write_review(plan, request, inspector, controller.id,
+                                                   sanitize=controller._public)
+                agent._bind_action_review = bind_review
             agent._delegation_jobs = jobs
             agent._delegation_runs = runs
             agent._delegation_grants = grants
@@ -291,6 +299,15 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
             collaboration=service, jobs=jobs, config=config, audit=audit,
             durable=store, session_id=restored_id, resume=restore_request,
             runtime_selection=runtime_selection)
+        # Only an explicitly configured local root may be exposed to inspection.
+        if configured_workspace:
+            from odessy.runtime.hooks import load_hooks
+            controller._workspace_policy_factory = lambda: cli._build_policy(workspace, load_hooks(workspace))
+            controller._workspace_root = workspace
+            from odessy.tools.lan_executor import current as local_target
+            from odessy.config.deployment import deployment_mode
+            controller._workspace_authorized = lambda: local_target() is None and deployment_mode() == 'single'
+
         if interactive:
             from odessy.interaction.terminal import TerminalInteractionHandler, TerminalUnavailable
             keyboard = TerminalInteractionHandler(controller.interactions, stop_turn=controller.stop)

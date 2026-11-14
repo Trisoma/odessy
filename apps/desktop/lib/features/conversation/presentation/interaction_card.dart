@@ -7,7 +7,11 @@ import '../../../app/theme.dart';
 
 class InteractionCard extends StatefulWidget {
   const InteractionCard(
-      {super.key, required this.entry, required this.controller});
+      {super.key,
+      required this.entry,
+      required this.controller,
+      this.onInspectDiff});
+  final VoidCallback? onInspectDiff;
   final Json entry;
   final DesktopSession controller;
   @override
@@ -87,162 +91,171 @@ class _InteractionCardState extends State<InteractionCard> {
           return Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
               child: Card(
+                  color: approval
+                      ? Color.alphaBlend(
+                          Theme.of(context)
+                              .colorScheme
+                              .tertiaryContainer
+                              .withValues(alpha: .28),
+                          Theme.of(context).colorScheme.surface)
+                      : null,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(
+                          color: approval
+                              ? Theme.of(context)
+                                  .colorScheme
+                                  .tertiary
+                                  .withValues(alpha: .5)
+                              : Theme.of(context).dividerColor)),
                   child: Padding(
-                padding: const EdgeInsets.all(OdessyTokens.spaceLarge),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Wrap(
-                          spacing: 16,
-                          runSpacing: 8,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            Row(mainAxisSize: MainAxisSize.min, children: [
-                              Icon(
-                                  approval
-                                      ? Icons.shield_outlined
-                                      : Icons.help_outline,
-                                  size: 20,
-                                  color: Theme.of(context).colorScheme.primary),
-                              const SizedBox(width: 8),
-                              Flexible(
-                                  child: Semantics(
-                                      header: true,
-                                      child: Text(
-                                          approval
-                                              ? 'Approval required'
-                                              : question
-                                                  ? 'One detail needed'
-                                                  : 'Request unavailable',
+                    padding: const EdgeInsets.all(OdessyTokens.spaceLarge),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Wrap(
+                              spacing: 16,
+                              runSpacing: 8,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Row(mainAxisSize: MainAxisSize.min, children: [
+                                  Icon(
+                                      approval
+                                          ? Icons.shield_outlined
+                                          : Icons.help_outline,
+                                      size: 20,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .primary),
+                                  const SizedBox(width: 8),
+                                  Flexible(
+                                      child: Semantics(
+                                          header: true,
+                                          child: Text(
+                                              approval
+                                                  ? 'Approval required'
+                                                  : question
+                                                      ? 'One detail needed'
+                                                      : 'Request unavailable',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .titleMedium))),
+                                ]),
+                                Text(
+                                    remaining > 0
+                                        ? 'Expires in ${remaining}s'
+                                        : 'Expired',
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall),
+                              ]),
+                          const SizedBox(height: 16),
+                          Text(approval
+                              ? _format(e['authoritative_prompt'] ??
+                                  e['prompt'] ??
+                                  'Review this exact action.')
+                              : _format(e['question'] ??
+                                  'Review the service request.')),
+                          const SizedBox(height: 16),
+                          if (approval) ...[
+                            Wrap(spacing: 24, runSpacing: 8, children: [
+                              for (final field in approvalFacts(e).take(4))
+                                Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(field.$1,
                                           style: Theme.of(context)
                                               .textTheme
-                                              .titleMedium))),
+                                              .bodySmall),
+                                      SelectableText(field.$2),
+                                    ]),
                             ]),
-                            Text(
-                                remaining > 0
-                                    ? 'Expires in ${remaining}s'
-                                    : 'Expired',
+                            const SizedBox(height: 10),
+                            Text('Exact arguments',
                                 style: Theme.of(context).textTheme.bodySmall),
-                          ]),
-                      const SizedBox(height: 16),
-                      Text(approval
-                          ? _format(e['authoritative_prompt'] ??
-                              e['prompt'] ??
-                              'Review this exact action.')
-                          : _format(
-                              e['question'] ?? 'Review the service request.')),
-                      const SizedBox(height: 16),
-                      if (approval) ...[
-                        for (final field in approvalFacts(e).take(4))
-                          _detail(context, field.$1, field.$2),
-                        if (!e.containsKey('arguments'))
-                          _detail(context, 'Exact arguments', 'not reported'),
-                        if (e.containsKey('arguments')) ...[
-                          const SizedBox(height: 12),
-                          Text('Exact arguments',
-                              style: Theme.of(context).textTheme.labelLarge),
-                          const SizedBox(height: 8),
-                          Container(
-                              padding: const EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .surfaceContainerLow,
-                                  borderRadius: BorderRadius.circular(
-                                      OdessyTokens.radiusSmall)),
-                              child: SelectableText(_format(e['arguments']),
-                                  style:
-                                      Theme.of(context).textTheme.bodySmall)),
-                        ],
-                      ],
-                      ExpansionTile(
-                          title: const Text('Details'),
-                          tilePadding: EdgeInsets.zero,
-                          expandedCrossAxisAlignment:
-                              CrossAxisAlignment.stretch,
-                          children: [
-                            SelectableText(_format(e),
-                                style: Theme.of(context).textTheme.bodySmall)
-                          ]),
-                      if (unavailable != null)
-                        Padding(
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: Text(unavailable)),
-                      if (approval)
-                        Wrap(spacing: 10, runSpacing: 8, children: [
-                          OutlinedButton(
-                              onPressed: enabled
-                                  ? () => c.resolve(e, approved: false)
-                                  : null,
-                              child: const Text('Deny')),
-                          FilledButton(
-                              onPressed: enabled
-                                  ? () => c.resolve(e, approved: true)
-                                  : null,
-                              child: const Text('Approve once')),
-                        ]),
-                      if (question) ...[
-                        Wrap(spacing: 8, runSpacing: 8, children: [
-                          for (final choice in (e['choices'] is List
-                                  ? e['choices'] as List
-                                  : const [])
-                              .whereType<String>())
-                            OutlinedButton(
-                                onPressed: enabled
-                                    ? () => c.resolve(e, answer: choice)
-                                    : null,
-                                child: Text(choice)),
-                        ]),
-                        if (e['allow_free_text'] == true) ...[
-                          const SizedBox(height: 12),
-                          TextField(
-                              controller: answer,
-                              enabled: enabled,
-                              minLines: 1,
-                              maxLines: 4,
-                              onChanged: (_) => setState(() {}),
-                              decoration: const InputDecoration(
-                                  labelText: 'Your answer')),
-                          const SizedBox(height: 12),
-                          Align(
-                              alignment: Alignment.centerLeft,
-                              child: FilledButton(
-                                  onPressed:
-                                      enabled && answer.text.trim().isNotEmpty
+                            SelectableText(
+                                e.containsKey('arguments')
+                                    ? _format(e['arguments'])
+                                    : 'not reported',
+                                style: const TextStyle(
+                                    fontFamily: 'OdessyMono', fontSize: 12)),
+                          ],
+                          ExpansionTile(
+                              title: const Text('Details'),
+                              tilePadding: EdgeInsets.zero,
+                              expandedCrossAxisAlignment:
+                                  CrossAxisAlignment.stretch,
+                              children: [
+                                SelectableText(_format(e),
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall),
+                              ]),
+                          if (unavailable != null)
+                            Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: Text(unavailable)),
+                          if (approval)
+                            Wrap(spacing: 10, runSpacing: 8, children: [
+                              if (widget.onInspectDiff != null)
+                                TextButton.icon(
+                                    onPressed: widget.onInspectDiff,
+                                    icon: const Icon(Icons.difference_outlined,
+                                        size: 18),
+                                    label: const Text('Inspect diff')),
+                              OutlinedButton(
+                                  onPressed: enabled
+                                      ? () => c.resolve(e, approved: false)
+                                      : null,
+                                  child: const Text('Deny')),
+                              FilledButton(
+                                  onPressed: enabled
+                                      ? () => c.resolve(e, approved: true)
+                                      : null,
+                                  child: const Text('Approve once')),
+                            ]),
+                          if (question) ...[
+                            Wrap(spacing: 8, runSpacing: 8, children: [
+                              for (final choice in (e['choices'] is List
+                                      ? e['choices'] as List
+                                      : const [])
+                                  .whereType<String>())
+                                OutlinedButton(
+                                    onPressed: enabled
+                                        ? () => c.resolve(e, answer: choice)
+                                        : null,
+                                    child: Text(choice)),
+                            ]),
+                            if (e['allow_free_text'] == true) ...[
+                              const SizedBox(height: 12),
+                              TextField(
+                                  controller: answer,
+                                  enabled: enabled,
+                                  minLines: 1,
+                                  maxLines: 4,
+                                  onChanged: (_) => setState(() {}),
+                                  decoration: const InputDecoration(
+                                      labelText: 'Your answer')),
+                              const SizedBox(height: 12),
+                              Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: FilledButton(
+                                      onPressed: enabled &&
+                                              answer.text.trim().isNotEmpty
                                           ? () => c.resolve(e,
                                               answer: answer.text.trim())
                                           : null,
-                                  child: const Text('Answer'))),
-                        ],
-                      ],
-                      const SizedBox(height: 12),
-                      Text(
-                          approval
-                              ? 'One-use authorization for this exact action. Stop does not undo completed work.'
-                              : 'Your answer supplies information. It does not grant permission.',
-                          style: Theme.of(context).textTheme.bodySmall),
-                    ]),
-              )));
+                                      child: const Text('Answer'))),
+                            ],
+                          ],
+                          const SizedBox(height: 12),
+                          Text(
+                              approval
+                                  ? 'One-use authorization for this exact action. Stop does not undo completed work.'
+                                  : 'Your answer supplies information. It does not grant permission.',
+                              style: Theme.of(context).textTheme.bodySmall),
+                        ]),
+                  )));
         },
-      );
-
-  Widget _detail(BuildContext context, String label, String value) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: LayoutBuilder(builder: (context, box) {
-          final heading =
-              Text(label, style: Theme.of(context).textTheme.bodySmall);
-          final content = SelectableText(value);
-          if (box.maxWidth < 480) {
-            return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [heading, const SizedBox(height: 4), content]);
-          }
-          return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            SizedBox(width: 150, child: heading),
-            const SizedBox(width: 12),
-            Expanded(child: content),
-          ]);
-        }),
       );
 }
 
