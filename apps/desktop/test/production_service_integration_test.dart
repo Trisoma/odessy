@@ -68,6 +68,14 @@ void main() {
           return value as T;
         }
 
+        /// Bounded pumps: a pending interaction or live turn keeps scheduling
+        /// frames, so `pumpAndSettle` would time out instead of asserting.
+        Future<void> settleFrames() async {
+          for (var i = 0; i < 8; i++) {
+            await tester.pump(const Duration(milliseconds: 60));
+          }
+        }
+
         await until(() =>
             find.byType(ConversationPage).evaluate().isNotEmpty &&
             tester
@@ -135,14 +143,16 @@ void main() {
         await send('propose fixture change');
         await until(() => session.session!.pending.isNotEmpty);
         await tester.ensureVisible(find.text('Inspect diff'));
-        await tester.pumpAndSettle();
+        // A pending approval intentionally keeps an indeterminate indicator
+        // running, so pumpAndSettle cannot be used here.
+        await settleFrames();
         await tester.tap(find.text('Inspect diff'));
         await until(() =>
             find.byType(WorkspaceInspector).evaluate().isNotEmpty &&
             inspector.changes.isNotEmpty);
         expect(inspector.changes.single.path, 'readme.txt');
         await tester.ensureVisible(find.text('Approve exact request'));
-        await tester.pumpAndSettle();
+        await settleFrames();
         await tester.tap(find.text('Approve exact request'));
         await until(() => session.session!.messages.any(
             (m) => m.text == 'Fixture change applied after exact approval'));

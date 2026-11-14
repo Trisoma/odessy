@@ -112,7 +112,9 @@ class DesktopPreferencesController extends ChangeNotifier {
         _saving ||
         _conflict ||
         revision == null ||
-        (theme == null && !dirty)) return false;
+        (theme == null && !dirty)) {
+      return false;
+    }
     final currentDraft = _draft;
     final draft = theme == null
         ? currentDraft!

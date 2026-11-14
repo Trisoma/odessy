@@ -237,7 +237,9 @@ class WorkspaceInspectorController extends ChangeNotifier {
       }
       if (!_current(epoch) ||
           !_pending.contains(proposal.requestId) ||
-          !_canRespond(proposal.requestId)) return;
+          !_canRespond(proposal.requestId)) {
+        return;
+      }
       await resolveApproval!(proposal.sessionId, proposal.requestId, approved);
       if (!_current(epoch)) return;
       _pending.remove(proposal.requestId);

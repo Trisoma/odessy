@@ -59,6 +59,10 @@ void main() {
     await tester.tap(find.byTooltip('Toggle light / dark theme'));
     await settle();
     await tester.runAsync(() => capture('settings-tts-dark'));
+    // The settings pane may still hold its bounded setup-request timeout after
+    // the captures; unmount and elapse it so teardown has no pending timer.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 31));
   });
 }
 

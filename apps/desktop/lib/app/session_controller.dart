@@ -477,8 +477,9 @@ class DesktopSession extends ChangeNotifier {
         );
       }
       final available = fresh.availableProfiles ?? await transport.profiles();
-      if (_disposed || epoch != _epoch || !identical(transport, api))
+      if (_disposed || epoch != _epoch || !identical(transport, api)) {
         return false;
+      }
       ++_epoch;
       _retry?.cancel();
       _retry = null;
