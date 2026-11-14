@@ -67,7 +67,7 @@ void main() {
     await tester.pumpWidget(OdessyApp(api: api, setupBackend: backend));
     await tester.pumpAndSettle();
     for (final title in ['Assistant', 'Workspaces', 'Devices', 'Settings']) {
-      expect(find.widgetWithText(ListTile, title), findsOneWidget);
+      expect(find.byKey(ValueKey('nav-$title')).hitTestable(), findsOneWidget);
     }
     expect(find.widgetWithText(ListTile, 'Monitor'), findsNothing);
     expect(find.widgetWithText(ListTile, 'Install Odessy'), findsNothing);
@@ -78,7 +78,7 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     await tester.pumpAndSettle();
     for (final title in ['Devices', 'Workspaces', 'Settings', 'Assistant']) {
-      await tester.tap(find.widgetWithText(ListTile, title));
+      await tester.tap(find.byKey(ValueKey('nav-$title')).hitTestable());
       await tester.pumpAndSettle();
     }
     expect((await api.snapshot('demo')).pending, hasLength(1));

@@ -87,7 +87,11 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(OdessyApp(api: DemoApi(delay: Duration.zero)));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Jetson'));
+    await tester.tap(find.byKey(const ValueKey('nav-Devices')).hitTestable());
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+        of: find.byKey(const ValueKey('host-card-host_demo_jetson')),
+        matching: find.widgetWithText(TextButton, 'View details')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Settings').last);
     await tester.pumpAndSettle();

@@ -1,3 +1,5 @@
+import 'component_settings_test.dart' show SavedComponents;
+import 'settings_presentation_test.dart' show selectSettingsSection;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -33,7 +35,8 @@ void main() {
               ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf')))
             .load();
       }
-      await tester.pumpWidget(OdessyApp(api: DemoApi(delay: Duration.zero)));
+      await tester.pumpWidget(OdessyApp(
+          api: DemoApi(delay: Duration.zero), setupBackend: SavedComponents()));
       await tester.pumpAndSettle();
       final compact = size.width < 900;
       if (compact) {
@@ -42,30 +45,44 @@ void main() {
       }
 
       expect(tester.takeException(), isNull);
-      final footer = find.widgetWithText(ListTile, 'Settings');
+      final footer = find.byKey(const ValueKey('nav-Settings')).hitTestable();
       expect(footer.hitTestable(), findsOneWidget);
       final footerRect = tester.getRect(footer);
       expect(footerRect.bottom, lessThanOrEqualTo(size.height));
-      expect(tester.getRect(find.text('Demo · no tools execute')).bottom,
-          lessThanOrEqualTo(size.height));
-
-      final scrollable = find.descendant(
-          of: find.byKey(const Key('device-sidebar-scroll')),
-          matching: find.byType(Scrollable));
-      await tester.scrollUntilVisible(find.text('Tools & installation'), 160,
-          scrollable: scrollable);
+      // Maintenance now lives in Settings; hosts are selected from Devices.
+      // The pinned rail footer must remain reachable at every short viewport.
+      await tester.tap(footer);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Tools & installation'));
+      await selectSettingsSection(tester, 'Installation');
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(find.text('Runtime maintenance'), 160,
-          scrollable: scrollable);
-      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Runtime maintenance'));
       expect(find.text('Runtime maintenance').hitTestable(), findsOneWidget);
-      expect(tester.getRect(footer), footerRect);
-      await tester.scrollUntilVisible(find.text('Jetson'), -160,
-          scrollable: scrollable);
+      await tester.tap(find.text('Runtime maintenance'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Jetson'));
+      expect(find.byKey(const ValueKey('native-root')), findsOneWidget);
+      await tester.tap(find.byTooltip('Back to Settings'));
+      await tester.pumpAndSettle();
+      if (compact) {
+        await tester.tap(find.byTooltip('Open navigation menu'));
+        await tester.pumpAndSettle();
+      }
+      expect(tester.getRect(footer), footerRect);
+      await tester.tap(find.byKey(const ValueKey('nav-Devices')).hitTestable());
+      await tester.pumpAndSettle();
+      final details = find.descendant(
+          of: find.byKey(const ValueKey('host-card-host_demo_jetson')),
+          matching: find.widgetWithText(TextButton, 'View details'));
+      if (details.evaluate().isEmpty) {
+        await tester.scrollUntilVisible(details, 120,
+            scrollable: find
+                .descendant(
+                    of: find.byKey(const Key('devices-overview-scroll')),
+                    matching: find.byType(Scrollable))
+                .first);
+      }
+      await tester.ensureVisible(details);
+      await tester.pumpAndSettle();
+      await tester.tap(details);
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('device-detail-scroll')), findsOneWidget);
       if (compact) {
@@ -73,13 +90,8 @@ void main() {
         await tester.pumpAndSettle();
       }
       expect(tester.getRect(footer), footerRect);
-
       await tester.tap(footer);
       await tester.pumpAndSettle();
-      if (compact) {
-        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        await tester.pumpAndSettle();
-      }
       expect(find.text('Preferences').hitTestable(), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());

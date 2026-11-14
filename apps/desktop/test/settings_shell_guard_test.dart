@@ -93,7 +93,7 @@ Future<void> _settings(WidgetTester tester) async {
     await tester.tap(drawer);
     await tester.pumpAndSettle();
   }
-  await tester.tap(find.widgetWithText(ListTile, 'Settings'));
+  await tester.tap(find.byKey(const ValueKey('nav-Settings')).hitTestable());
   await tester.pumpAndSettle();
   if (drawer.evaluate().isNotEmpty) {
     final scaffold = tester.state<ScaffoldState>(find.byType(Scaffold).first);
@@ -157,16 +157,16 @@ void main() {
     final api = _TrackedApi();
     await _mount(tester, api);
     api.readGate = Completer<Json>();
-    await tester.tap(find.widgetWithText(ListTile, 'Settings'));
+    await tester.tap(find.byKey(const ValueKey('nav-Settings')).hitTestable());
     await tester.pump();
-    await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
+    await tester.tap(find.byKey(const ValueKey('nav-Assistant')).hitTestable());
     await tester.pump();
     expect(find.text('Preferences'), findsOneWidget);
     expect(await tester.binding.handleRequestAppExit(), AppExitResponse.cancel);
     expect(api.closed, false);
     api.readGate!.complete(api.document);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
+    await tester.tap(find.byKey(const ValueKey('nav-Assistant')).hitTestable());
     await tester.pumpAndSettle();
     expect(find.text('Preferences'), findsNothing);
     await tester.pumpWidget(const SizedBox());
@@ -177,7 +177,7 @@ void main() {
     await _mount(tester, api);
     await _settings(tester);
     await editLimit(tester, '4');
-    await tester.tap(find.widgetWithText(ListTile, 'Settings'));
+    await tester.tap(find.byKey(const ValueKey('nav-Settings')).hitTestable());
     await tester.tap(find.byTooltip('Toggle light / dark theme'));
     await tester.pumpAndSettle();
     expect(find.text('Discard unsaved changes?'), findsNothing);
@@ -191,14 +191,16 @@ void main() {
       await _mount(tester, api);
       await _settings(tester);
       await editLimit(tester, draft);
-      await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
+      await tester
+          .tap(find.byKey(const ValueKey('nav-Assistant')).hitTestable());
       await tester.pumpAndSettle();
       expect(find.text('Unsaved collaboration setting'), findsOneWidget);
       await _answer(tester, 'Cancel');
       expect(tester.widget<TextField>(limitField).controller!.text, draft);
       expect(api.writes, 0);
       expect(api.closed, false);
-      await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
+      await tester
+          .tap(find.byKey(const ValueKey('nav-Assistant')).hitTestable());
       await tester.pumpAndSettle();
       await _answer(tester, 'Discard changes');
       expect(find.text('Preferences'), findsNothing);
@@ -212,11 +214,15 @@ void main() {
       (tester) async {
     final api = _TrackedApi();
     await _mount(tester, api);
-    await tester.tap(find.text('Jetson'));
+    await tester.tap(find.byKey(const ValueKey('nav-Devices')).hitTestable());
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+        of: find.byKey(const ValueKey('host-card-host_demo_jetson')),
+        matching: find.widgetWithText(TextButton, 'View details')));
     await tester.pumpAndSettle();
     await _settings(tester);
     await editLimit(tester, '4');
-    await tester.tap(find.text('Laptop host'));
+    await tester.tap(find.byKey(const ValueKey('nav-Devices')).hitTestable());
     await tester.pumpAndSettle();
     await _answer(tester, 'Cancel');
     await selectSettingsSection(tester, SettingsSections.devices);
@@ -265,7 +271,7 @@ void main() {
     api.failWrite = true;
     await tester.tap(saveSettingsButton);
     await tester.pump();
-    await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
+    await tester.tap(find.byKey(const ValueKey('nav-Assistant')).hitTestable());
     await tester.pump();
     expect(await tester.binding.handleRequestAppExit(), AppExitResponse.cancel);
     expect(api.closed, false);
@@ -273,7 +279,7 @@ void main() {
     expect(find.text('Preferences'), findsOneWidget);
     api.writeGate!.complete();
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
+    await tester.tap(find.byKey(const ValueKey('nav-Assistant')).hitTestable());
     await tester.pumpAndSettle();
     await _answer(tester, 'Cancel');
     expect(tester.widget<TextField>(limitField).controller!.text, '4');
@@ -287,12 +293,12 @@ void main() {
     await editLimit(tester, '4');
     await tester.tap(saveSettingsButton);
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
+    await tester.tap(find.byKey(const ValueKey('nav-Assistant')).hitTestable());
     await tester.pumpAndSettle();
     expect(find.text('Discard unsaved changes?'), findsNothing);
     await _settings(tester);
     expect(tester.widget<TextField>(limitField).controller!.text, '4');
-    await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
+    await tester.tap(find.byKey(const ValueKey('nav-Assistant')).hitTestable());
     await tester.pumpAndSettle();
     expect(find.text('Preferences'), findsNothing);
     await tester.pumpWidget(const SizedBox());
@@ -340,7 +346,7 @@ void main() {
     await editLimit(tester, '4');
     await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
+    await tester.tap(find.byKey(const ValueKey('nav-Assistant')).hitTestable());
     await tester.pumpAndSettle();
     await _answer(tester, 'Cancel');
     final scaffold = tester.state<ScaffoldState>(find.byType(Scaffold).first);

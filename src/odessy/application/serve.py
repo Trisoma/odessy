@@ -64,7 +64,7 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
 
     history = UsageHistory(default_history_path())
     app = create_app(factory, config=load_config(), profiles=profiles, runtime_configuration=runtime_configuration, desktop_voice=desktop_voice,
-                     token=token, usage_history=history)
+                     token=token, usage_history=history, conversations_enabled=True)
     set_usage_history(history)
     address = f'[{host}]' if ':' in host else host
     print(f'[odessy] HTTP API: http://{address}:{port}', file=sys.stderr, flush=True)

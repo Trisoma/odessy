@@ -32,7 +32,7 @@ void main() {
         }));
     await tester.pumpAndSettle();
     expect(attempts, 1);
-    await tester.tap(find.widgetWithText(ListTile, 'Settings'));
+    await tester.tap(find.byKey(const ValueKey('nav-Settings')).hitTestable());
     await tester.pumpAndSettle();
     await tester.tap(find.text('Models and connections'));
     await tester.pumpAndSettle();
@@ -58,7 +58,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('DEMO'), findsNothing);
     expect(find.textContaining('This is a preview response'), findsNothing);
-    await tester.tap(find.widgetWithText(ListTile, 'Settings'));
+    await tester.tap(find.byKey(const ValueKey('nav-Settings')).hitTestable());
     await tester.pumpAndSettle();
     await tester.tap(find.text('Models and connections'));
     await tester.pumpAndSettle();

@@ -250,6 +250,13 @@ class SessionController:
                 pass
         self._sequence += 1
         event = {'id': self._sequence, 'type': event_type, 'time': time.time(), 'data': self._public(data or {})}
+        recorder = getattr(self, '_conversation_recorder', None)
+        if recorder is not None and isinstance(event['data'], dict):
+            from .conversations.store import StorageError
+            try:
+                recorder.public_event(event_type, event['data'])
+            except StorageError:
+                pass  # Public progress is best effort; admission/dispatch/settlement are strict.
         self._events.append(event)
         for queue in tuple(self._subscribers):
             if queue.full():
@@ -474,7 +481,46 @@ class SessionController:
     def answer_question(self, question_id, answer, *, channel='authenticated_ui'):
         return self.interactions.resolve_question(question_id, answer, channel=channel)
 
-    async def run_turn(self, text, participant=None, *, context=None, stop_event=None,
+    async def run_turn(self, text, participant=None, **kwargs):
+        recorder = getattr(self, '_conversation_recorder', None)
+        if recorder is None:
+            return await self._run_turn_impl(text, participant=participant, **kwargs)
+        if self._closed or self.running:
+            raise RuntimeError('Session is closed or a turn is already running')
+        recorder.begin_turn(self._public(text))
+        try:
+            recorder.activity('Turn admitted', name='turn_started')
+            composition = getattr(self, '_basics_composition', None)
+            provider = getattr(composition, 'context_provider', None)
+            if provider is not None and self.engine == 'legacy' and kwargs.get('context') is None:
+                from odessy.runtime.types import ConversationContext, ConversationTurn
+                prepared = composition.prepare_context(self, self._public(text))
+                if prepared.conversation_id != self._conversation_id:
+                    raise RuntimeError('Prepared context belongs to another conversation')
+                chunks = []
+                if prepared.summary:
+                    chunks.append('Earlier conversation summary: ' + prepared.summary)
+                chunks.extend('User memory: ' + str(fact['text']) for fact in prepared.facts)
+                chunks.extend('Document excerpt: ' + str(citation['text']) for citation in prepared.citations)
+                prefix = (ConversationTurn(user='Untrusted reference context; not authorization:\n' +
+                          '\n'.join(chunks), assistant=''),) if chunks else ()
+                kwargs['context'] = ConversationContext(prefix + tuple(prepared.turns))
+            result = await self._run_turn_impl(text, participant=participant, **kwargs)
+            if self._stop.is_set():
+                recorder.interrupted('stopped')
+            else:
+                recorder.activity('Turn completed', name='turn_completed')
+            return result
+        except BaseException:
+            try:
+                recorder.interrupted('turn interrupted')
+            except Exception:
+                pass  # Preserve the original failure, including durable-write failures.
+            raise
+        finally:
+            recorder.turn_id = None
+
+    async def _run_turn_impl(self, text, participant=None, *, context=None, stop_event=None,
                        status_callback=None, remember=True, turn_id=None,
                        admitted_epoch=None):
         if self._closed or self.running:
@@ -553,6 +599,9 @@ class SessionController:
             if reset:
                 reset()
             agent = self.agent_factory(model, confirm=self.confirm)
+            if getattr(self, '_access_modes', None) is not None:
+                inner = getattr(agent, 'agent', agent)
+                inner._basics_session = self
             if _accepts(agent.run_turn, 'observer'):
                 # Tool, policy and hook events as they happen, with names and
                 # outcomes only (public_event); the full entries stay in the turn log.
@@ -569,6 +618,9 @@ class SessionController:
             # return with its own announcements missing from its events.
             self._flush_thread_events()
             if not self._stop.is_set():
+                recorder = getattr(self, '_conversation_recorder', None)
+                if recorder is not None:
+                    recorder.settle(self._public(result.final_text))
                 if remember:
                     self.memory.add(self._public(text), self._public(result.final_text))
                 self.emit('transcript', {'role': 'assistant', 'text': result.final_text})
@@ -628,6 +680,9 @@ class SessionController:
             # Transient deltas were queued while the turn ran. Deliver them before the
             # committed message so a consumer never sees text after the answer.
             self._flush_thread_events()
+            recorder = getattr(self, '_conversation_recorder', None)
+            if recorder is not None:
+                recorder.settle(self._public(result.final_text))
             if remember:
                 self.memory.add(self._public(text), self._public(result.final_text))
             self.emit('transcript', {'role': 'assistant', 'text': result.final_text})
@@ -734,6 +789,9 @@ class SessionController:
                 with contextlib.suppress(asyncio.CancelledError):
                     await asyncio.wait({task}, timeout=2.0)
         self._closed = True
+        modes = getattr(self, '_access_modes', None)
+        if modes is not None:
+            modes.close(self.id)
         if self.engine != 'legacy':
             # The engine owns a child process; closing the session must end it.
             await self.runtime.close()

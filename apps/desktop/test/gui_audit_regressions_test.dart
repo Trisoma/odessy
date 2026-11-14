@@ -106,7 +106,8 @@ void main() {
       }
 
       await openNavigation();
-      await tester.tap(find.byKey(const ValueKey('nav-Workspaces')));
+      await tester
+          .tap(find.byKey(const ValueKey('nav-Workspaces')).hitTestable());
       await tester.pumpAndSettle();
       final original = tester
           .widget<TextField>(find.byKey(const ValueKey('component-workspace')))
@@ -115,7 +116,7 @@ void main() {
       await tester.enterText(
           find.byKey(const ValueKey('component-workspace')), '/draft');
       await openNavigation();
-      final trigger = find.byKey(const ValueKey('nav-Settings'));
+      final trigger = find.byKey(const ValueKey('nav-Settings')).hitTestable();
       await tester.tap(trigger);
       await tester.pumpAndSettle();
       final keep = find.widgetWithText(TextButton, 'Keep editing');
@@ -139,8 +140,8 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
       expect(find.text('Unsaved changes'), findsNothing);
-      expect(
-          tester.widget<ListTile>(trigger).focusNode?.hasPrimaryFocus, isTrue);
+      expect(tester.widget<IconButton>(trigger).focusNode?.hasPrimaryFocus,
+          isTrue);
       expect(
           tester
               .widget<TextField>(
@@ -153,8 +154,8 @@ void main() {
       expect(focusedInside(keep), isTrue);
       await tester.tap(keep);
       await tester.pumpAndSettle();
-      expect(
-          tester.widget<ListTile>(trigger).focusNode?.hasPrimaryFocus, isTrue);
+      expect(tester.widget<IconButton>(trigger).focusNode?.hasPrimaryFocus,
+          isTrue);
       if (width < 900) {
         tester.state<ScaffoldState>(find.byType(Scaffold).first).closeDrawer();
         await tester.pumpAndSettle();

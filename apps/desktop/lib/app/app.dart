@@ -437,6 +437,7 @@ class _OdessyAppState extends State<OdessyApp> {
   final navigatorKey = GlobalKey<NavigatorState>();
   final scaffoldKey = GlobalKey<ScaffoldState>();
   final navigationFocus = <String, FocusNode>{};
+  final drawerNavigationFocus = <String, FocusNode>{};
   final conversationDraft = TextEditingController();
   bool _navigating = false;
 
@@ -673,7 +674,7 @@ class _OdessyAppState extends State<OdessyApp> {
   @override
   void dispose() {
     unawaited(sessionModelCredentials.clear().catchError((Object _) {}));
-    for (final node in navigationFocus.values) {
+    for (final node in [...navigationFocus.values, ...drawerNavigationFocus.values]) {
       node.dispose();
     }
     lifecycle.dispose();
@@ -1126,7 +1127,7 @@ class _OdessyAppState extends State<OdessyApp> {
   }
 
   Widget _iconRail(BuildContext context, {bool drawer = false}) => AppIconRail(
-          navigationFocus: drawer ? null : navigationFocus,
+          navigationFocus: drawer ? drawerNavigationFocus : navigationFocus,
           settingsSelected: page == 'Settings',
           onSettings: _openSettings,
           destinations: [

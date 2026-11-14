@@ -122,7 +122,7 @@ void main() {
           DevicePage(device: 'Accessible workstation', controller: c),
           'Accessible workstation'
         ),
-        (ConversationPage(controller: c), 'odessy / assistant'),
+        (ConversationPage(controller: c), 'Connected'),
         (SettingsPage(controller: c), 'Preferences'),
         (
           SingleChildScrollView(

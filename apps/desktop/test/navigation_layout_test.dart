@@ -44,11 +44,11 @@ void main() {
 
   Future<void> nav(WidgetTester tester, String label,
       {bool settle = true}) async {
-    if (find.widgetWithText(ListTile, label).evaluate().isEmpty) {
+    if (find.byKey(ValueKey('nav-$label')).hitTestable().evaluate().isEmpty) {
       await tester.tap(find.byTooltip('Open navigation menu'));
       await tester.pumpAndSettle();
     }
-    await tester.tap(find.widgetWithText(ListTile, label));
+    await tester.tap(find.byKey(ValueKey('nav-$label')).hitTestable());
     if (settle) {
       await tester.pumpAndSettle();
     } else {
@@ -63,7 +63,11 @@ void main() {
     await tester
         .pumpWidget(OdessyApp(api: DemoApi(), setupBackend: SavedComponents()));
     await tester.pumpAndSettle();
-    Focus.of(tester.element(find.text('Workspaces'))).requestFocus();
+    tester
+        .widget<IconButton>(
+            find.byKey(const ValueKey('nav-Workspaces')).hitTestable())
+        .focusNode!
+        .requestFocus();
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();

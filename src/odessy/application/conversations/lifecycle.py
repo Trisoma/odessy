@@ -78,6 +78,28 @@ class ConversationRecorder:
         except StorageError:
             return  # transient: the settled answer still carries the truth
 
+    def public_event(self, event_type: str, data: Mapping[str, Any]) -> None:
+        """Retain only already-public bounded metadata, never tool arguments/results."""
+        if self.turn_id is None:
+            return
+        if event_type == 'delta':
+            self.delta(str(data.get('text') or '')[:16384])
+            return
+        fields = {
+            'tool': ('phase', 'name', 'status', 'call_id', 'batch_id'),
+            'policy': ('name', 'outcome', 'risk', 'call_id'),
+            'hook': ('event', 'name', 'hook', 'decision', 'failed', 'action'),
+            'progress': ('message',),
+            'stopped': ('reason', 'status'),
+            'error': ('message', 'error_type'),
+        }.get(event_type)
+        if fields is None:
+            return
+        safe = {key: _public_text(data[key])[:2048] for key in fields if key in data}
+        self.store.append(self.conversation_id, event_id=f'public:{uuid.uuid4().hex}',
+                          kind='activity', payload={'type': event_type, 'data': safe},
+                          created_at=self.clock())
+
     def settle(self, text: str) -> None:
         if self.turn_id is None:
             raise RuntimeError('No admitted turn to settle')

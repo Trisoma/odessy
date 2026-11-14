@@ -41,7 +41,7 @@ void main() {
         child: OdessyApp(
             api: SettingsFixtureApi(), setupBackend: SavedComponents())));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ListTile, 'Settings'));
+    await tester.tap(find.byKey(const ValueKey('nav-Settings')).hitTestable());
     await tester.pumpAndSettle();
     await tester.runAsync(() => capture('general-dark'));
     await selectSettingsSection(tester, SettingsSections.models);

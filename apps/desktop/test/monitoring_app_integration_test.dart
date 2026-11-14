@@ -134,6 +134,9 @@ void main() {
       try {
         await tester.pumpWidget(
             RepaintBoundary(key: captureKey, child: OdessyApp(api: api)));
+        await tester.pump();
+        await tester
+            .tap(find.byKey(const ValueKey('nav-Devices')).hitTestable());
         await ready(() => find.text('Server A').evaluate().isNotEmpty);
         expect(find.text('DEMO'), findsNothing);
         expect(find.text('Jetson'), findsNothing);
@@ -161,22 +164,39 @@ void main() {
                 (c) => c.contains('/v1/monitoring') && !c.startsWith('GET ')),
             isEmpty);
         monitoringDown = true;
-        await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
+        await tester
+            .tap(find.byKey(const ValueKey('nav-Devices')).hitTestable());
         await tester.pump();
-        await tester.tap(find.byTooltip('Refresh devices'));
+        if (find.text('All computers').evaluate().isNotEmpty) {
+          await tester.tap(find.text('All computers'));
+          await tester.pumpAndSettle();
+        }
+        await tester.tap(find.text('Refresh inventory'));
         await ready(
             () => find.textContaining('HTTP 503').evaluate().isNotEmpty);
+        await tester
+            .tap(find.byKey(const ValueKey('nav-Assistant')).hitTestable());
+        await tester.pumpAndSettle();
         expect(find.text('Ready'), findsOneWidget);
         expect(find.text('DEMO'), findsNothing);
         expect(find.text('Jetson'), findsNothing);
 
         monitoringDown = false;
         denied = true;
-        await tester.tap(find.byTooltip('Refresh devices'));
+        await tester
+            .tap(find.byKey(const ValueKey('nav-Devices')).hitTestable());
+        await tester.pumpAndSettle();
+        if (find.text('All computers').evaluate().isNotEmpty) {
+          await tester.tap(find.text('All computers'));
+          await tester.pumpAndSettle();
+        }
+        await tester.tap(find.text('Refresh inventory'));
         await ready(
             () => find.textContaining('HTTP 403').evaluate().isNotEmpty);
-        await tester.ensureVisible(find.byKey(const ValueKey('nav-Devices')));
-        await tester.tap(find.byKey(const ValueKey('nav-Devices')));
+        await tester.ensureVisible(
+            find.byKey(const ValueKey('nav-Devices')).hitTestable());
+        await tester
+            .tap(find.byKey(const ValueKey('nav-Devices')).hitTestable());
         await tester.pumpAndSettle();
         expect(find.text('33.3%'), findsNothing);
         expect(find.text('Server A'), findsNothing);

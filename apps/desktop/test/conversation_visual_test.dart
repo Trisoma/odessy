@@ -88,7 +88,8 @@ void main() {
     ];
     await page.controller.refresh();
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Activity & usage'));
+    await tester
+        .tap(find.byKey(const ValueKey('nav-Activity & usage')).hitTestable());
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Activity & provenance'));
     await tester.tap(find.text('Activity & provenance'));
@@ -115,7 +116,7 @@ void main() {
     await tester.runAsync(() => capture('usage-light'));
     await tester.tap(find.byTooltip('Toggle light / dark theme'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Assistant'));
+    await tester.tap(find.byKey(const ValueKey('nav-Assistant')).hitTestable());
     await tester.pumpAndSettle();
     api.pending = [interactionFixture()];
     await page.controller.refresh();

@@ -1166,7 +1166,26 @@ class OdessyAgent:
 
         if answered_before:
             revalidate()
-        await self._authorize(action, decision, plan, answer, log)
+        basics = getattr(self, '_basics_session', None)
+        mode_result = mode_input = None
+        if basics is not None and plan.scopes:
+            from odessy.application.agent_basics import ReviewInput
+            from odessy.application.workspace_inspector import ContentBoundApproval
+            modes = basics._access_modes
+            state = modes.snapshot(basics.id)
+            target = self._target_identity(action, registry)
+            mode_input = ReviewInput(
+                basics.id, basics._basics_service_instance, state['revision'],
+                action.name, plan.fingerprint, decision.action, decision.rule,
+                decision.risk, tuple(plan.scopes),
+                state['effective'] and target.get('host') == 'local',
+                plan.matches(action, decision, self._policy, execution_target=target),
+                isinstance(plan, ContentBoundApproval))
+            mode_result = modes.review(mode_input)
+            if mode_result.outcome == 'deny':
+                raise PermissionError('Access mode policy refused this action')
+        if mode_result is None or mode_result.outcome != 'approve':
+            await self._authorize(action, decision, plan, answer, log)
         # A stop during the question is not a refusal: the turn ends at its own check.
         if plan.scopes and not self._stop_requested(stop_event):
             revalidate()
@@ -1224,7 +1243,29 @@ class OdessyAgent:
                 # Issued only now, after the answer: the tool server refuses the call
                 # without it. The model never sets it (the contracts do not list it).
                 arguments[APPROVAL_ARGUMENT] = grants.issue(action.name)
-        return _BoundArguments(arguments, revalidate)
+        grant_consumed = False
+        recorded = False
+        def dispatch_checks():
+            nonlocal grant_consumed, recorded
+            revalidate()
+            if mode_input is not None:
+                state = basics._access_modes.snapshot(basics.id)
+                if state['revision'] != mode_input.mode_revision or (mode_result.outcome == 'approve' and not state['effective']):
+                    raise PermissionError('Session permissions changed before dispatch')
+                if mode_result.outcome == 'approve' and not grant_consumed:
+                    if not basics._access_modes.validate(mode_result, mode_input):
+                        raise PermissionError('Automatic approval expired or changed before dispatch')
+                    grant_consumed = True
+            if basics is not None and not recorded:
+                recorder = getattr(basics, '_conversation_recorder', None)
+                if recorder is not None:
+                    recorder.tool_call(plan.call_id, action.name)
+                recorded = True
+        bound = _BoundArguments(arguments, dispatch_checks)
+        if basics is not None:
+            bound._basics_recorder = getattr(basics, '_conversation_recorder', None)
+            bound._basics_call_id = plan.call_id
+        return bound
 
     async def _authorize(self, action, decision, plan, answer: bool | None, log) -> None:
         """Put the question to a person, on whichever channel this agent has.
@@ -1361,7 +1402,8 @@ class OdessyAgent:
 
         from odessy.authority.action_approval import build_action_approval
 
-        if self._confirm_action is not None or not callable(self._confirm_batch):
+        if (getattr(self, '_basics_session', None) is not None or
+                self._confirm_action is not None or not callable(self._confirm_batch)):
             return {}
         pending = []
         for call in calls:
@@ -1561,6 +1603,10 @@ class OdessyAgent:
                 if structured.get('status') != 'ok':
                     reason = structured.get('error') or structured.get('reason') or structured.get('status')
                     raise PermissionError(f'Clarification ended without an answer: {reason}')
+            recorder = getattr(arguments, '_basics_recorder', None)
+            if recorder is not None:
+                recorder.tool_result(arguments._basics_call_id, name,
+                                     'error' if _is_error_result(result) else 'ok')
             self._audit_call(name, result, started)
             return result
         except Exception as exc:

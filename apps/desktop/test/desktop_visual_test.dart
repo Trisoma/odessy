@@ -46,7 +46,11 @@ void main() {
     await tester.tap(find.byTooltip('Toggle light / dark theme'));
     await tester.pumpAndSettle();
     await tester.runAsync(() => capture('conversation-light'));
-    await tester.tap(find.text('Jetson'));
+    await tester.tap(find.byKey(const ValueKey('nav-Devices')).hitTestable());
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+        of: find.byKey(const ValueKey('host-card-host_demo_jetson')),
+        matching: find.widgetWithText(TextButton, 'View details')));
     await tester.pumpAndSettle();
     await tester.runAsync(() => capture('device-light'));
     await tester.tap(find.widgetWithText(OutlinedButton, 'History'));
@@ -57,7 +61,7 @@ void main() {
     await tester.runAsync(() => capture('integrated-history-dark'));
     await tester.tap(find.byTooltip('Toggle light / dark theme'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ListTile, 'Settings'));
+    await tester.tap(find.byKey(const ValueKey('nav-Settings')).hitTestable());
     await tester.pumpAndSettle();
     await tester.runAsync(() => capture('settings-light'));
     await tester.tap(
@@ -66,14 +70,14 @@ void main() {
     await tester.ensureVisible(find.byKey(const Key('consultation-limit')));
     await tester.enterText(find.byKey(const Key('consultation-limit')), '4');
     await tester.pump();
-    await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
+    await tester.tap(find.byKey(const ValueKey('nav-Assistant')).hitTestable());
     await tester.pumpAndSettle();
     await tester.runAsync(() => capture('settings-leave-light'));
     await tester.tap(find.widgetWithText(TextButton, 'Keep editing'));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Toggle light / dark theme'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(ListTile, 'Assistant'));
+    await tester.tap(find.byKey(const ValueKey('nav-Assistant')).hitTestable());
     await tester.pumpAndSettle();
     await tester.runAsync(() => capture('settings-leave-dark'));
     await tester.tap(find.widgetWithText(TextButton, 'Discard'));

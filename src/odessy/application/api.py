@@ -60,7 +60,7 @@ window.addEventListener('pagehide',()=>streamAbort?.abort());
 
 def create_app(controller_factory, *, config=None, settings=None, jobs=None, token=None,
                config_path=None, profiles=None, monitoring=None, runtime_configuration=None, desktop_voice=None,
-               usage_history=None, agent_basics=None):
+               usage_history=None, agent_basics=None, conversations_enabled=False):
     """Build an app; the caller owns loopback-only binding and displaying its token."""
     try:
         from fastapi import FastAPI, Request, HTTPException
@@ -96,6 +96,8 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             await monitoring.close()
         for controller in tuple(sessions.values()):
             await controller.close()
+        if conversations_enabled:
+            app.state.conversations.store.close()
         if jobs is not None:
             await jobs.close()
         zeroconf = getattr(app.state, 'zeroconf', None)
@@ -287,7 +289,10 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         return sessions[sid]
 
     def snapshot(controller):
-        return controller.public_snapshot()
+        value = controller.public_snapshot()
+        if getattr(controller, '_conversation_id', None):
+            value['conversation_id'] = controller._conversation_id
+        return value
 
     # Optional additive feature modules share existing authentication and live
     # session ownership. No new route or capability is enabled by default.
@@ -298,15 +303,23 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         app.state.agent_basics = agent_basics
         agent_basics.mount(app, BasicsDependencies(app.state.service_instance_id, find))
 
+    # Optional persistent composition: the normal serve entry enables it, tests
+    # and embedders retain the historical transient default unless requested.
+    if conversations_enabled:
+        from .basics_integration import PersistentComposition
+        composition = PersistentComposition(app, find, controller_factory,
+                                            config_path=config_path)
+        app.state.basics_composition = composition
+
     async def make_controller():
         nonlocal pending_admissions
         admission_open()
         pending_admissions += 1
+        controller = None
         try:
             try:
-                controller = controller_factory()
-                if inspect.isawaitable(controller):
-                    controller = await controller
+                created = controller_factory()
+                controller = await created if inspect.isawaitable(created) else created
             except CloudModelConfigError as exc:
                 raise HTTPException(503, public(str(exc))) from exc
             except RuntimeUnavailable as exc:
@@ -325,11 +338,21 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                 if not isinstance(exc.__cause__, CloudModelConfigError):
                     raise
                 raise HTTPException(503, public(str(exc.__cause__))) from exc
+            admission_open()
             if monitoring is not None and hasattr(monitoring, 'attach'):
                 await monitoring.attach(controller)
+            admission_open()
             return controller
+        except BaseException:
+            if controller is not None:
+                await controller.close()
+            raise
         finally:
             pending_admissions -= 1
+
+    if conversations_enabled:
+        composition.resume_allowed = admission_open
+        composition.factory = make_controller
 
     @app.get('/', response_class=HTMLResponse)
     async def diagnostic():
@@ -815,6 +838,12 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     async def new_session():
         controller = await make_controller()
         controller._workspace_inspector = workspace_inspector
+        if conversations_enabled:
+            try:
+                composition.attach(controller)
+            except BaseException:
+                await controller.close()
+                raise
         sessions[controller.id] = controller
         return snapshot(controller)
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import base64
 import binascii
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 import json
 import os
@@ -218,7 +218,7 @@ class ConversationStore:
                 os.close(fd)
             except FileExistsError:
                 pass
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             self._initialize(db)
 
     def _connect(self) -> sqlite3.Connection:

@@ -141,48 +141,52 @@ class _DevicesHubState extends State<DevicesHub> {
           listenable: c,
           builder: (context, _) {
             final hosts = c.hosts;
-            return ListView(padding: const EdgeInsets.all(24), children: [
-              Text('Computers and monitoring',
-                  style: Theme.of(context).textTheme.headlineSmall),
-              const SizedBox(height: 6),
-              const Text(
-                  'Identity, connection, telemetry and execution permissions are separate states. Inspecting a computer never changes the conversation coordinator.'),
-              const SizedBox(height: 16),
-              if (c.loadingInventory && hosts.isEmpty)
-                const LinearProgressIndicator(
-                    semanticsLabel: 'Loading computer inventory'),
-              if (c.inventoryError != null)
-                Card(
-                    child: ListTile(
-                        leading: const Icon(Icons.error_outline),
-                        title: const Text('Inventory needs attention'),
-                        subtitle: Text(c.inventoryError!),
-                        trailing: TextButton(
-                            onPressed: () => unawaited(c.refresh()),
-                            child: const Text('Retry')))),
-              if (hosts.isEmpty &&
-                  !c.loadingInventory &&
-                  c.inventoryError == null)
-                const Card(
-                    child: ListTile(
-                        leading: Icon(Icons.devices_other_outlined),
-                        title: Text('No verified computers yet'),
-                        subtitle: Text(
-                            'Connect a computer through pairing, or check monitoring access and grants. No device state is assumed.'))),
-              LayoutBuilder(builder: (context, box) {
-                final columns =
-                    box.maxWidth >= 900 ? 3 : (box.maxWidth >= 620 ? 2 : 1);
-                final width = (box.maxWidth - (columns - 1) * 12) / columns;
-                return Wrap(spacing: 12, runSpacing: 12, children: [
-                  for (final host in hosts)
-                    SizedBox(width: width, child: _hostCard(context, c, host)),
+            return ListView(
+                key: const Key('devices-overview-scroll'),
+                padding: const EdgeInsets.all(24),
+                children: [
+                  Text('Computers and monitoring',
+                      style: Theme.of(context).textTheme.headlineSmall),
+                  const SizedBox(height: 6),
+                  const Text(
+                      'Identity, connection, telemetry and execution permissions are separate states. Inspecting a computer never changes the conversation coordinator.'),
+                  const SizedBox(height: 16),
+                  if (c.loadingInventory && hosts.isEmpty)
+                    const LinearProgressIndicator(
+                        semanticsLabel: 'Loading computer inventory'),
+                  if (c.inventoryError != null)
+                    Card(
+                        child: ListTile(
+                            leading: const Icon(Icons.error_outline),
+                            title: const Text('Inventory needs attention'),
+                            subtitle: Text(c.inventoryError!),
+                            trailing: TextButton(
+                                onPressed: () => unawaited(c.refresh()),
+                                child: const Text('Retry')))),
+                  if (hosts.isEmpty &&
+                      !c.loadingInventory &&
+                      c.inventoryError == null)
+                    const Card(
+                        child: ListTile(
+                            leading: Icon(Icons.devices_other_outlined),
+                            title: Text('No verified computers yet'),
+                            subtitle: Text(
+                                'Connect a computer through pairing, or check monitoring access and grants. No device state is assumed.'))),
+                  LayoutBuilder(builder: (context, box) {
+                    final columns =
+                        box.maxWidth >= 900 ? 3 : (box.maxWidth >= 620 ? 2 : 1);
+                    final width = (box.maxWidth - (columns - 1) * 12) / columns;
+                    return Wrap(spacing: 12, runSpacing: 12, children: [
+                      for (final host in hosts)
+                        SizedBox(
+                            width: width, child: _hostCard(context, c, host)),
+                    ]);
+                  }),
+                  const SizedBox(height: 16),
+                  const Text(
+                      'Monitoring is read-only. It grants no execution or workspace access.',
+                      style: TextStyle(fontSize: 12)),
                 ]);
-              }),
-              const SizedBox(height: 16),
-              const Text(
-                  'Monitoring is read-only. It grants no execution or workspace access.',
-                  style: TextStyle(fontSize: 12)),
-            ]);
           });
 
   Widget _hostCard(BuildContext context, DeviceMonitoringController c,

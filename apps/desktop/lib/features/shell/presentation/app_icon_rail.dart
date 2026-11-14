@@ -36,6 +36,7 @@ class AppIconRail extends StatelessWidget {
                 ? null
                 : () {
                     focus?.requestFocus();
+                    FocusManager.instance.applyFocusChangesIfNeeded();
                     item.onTap!();
                   },
             icon: Icon(item.icon, size: 21)));

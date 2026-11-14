@@ -43,7 +43,11 @@ void main() {
       RepaintBoundary(key: key, child: OdessyApp(api: DemoApi())),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Jetson'));
+    await tester.tap(find.byKey(const ValueKey('nav-Devices')).hitTestable());
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(
+        of: find.byKey(const ValueKey('host-card-host_demo_jetson')),
+        matching: find.widgetWithText(TextButton, 'View details')));
     await tester.pumpAndSettle();
     await tester.runAsync(() => capture('overview-dark'));
     final deviceSettings = find.descendant(
@@ -56,7 +60,8 @@ void main() {
     await tester.tap(find.byTooltip('Toggle light / dark theme'));
     await tester.pumpAndSettle();
     await tester.runAsync(() => capture('settings-light'));
-    await tester.tap(find.text('Overview'));
+    await tester.tap(find.descendant(
+        of: find.byType(DevicePage), matching: find.text('Overview')));
     await tester.pumpAndSettle();
     await tester.runAsync(() => capture('overview-light'));
 

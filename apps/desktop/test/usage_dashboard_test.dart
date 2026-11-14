@@ -32,7 +32,8 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(OdessyApp(api: SingleUsageApi()));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Activity & usage'));
+    await tester
+        .tap(find.byKey(const ValueKey('nav-Activity & usage')).hitTestable());
     await tester.pumpAndSettle();
     final now = DateTime.now().toUtc();
     final today = DateTime.utc(now.year, now.month, now.day);
@@ -54,7 +55,8 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(OdessyApp(api: UsagePreviewApi()));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Activity & usage'));
+    await tester
+        .tap(find.byKey(const ValueKey('nav-Activity & usage')).hitTestable());
     await tester.pumpAndSettle();
     expect(find.text('Usage overview'), findsOneWidget);
     expect(find.textContaining('Demo data'), findsWidgets);
@@ -79,7 +81,7 @@ void main() {
     await tester.tap(find.text('Last 7 days').last);
     await tester.pumpAndSettle();
     expect(find.text('Last 7 days'), findsOneWidget);
-    await tester.tap(find.text('Assistant'));
+    await tester.tap(find.byKey(const ValueKey('nav-Assistant')).hitTestable());
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('composer')), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -103,7 +105,8 @@ void main() {
     await tester.pumpWidget(
         RepaintBoundary(key: key, child: OdessyApp(api: UsagePreviewApi())));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Activity & usage'));
+    await tester
+        .tap(find.byKey(const ValueKey('nav-Activity & usage')).hitTestable());
     await tester.pumpAndSettle();
     Future<void> capture(String name) async {
       final boundary =
@@ -128,8 +131,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pumpAndSettle();
-    expect(find.text('Activity & usage'), findsWidgets);
-    await tester.tap(find.text('Activity & usage').last);
+    expect(find.byKey(const ValueKey('nav-Activity & usage')).hitTestable(),
+        findsWidgets);
+    await tester.tap(
+        find.byKey(const ValueKey('nav-Activity & usage')).hitTestable().last);
     await tester.pumpAndSettle();
     await tester.runAsync(() => capture('narrow-large-text'));
     expect(find.text('Usage overview'), findsOneWidget);

@@ -132,11 +132,24 @@ Future<void> mountSettings(WidgetTester tester, DesktopSession c,
 Future<void> selectSettingsSection(WidgetTester tester, String name,
     {bool settle = true}) async {
   final rail = find.byKey(ValueKey('settings-section-$name'));
-  if (rail.evaluate().isNotEmpty) {
+  final picker = find.byKey(const Key('settings-section-picker'));
+  if (picker.evaluate().isEmpty) {
+    if (rail.evaluate().isEmpty) {
+      await tester.scrollUntilVisible(rail, 120,
+          scrollable: find
+              .descendant(
+                  of: find.byKey(const Key('settings-section-list')),
+                  matching: find.byType(Scrollable))
+              .first);
+    }
     await tester.ensureVisible(rail);
+    if (settle) {
+      await tester.pumpAndSettle();
+    } else {
+      await tester.pump();
+    }
     await tester.tap(rail);
   } else {
-    final picker = find.byKey(const Key('settings-section-picker'));
     await tester.ensureVisible(picker);
     await tester.tap(picker);
     await tester.pumpAndSettle();

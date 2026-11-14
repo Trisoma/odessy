@@ -47,10 +47,10 @@ void main() {
     await tester.tap(find.byTooltip('Toggle light / dark theme'));
     await settle();
     await tester.runAsync(() => capture('conversation-light'));
-    await tester.tap(find.widgetWithText(ListTile, 'Devices'));
+    await tester.tap(find.byKey(const ValueKey('nav-Devices')).hitTestable());
     await settle();
     await tester.runAsync(() => capture('device-light'));
-    await tester.tap(find.text('Settings'));
+    await tester.tap(find.byKey(const ValueKey('nav-Settings')).hitTestable());
     await settle();
     await tester.runAsync(() => capture('settings-light'));
     await tester.tap(find.text('Text to speech (TTS)'));

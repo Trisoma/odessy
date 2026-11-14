@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_desktop/app/app.dart';
 import 'package:odessy_desktop/features/devices/presentation/devices.dart';
-import 'package:odessy_desktop/features/shell/presentation/device_sidebar.dart';
 import 'package:odessy_desktop/features/conversation/presentation/conversation.dart';
 import 'package:odessy_client/odessy_client.dart';
 import 'component_settings_test.dart' show SavedComponents;
@@ -18,7 +17,8 @@ void main() {
     await tester.pumpWidget(
         OdessyApp(api: MalformedHistoryApi(), setupBackend: SavedComponents()));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Activity & usage'));
+    await tester
+        .tap(find.byKey(const ValueKey('nav-Activity & usage')).hitTestable());
     await tester.pumpAndSettle();
     expect(find.textContaining('Usage history is unavailable'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -37,7 +37,8 @@ void main() {
     await tester
         .pumpWidget(OdessyApp(api: api, setupBackend: SavedComponents()));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Activity & usage'));
+    await tester
+        .tap(find.byKey(const ValueKey('nav-Activity & usage')).hitTestable());
     await tester.pumpAndSettle();
     expect(find.textContaining('Usage history is unavailable'), findsOneWidget);
     await tester.ensureVisible(find.text('Activity & provenance'));
@@ -58,9 +59,10 @@ void main() {
         .pumpWidget(OdessyApp(api: DemoApi(), setupBackend: SavedComponents()));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('composer')), 'Unsent draft');
-    await tester.tap(find.text('Activity & usage'));
+    await tester
+        .tap(find.byKey(const ValueKey('nav-Activity & usage')).hitTestable());
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Assistant'));
+    await tester.tap(find.byKey(const ValueKey('nav-Assistant')).hitTestable());
     await tester.pumpAndSettle();
     expect(find.text('Unsent draft'), findsOneWidget);
   });
@@ -83,21 +85,24 @@ void main() {
     await tester.pumpAndSettle();
     expect(
         find.descendant(
-            of: find.byType(DeviceSidebar),
-            matching: find.text('Activity & usage')),
+            of: find.byType(OdessyApp),
+            matching: find
+                .byKey(const ValueKey('nav-Activity & usage'))
+                .hitTestable()),
         findsOneWidget);
     expect(
         find.descendant(
             of: find.byType(ConversationPage),
             matching: find.text('Activity & provenance')),
         findsOneWidget);
-    await tester.tap(find.text('Activity & usage'));
+    await tester
+        .tap(find.byKey(const ValueKey('nav-Activity & usage')).hitTestable());
     await tester.pumpAndSettle();
     expect(find.text('API usage and estimated cost'), findsOneWidget);
     expect(find.text('27'), findsOneWidget);
     expect(find.text('Not reported'), findsWidgets);
     expect(find.byType(ConversationPage), findsNothing);
-    await tester.tap(find.text('Assistant'));
+    await tester.tap(find.byKey(const ValueKey('nav-Assistant')).hitTestable());
     await tester.pumpAndSettle();
     expect(find.byType(ConversationPage), findsOneWidget);
   });
@@ -123,7 +128,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Open navigation menu'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Activity & usage'));
+    await tester
+        .tap(find.byKey(const ValueKey('nav-Activity & usage')).hitTestable());
     await tester.pumpAndSettle();
     expect(find.text('27'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -170,9 +176,13 @@ void main() {
     await tester.tap(find.byTooltip('Stop current turn'));
     await tester.pumpAndSettle();
     expect(find.textContaining('Stopped'), findsWidgets);
-    await tester.tap(find.text('Jetson'));
+    await tester.tap(find.byKey(const ValueKey('nav-Devices')).hitTestable());
     await tester.pumpAndSettle();
-    expect(find.textContaining('does not change'), findsOneWidget);
+    await tester.tap(find.descendant(
+        of: find.byKey(const ValueKey('host-card-host_demo_jetson')),
+        matching: find.widgetWithText(TextButton, 'View details')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('does not change'), findsWidgets);
     expect(find.text('Telemetry access'), findsOneWidget);
     expect(find.text('Allowed'), findsOneWidget);
     await tester.tap(find.descendant(

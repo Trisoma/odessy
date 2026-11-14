@@ -286,12 +286,12 @@ void main() {
     await mountConversation(tester, c,
         body: ConversationPage(controller: c, voice: voice));
     expect(find.text('Check voice availability'), findsNothing);
-    await tester.tap(find.text('Voice options'));
-    await tester.pump();
+    await tester.tap(find.byTooltip('Voice options'));
+    await tester.pumpAndSettle();
     expect(find.text('Check voice availability'), findsOneWidget);
     expect(find.text('Test speech output'), findsOneWidget);
-    await tester.tap(find.text('Voice options'));
-    await tester.pump();
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
     api.state = 'speaking';
     await voice.refresh();
     await tester.pump();
