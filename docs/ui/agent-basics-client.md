@@ -36,8 +36,9 @@ sufficient for the offline checks below; this slice adds no dependencies.
    starts on tab open. When a verified backend is advertised, explicit Create,
    exact input, bounded output refresh, resize, interrupt and close use that
    backend. Output refresh is manual; this is not a terminal emulator. Input is
-   sent exactly as entered, including any newline. The frozen 05 candidate has
-   no verified PTY dependency, so production Terminal must remain disabled.
+   sent exactly as entered, including any newline. The audited 05 candidate now
+   passes real Windows ConPTY gates with the authorized pinned dependency.
+   Production Terminal remains disabled until 07 mounts and packages that owner.
 7. **Checkpoints** lists/creates local Git checkpoints, previews paths/status and
    exclusions, then explicitly confirms the exact preview hash/revision before
    requesting restore. A service acknowledgment is required before success is
