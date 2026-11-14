@@ -54,7 +54,7 @@ def register(app: Any, dependencies: Any, *, service: CheckpointService) -> None
         if 'label' not in data:
             invalid('label is required')
         try:
-            return service.create(sid, data['label'])
+            return await service.run_async(service.create, sid, data['label'])
         except CheckpointError as error:
             fail(error)
 
@@ -74,7 +74,7 @@ def register(app: Any, dependencies: Any, *, service: CheckpointService) -> None
         if 'preview_hash' not in data or 'expected_revision' not in data:
             invalid('preview_hash and expected_revision are required')
         try:
-            return service.restore(
+            return await service.run_async(service.restore,
                 sid, checkpoint_id, preview_hash=data['preview_hash'],
                 expected_revision=data['expected_revision'])
         except CheckpointError as error:

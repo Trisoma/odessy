@@ -7,10 +7,15 @@ checked out.
 """
 from __future__ import annotations
 
+import asyncio
+import contextvars
+import concurrent.futures
 import hashlib
+import inspect
 import json
 import os
 import re
+import stat
 import subprocess
 import tempfile
 import threading
@@ -28,6 +33,7 @@ MAX_LABEL = 120
 RETENTION = 20
 GIT_TIMEOUT = 60
 REF_PREFIX = 'refs/odessy/checkpoints/'
+_GRANT_LOOP = contextvars.ContextVar('checkpoint_grant_loop', default=None)
 
 _ID = re.compile(r'^ckpt_[0-9a-f]{32}$')
 _CONTROL = re.compile(r'[\x00-\x1f\x7f]')
@@ -142,7 +148,11 @@ class CheckpointService:
         return binding
 
     def _workspace_dir(self, binding) -> Path:
-        key = hashlib.sha256(_canonical(list(binding.identity())).encode()).hexdigest()[:32]
+        # Durable snapshots belong to the root, never an ephemeral service/session.
+        root = Path(binding.root_path).resolve()
+        info = root.stat()
+        key = hashlib.sha256(_canonical([os.path.normcase(str(root)),
+                                        info.st_dev, info.st_ino]).encode()).hexdigest()[:32]
         directory = self._root / key
         directory.mkdir(parents=True, exist_ok=True)
         return directory
@@ -194,7 +204,8 @@ class CheckpointService:
         if env:
             environment.update(env)
         try:
-            result = subprocess.run(['git', '-C', str(root), *args],
+            result = subprocess.run(['git', '-c', 'core.fsmonitor=false',
+                                    '-C', str(root), *args],
                                     input=input_bytes, capture_output=True,
                                     timeout=GIT_TIMEOUT, env=environment, check=False)
         except FileNotFoundError:
@@ -286,8 +297,16 @@ class CheckpointService:
         try:
             env = {'GIT_INDEX_FILE': str(index)}
             self._git(root, 'read-tree', '--empty', env=env)
-            if captured:
-                self._git(root, 'add', '--', *captured, env=env)
+            for path in captured:
+                # Store raw reviewed bytes: git add may execute repository filters.
+                candidate = self._safe_path(binding, path, must_exist=True)
+                data = candidate.read_bytes()
+                if len(data) > MAX_FILE_BYTES or _hash_bytes(data) != hashes[path]:
+                    raise CheckpointError(409, 'Workspace changed during checkpoint capture')
+                blob = self._git(root, 'hash-object', '-w', '--stdin',
+                                 input_bytes=data).decode().strip()
+                self._git(root, 'update-index', '--add', '--cacheinfo',
+                          f'100644,{blob},{path}', env=env)
             tree = self._git(root, 'write-tree', env=env).decode().strip()
             if not tree:
                 raise CheckpointError(503, 'Checkpoint snapshot failed')
@@ -345,9 +364,7 @@ class CheckpointService:
         binding = self._binding(sid)
         data = self._read_metadata(binding)
         return {'version': 1,
-                'revision': data['revision'],
-                'workspace_id': binding.workspace_id,
-                'checkpoints': [entry['checkpoint']
+                'checkpoints': [{**entry['checkpoint'], 'workspace_id': binding.workspace_id}
                                 for entry in data['checkpoints']]}
 
     def _entry(self, binding, checkpoint_id: str) -> dict[str, Any]:
@@ -360,15 +377,46 @@ class CheckpointService:
         root = Path(binding.root_path)
         current: dict[str, str | None] = {}
         for path in entry['files_sha256']:
-            candidate = root / path
+            candidate = self._safe_path(binding, path)
             try:
                 if candidate.is_symlink() or not candidate.is_file():
                     current[path] = None
                     continue
+                if candidate.stat().st_size > MAX_FILE_BYTES:
+                    raise CheckpointError(413, 'Current file exceeds checkpoint preview limit')
                 current[path] = _hash_bytes(candidate.read_bytes())
             except OSError:
                 current[path] = None
         return current
+
+    def _safe_path(self, binding, path, *, must_exist=False):
+        context = _GRANT_LOOP.get()
+        if context is not None and context[1].is_set():
+            raise CheckpointError(403, 'Checkpoint request cancelled')
+        root = Path(binding.root_path).resolve()
+        info = root.stat()
+        if (info.st_dev, info.st_ino) != binding.root_identity or not binding.is_authorized():
+            raise CheckpointError(403, 'Workspace authority is no longer valid')
+        candidate = root / path
+        try:
+            current = root
+            for part in Path(path).parts:
+                current = current / part
+                try:
+                    info = current.lstat()
+                except FileNotFoundError:
+                    continue
+                if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+                    raise ValueError('Linked path')
+            resolved = binding.policy.authority.resolve_path(path, must_exist=must_exist)
+            if resolved.sensitive or candidate.is_symlink():
+                raise ValueError('Denied')
+            actual = candidate.resolve()
+            if root not in (actual, *actual.parents):
+                raise ValueError('Escape')
+        except (OSError, ValueError, PermissionError):
+            raise CheckpointError(403, 'Checkpoint workspace path denied') from None
+        return candidate
 
     def _plan(self, binding, entry) -> dict[str, Any]:
         expected = entry['files_sha256']
@@ -415,14 +463,57 @@ class CheckpointService:
                 501, 'Checkpoint authorization is not wired; no snapshot was taken')
         plan = {'action': action, 'session_id': sid,
                 'scopes': ['authorization'], **details}
+        binding = self._binding(sid)
+        identity = binding.identity()
+        revision = self._mode_revision(sid) if self._mode_revision else None
         try:
             approved = self._grant(sid, plan)
+            if inspect.isawaitable(approved):
+                context = _GRANT_LOOP.get()
+                if context is None:
+                    if inspect.iscoroutine(approved):
+                        approved.close()
+                    raise CheckpointError(501, 'Async authorization requires the async checkpoint route')
+                async def wait_for_grant():
+                    return await approved
+                loop, cancelled = context
+                future = asyncio.run_coroutine_threadsafe(wait_for_grant(), loop)
+                deadline = self._clock() + 300
+                try:
+                    while True:
+                        if cancelled.is_set() or self._clock() >= deadline:
+                            raise CheckpointError(403, 'Checkpoint approval cancelled or expired')
+                        try:
+                            approved = future.result(timeout=0.1)
+                            break
+                        except concurrent.futures.TimeoutError:
+                            continue
+                finally:
+                    if not future.done():
+                        future.cancel()
         except CheckpointError:
             raise
         except Exception:
             raise CheckpointError(403, 'Checkpoint authorization failed') from None
         if approved is not True:
             raise CheckpointError(403, 'Checkpoint authorization was refused')
+        if self._binding(sid).identity() != identity:
+            raise CheckpointError(409, 'Workspace authority changed during authorization')
+        if self._mode_revision and self._mode_revision(sid) != revision:
+            raise CheckpointError(409, 'Access mode changed during authorization')
+        context = _GRANT_LOOP.get()
+        if context is not None and context[1].is_set():
+            raise CheckpointError(403, 'Checkpoint request cancelled')
+
+    async def run_async(self, function, *args, **kwargs):
+        """Keep Git off the API loop; run async approvals on that owning loop."""
+        cancelled = threading.Event()
+        token = _GRANT_LOOP.set((asyncio.get_running_loop(), cancelled))
+        try:
+            return await asyncio.to_thread(function, *args, **kwargs)
+        finally:
+            cancelled.set()
+            _GRANT_LOOP.reset(token)
 
     def restore(self, sid: str, checkpoint_id: str, *, preview_hash: str,
                 expected_revision: int) -> dict[str, Any]:
@@ -461,7 +552,7 @@ class CheckpointService:
         ref = f'{REF_PREFIX}{entry["checkpoint"]["id"]}'
         restored = 0
         for path in sorted(entry['files_sha256']):
-            target = root / path
+            target = self._safe_path(binding, path)
             parent = target.parent
             try:
                 if parent.is_symlink():
@@ -471,6 +562,8 @@ class CheckpointService:
                 if root.resolve() not in (resolved_parent, *resolved_parent.parents):
                     raise CheckpointError(403, 'Workspace path escaped during restore')
                 data = self._git(root, 'cat-file', 'blob', f'{ref}:{path}')
+                if _hash_bytes(data) != entry['files_sha256'][path]:
+                    raise CheckpointError(409, 'Checkpoint content changed; restore refused')
             except CheckpointError:
                 raise
             except OSError:
@@ -504,6 +597,5 @@ class CheckpointService:
             pass
 
     def close_session(self, sid: str) -> None:
-        """Nothing holds a process or OS handle; only per-workspace locks are dropped."""
-        with self._locks_guard:
-            self._locks.clear()
+        """Keep shared locks stable while another authorized session may use them."""
+        return None

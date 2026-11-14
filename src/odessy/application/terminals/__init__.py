@@ -1,4 +1,4 @@
-"""Local interactive terminal capability — honestly unavailable in this build.
+"""Default packaged capability stays off until 07 wires the opt-in native owner.
 
 A real PTY needs a reviewed native dependency or binding. This project has no cached
 ``node-pty``/``@lydell/node-pty``/``koffi``/``winpty`` and no reviewed ConPTY
@@ -8,6 +8,8 @@ tool output up as a shell. Nothing here spawns a process.
 from __future__ import annotations
 
 from typing import Any, Mapping
+
+from .service import LocalTerminalService, TerminalError
 
 #: One stable, specific reason string; 07 exposes it in capabilities/UI copy.
 PTY_REASON = (

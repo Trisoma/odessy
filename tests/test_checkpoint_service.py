@@ -303,3 +303,77 @@ def test_close_session_is_a_no_op_and_unknown_session_is_missing(tmp_path):
     with pytest.raises(CheckpointError) as missing:
         api.list('ghost')
     assert missing.value.status == 404
+
+
+@needs_git
+def test_create_refuses_grant_revocation_and_mode_change_during_approval(tmp_path):
+    _, binding = workspace(tmp_path)
+    revision = [0]
+    def grant(sid, plan):
+        revision[0] += 1
+        return True
+    api = CheckpointService(inspector=Inspector(binding), request_grant=grant,
+                            state_dir=tmp_path / 'state',
+                            mode_revision=lambda sid: revision[0])
+    with pytest.raises(CheckpointError) as error:
+        api.create('s1', 'stale mode')
+    assert error.value.status == 409
+    assert not api.list('s1')['checkpoints']
+    api._grant = lambda sid, plan: setattr(binding, 'authorized', False) or True
+    with pytest.raises(CheckpointError) as error:
+        api.create('s1', 'revoked')
+    assert error.value.status == 403
+
+
+@needs_git
+def test_checkpoint_metadata_survives_new_live_service_and_session(tmp_path):
+    root, binding = workspace(tmp_path)
+    api = service(tmp_path, binding)
+    saved = api.create('s1', 'persistent')
+    fresh = Binding(root)
+    fresh.service_instance_id = 'svc-2'
+    fresh.session_id = 's2'
+    fresh.workspace_id = 'new-live-workspace-id'
+    reopened = service(tmp_path, fresh)
+    assert [row['id'] for row in reopened.list('s2')['checkpoints']] == [saved['id']]
+
+
+@needs_git
+def test_snapshot_preserves_raw_bytes_without_running_git_clean_filters(tmp_path):
+    root, binding = workspace(tmp_path)
+    git(root, 'config', 'core.autocrlf', 'true')
+    (root / 'readme.txt').write_bytes(b'raw\nbytes\n')
+    api = service(tmp_path, binding)
+    saved = api.create('s1', 'raw bytes')
+    blob = subprocess.run(['git', '-C', str(root), 'cat-file', 'blob',
+                          f'{checkpoint_module.REF_PREFIX}{saved["id"]}:readme.txt'],
+                         capture_output=True, check=True).stdout
+    assert blob == b'raw\nbytes\n'
+    git(root, 'config', 'filter.refuse.clean', 'a-program-that-does-not-exist')
+    git(root, 'config', 'filter.refuse.required', 'true')
+    (root / '.gitattributes').write_text('*.txt filter=refuse\n', encoding='utf-8')
+    api.create('s1', 'do not execute filters')
+
+
+@needs_git
+def test_cancelled_async_approval_never_creates_checkpoint(tmp_path):
+    import asyncio
+    _, binding = workspace(tmp_path)
+    async def run():
+        waiting, ended = asyncio.Event(), asyncio.Event()
+        async def grant(sid, plan):
+            waiting.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                ended.set()
+        api = service(tmp_path, binding)
+        api._grant = grant
+        request = asyncio.create_task(api.run_async(api.create, 's1', 'cancelled'))
+        await asyncio.wait_for(waiting.wait(), 5)
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request
+        await asyncio.wait_for(ended.wait(), 5)
+        assert api.list('s1')['checkpoints'] == []
+    asyncio.run(run())

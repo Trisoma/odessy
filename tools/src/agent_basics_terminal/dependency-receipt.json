@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "platform_tested": "win32-x64",
+  "node_tested": "22.23.4",
+  "install_scripts_executed": false,
+  "packages": [
+    {
+      "name": "node-pty",
+      "version": "1.1.0",
+      "license": "MIT",
+      "url": "https://registry.npmjs.org/node-pty/-/node-pty-1.1.0.tgz",
+      "integrity": "sha512-20JqtutY6JPXTUnL0ij1uad7Qe1baT46lyolh2sSENDd4sTzKZ4nmAFkeAARDKwmlLjPx6XKRlwRUxwjOy+lUg=="
+    },
+    {
+      "name": "node-addon-api",
+      "version": "7.1.1",
+      "license": "MIT",
+      "url": "https://registry.npmjs.org/node-addon-api/-/node-addon-api-7.1.1.tgz",
+      "integrity": "sha512-5m3bsyrjFWE1xf7nz7YXdN4udnVtXK6/Yfgn5qnahL6bCkf2yKt4k3nuTKAtT4r3IG8JNR2ncsIMdZuAzJjHQQ=="
+    }
+  ],
+  "integration_owner": "07",
+  "integration_requirements": [
+    "Pin both packages in the owned manifest and lockfile; include their MIT licenses",
+    "Ship helper.cjs and the matching Windows x64 node-pty prebuilds with hash verification",
+    "Supply trusted inspector, policy/hook-screened async shell broker and mode_revision callbacks",
+    "Register terminal routes only after native dependency availability is verified",
+    "Await close_session on session/service exit; never restore terminal handles after restart",
+    "Keep the global capability false until integrated qualification succeeds"
+  ],
+  "native_sha256": [
+    {
+      "path": "prebuilds/win32-x64/conpty.node",
+      "sha256": "ee8f4e6f4dad71939eecfda11de249400e34bfefe4c8b48af13f3b5476f4035b"
+    },
+    {
+      "path": "prebuilds/win32-x64/conpty_console_list.node",
+      "sha256": "879dd94cfc79f1e263a00077597ae9448a5394b7d193381aaa50d992a1f91090"
+    },
+    {
+      "path": "prebuilds/win32-x64/conpty/OpenConsole.exe",
+      "sha256": "d1fe7faa62f9e955e2ac2371f95d7e5513df4d496255097158f979c94782c5fc"
+    }
+  ]
+}

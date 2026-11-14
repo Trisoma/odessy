@@ -89,3 +89,38 @@ which removes only our ref and metadata entry). `delete` requires the same grant
 - Register with `checkpoints.routes.register(app, dependencies, service=...)`; keep the
   `checkpoints` capability `false` until the route suite passes in the integrated tree.
 - Keep the `terminal` capability `false` and expose `PTY_REASON` as copy.
+# Audit handoff: checkpoint contract and lifecycle
+
+The list envelope is exactly `{version: 1, checkpoints: [...]}`. Snapshot metadata
+uses canonical root/device/inode identity, independent of live service/session IDs;
+opening it still requires current workspace authorization. New snapshots store raw,
+hash-verified Git blobs using a private index, without `git add` or clean filters.
+
+Mutation routes use `await service.run_async(service.create/restore, ...)` to keep
+Git off the API loop and await the real asynchronous approval broker on its owning
+loop. Cancellation/expiry refuses pending approval. Grant completion rechecks the
+workspace binding and optional access-mode revision; 07 must supply that revision
+callback and screen exact plans through existing policy/hooks before broker approval.
+Per-file restore rechecks containment, link/reparse exclusions and blob hashes.
+
+## Native terminal candidate (supersedes the missing-dependency note)
+
+The user authorized an isolated pinned dependency download during the closure
+audit. `LocalTerminalService` and `terminals.routes.register_local` now implement
+the frozen terminal routes with the owned Node helper. `node-pty 1.1.0` and
+`node-addon-api 7.1.1` were downloaded with install scripts disabled; exact SRI,
+licenses and packaging instructions are in
+`tools/src/agent_basics_terminal/dependency-receipt.json`.
+
+The actual Windows ConPTY tests cover explicit/refused grants, real input/output,
+resize, interrupt/close, stale revisions, session isolation, idle revocation,
+authenticated HTTP, bounded output and owned helper shutdown. These are opt-in
+through `ODESSY_PTY_MODULE_ROOT`; ordinary capability tests still need no native
+package. The default packaged terminal capability remains false until 07 supplies
+the verified packaged paths, trusted policy/hooks/broker and mode-revision owner,
+then registers and qualifies the routes. Await `close_session` on every exit.
+
+A shell runs with the user's OS permissions; its commands are not individually
+intercepted or confined to the workspace. The exact shell grant must disclose that
+scope and be refused where existing authority does not permit it. There is no
+remote terminal and no resurrection/replay of handles or input after restart.

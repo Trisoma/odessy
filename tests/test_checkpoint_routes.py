@@ -106,8 +106,13 @@ def test_checkpoint_routes_require_auth_and_report_shapes(tmp_path):
 
     empty = call(app, httpx, 'GET', '/v1/sessions/s1/checkpoints')
     assert empty.status_code == 200
-    assert empty.json() == {'version': 1, 'revision': 0, 'workspace_id': 'ws-1',
-                            'checkpoints': []}
+    assert empty.json() == {'version': 1, 'checkpoints': []}
+
+    async def async_grant(sid, plan):
+        await asyncio.sleep(0)
+        return True
+
+    app.state.checkpoints._grant = async_grant
 
     created = call(app, httpx, 'POST', '/v1/sessions/s1/checkpoints',
                    body={'label': 'before edit'})
