@@ -482,13 +482,16 @@ class SessionController:
         return self.interactions.resolve_question(question_id, answer, channel=channel)
 
     async def run_turn(self, text, participant=None, **kwargs):
+        attachments = kwargs.pop('attachments', ())
         recorder = getattr(self, '_conversation_recorder', None)
         if recorder is None:
             return await self._run_turn_impl(text, participant=participant, **kwargs)
         if self._closed or self.running:
             raise RuntimeError('Session is closed or a turn is already running')
-        recorder.begin_turn(self._public(text))
         try:
+            recorder.begin_turn(self._public(text))
+            for attachment in attachments:
+                recorder.attachment(**attachment)
             recorder.activity('Turn admitted', name='turn_started')
             composition = getattr(self, '_basics_composition', None)
             provider = getattr(composition, 'context_provider', None)
@@ -620,6 +623,7 @@ class SessionController:
             if not self._stop.is_set():
                 recorder = getattr(self, '_conversation_recorder', None)
                 if recorder is not None:
+                    self._record_command_outputs(result, recorder)
                     recorder.settle(self._public(result.final_text))
                 if remember:
                     self.memory.add(self._public(text), self._public(result.final_text))
@@ -645,6 +649,12 @@ class SessionController:
             self.active_profile = None
             self._active_model = None
             self._task = None
+
+    def _record_command_outputs(self, result, recorder):
+        from .workspace_inspector import recorded_outputs
+        for output in recorded_outputs(result, session_id=self.id, turn_id=recorder.turn_id,
+                                       sanitize=self._public):
+            self.emit('command_output', recorder.command_output(self._public(output)))
 
     async def _run_engine_turn(self, text, *, participant=None, remember=True, turn_id=None, stop_event=None):
         """One turn on a non-legacy engine.
@@ -682,6 +692,7 @@ class SessionController:
             self._flush_thread_events()
             recorder = getattr(self, '_conversation_recorder', None)
             if recorder is not None:
+                self._record_command_outputs(result, recorder)
                 recorder.settle(self._public(result.final_text))
             if remember:
                 self.memory.add(self._public(text), self._public(result.final_text))

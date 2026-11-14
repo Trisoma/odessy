@@ -1,4 +1,5 @@
-import 'package:odessy_client/odessy_client.dart' show AccessMode;
+import 'package:odessy_client/odessy_client.dart'
+    show AccessMode, WorkspaceAttachmentApi;
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -171,7 +172,11 @@ class _ConversationPageState extends State<ConversationPage> {
           !c.connected) {
         return;
       }
-      if (await c.send(contextText.isEmpty ? text : '$text\n\n$contextText')) {
+      final accepted = attachments.isNotEmpty && api is WorkspaceAttachmentApi
+          ? await c.sendAttachments(
+              text, attachments.map((a) => a.file).toList())
+          : await c.send(contextText.isEmpty ? text : '$text\n\n$contextText');
+      if (accepted) {
         for (final attachment in attachments) {
           owner!.removeAttachment(attachment.file.path);
         }

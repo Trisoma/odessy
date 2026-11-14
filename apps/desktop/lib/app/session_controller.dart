@@ -209,6 +209,17 @@ class DesktopSession extends ChangeNotifier {
 
   Future<bool> send(String text) =>
       command((sid) => api.send(sid, text.trim()), requireIdle: true);
+  Future<bool> sendAttachments(
+          String text, List<WorkspaceTextFile> attachments) =>
+      command((sid) async {
+        final transport = api;
+        if (transport is! WorkspaceAttachmentApi) {
+          throw StateError(
+              'This connection cannot admit reviewed file attachments.');
+        }
+        await (transport as WorkspaceAttachmentApi)
+            .sendWithAttachments(sid, text.trim(), attachments);
+      }, requireIdle: true);
   Future<void> stop() async {
     if (stopping || !connected || session == null) return;
     final transport = api;

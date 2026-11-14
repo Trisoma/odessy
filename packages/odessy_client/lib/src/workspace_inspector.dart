@@ -9,6 +9,12 @@ abstract interface class WorkspaceInspectorApi {
   Future<WorkspaceTextFile> readWorkspaceFile(String sid, String path);
 }
 
+/// Optional live admission transport. The server rereads and checks every file.
+abstract interface class WorkspaceAttachmentApi {
+  Future<void> sendWithAttachments(
+      String sid, String text, List<WorkspaceTextFile> attachments);
+}
+
 class WorkspaceInspectorClient implements WorkspaceInspectorApi {
   WorkspaceInspectorClient(this.readJson);
   final Future<Json> Function(String path) readJson;

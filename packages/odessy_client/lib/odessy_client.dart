@@ -284,6 +284,7 @@ class LocalApi
         OdessyApi,
         SessionDirectoryApi,
         WorkspaceInspectorApi,
+        WorkspaceAttachmentApi,
         UsageHistoryApi,
         ProfileMetadataApi,
         JobsApi,
@@ -773,6 +774,29 @@ class LocalApi
   @override
   Future<void> send(String sid, String text) async {
     await _json('${_session(sid)}/turns', 'POST', {'text': text});
+  }
+
+  @override
+  Future<void> sendWithAttachments(
+      String sid, String text, List<WorkspaceTextFile> attachments) async {
+    if (attachments.isEmpty || attachments.length > 16) {
+      throw ArgumentError('Select 1 to 16 reviewed workspace files');
+    }
+    if (attachments.any((file) => file.sessionId != sid)) {
+      throw StateError('Attachment session changed');
+    }
+    await _json('${_session(sid)}/turns', 'POST', {
+      'text': text,
+      'attachments': [
+        for (final file in attachments)
+          {
+            'path': file.path,
+            'sha256': file.sha256,
+            'service_instance_id': file.serviceInstanceId,
+            'workspace_id': file.workspaceId,
+          }
+      ],
+    });
   }
 
   @override

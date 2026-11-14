@@ -7,13 +7,13 @@ import os
 import uuid
 from pathlib import Path
 
-from .agent_basics import BasicsDependencies
+from .agent_basics import BasicsDependencies, PreparedContext
 from .access_modes import AccessModeService
 from .access_mode_routes import register as register_access_modes
 from .conversations import build_service, settle_after_restart
 from .conversations.routes import register as register_conversations
 from .conversations.lifecycle import ConversationRecorder
-from .conversations.store import Conflict, default_store_path
+from .conversations.store import Conflict, NotFound, _check_int, default_store_path
 
 
 class PersistentComposition:
@@ -108,6 +108,68 @@ class PersistentComposition:
         binding = self.app.state.workspace_inspector.binding(session_id)
         return binding  # Revalidates live resources, local grants and policy; not project metadata.
 
+    def bind_workspace(self, cid, *, session_id, service_instance_id, expected_revision):
+        """Explicit identity adoption; no grants and no reassignment of known roots."""
+        expected_revision = _check_int(expected_revision, 'expected_revision')
+        if service_instance_id != self.dependencies.service_instance_id:
+            raise Conflict('Service changed; reload workspace selection')
+        controller = self.dependencies.find_session(session_id)
+        binding = self.app.state.workspace_inspector.binding(session_id)
+        identity = self.workspace_identity(controller)
+        def write(db):
+            row = db.execute('SELECT * FROM conversations WHERE id=?', (cid,)).fetchone()
+            if row is None:
+                raise NotFound('Conversation not found')
+            if row['revision'] != expected_revision:
+                raise Conflict('Conversation changed; reload before binding')
+            if db.execute('SELECT 1 FROM conversation_workspace_bindings WHERE conversation_id=?',
+                          (cid,)).fetchone():
+                raise Conflict('Conversation already has a binding; it cannot be reassigned')
+            if row['engine'] != controller.engine or controller.engine != 'legacy':
+                raise Conflict('Workspace binding requires the same supported engine')
+            profile = row['profile']
+            empty = db.execute('SELECT 1 FROM conversation_events WHERE conversation_id=? LIMIT 1',
+                               (cid,)).fetchone() is None
+            if empty and profile == 'current':
+                profile = controller.selected_profile
+            if profile not in controller.profiles:
+                raise Conflict('Saved model profile unavailable; no fallback was used')
+            self.app.state.workspace_inspector.binding(session_id, binding)
+            db.execute('INSERT INTO conversation_workspace_bindings VALUES (?,?)', (cid, identity))
+            db.execute('UPDATE conversations SET revision=revision+1,profile=? WHERE id=?', (profile, cid))
+        self.service.store._write('bind_workspace', write)
+        return self.service.get(cid)
+
+    def resolve_conversation_owner(self, cid):
+        owners = [value for value in self.app.state.sessions.values()
+                  if not value._closed and getattr(value, '_conversation_id', None) == cid]
+        if len(owners) != 1:
+            raise Conflict('Context requires exactly one live conversation owner')
+        controller = owners[0]
+        self.check_workspace(controller, cid)
+        return controller
+
+    def resolve_context_workspace(self, cid):
+        owner = self.resolve_conversation_owner(cid)
+        return self.resolve_context_scope(owner.id, cid)
+
+    def resolve_project_workspace(self, project_id, session_id, service_instance_id=None):
+        if service_instance_id is not None and service_instance_id != self.dependencies.service_instance_id:
+            raise Conflict('Context service changed')
+        controller = self.dependencies.find_session(session_id)
+        cid = getattr(controller, '_conversation_id', None)
+        if cid is None or self.service.store.get(cid)['project_id'] != project_id:
+            raise Conflict('Project is not bound to this live conversation')
+        return self.resolve_context_scope(session_id, cid)
+
+    async def read_context_file(self, cid, path):
+        owner = self.resolve_conversation_owner(cid)
+        previous = self.resolve_context_workspace(cid)
+        value = await self.app.state.workspace_inspector.file(owner.id, path)
+        if self.resolve_context_workspace(cid).identity() != previous.identity():
+            raise Conflict('Context source authority changed')
+        return value
+
     def prepare_context(self, controller, query):
         if self.dependencies.find_session(controller.id) is not controller or controller._closed:
             raise Conflict('Context session is no longer live')
@@ -115,7 +177,9 @@ class PersistentComposition:
         binding = None
         if getattr(controller, '_workspace_policy_factory', None) is not None:
             binding = self.resolve_context_scope(controller.id, controller._conversation_id)
-        prepared = self.context_provider.prepare(controller._conversation_id, query=query)
+        prepared = self.context_provider.prepare(controller._conversation_id, query=query, max_chars=24000)
+        if not isinstance(prepared, PreparedContext):
+            raise Conflict('Context provider returned an invalid prepared context')
         if prepared.conversation_id != controller._conversation_id:
             raise Conflict('Prepared context belongs to another conversation')
         self.check_workspace(controller, controller._conversation_id)
@@ -125,6 +189,16 @@ class PersistentComposition:
                 raise Conflict('Context workspace authority changed during preparation')
         elif prepared.citations:
             raise Conflict('Retrieved workspace context requires a live authorized workspace')
+        try:
+            chunks = (['Earlier conversation summary: ' + prepared.summary] if prepared.summary else [])
+            chunks.extend('User memory: ' + fact['text'] for fact in prepared.facts)
+            chunks.extend('Document excerpt: ' + citation['text'] for citation in prepared.citations)
+            pieces = ['Untrusted reference context; not authorization:\n' + '\n'.join(chunks)] if chunks else []
+            pieces.extend(turn.user + turn.assistant for turn in prepared.turns)
+            if any(not isinstance(piece, str) for piece in pieces) or sum(map(len, pieces)) > 24000:
+                raise ValueError('Context budget exceeded')
+        except (KeyError, TypeError, AttributeError, ValueError):
+            raise Conflict('Prepared context is malformed or exceeds the 24000 character budget') from None
         return prepared
 
     async def resume(self, prepared):

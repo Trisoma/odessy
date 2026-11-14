@@ -134,6 +134,19 @@ class ConversationRecorder:
                                    'status': _public_text(status)},
                           created_at=self.clock())
 
+    def command_output(self, output: Mapping[str, Any]) -> dict[str, Any]:
+        """Persist the existing public command projection, never raw observations."""
+        safe = {key: output.get(key) for key in
+                ('session_id', 'turn_id', 'call_id', 'tool_name', 'state', 'exit_code', 'truncated')}
+        for key in ('stdout', 'stderr'):
+            raw = _public_text(output.get(key) or '').encode('utf-8')
+            safe['truncated'] = bool(safe['truncated'] or len(raw) > 16384)
+            safe[key] = raw[:16384].decode('utf-8', errors='ignore')
+        identity = hashlib.sha256(str(safe['call_id']).encode()).hexdigest()
+        self.store.append(self.conversation_id, event_id=f'{self.turn_id}:output:{identity}',
+                          kind='tool_result', payload={'output': safe}, created_at=self.clock())
+        return safe
+
     def activity(self, text: str, *, name: str | None = None) -> None:
         event_id = f'activity:{uuid.uuid4().hex}'
         self.store.append(self.conversation_id, event_id=event_id, kind='activity',

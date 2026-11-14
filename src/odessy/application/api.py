@@ -354,6 +354,21 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         composition.resume_allowed = admission_open
         composition.factory = make_controller
 
+        @app.post('/v1/conversations/{cid}/bind-workspace')
+        async def bind_saved_workspace(cid: str, request: Request):
+            from .conversations.store import StorageError
+            data = await body(request)
+            if set(data) != {'session_id', 'service_instance_id', 'expected_revision'}:
+                raise HTTPException(400, 'Exact session, service and revision fields are required')
+            if not isinstance(data['session_id'], str):
+                raise HTTPException(400, 'session_id must be a string')
+            try:
+                return composition.bind_workspace(cid, **data)
+            except StorageError as exc:
+                raise HTTPException(exc.status, {'code': exc.code, 'message': str(exc)}) from None
+            except InspectorError as exc:
+                raise HTTPException(exc.status, str(exc)) from None
+
     @app.get('/', response_class=HTMLResponse)
     async def diagnostic():
         return _DIAGNOSTIC
@@ -882,6 +897,47 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     async def start_turn(sid: str, request: Request):
         controller = find(sid)
         data = await body(request)
+        attachments = data.get('attachments', [])
+        if not isinstance(attachments, list) or len(attachments) > 16:
+            raise HTTPException(400, 'At most 16 reviewed workspace attachments are allowed')
+        verified, parts, total = [], [], 0
+        attachment_binding = None
+        if attachments:
+            try:
+                attachment_binding = workspace_inspector.binding(sid)
+            except InspectorError as exc:
+                raise HTTPException(exc.status, str(exc)) from None
+        for attachment in attachments:
+            if (not isinstance(attachment, dict) or set(attachment) !=
+                    {'path', 'sha256', 'service_instance_id', 'workspace_id'}):
+                raise HTTPException(400, 'Exact reviewed attachment identity is required')
+            if not isinstance(attachment['path'], str):
+                raise HTTPException(400, 'Attachment path must be a string')
+            try:
+                fresh = await workspace_inspector.file(sid, attachment['path'])
+            except InspectorError as exc:
+                raise HTTPException(exc.status, str(exc)) from None
+            if any(attachment[key] != fresh[key] for key in attachment):
+                raise HTTPException(409, 'Attachment changed; reread and review before sending')
+            text = fresh['text']
+            part = (f"--- Workspace text: {fresh['path']} (sha256:{fresh['sha256']}) ---\n"
+                    f"{text}\n--- End workspace text ---")
+            total += len(part.encode('utf-8'))
+            if total > 32 * 1024:
+                raise HTTPException(413, 'Combined attachment context exceeds 32 KiB')
+            parts.append(part)
+            verified.append({'name': fresh['path'], 'size': len(text.encode('utf-8')),
+                             'media_type': 'text/plain'})
+        if parts:
+            try:
+                workspace_inspector.binding(sid, attachment_binding)
+            except InspectorError as exc:
+                raise HTTPException(exc.status, str(exc)) from None
+            if not isinstance(data.get('text'), str):
+                raise HTTPException(400, 'Nonempty text is required')
+            data['text'] += '\n\n' + '\n\n'.join(parts)
+        data['_verified_attachments'] = verified
+        data['_attachment_binding'] = attachment_binding
         if desktop_voice is not None and desktop_voice.owner==sid:
             if desktop_voice.wake is not None:await desktop_voice.typed(controller,True)
             else:await desktop_voice.cancel(controller)
@@ -900,7 +956,10 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         epoch = controller.stop_epoch
         async def run():
             try:
-                result=await controller.run_turn(data['text'], participant=data.get('participant'), turn_id=turn_id, admitted_epoch=epoch)
+                if data.get('_verified_attachments'):
+                    workspace_inspector.binding(sid, data['_attachment_binding'])
+                extra = {'attachments': data['_verified_attachments']} if data.get('_verified_attachments') else {}
+                result=await controller.run_turn(data['text'], participant=data.get('participant'), turn_id=turn_id, admitted_epoch=epoch, **extra)
                 if spoken and desktop_voice is not None:
                     await desktop_voice.speak(controller,result.final_text)
                 return result.final_text

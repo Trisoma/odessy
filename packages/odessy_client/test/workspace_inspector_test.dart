@@ -18,6 +18,37 @@ Json file(String sid, {String path = 'a.txt', String text = 'hello'}) => {
     };
 
 void main() {
+  test(
+      'live attachment admission sends identities without client file contents',
+      () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final api =
+        LocalApi(Uri.parse('http://127.0.0.1:${server.port}'), 'fixture');
+    Json? received;
+    server.listen((request) async {
+      expect(request.headers.value('authorization'), 'Bearer fixture');
+      expect(request.uri.path, '/v1/sessions/s/turns');
+      received = jsonDecode(await utf8.decoder.bind(request).join()) as Json;
+      request.response.statusCode = 202;
+      request.response.write('{}');
+      await request.response.close();
+    });
+    try {
+      await api.sendWithAttachments(
+          's', 'question', [WorkspaceTextFile.fromJson(file('s'))]);
+      expect(received!['text'], 'question');
+      expect((received!['attachments'] as List).single, {
+        'path': 'a.txt',
+        'sha256': hash,
+        'service_instance_id': 'instance',
+        'workspace_id': 'root',
+      });
+      expect(jsonEncode(received), isNot(contains('hello')));
+    } finally {
+      api.close();
+      await server.close(force: true);
+    }
+  });
   test('adapter encodes relative paths and rejects foreign response identities',
       () async {
     final paths = <String>[];
