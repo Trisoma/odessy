@@ -59,7 +59,17 @@ def dispatch(parameters,*,cancelled=lambda:False):
         if action.endswith('-plan'):return {'installation_format':kind,'operation':operation,'plan_id':token,'installation_id':record['id'],'target_version':details['target_version'],'keep_models':True,'keep_config':True,'ready':False}
         if data.get('confirm')!=token:raise ValueError('review the exact operation and current installation first')
         if cancelled():raise KeyboardInterrupt()
-        result=manager.rollback(data['version'],confirm=record['id'],expected_state=record,expected_operation=operation_state) if operation=='rollback' else manager.uninstall(confirm=record['id'],expected_state=record,expected_operation=operation_state,cancelled=cancelled)
+        def cleanup(progress):
+            if not (record.get('windows_registration') or record.get('linux_registration')):
+                return {}
+            from .platform_installation import helper_cleanup, unregister
+            progress.stage('unregister')
+            if cancelled():raise KeyboardInterrupt()
+            retained=unregister(root,record)
+            progress.stage('maintenance-cache')
+            cache=helper_cleanup(record,progress=progress,cancelled=cancelled)
+            return {'retained_registration':retained,'helper_cleanup':cache}
+        result=manager.rollback(data['version'],confirm=record['id'],expected_state=record,expected_operation=operation_state) if operation=='rollback' else manager.uninstall(confirm=record['id'],expected_state=record,expected_operation=operation_state,cancelled=cancelled,cleanup=cleanup)
         if operation=='rollback':
             # The launcher must follow the version that is actually active.
             from .maintenance import atomic
@@ -70,10 +80,6 @@ def dispatch(parameters,*,cancelled=lambda:False):
                 atomic(root/'installation.json',updated)
             except (ValueError,RuntimeError,OSError) as error:
                 result['registration_error']=str(error)
-        if operation=='uninstall' and (record.get('windows_registration') or record.get('linux_registration')):
-            from .platform_installation import helper_cleanup, unregister
-            result['retained_registration']=unregister(root,record)
-            result['helper_cleanup']=helper_cleanup(record)
         return dict(result,installation_format=kind)
     return None
 

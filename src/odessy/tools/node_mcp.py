@@ -170,11 +170,36 @@ def node_tool_server_dependencies_installed() -> bool:
         and tsc.exists()
     )
 
+def node_tool_server_launch(node: str, *, environ: Mapping[str, str] | None = None) -> tuple[Path, Path]:
+    """The reviewed tool server's ``(executable, built entry)``, or ``ValueError``.
+
+    One answer to "where is the tool server": the built entry under ``ODESSY_NODE_TOOLS_DIR``
+    or the repository's ``tools/dist/src/server.js``, and the Node executable the caller named.
+    The executable is never discovered on ``PATH`` — the Harness path names it explicitly,
+    the same way it names ``ODESSY_HARNESS_EXE``.
+    """
+
+    source = os.environ if environ is None else environ
+    executable = Path(node).expanduser()
+    if not executable.is_absolute():
+        raise ValueError(f"the Node executable must be an absolute path: {node}")
+    if not executable.is_file():
+        raise ValueError(f"the Node executable does not exist: {executable}")
+    tools_dir = _node_tools_dir(_public_repo_root(), source)
+    entry = _built_server_entry(tools_dir)
+    if not entry.is_file():
+        raise ValueError(
+            f"the Node tool server is not built: {entry} (run `npm run build` in {tools_dir}, "
+            "or point ODESSY_NODE_TOOLS_DIR at a built server)"
+        )
+    return executable, entry
+
 def _public_repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
-def _node_tools_dir(public_repo_root: Path) -> Path:
-    portable = os.environ.get("ODESSY_NODE_TOOLS_DIR")
+def _node_tools_dir(public_repo_root: Path, environ: Mapping[str, str] | None = None) -> Path:
+    source = os.environ if environ is None else environ
+    portable = source.get("ODESSY_NODE_TOOLS_DIR")
     if portable:
         path = Path(portable)
         if not path.is_absolute():

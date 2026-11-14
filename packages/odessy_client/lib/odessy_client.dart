@@ -195,6 +195,19 @@ abstract interface class RuntimeSettingsApi {
   Future<Json> runtimeSettings();
 }
 
+/// Optional: choose the runtime engine for a **new** session (prompt 12).
+///
+/// A service that predates runtime selection does not implement this; callers keep using
+/// [OdessyApi.createSession] in that case. Naming an engine is an explicit choice and
+/// applies to the session being created — an existing session keeps its backend.
+abstract interface class RuntimeSelectionApi {
+  /// `{"default": "legacy", "engines": [...], "known": [...]}` as the service reports it.
+  Future<Json> runtimeEngines();
+
+  /// Create a session on [runtime]; `null` keeps the service's default.
+  Future<Session> createSessionOn({String? runtime});
+}
+
 /// Compare-and-save for the connected service's collaboration limit.
 abstract interface class ConsultationLimitApi {
   Future<Json> readConsultationLimit();
@@ -254,6 +267,24 @@ abstract interface class ExecutionHostsApi {
   Future<void> disconnectExecutionHost();
 }
 
+/// One SSH computer, using the user's existing OpenSSH configuration.
+abstract interface class SshConnectionApi {
+  Future<Json> sshAliases();
+  Future<Json> sshTarget();
+  Future<Json> inspectSshAlias(String alias);
+  Future<Json> testSshAlias(String alias);
+  Future<Json> saveSshTarget(String alias, {String displayName = ''});
+  Future<Json> removeSshTarget();
+  Future<Json> sshComputer();
+}
+
+class SshConnectionFailure implements Exception {
+  const SshConnectionFailure(this.status);
+  final int status;
+  @override
+  String toString() => 'SSH connection request failed ($status)';
+}
+
 class ExecutionConnectionFailure implements Exception {
   const ExecutionConnectionFailure(this.message);
   final String message;
@@ -287,6 +318,7 @@ class LocalApi
         JobsApi,
         HandoffRunsApi,
         RuntimeSettingsApi,
+        RuntimeSelectionApi,
         ConsultationLimitApi,
         ContextLimitApi,
         RoundLimitApi,
@@ -299,7 +331,8 @@ class LocalApi
         ModelProfileLimitsApi,
         RuntimeConfigurationApi,
         DesktopVoiceApi,
-        ExecutionHostsApi {
+        ExecutionHostsApi,
+        SshConnectionApi {
   LocalApi(this.base, String token) : _token = token {
     if (!['http', 'https'].contains(base.scheme) ||
         !['localhost', '127.0.0.1', '::1'].contains(base.host) ||
@@ -452,6 +485,39 @@ class LocalApi
   Future<Json> scanExecutionHosts() => _json('/v1/execution-hosts');
   @override
   Future<Json> executionHostStatus() => _json('/v1/execution-hosts/status');
+
+  Future<Json> _sshJson(String path,
+      [String method = 'GET',
+      Json? data,
+      Duration timeout = const Duration(seconds: 12)]) async {
+    try {
+      return await _json(path, method, data, timeout);
+    } on ApiFailure catch (error) {
+      throw SshConnectionFailure(error.status);
+    }
+  }
+
+  @override
+  Future<Json> sshAliases() => _sshJson('/v1/ssh/aliases');
+  @override
+  Future<Json> sshTarget() => _sshJson('/v1/ssh/target');
+  @override
+  Future<Json> inspectSshAlias(String alias) => _sshJson(
+      '/v1/ssh/inspect', 'POST', {'alias': alias}, const Duration(seconds: 25));
+  @override
+  Future<Json> testSshAlias(String alias) => _sshJson(
+      '/v1/ssh/test', 'POST', {'alias': alias}, const Duration(seconds: 25));
+  @override
+  Future<Json> saveSshTarget(String alias, {String displayName = ''}) =>
+      _sshJson(
+          '/v1/ssh/target',
+          'POST',
+          {'alias': alias, 'display_name': displayName},
+          const Duration(seconds: 25));
+  @override
+  Future<Json> removeSshTarget() => _sshJson('/v1/ssh/target', 'DELETE');
+  @override
+  Future<Json> sshComputer() => _sshJson('/v1/ssh/computer');
   @override
   Future<void> disconnectExecutionHost() async {
     await _json('/v1/execution-hosts/disconnect', 'POST');
@@ -709,6 +775,24 @@ class LocalApi
   @override
   Future<Session> createSession() async => Session.fromJson(
         await _json('/v1/sessions', 'POST', null, const Duration(seconds: 90)),
+      );
+  @override
+  Future<Json> runtimeEngines() async {
+    final data = await _json('/v1/capabilities');
+    final runtime = data['runtime'];
+    return runtime is Map
+        ? Map<String, dynamic>.from(runtime)
+        : <String, dynamic>{};
+  }
+
+  @override
+  Future<Session> createSessionOn({String? runtime}) async => Session.fromJson(
+        await _json(
+          '/v1/sessions',
+          'POST',
+          runtime == null ? null : <String, dynamic>{'runtime': runtime},
+          const Duration(seconds: 90),
+        ),
       );
   @override
   Future<Session> snapshot(String sid) async =>
@@ -1238,7 +1322,7 @@ class UsagePreviewApi extends DemoApi implements UsageHistoryApi {
 }
 
 /// Presentation fixtures only: no models, tools or processes execute here.
-class DemoApi implements OdessyApi {
+class DemoApi implements OdessyApi, RuntimeSelectionApi {
   DemoApi({this.delay = const Duration(milliseconds: 1000)});
   final Duration delay;
   final _stream = StreamController<SessionEvent>.broadcast();
@@ -1276,6 +1360,14 @@ class DemoApi implements OdessyApi {
   Future<List<String>> profiles() async => ['auto', 'local', 'cloud-example'];
   @override
   Future<Session> createSession() => snapshot('demo');
+  @override
+  Future<Json> runtimeEngines() async => <String, dynamic>{
+        'default': 'legacy',
+        'engines': <String>['legacy'],
+        'known': <String>['legacy', 'harness'],
+      };
+  @override
+  Future<Session> createSessionOn({String? runtime}) => snapshot('demo');
   @override
   Future<Session> snapshot(String sid) async => Session(
         'demo',

@@ -184,3 +184,50 @@ def test_upgrade_refuses_to_leave_registered_service_on_old_version(tmp_path):
     manager.install(source,selection,manager.plan(source,selection)['plan_id'])
     (manager.root/'service.json').write_text('{}')
     with pytest.raises(ValueError): manager.repair(source,confirm=manager.plan(source,selection)['plan_id'])
+
+@pytest.mark.parametrize('kind', ['symlink', 'reparse'])
+def test_guard_checks_each_ancestor_once_and_rejects_links(tmp_path, monkeypatch, kind):
+    from odessy.setup import maintenance
+    import stat
+    from types import SimpleNamespace
+    path = tmp_path / 'missing' / 'file'
+    calls = []
+    original = Path.lstat
+    def counted(item):
+        calls.append(item)
+        return original(item)
+    monkeypatch.setattr(Path, 'lstat', counted)
+    assert maintenance.guard(path) == path
+    assert calls == [path, *path.parents]
+    if kind == 'reparse' and maintenance.os.name != 'nt':
+        pytest.skip('Windows reparse point attribute')
+    def linked(item):
+        if item == tmp_path:
+            return SimpleNamespace(st_mode=stat.S_IFLNK if kind == 'symlink' else stat.S_IFDIR, st_file_attributes=1024)
+        return original(item)
+    monkeypatch.setattr(Path, 'lstat', linked)
+    with pytest.raises(ValueError, match='linked|reparse'):
+        maintenance.guard(path)
+
+
+def test_uninstall_reports_file_progress_and_preserves_modified_files(tmp_path, monkeypatch):
+    from odessy.setup import maintenance
+    source = bundle(tmp_path)
+    manager = ManagedInstallation(tmp_path/'installation', runner=fake_runner)
+    selection = SetupSelection(role='execution')
+    manager.install(source, selection, manager.plan(source, selection)['plan_id'])
+    changed = manager.root/'versions'/manager.record()['active']/'selection.json'
+    changed.write_text('user modification')
+    snapshots = []
+    original = maintenance.Progress.flush
+    def capture(progress, force=False):
+        snapshots.append(dict(progress.journal))
+        original(progress, force)
+    monkeypatch.setattr(maintenance.Progress, 'flush', capture)
+    report = manager.uninstall(confirm=manager.identity())
+    assert changed.read_text() == 'user modification'
+    assert report['retained']
+    final = snapshots[-1]
+    assert final['files_total'] > 0
+    assert final['files_done'] == final['files_total']
+    assert any(0 < s.get('files_done', 0) < final['files_total'] for s in snapshots)

@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, TypedDict
@@ -122,6 +123,8 @@ class CommandBridge:
         hidden_paths: list[str] | tuple[str, ...] | None = None,
         extra_writable: list[str] | tuple[str, ...] | None = None,
         limits: dict[str, Any] | None = None,
+        on_spawn: Callable[[subprocess.Popen[str]], None] | None = None,
+        before_spawn: Callable[[], None] | None = None,
     ) -> TerminalRunResult:
         """Run one command. Everything after ``timeout`` is the authority layer's
         sandbox decision for this call, injected by the agent loop, never the model's.
@@ -129,6 +132,10 @@ class CommandBridge:
         ``network``, ``hidden_paths`` and ``extra_writable`` shape the confinement
         policy; ``limits`` are applied at spawn. What each achieved is reported in
         the result's ``sandbox`` field.
+
+        ``on_spawn`` hands the live process to the caller the instant it exists, so a caller
+        that can be cancelled (a tool server supervising a turn) can terminate the command
+        instead of waiting for its timeout. It receives the ``Popen`` and must not block.
         """
 
         resolved_cwd = self.resolve_cwd(cwd)
@@ -151,6 +158,8 @@ class CommandBridge:
             sandbox["limits"] = limit_report(resource_limits)
         argv = windows_limit_argv(resource_limits, argv)
         start = time.monotonic()
+        if before_spawn is not None:
+            before_spawn()
         process: subprocess.Popen[str] | None = None
 
         try:
@@ -168,6 +177,11 @@ class CommandBridge:
                 start_new_session=os.name != "nt",
                 preexec_fn=posix_preexec(resource_limits),
             )
+            if on_spawn is not None:
+                try:
+                    on_spawn(process)
+                except Exception:  # noqa: BLE001 - a bookkeeping callback must not fail the run
+                    pass
             stdout, stderr = process.communicate(timeout=effective_timeout)
             limit_hit = exceeded_limit(process.returncode) if resource_limits is not None else None
             if limit_hit is not None:
@@ -200,7 +214,7 @@ class CommandBridge:
             }
         except subprocess.TimeoutExpired as exc:
             if process is not None:
-                _terminate_process_tree(process)
+                terminate_process_tree(process)
                 stdout, stderr = process.communicate()
             else:
                 stdout = exc.stdout or ""
@@ -472,7 +486,9 @@ def _creation_flags() -> int:
     return getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
 
-def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+def terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    """Terminate the command and its children. Public so a supervising caller can stop a run."""
+
     if process.poll() is not None:
         return
     if os.name == "nt":

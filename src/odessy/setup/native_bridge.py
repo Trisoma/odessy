@@ -132,7 +132,7 @@ def _packaged(parameters,*,cancelled=lambda:False):
         manager=ManagedInstallation(root)
         record=manager.record()
         payload=data.get('payload') or (record.get('windows_registration') or record.get('linux_registration') or {}).get('helper')
-        register(root,record,payload=payload or None)
+        register(root,record,payload=payload or None,cancelled=cancelled)
         atomic(root/'installation.json',record)
         state=(record.get('windows_registration') or record.get('linux_registration') or {}).get('state','none')
         return {'registered':True,'state':state}
@@ -163,7 +163,7 @@ def _packaged(parameters,*,cancelled=lambda:False):
     record=manager.record()
     registration='skipped'
     try:
-        registered=register(root,record,payload=package['payload_root'])
+        registered=register(root,record,payload=package['payload_root'],cancelled=cancelled)
         registration=registered.get('state','complete') if registered else 'unsupported'
     except (RuntimeError,OSError,ValueError) as error:
         # The installation is active; registration stays a recoverable, recorded step.

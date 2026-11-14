@@ -1,12 +1,11 @@
-"""Removal boundaries, fresh previews, partial failures and non-destructive UI."""
+"""Removal boundaries, fresh previews and partial failures."""
 import json
 import os
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from installer import uninstall, shortcuts, start
+from installer import uninstall, shortcuts
 from installer.download import DownloadError
 from installer.checkpoint import Step, run_steps, writer_lock
 
@@ -107,7 +106,6 @@ class RemovalTests(unittest.TestCase):
         with patch.object(Path,'unlink',fail):
             with self.assertRaises(PermissionError):self.remove(preview)
         record=json.loads((self.root/uninstall.RECORD).read_text());self.assertEqual(record['status'],'failed')
-        with self.assertRaisesRegex(ValueError,'This installation is being uninstalled and'):start.inspect_installation(self.root)
         self.assertEqual(self.remove(self.preview())['status'],'completed')
         self.assertEqual((self.root/'models/model.blob').read_bytes(),b'model')
 
@@ -139,42 +137,33 @@ class RemovalTests(unittest.TestCase):
         remove.assert_not_called()
 
 
-class RemovalUiTests(unittest.TestCase):
+class HarnessComponentTests(unittest.TestCase):
+    """The staged Harness payload is nested under runtime/, not at the installation root."""
+
     def setUp(self):
-        import tkinter as tk
-        from installer.uninstall_ui import Uninstaller
-        try:self.root=tk.Tk();self.root.withdraw()
-        except tk.TclError as error:self.skipTest(str(error))
-        self.calls=[];self.allow=False
-        self.preview=dict(keep_models=True,keep_config=True,plan_sha256='fixture',components=['application'],bytes_to_remove=12,shortcuts=[],retained_shortcuts=[])
-        def remove(*args,**kwargs):self.calls.append(kwargs);return dict(removed_files=1,removed_shortcuts=0)
-        self.ui=Uninstaller(self.root,Path('D:/fixture'),preview=lambda *args,**kwargs:dict(self.preview,**kwargs),remove=remove,confirm=lambda message:self.allow)
-        self.addCleanup(self.cleanup)
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.base=Path(self.temp.name);self.root=self.base/'installed';self.cache=self.base/'cache';self.cache.mkdir()
+        run_steps(self.root,dict(install_dir=str(self.root),cache_dir=str(self.cache)),[Step('fixture',lambda:{},lambda:{})])
+        for name,marker in uninstall.COMPONENTS.items():
+            if name in ('launcher','harness-runtime'):continue
+            folder=self.root/name;folder.mkdir();(folder/'payload.bin').write_bytes(b'owned')
+            if marker:(folder/marker).write_text(json.dumps(dict(schema_version=1)))
+        self.folders={key:self.base/key for key in ('desktop','programs')}
+        for folder in self.folders.values():folder.mkdir()
+        self.options=dict(folders=self.folders,probe=lambda root:[])
 
-    def cleanup(self):
-        import gc
-        if self.ui.thread:self.ui.thread.join(3)
-        try:
-            for callback in self.root.tk.call('after','info'):self.root.after_cancel(callback)
-            self.root.destroy()
-        except Exception:pass
-        self.ui=None;self.root=None
-        gc.collect()
-
-    def pump(self):
-        end=time.monotonic()+3
-        while self.ui.busy and time.monotonic()<end:self.root.update();time.sleep(.01)
-        self.assertFalse(self.ui.busy)
-
-    def test_preview_and_declined_confirmation_never_remove(self):
-        self.assertTrue(self.ui.keep_models.get());self.ui.preview();self.pump();self.ui.remove()
-        self.assertEqual(self.calls,[])
-
-    def test_option_changes_invalidate_preview_and_confirmed_removal_uses_selection(self):
-        self.ui.preview();self.pump();self.ui.keep_models.set(False);self.assertIsNone(self.ui.plan)
-        self.ui.remove();self.assertEqual(self.calls,[])
-        self.ui.preview();self.pump();self.allow=True;self.ui.remove();self.pump()
-        self.assertEqual(self.calls,[dict(keep_models=False,keep_config=True)])
+    def test_nested_harness_component_is_planned_and_removed(self):
+        nested=self.root/'runtime'/'harness-runtime';nested.mkdir()
+        (nested/'payload.bin').write_bytes(b'owned')
+        (nested/'harness-runtime.json').write_text(json.dumps(dict(schema_version=1)))
+        (self.root/'my-note.txt').write_text('keep root note')
+        preview=uninstall.plan(self.root,**self.options)
+        self.assertIn('harness-runtime',preview['components'])
+        self.assertIn('runtime/harness-runtime/payload.bin',[item['path'] for item in preview['inventory']])
+        result=uninstall.execute(self.root,preview['plan_sha256'],**self.options)
+        self.assertEqual(result['status'],'completed')
+        self.assertFalse(nested.exists())
+        self.assertTrue((self.root/'my-note.txt').exists())
 
 
 if __name__=='__main__':unittest.main()

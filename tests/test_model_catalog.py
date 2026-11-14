@@ -45,3 +45,6 @@ def test_catalog_missing_key_is_actionable_and_preserves_suggestions(monkeypatch
     reply=execute({'operation':'model-catalog','parameters':{'provider':'deepseek','refresh':True}})
     assert reply['status']=='credentials_missing'
     assert reply['models']
+    # The recovery must be reachable from the first-run screen that shows it.
+    assert 'Enter the provider API key' in reply['error']
+    assert 'Settings' in reply['error']

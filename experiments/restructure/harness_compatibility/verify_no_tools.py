@@ -1,11 +1,11 @@
-"""Verify that an overlay leaves the model with no executable tool at all.
+"""Verify which model-facing tools a set of overlays leaves in place.
 
 Used while designing the Odessy profile: it boots the pinned runtime with one or more
 patch overlays, runs a deterministic prompt, and reads the tool roster the provider
-actually received. An empty roster means "refused by absence"; a non-empty roster names
-exactly what still needs disabling.
+actually received. A non-empty roster names exactly what is still enabled; `--allow`
+names the tools that are permitted (prompt 07 permits only `ask_user_question`).
 
-    python verify_no_tools.py --exe <exe> --home <DSH_HOME> --work <dir> --patch <overlay.yml> [--patch ...]
+    python verify_no_tools.py --exe <exe> --home <DSH_HOME> --work <dir> --patch <overlay.yml> [--allow <tool> ...]
 """
 
 from __future__ import annotations
@@ -29,6 +29,8 @@ def main() -> int:
     parser.add_argument("--home", required=True)
     parser.add_argument("--work", required=True)
     parser.add_argument("--patch", action="append", default=[])
+    parser.add_argument("--allow", action="append", default=[],
+                        help="a tool name the reviewed profile may still expose (prompt 07: ask_user_question)")
     parser.add_argument("--materialize-narrow", action="store_true",
                         help="append the reviewed package overlay last, as the runtime does")
     args = parser.parse_args()
@@ -70,13 +72,15 @@ def main() -> int:
             lines = [line for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
             if lines:
                 roster = json.loads(lines[-1]).get("tools") or []
+        allowed = set(args.allow)
         print(json.dumps({
             "stop_reason": turn.stop_reason,
             "tool_roster": roster,
             "tool_count": len(roster),
-            "clean": turn.stop_reason == "end_turn" and not roster,
+            "allowed": sorted(allowed),
+            "clean": turn.stop_reason == "end_turn" and set(roster) <= allowed,
         }, indent=2))
-        return 0 if turn.stop_reason == "end_turn" and not roster else 1
+        return 0 if turn.stop_reason == "end_turn" and set(roster) <= allowed else 1
     finally:
         client.close()
         server.shutdown()

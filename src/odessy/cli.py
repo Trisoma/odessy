@@ -36,8 +36,7 @@ from odessy.config.sandbox import (
 )
 from odessy.execution.contract import IsolationRequirement
 from odessy.execution.posture import host_posture, limitations_when_asked, resolve_isolation
-from odessy.execution.providers import default_execution_providers
-from odessy.execution.registry import ProviderRegistry, with_unconfined_fallback
+from odessy.execution.registry import ProviderRegistry, host_registry
 from odessy.execution.escalation import ApprovalRequest, EscalationDeniedError, EscalationOutcome
 from odessy.models.fake_model import FakeModel
 from odessy.models.lfm_model import LlamaCppLFMModel
@@ -353,9 +352,12 @@ def execution_registry() -> ProviderRegistry:
     can actually enforce it, then the unconfined fallback, which only a request that
     does not require isolation can select. Built once: the probes describe the host,
     not the call.
+
+    Delegates to :func:`odessy.execution.registry.host_registry` so that the Harness
+    launch and the doctor resolve the *same* host picture rather than two.
     """
 
-    return with_unconfined_fallback(default_execution_providers())
+    return host_registry()
 
 
 def _isolation_from_env() -> str | None:

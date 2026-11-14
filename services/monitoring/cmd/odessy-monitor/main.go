@@ -91,7 +91,8 @@ func run() error {
 		f.MarkDegraded("history database unavailable")
 	}
 
-	worker, err := link.StartProcess(context.Background(), frame.LinkBinary)
+	var worker link.Link
+	worker, err = startTelemetry(frame)
 	if err != nil {
 		return fmt.Errorf("telemetry worker unavailable: %w", err)
 	}
@@ -160,6 +161,38 @@ func run() error {
 	scheduler.Close()
 	f.MarkDegraded("")
 	return nil
+}
+
+func startTelemetry(frame protocol.BootstrapFrame) (link.Link, error) {
+	var workers []link.Link
+	var failures []error
+	if frame.SSH != nil {
+		worker, err := link.StartSSH(*frame.SSH)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("ssh: %w", err))
+		} else {
+			workers = append(workers, worker)
+		}
+	}
+	if frame.LinkBinary != "" {
+		worker, err := link.StartProcess(context.Background(), frame.LinkBinary)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("link: %w", err))
+		} else {
+			workers = append(workers, worker)
+		}
+	}
+	switch len(workers) {
+	case 0:
+		if len(failures) == 0 {
+			return nil, errors.New("no monitoring provider is configured")
+		}
+		return nil, errors.Join(failures...)
+	case 1:
+		return workers[0], nil
+	default:
+		return link.Compose(workers...), nil
+	}
 }
 
 func readBootstrap(r io.Reader) (protocol.BootstrapFrame, error) {

@@ -20,6 +20,7 @@ of cached facts and the request rather than re-probing per candidate.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -34,7 +35,13 @@ from odessy.execution.contract import (
 )
 from odessy.execution.providers import UnconfinedProvider
 
-__all__ = ["ProviderRegistry", "Selection", "render_selection", "with_unconfined_fallback"]
+__all__ = [
+    "ProviderRegistry",
+    "Selection",
+    "host_registry",
+    "render_selection",
+    "with_unconfined_fallback",
+]
 
 #: Strongest first. Used only to choose *among* providers that already satisfy the
 #: request, so it can never turn an unsatisfied request into a satisfied one.
@@ -150,6 +157,20 @@ def with_unconfined_fallback(
     registry = ProviderRegistry(providers)
     registry.register(UnconfinedProvider())
     return registry
+
+
+@functools.lru_cache(maxsize=1)
+def host_registry() -> ProviderRegistry:
+    """The backends this host offers, probed once per process.
+
+    One shared construction, so the CLI, the doctor and the Harness launch cannot
+    describe the same host differently. The probes describe the host, not a call,
+    which is why this is cached rather than rebuilt per request.
+    """
+
+    from odessy.execution.providers import default_execution_providers
+
+    return with_unconfined_fallback(default_execution_providers())
 
 
 def render_selection(selection: Selection) -> str:

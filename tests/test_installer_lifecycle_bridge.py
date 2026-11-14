@@ -64,13 +64,40 @@ def test_core_only_activation_and_failure_reuse_existing_journal(tmp_path):
         maintenance.require_idle(root)
         value={'install_dir':str(root),'new_plan':old['plan'],'inventory':maintenance._tree(root,root/'application'),'activation_components':['application'],'scope':'role-aware-core','tool_archive_sha256':'x','executable_sha256':None}
         value['plan_sha256']=fingerprint(value);return value
-    def assemble(runtime,deps,bundle,target):
+    def assemble(runtime,deps,bundle,target,**options):
         target.mkdir();(target/'new.txt').write_text('new');return {'python':'unused'}
     preview=planner(root,bundle,None)
     result=maintenance.execute(root,bundle,None,preview['plan_sha256'],planner=planner,assemble=assemble,verify=lambda *args:{'core_verified':True},final_check=lambda app:None,probe=lambda root:[])
     assert result['status']=='completed' and (root/'application/new.txt').exists()
     maintenance.recover(root,probe=lambda root:[])
     assert (root/'application/old.txt').read_text()=='old'
+
+
+@pytest.mark.parametrize("staged", [True, False])
+def test_a_rebuilt_application_keeps_the_harness_record_it_had(tmp_path, staged):
+    """An upgrade or repair must not silently drop the installed engine from the record.
+
+    The assembler is what writes ``harness`` into ``odessy-application.json``; a maintenance
+    transaction that called it without the staged directory produced a marker whose engine
+    vanished, even though every staged byte was still on disk.
+    """
+    from installer.operations import maintenance
+    root=legacy(tmp_path/'legacy');old=read_state(root);bundle=tmp_path/'bundle';bundle.mkdir()
+    staged_path=root/'runtime/harness-runtime'
+    if staged:staged_path.mkdir(parents=True)
+    def planner(root,bundle,exe,**kwargs):
+        maintenance.require_idle(root)
+        value={'install_dir':str(root),'new_plan':old['plan'],'inventory':maintenance._tree(root,root/'application'),
+               'activation_components':['application'],'scope':'role-aware-core','tool_archive_sha256':'x','executable_sha256':None}
+        value['plan_sha256']=fingerprint(value);return value
+    seen={}
+    def assemble(runtime,deps,bundle,target,**options):
+        seen.update(options);target.mkdir();(target/'new.txt').write_text('new');return {'python':'unused'}
+    preview=planner(root,bundle,None)
+    maintenance.execute(root,bundle,None,preview['plan_sha256'],planner=planner,assemble=assemble,
+        verify=lambda *args:{'core_verified':True},final_check=lambda app:None,probe=lambda root:[])
+    if staged:assert seen.get('harness_dir')==staged_path
+    else:assert 'harness_dir' not in seen
 
 
 def test_uninstall_cancellation_records_partial_state_and_explicit_resume(tmp_path,monkeypatch):
@@ -118,10 +145,27 @@ def test_versioned_rollback_rechecks_journal_under_lock(tmp_path):
         manager.rollback('c'*32,confirm=record['id'],expected_state=record,expected_operation=None)
 
 
+def test_parent_runtime_repair_includes_existing_nested_harness(tmp_path, monkeypatch):
+    """Repair the nested component before replacing its damaged parent runtime."""
+    from installer.operations import component_repair, role_maintenance
+    from installer import workflow
+    (tmp_path/'runtime/harness-runtime').mkdir(parents=True)
+    monkeypatch.setattr(workflow, 'steps_for', lambda plan: [
+        Step('runtime', lambda: {}, lambda: None),
+        Step('harness_runtime', lambda: {}, lambda: {}),
+        Step('dependencies', lambda: {}, lambda: {}),
+    ])
+    monkeypatch.setattr(component_repair, 'dependency_integrity', lambda root: {})
+    repairs, issues = role_maintenance.health(tmp_path, {})
+    assert repairs.count(component_repair.HARNESS_COMPONENT) == 1
+    assert component_repair.HARNESS_COMPONENT in issues
+    assert 'runtime' in repairs and 'dependencies' in repairs
+
+
 def test_core_health_and_artifacts_never_probe_model(tmp_path,monkeypatch):
     from installer.operations import component_repair,role_maintenance
     from installer import workflow
-    monkeypatch.setattr(workflow,'steps_for',lambda plan:[Step('runtime',lambda:{},lambda:{}),Step('dependencies',lambda:{},lambda:{})])
+    monkeypatch.setattr(workflow,'steps_for',lambda plan:[Step('runtime',lambda:{},lambda:{}),Step('harness_runtime',lambda:{},lambda:{}),Step('dependencies',lambda:{},lambda:{})])
     monkeypatch.setattr(component_repair,'dependency_integrity',lambda root:{})
     monkeypatch.setattr(component_repair.model,'load_release',lambda:(_ for _ in ()).throw(AssertionError('model loaded')))
     assert role_maintenance.health(tmp_path,{'engine':'role-aware-existing-installer-v1'})==([],{})

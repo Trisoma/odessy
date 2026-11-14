@@ -108,6 +108,73 @@ $env:PYTHONUTF8="1"
 On Linux, use `export ODESSY_CONFIG_FILE="$PWD/.ci-no-config.env"` and
 `export PYTHONUTF8=1` instead of the PowerShell environment assignments.
 
+### What the quickstart expects
+
+These are the requirements the commands below are checked against; installing the
+packaged application does not ask for any of them.
+
+| Component | Verified requirement |
+|---|---|
+| Python | 3.10–3.13; CI runs 3.10/3.13 on Ubuntu and 3.12/3.13 on Windows |
+| Node | 22 or 24 for the tool server (`tools/`), installed with `npm ci` |
+| Flutter | 3.47.7 stable for `apps/desktop`; its bundled Dart SDK for `packages/odessy_client` |
+| Rust | stable, only for `native/odessy-link` pairing work |
+
+## Start it
+
+Everything below runs locally and needs no paid provider, microphone or remote
+host. A deterministic fake model makes the first text path checkable offline.
+
+Start the backend (this prints the loopback address; the API needs a token):
+
+```powershell
+$env:ODESSY_API_TOKEN = python -c "import secrets; print(secrets.token_urlsafe(32))"
+python -m odessy serve --fake-model
+```
+
+Start the desktop application in a second terminal:
+
+```powershell
+cd apps/desktop
+flutter run -d windows
+```
+
+On Linux, generate a local token and start the server with:
+
+```sh
+export ODESSY_API_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+python -m odessy serve --fake-model
+```
+
+Then run `flutter run -d linux` from `apps/desktop`. Use the generated token
+when connecting the desktop app. Display it locally with `$env:ODESSY_API_TOKEN`
+in PowerShell or `printf '%s\n' "$ODESSY_API_TOKEN"` on Linux before entering it
+in the app. Keep it private. Generate a separate token on each machine.
+
+Click the connection icon, enter the printed loopback address and the token, then
+send `what time is it?`. The token stays in application memory; the backend never
+prints it. Without `--fake-model`, the same steps use the configured real model
+and its existing budget, which is what makes live-provider checks separate work.
+Clear the quickstart override first (`unset ODESSY_CONFIG_FILE` on Linux or
+`Remove-Item Env:ODESSY_CONFIG_FILE` in PowerShell), or point it at your personal
+configuration. Otherwise the live run still uses `.ci-no-config.env`.
+
+`python -m odessy --fake-model "what time is it?"` runs the same text loop without
+the desktop, which is the smallest end-to-end check of the Python side.
+
+## Diagnose this workstation
+
+```sh
+python -m odessy doctor
+python -m odessy doctor --voice
+```
+
+`doctor` names each failed or optional step with one fix next to it, for example a
+model endpoint that is not answering, an unbuilt `tools/` directory, or the
+optional Whisper/Kokoro assets voice needs. A `[FAIL]` for the model endpoint is
+expected before Ollama (or another endpoint) runs and does not block the fake-model
+checks above. It reads local configuration; it downloads and sends nothing.
+
 ## Run the relevant checks
 
 Run the checks for the components you changed and include the exact commands and
@@ -154,6 +221,14 @@ For paired integration, build Node and Rust first, set `ODESSY_LINK_E2E=1`
 ```sh
 python -m pytest -q tests/test_paired_transport.py tests/test_paired_integration.py tests/test_paired_agent.py tests/test_paired_host.py
 ```
+
+### Remote computer monitoring (SSH)
+
+Use the [SSH contributor path](src/odessy/ssh/README.md) for an existing alias →
+test connection → first timestamped status → disconnect/reconnect. It includes
+the one-laptop fixture commands, provider/lifecycle seam and troubleshooting.
+SSH is monitoring-only; optional tasks still require an independently supported
+execution path and its grants. Existing paired hosts remain supported consumers.
 
 ### Live Linux confinement
 

@@ -23,6 +23,7 @@ that a resumed session replayed its history).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import threading
 import time
@@ -40,6 +41,9 @@ ESCALATION_TARGET: str | None = None
 def _tool_results(messages: list) -> int:
     count = 0
     for message in messages:
+        if message.get("role") == "tool":
+            count += 1
+            continue
         content = message.get("content")
         if isinstance(content, list):
             count += sum(1 for part in content if isinstance(part, dict) and part.get("type") == "tool_result")
@@ -55,6 +59,11 @@ def _chunks_for(prompt: str) -> tuple[list[str], int, dict | None]:
             "description": "Write a marker outside the workspace",
             "command": command,
         }})
+    if "slow sentences" in prompt.lower():
+        # Two complete sentences, then a long tail without sentence ends: the voice path
+        # speaks what arrived before a Stop and nothing after it (prompt 13).
+        return (["The first sentence is spoken. ", "The second one too. "]
+                + [f"tail{i} " for i in range(40)], 250, None)
     if "slow survive" in prompt.lower():
         # 5 s: still running after the other turn is cancelled and observed.
         return ([f"token{i} " for i in range(20)], 250, None)
@@ -135,9 +144,24 @@ class Handler(BaseHTTPRequestHandler):
         messages = payload.get("messages") or []
         prompt = prompt_of(messages)
         chunks, delay_ms, tool_call = _chunks_for(prompt)
+        if prompt.startswith("question"):
+            # Prompt 07: the model asks a structured clarification. The first request has
+            # no tool result and asks; after the tool returns, the same turn continues.
+            if _tool_results(messages) == 0:
+                chunks, delay_ms, tool_call = ([], 0, {"name": "ask_user_question", "arguments": {
+                    "questions": [{
+                        "id": "cleanup",
+                        "question": "Proceed with the cleanup?",
+                        "header": "Confirm",
+                        "options": [{"label": "Yes"}, {"label": "No"}],
+                    }],
+                }})
+            else:
+                chunks, delay_ms, tool_call = (["Answer received; continuing."], 10, None)
         # Escalate exactly once: after the first tool result. A rejected approval
-        # returns another result, and asking again would loop forever.
-        if _tool_results(messages) == 1:
+        # returns another result, and asking again would loop forever. Guarded on the
+        # scenario, so an ordinary tool scenario is not hijacked into an escalation.
+        elif prompt.startswith("escalate") and _tool_results(messages) == 1:
             target = ESCALATION_TARGET or "spike-outside.txt"
             command = "Set-Content -LiteralPath '" + target + "' -Value spike"
             chunks, delay_ms = ["Retrying with the wider mode."], 10
@@ -147,6 +171,8 @@ class Handler(BaseHTTPRequestHandler):
                 "sandbox_permissions": "danger-full-access",
                 "justification": "Spike: prove the approval prompt reaches the client.",
             }}
+        if prompt.startswith("tool ") and messages and messages[-1].get("role") == "tool":
+            chunks, delay_ms, tool_call = (["Tool completed."], 10, None)
         tools = payload.get("tools") or []
 
         def tool_name(tool: dict) -> str:
@@ -165,8 +191,17 @@ class Handler(BaseHTTPRequestHandler):
             "message_roles": [m.get("role") for m in messages],
             "n_messages": len(messages),
             "last_user": prompt[:200],
+            # A 200-char head cannot prove what a framed/patched prompt said. The digest
+            # lets a scenario assert the exact text it expected, and the tail shows the end.
+            "last_user_length": len(prompt),
+            "last_user_tail": prompt[-200:],
+            "last_user_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
             "tools": [tool_name(t) for t in tools][:60],
             "tool_schemas": schemas,
+            # What the model was actually shown after a tool ran. Without it a fixture can
+            # prove a call was *made* but not that the caller saw its result.
+            "tool_results": [_text_of(m)[:2000] for m in messages
+                             if m.get("role") == "tool"],
             "t": time.time(),
         })
 
@@ -186,6 +221,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             finally:
                 self.close_connection = True
+                with _LOCK:
+                    event = self.server.stream_completions.setdefault(prompt, threading.Event())
+                    event.set()
             return
 
         message: dict = {"role": "assistant", "content": "".join(chunks)}
@@ -286,6 +324,7 @@ def serve(log_dir: Path, port: int = 0) -> tuple[ThreadingHTTPServer, int]:
     log_dir.mkdir(parents=True, exist_ok=True)
     handler = type("BoundHandler", (Handler,), {"log_dir": log_dir})
     server = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    server.stream_completions = {}
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, server.server_address[1]

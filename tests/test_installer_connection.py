@@ -92,14 +92,9 @@ class ConnectionTests(unittest.TestCase):
             self.assertTrue(Path(env['ODESSY_CONFIG_FILE']).is_absolute())
 
     def test_installation_check_matches_normal_session_generation_budget(self):
-        from installer import start
-        scratch=self.root/'session'
-        info={'paths':{'runtime':Path(self.settings['runtime_dir']),'config':scratch/'profile.env'}}
         with patch.dict(os.environ,{'ODESSY_MODEL_NUM_PREDICT':'999999'}):
             self.verify()
-            normal=start.session_environment(info,scratch)
         for _,kwargs in self.calls:
-            self.assertEqual(kwargs['env']['ODESSY_MODEL_NUM_PREDICT'],normal['ODESSY_MODEL_NUM_PREDICT'])
             self.assertEqual(kwargs['env']['ODESSY_MODEL_NUM_PREDICT'],'2048')
 
     def test_changed_application_source_rejected_before_model_calls(self):

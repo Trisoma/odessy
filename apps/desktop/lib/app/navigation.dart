@@ -35,7 +35,7 @@ abstract final class DesktopNavigation {
         'Monitor' => 'Devices',
         'Installer' => 'Install Odessy',
         'Maintenance' => 'Installation & recovery',
-        'Pairing' => 'Connect a device',
+        'Pairing' => 'Connect a computer',
         'Local pairing' => 'Local pairing tools',
         'Setup' => 'Computer configuration',
         _ => route,

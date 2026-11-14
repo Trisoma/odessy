@@ -24,6 +24,34 @@ class DesktopSession extends ChangeNotifier {
   bool connected = false, busy = false, stopping = false, _disposed = false;
 
   final _ownedSessions = <String>{};
+
+  /// Which engine a *new* session should run. `null` keeps the service's default.
+  /// An existing session keeps the engine it started with — changing this never
+  /// reinterprets the open conversation.
+  String? newSessionRuntime;
+
+  /// What the service reported for `/v1/capabilities`: `default`, `engines`, `known`.
+  /// Diagnostics only; an unreadable report never blocks a session.
+  Json runtimeEngines = const {};
+
+  List<String> get availableEngines {
+    final value = runtimeEngines['engines'];
+    return value is List
+        ? value.whereType<String>().toList(growable: false)
+        : const <String>[];
+  }
+
+  String get engineDefault => runtimeEngines['default'] as String? ?? 'legacy';
+
+  /// The open session's backend identity, or null when the service did not report one.
+  EngineInfo? get engine => session?.engine;
+
+  void selectNewSessionRuntime(String? runtime) {
+    if (newSessionRuntime == runtime) return;
+    newSessionRuntime = runtime;
+    _notify();
+  }
+
   int _epoch = 0;
   Future<void>? _shutdown;
   Json? _consultationVersion;
@@ -58,7 +86,26 @@ class DesktopSession extends ChangeNotifier {
       final details = api is ProfileMetadataApi
           ? await (api as ProfileMetadataApi).profileMetadata()
           : <Profile>[];
-      final fresh = await api.createSession();
+      if (api is RuntimeSelectionApi) {
+        try {
+          runtimeEngines = await (api as RuntimeSelectionApi).runtimeEngines();
+        } catch (_) {
+          // Diagnostics only: a service that cannot describe its engines still serves
+          // sessions, and the create call below reports any real refusal.
+          runtimeEngines = const {};
+        }
+      } else if (newSessionRuntime != null) {
+        // Asking for an engine this service cannot inject and quietly opening the default
+        // is the silent switch this path must not make.
+        throw StateError('This service cannot select a runtime engine.');
+      }
+      // No selection keeps the original create call, so a composition that predates
+      // runtime selection behaves exactly as it did.
+      final fresh = newSessionRuntime == null
+          ? await api.createSession()
+          : await (api as RuntimeSelectionApi).createSessionOn(
+              runtime: newSessionRuntime,
+            );
       final values = fresh.availableProfiles ?? legacyProfiles;
       if (_disposed || epoch != _epoch) return;
       profiles = values;
@@ -92,38 +139,43 @@ class DesktopSession extends ChangeNotifier {
 
   String _safeError(Object e) => e is ApiFailure
       ? e.toString()
+      : e is StateError
+      ? e.message
       : 'Connection unavailable. Check that the local service is running.';
 
   void _listen(int epoch) {
     final sid = session!.id;
-    _subscription = api.events(sid, lastEvent).listen(
-      (event) async {
-        if (_disposed || epoch != _epoch) return;
-        if (event.type == 'selection') {
-          route = '${event.data['profile']} · ${event.data['reason'] ?? ''}';
-        }
-        if (event.type == 'stopped') {
-          status = 'Stopped · completed actions remain completed';
-        }
-        if (event.type == 'error') {
-          final detail = event.data['message'];
-          final text = detail is String
-              ? detail.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ').trim()
-              : '';
-          error = text.isEmpty
-              ? 'The turn failed without an error detail.'
-              : text.substring(0, text.length > 600 ? 600 : text.length);
-          status = 'Failed';
-        }
-        await refresh(epoch: epoch);
-        if (event.type == 'error' && epoch == _epoch && !_disposed) {
-          status = 'Failed';
-          _notify();
-        }
-      },
-      onError: (Object e) => _disconnected(epoch, e),
-      onDone: () => _disconnected(epoch, StateError('Closed')),
-    );
+    _subscription = api
+        .events(sid, lastEvent)
+        .listen(
+          (event) async {
+            if (_disposed || epoch != _epoch) return;
+            if (event.type == 'selection') {
+              route =
+                  '${event.data['profile']} · ${event.data['reason'] ?? ''}';
+            }
+            if (event.type == 'stopped') {
+              status = 'Stopped · completed actions remain completed';
+            }
+            if (event.type == 'error') {
+              final detail = event.data['message'];
+              final text = detail is String
+                  ? detail.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ').trim()
+                  : '';
+              error = text.isEmpty
+                  ? 'The turn failed without an error detail.'
+                  : text.substring(0, text.length > 600 ? 600 : text.length);
+              status = 'Failed';
+            }
+            await refresh(epoch: epoch);
+            if (event.type == 'error' && epoch == _epoch && !_disposed) {
+              status = 'Failed';
+              _notify();
+            }
+          },
+          onError: (Object e) => _disconnected(epoch, e),
+          onDone: () => _disconnected(epoch, StateError('Closed')),
+        );
   }
 
   void _disconnected(int epoch, Object error) {
@@ -246,8 +298,8 @@ class DesktopSession extends ChangeNotifier {
       throw StateError('Safe settings updates are unavailable.');
     }
     final epoch = _epoch;
-    final result =
-        await (transport as ConsultationLimitApi).readConsultationLimit();
+    final result = await (transport as ConsultationLimitApi)
+        .readConsultationLimit();
     if (_disposed || epoch != _epoch || !identical(transport, api)) {
       throw StateError('Connection changed.');
     }
@@ -396,8 +448,7 @@ class DesktopSession extends ChangeNotifier {
       if (!_disposed && epoch == _epoch) {
         busy = false;
         status = 'Offline';
-        error =
-            'The previous session could not be closed. Reconnect or restart the app to continue.';
+        error = 'The previous session could not be closed. Reconnect or restart the app to continue.';
         _notify();
       }
     }
@@ -424,7 +475,8 @@ class DesktopSession extends ChangeNotifier {
       }
       if (fresh.id != sid || fresh.running || fresh.pending.isNotEmpty) {
         throw StateError(
-            'Select an idle session with no pending interactions.');
+          'Select an idle session with no pending interactions.',
+        );
       }
       ++_epoch;
       _retry?.cancel();
@@ -461,7 +513,9 @@ class DesktopSession extends ChangeNotifier {
           await transport
               .deleteSession(sid)
               .timeout(const Duration(seconds: 3));
-        } catch (_) {/* Best effort per owned session. */}
+        } catch (_) {
+          /* Best effort per owned session. */
+        }
       }
       _ownedSessions.clear();
     } catch (_) {

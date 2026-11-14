@@ -38,17 +38,21 @@ consecutive runs passed.
 | `stream_bridge.py` | Client for the bridge plugin (token auth, frame collection with receive times) |
 | `mock_provider.py` | Deterministic local provider (Anthropic Messages + OpenAI chat SSE), request log, escalation trigger. `prompt_of()` skips the runtime's own user-role context snapshot, so a marker in the request ("slow", "tool …") selects the scenario |
 | `mcp_echo_server.py` | Three-call MCP stdio server used only to prove external tool invocation |
-| `install_plugin.py` | Installs the spike bundle into an isolated profile using a workspace-local toolchain |
-| `plugin/odessy-stream-bridge/` | The bundle: `package.json`, `cordis.patch.yml`, `lib/index.js` |
+| `install_plugin.py` | Installs the packaged bundle into an isolated profile using a workspace-local toolchain; it resolves the bundle from `odessy.runtime_backends.harness.resources`, so nothing is copied here |
+| `src/odessy/runtime_backends/harness/bundle/odessy-stream-bridge/` | **The** bundle (`package.json`, `cordis.patch.yml`, `lib/index.js`), owned by the product package and declared in `harness-artifacts.json` with a digest per file. It forwards live frames **and** answers the runtime's `user-questions` seam over the same authenticated socket; its patch also mounts the upstream `tool-ask-user` row |
 | `smoke_acceptance.py` | **The gate.** C0–C6 with assertions and non-zero exit |
 | `smoke_sdk.py` | Same pin over the Python SDK: notification census, delta check, method probes, resume |
-| `verify_no_tools.py` | Boots the pin with one or more overlays and reads the tool roster the provider received; exits 1 unless the roster is empty. Used to design `odessy_narrow.patch.yml` |
-| `smoke_p03.py` | Drives the **production** `HarnessRuntime` (`from_environment` → `start`/`run_turn`/`close`) against the pinned binary: version identity, allowlisted environment, no tools, settled text, no orphan |
+| `verify_no_tools.py` | Boots the pin with one or more overlays and reads the tool roster the provider received. Exits 1 unless the roster is within `--allow` (prompt 07 passes `--allow ask_user_question`). Used to design `odessy_narrow.patch.yml` |
+| `smoke_p03.py` | Drives the **production** `HarnessRuntime` (`from_environment` → `start`/`run_turn`/`close`) against the pinned binary: version identity, allowlisted environment, only the clarification tool, settled text, no orphan |
 | `probe_providers.py` | Prints the model catalogue the pin advertises and what it does with pairs it does not offer |
 | `probe_piai_route.py` | Declares one `llm-pi-ai` route and reports whether it appears, is selectable, and reaches the endpoint (both wire apis) |
 | `smoke_p04.py` | Model routes end to end against the pin: missing key refused, declared route used, context usage recorded, model switched in the same process |
 | `smoke_p05.py` | Live event translation end to end against the pin with the real plugin: bridge attached, deltas before settlement, deltas join to the committed answer, no loss, no orphan |
 | `smoke_p06.py` | Per-session Stop against the pin: two sessions generating, one cancelled (prompt settles `cancelled`), the other completes, the stopped session runs another turn, no orphan |
+| `smoke_p07.py` | Clarification end to end against the pin with the real bundle: the runtime's `ask_user_question` executes, the question reaches the production broker, the answer returns, the same turn continues, and a Stop while waiting settles with no orphan |
+| `probe_sandbox_vocabulary.py` | Asks the pin what sandbox vocabulary it exposes: composed `sandbox*` rows from `--dump-config`, accepted fields from `--dump-config-schema`, and every `session/new` config option (plus whether a set is accepted). This is where §22's "the pin accepts only `mode` and `workspaceRoot`" comes from |
+| `verify_enforcement.py` | Runs real commands through every backend this host offers under a `network=deny` + hidden-path policy and prints what happened, with exit codes and the denial signatures. Reports a backend that fails its own control as **unusable**, not strict |
+| `smoke_p08.py` | Pinned evidence for prompt 08: the pin composes Odessy's `sandbox-policy` (mode + workspace root), a widening overlay applied earlier loses, a real `SessionController` reports the plan it launched with and hands the child `DSH_PERMISSION_MODE`, a `required` policy refuses by name, and `close()` leaves no orphan |
 | `plugin_backpressure.mjs` | The plugin alone, loaded with a stub context: a client that stops reading loses frames, the loss is reported, the connection survives |
 
 ## Prerequisites
@@ -117,7 +121,9 @@ $SPIKE\venv\Scripts\python.exe experiments\restructure\harness_compatibility\smo
   asserts the marker file does not exist.
 - The deterministic provider is a fixture. A green run proves transport behaviour, not
   model quality, latency or provider compatibility. No real-provider evidence is claimed.
-- The bridge plugin is still installed by hand (`install_plugin.py`) and is not packaged; the
+- The bridge plugin is installed by hand (`install_plugin.py`) and its composed profile is not
+  packaged yet; the production source of the bundle itself is the `odessy` package, and the
   production *client* for it lives in `src/odessy/runtime_backends/harness/bridge.py` (prompt 05),
   and both ends of the socket are bounded — see
   [`../../../../restructure/doc/reports/05.md`](../../../../restructure/doc/reports/05.md).
+| `smoke_p09.py` | The guarded tool pipeline on the pin: the model is offered Odessy's own MCP server and no built-in execution row, an allowed command really runs and its result names the confining provider, an unapproved write is refused and leaves no file, and a call that tries to choose its sandbox mode is refused |

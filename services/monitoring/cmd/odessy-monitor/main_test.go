@@ -3,6 +3,9 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -55,7 +58,10 @@ func TestBinaryBootstrapSmokeWithFakeChild(t *testing.T) {
 	token := "smoketoken0123456789abcdef0123456789"
 
 	stateDir := t.TempDir()
-	cmd := exec.Command(monitor)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	cmd := exec.CommandContext(ctx, monitor)
+	cmd.WaitDelay = time.Second
 	cmd.Env = append(os.Environ(), "FAKEWORKER_HOST_ID="+hostID)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -197,6 +203,172 @@ func TestBinaryBootstrapSmokeWithFakeChild(t *testing.T) {
 	}
 }
 
+func TestBinaryBootstrapComposesPairedAndSSH(t *testing.T) {
+	if testing.Short() {
+		t.Skip("binary smoke skipped in short mode")
+	}
+	workerName := "odessy-fakeworker-compose"
+	sshName := "odessy-fakessh-compose"
+	if os.PathSeparator == '\\' {
+		workerName += ".exe"
+		sshName += ".exe"
+	}
+	monitor := buildBinary(t, "./cmd/odessy-monitor", "odessy-monitor")
+	worker := buildBinary(t, "./internal/testsupport/fakeworker", strings.TrimSuffix(workerName, ".exe"))
+	fakeSSH := buildBinary(t, "./internal/testsupport/fakessh", strings.TrimSuffix(sshName, ".exe"))
+
+	pairedID := "host_" + strings.Repeat("a", 64)
+	sshID := "host_" + strings.Repeat("b", 64)
+	token := "composetoken0123456789abcdef0123456789"
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	cmd := exec.CommandContext(ctx, monitor)
+	cmd.WaitDelay = time.Second
+	cmd.Env = append(os.Environ(), "FAKEWORKER_HOST_ID="+pairedID)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+
+	sshConfig := protocol.SSHConfig{
+		Hostname: "192.0.2.10", User: "tester", Port: 22, HostKey: fixtureKey(),
+		Binary: fakeSSH, Alias: "fixture-jetson", HostID: sshID,
+		DisplayName: "Fixture Jetson", FingerprintSHA256: fixtureFingerprint(),
+		Generation: "ssh:SHA256:fixture", Monitoring: true,
+	}
+	frame := protocol.BootstrapFrame{
+		SchemaVersion: protocol.SchemaVersion,
+		Op:            "configure",
+		Token:         token,
+		StateDir:      t.TempDir(),
+		LinkBinary:    worker,
+		SSH:           &sshConfig,
+		Settings: protocol.Settings{
+			MonitoredHostIDs: []string{pairedID, sshID},
+			IncludeLocal:     false,
+			Preset:           protocol.PresetDefault,
+		},
+	}
+	raw, _ := json.Marshal(frame)
+	if _, err := stdin.Write(append(raw, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(stdout)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("readiness: %v (stderr=%s)", err, stderr.String())
+	}
+	var ready protocol.ReadyFrame
+	if err := json.Unmarshal([]byte(line), &ready); err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	deadline := time.Now().Add(8 * time.Second)
+	var body []byte
+	for time.Now().Before(deadline) {
+		req, _ := http.NewRequest(http.MethodGet, ready.BaseURL+"/internal/v1/hosts", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if bytes.Contains(data, []byte(pairedID)) && bytes.Contains(data, []byte(sshID)) {
+			body = data
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if body == nil {
+		t.Fatalf("both providers never shared inventory (stderr=%s)", stderr.String())
+	}
+	_ = stdin.Close()
+	select {
+	case err := <-exited:
+		if err != nil {
+			t.Fatalf("monitor exited nonzero: %v (stderr=%s)", err, stderr.String())
+		}
+	case <-time.After(10 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatal("monitor did not shut down")
+	}
+}
+func TestStartTelemetryKeepsWorkingProviderWhenOtherFails(t *testing.T) {
+	sshName := "odessy-fakessh-fallback"
+	if os.PathSeparator == '\\' {
+		sshName += ".exe"
+	}
+	fakeSSH := buildBinary(t, "./internal/testsupport/fakessh", strings.TrimSuffix(sshName, ".exe"))
+	sshID := "host_" + strings.Repeat("d", 64)
+	sshConfig := protocol.SSHConfig{
+		Hostname: "192.0.2.10", User: "tester", Port: 22, HostKey: fixtureKey(),
+		Binary: fakeSSH, Alias: "fixture", HostID: sshID,
+		FingerprintSHA256: fixtureFingerprint(), Generation: "ssh:fixture", Monitoring: true,
+	}
+	frame := protocol.BootstrapFrame{
+		SchemaVersion: protocol.SchemaVersion, Op: "configure",
+		Token: strings.Repeat("t", 32), LinkBinary: filepath.Join(t.TempDir(), "missing-link"),
+		SSH: &sshConfig, Settings: protocol.DefaultSettings(),
+	}
+	worker, err := startTelemetry(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer worker.Close()
+	inventory, err := worker.Inventory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inventory.Hosts) != 1 || inventory.Hosts[0].HostID != sshID {
+		t.Fatalf("SSH provider was lost: %+v", inventory)
+	}
+}
+
+func TestStartTelemetryKeepsPairedWhenSSHConfigFails(t *testing.T) {
+	workerName := "odessy-fakeworker-sshfail"
+	if os.PathSeparator == '\\' {
+		workerName += ".exe"
+	}
+	workerPath := buildBinary(t, "./internal/testsupport/fakeworker", strings.TrimSuffix(workerName, ".exe"))
+	pairedID := "host_" + strings.Repeat("e", 64)
+	sshConfig := protocol.SSHConfig{
+		Hostname: "192.0.2.10", User: "tester", Port: 22, HostKey: fixtureKey(),
+		Binary: "/usr/bin/ssh", Alias: "fixture", HostID: "host_bad",
+		FingerprintSHA256: fixtureFingerprint(), Generation: "ssh:fixture", Monitoring: true,
+	}
+	frame := protocol.BootstrapFrame{
+		SchemaVersion: protocol.SchemaVersion, Op: "configure",
+		Token: strings.Repeat("t", 32), LinkBinary: workerPath,
+		SSH: &sshConfig, Settings: protocol.DefaultSettings(),
+	}
+	t.Setenv("FAKEWORKER_HOST_ID", pairedID)
+	worker, err := startTelemetry(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer worker.Close()
+
+	inventory, err := worker.Inventory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inventory.Hosts) != 1 || inventory.Hosts[0].HostID != pairedID {
+		t.Fatalf("paired provider was lost: %+v", inventory)
+	}
+}
+
 func leftoverChildren(t *testing.T, name string) bool {
 	t.Helper()
 	out, err := exec.Command("tasklist", "/FO", "CSV", "/NH").Output()
@@ -205,3 +377,14 @@ func leftoverChildren(t *testing.T, name string) bool {
 	}
 	return bytes.Contains(bytes.ToLower(out), bytes.ToLower([]byte(name)))
 }
+
+func fixtureSSHKey() (string, string) {
+	blob := append([]byte{0, 0, 0, 11}, []byte("ssh-ed25519")...)
+	blob = append(blob, 0, 0, 0, 32)
+	blob = append(blob, make([]byte, 32)...)
+	sum := sha256.Sum256(blob)
+	return "ssh-ed25519 " + base64.StdEncoding.EncodeToString(blob), "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:])
+}
+
+func fixtureKey() string         { key, _ := fixtureSSHKey(); return key }
+func fixtureFingerprint() string { _, fp := fixtureSSHKey(); return fp }

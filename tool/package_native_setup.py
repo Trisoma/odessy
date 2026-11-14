@@ -7,13 +7,36 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
 import zipfile
+
+
+def _discard(temporary):
+    """Remove the disposable staging tree, tolerating a transient Windows file lock.
+
+    The native wrapper writes and reads several gigabytes in this directory; an indexer or
+    scanner can still hold it briefly after the compiler exits. The artifact is already
+    written, so a locked leftover is reported, not raised: failing here would make a
+    successful release build look failed and skip the checksum sidecar.
+    """
+    for attempt in range(10):
+        try:
+            shutil.rmtree(temporary)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if attempt == 9:
+                print('warning: temporary packaging directory was left in place: ' + temporary)
+                return
+            time.sleep(0.5)
 
 
 def package(payload,output,platform,*,script_signing_thumbprint=""):
     payload,output=Path(payload).resolve(),Path(output).resolve()
     if output.exists() or output.is_symlink():raise ValueError('choose a new artifact output')
-    with tempfile.TemporaryDirectory(prefix='odessy-native-package-') as temporary:
+    temporary=tempfile.mkdtemp(prefix='odessy-native-package-')
+    try:
         stage=Path(temporary)
         if platform=='windows':
             if script_signing_thumbprint:
@@ -34,6 +57,8 @@ def package(payload,output,platform,*,script_signing_thumbprint=""):
             elif platform=='linux':
                 with tarfile.open(output,'w:gz') as archive:archive.add(stage,arcname='odessy-setup')
             else:raise ValueError('unsupported package platform')
+    finally:
+        _discard(temporary)
     sha=hashlib.sha256(output.read_bytes()).hexdigest()
     output.with_name(output.name+'.sha256').write_text(sha+'  '+output.name+'\n',encoding='utf-8')
     return output

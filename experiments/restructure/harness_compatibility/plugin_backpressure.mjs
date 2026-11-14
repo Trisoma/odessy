@@ -24,14 +24,18 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { writeFileSync } from 'node:fs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
-const PLUGIN = path.join(HERE, 'plugin', 'odessy-stream-bridge', 'lib', 'index.js')
-const TOKEN = 't0ken-backpressure'
-const TEXT = 'x'.repeat(400)
 
 function arg(name, fallback) {
   const index = process.argv.indexOf(`--${name}`)
   return index >= 0 && process.argv[index + 1] ? process.argv[index + 1] : fallback
 }
+
+// The plugin under test is the one Odessy ships, resolved from the package rather than
+// from a copy under this experiment directory. `--plugin` exists for a deliberate A/B run.
+const PLUGIN = arg('plugin', path.join(HERE, '..', '..', '..', 'src', 'odessy',
+  'runtime_backends', 'harness', 'bundle', 'odessy-stream-bridge', 'lib', 'index.js'))
+const TOKEN = 't0ken-backpressure'
+const TEXT = 'x'.repeat(400)
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 

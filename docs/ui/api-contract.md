@@ -7,7 +7,7 @@ an implicit request target. There are no direct provider/native calls in widgets
 | Operation | Existing backend route |
 |---|---|
 | List profiles | GET `/v1/profiles` |
-| Create/refresh/close | POST `/v1/sessions`, GET/DELETE `/v1/sessions/{sid}` |
+| Create/refresh/close | POST `/v1/sessions` (optional `{"restore": id, "runtime": engine}`), GET/DELETE `/v1/sessions/{sid}` |
 | Discover current live sessions | GET `/v1/sessions?limit=50&offset=0` |
 | Next-turn selection | PUT `/v1/sessions/{sid}/model`, `{profile}` |
 | Submit once | POST `/v1/sessions/{sid}/turns`, `{text}` |
@@ -39,6 +39,8 @@ an implicit request target. There are no direct provider/native calls in widgets
 | Monitoring inventory/detail | GET `/v1/monitoring/hosts`, GET `/v1/monitoring/hosts/{id}` |
 | Monitoring metrics/history | GET `/v1/monitoring/hosts/{id}/metrics`, GET `/v1/monitoring/hosts/{id}/history` |
 | Monitoring events | GET `/v1/monitoring/events`, `Last-Event-ID: epoch:sequence` |
+| SSH connection actions | GET `/v1/ssh/aliases`, GET `/v1/ssh/target`, POST `/v1/ssh/inspect`, POST `/v1/ssh/test`, POST/DELETE `/v1/ssh/target` |
+| SSH typed readiness | GET `/v1/ssh/computer` |
 
 Stop returns HTTP 200 with a body that says what was actually established, not merely that the
 request was accepted:
@@ -78,7 +80,23 @@ Desktop appearance persistence is separate from HTTP/runtime configuration.
 transparency under the user's Odessy desktop configuration directory. Revision
 conflicts and malformed/future files fail visibly and preserve the stored file;
 there is no credential, endpoint, engine or permission storage in that document.
-The foundation is not yet connected to the production settings/shell.
+The production settings and shell use these preferences.
+A new session may name its backend: `POST /v1/sessions` with `{"runtime": "harness"}`.
+The field is optional and applies only to the session being created — omitting it keeps the
+service's resolution (legacy, unless the installation chooses otherwise), and an open
+session never changes backend. An unknown name is `400`, a runtime this build cannot inject
+is `501`, and an engine whose own dependencies are missing is `503` carrying that engine's
+reason. Restoring continues the engine the history was written with; naming a different one
+is refused (`409`), never a silent reinterpretation. `GET /v1/capabilities` reports
+`runtime: {default, engines, known}` — what this build can create, and what a session gets
+without asking. Registration is not availability: a missing runtime is refused at creation,
+where the error can be acted on.
+
+Session snapshots also carry an `engine` block: `name`, `source` (`default` or `explicit`),
+the engine's own `identity` (empty until it starts) and the `capabilities` reported **for
+this session** (live deltas or questions can depend on the engine's plugin being attached).
+It is diagnostics, not conversation content; the desktop shows it in settings, and a service
+that omits it renders normally.
 
 Usage history is a read-only, bearer-authenticated view of provider-reported cloud
 API calls recorded by this service. Allowed ranges are 7, 30, 90 and 0 (all time)
@@ -112,6 +130,8 @@ The Python public route preserves all repeated `series` values when forwarding
 to the Go service; other query fields retain their existing handling.
 These routes add no pairing, trust or configuration mutations. HTTP 503 stays
 unavailable while conversation APIs remain usable; it never activates demo data.
+SSH actions only inspect/test/save/remove one user-selected alias; they write no
+`known_hosts` or key file, and no SSH execution route exists in this slice.
 
 A `run` session event carries the same snapshot as GET: `steps` are the agents and
 `transfers` the data moving between them. Runs do not survive a service restart.
@@ -126,6 +146,24 @@ risk, permission, action modification or model-written authorization. Interactio
 cards render the backend request and exact arguments. Pending IDs, expiry and
 allowed UI channels gate response controls; backend validation remains authoritative.
 HTTP 404/409/410 are stale/unavailable outcomes, never success.
+
+A Harness-originated approval uses the same `approvals/{id}` route and the same
+boolean answer, so no client shape changes. Its entry adds `operation`,
+`arguments`, `resolved_paths`, `workspace`, `requested_authority` (`allow_once`
+only), `risk`, `scopes`, `fingerprint`, plus `runtime_identity`
+(`runtime`, `version`, `artifact`), `session_identity` (`acp_session`,
+`odessy_session`) and `request_identity` (`request_id`, `method`,
+`tool_call_id`, `turn`). The runtime request is bound to the operation the card
+shows; an answer that no longer matches that operation is not authorization.
+
+A Harness clarification uses the existing `questions/{id}` route and a string
+answer. Its entry carries `prompt`, `choices` and, when the runtime supplied
+them, `header` and `detail`; `choices` may be empty for a free-text question. A
+choice label answered exactly appears in the model's tool result as `selected`;
+any other text appears as `custom`. Multi-select questions are refused by the
+runtime side rather than answered partially. A question is information, never
+authorization: it cannot resolve an approval, and an approval cannot resolve a
+question.
 
 The runtime inventory requires authentication and reports the server instance ID,
 registry metadata and whether each process-environment variable is nonempty. It

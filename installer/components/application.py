@@ -15,6 +15,7 @@ from installer.core.manifest import _unique_keys
 from installer.core.preflight import REPO_ROOT,default_locations
 from installer.core.process import child_env,owned_directory,run_step,validate_runtimes
 from installer.components.runtime import destination
+from installer.components import harness
 from installer.core.space import load_resources,volume_for,RESERVE_BYTES
 from installer.components.toolbundle import source_files as tool_source_files
 from installer.core.unpack import unpack
@@ -22,6 +23,30 @@ from installer.core.unpack import unpack
 
 def text_hash(data: bytes) -> str:
     return hashlib.sha256(data.replace(b'\r\n',b'\n')).hexdigest()
+
+
+# Reviewed asset kinds for application source. Everything else is refused rather than
+# copied, so an unreviewed file cannot ride into a payload.
+SOURCE_SUFFIXES={'.py','.json','.toml','.txt','.md'}
+# The Harness plugin closure is the one place under `src/odessy` that legitimately carries
+# a bundler-less ES module and the Cordis profile patch it declares. The allowance is
+# path-scoped and extension-scoped on purpose: `.js` or `.yml` anywhere else is still
+# refused, and every declared file also has a digest in
+# `src/odessy/runtime_backends/harness/harness-artifacts.json`.
+BUNDLE_DIRECTORY=('src','odessy','runtime_backends','harness','bundle')
+BUNDLE_SUFFIXES={'.js','.yml'}
+
+
+def reviewed_source_asset(repo: Path, path: Path) -> bool:
+    if path.suffix in SOURCE_SUFFIXES:
+        return True
+    if path.suffix not in BUNDLE_SUFFIXES:
+        return False
+    try:
+        parts=path.relative_to(repo).parts
+    except ValueError:
+        return False
+    return parts[:len(BUNDLE_DIRECTORY)]==BUNDLE_DIRECTORY
 
 
 def source_snapshot(repo: Path) -> dict[str,bytes]:
@@ -33,7 +58,7 @@ def source_snapshot(repo: Path) -> dict[str,bytes]:
             if path.is_symlink():
                 raise ValueError('Application source contains a file link.')
             if path.is_file():
-                if folder=='src/odessy' and path.suffix not in {'.py','.json','.toml','.txt','.md'}:
+                if folder=='src/odessy' and not reviewed_source_asset(repo,path):
                     raise ValueError('Unreviewed source asset type: '+str(path))
                 paths.append(path)
     if not (repo/'src'/'odessy'/'__main__.py').is_file():
@@ -93,7 +118,26 @@ def validate_dependencies(runtime: Path,dependencies: Path,*,repo: Path=REPO_ROO
     return {'python':str(python.resolve()),'packages':expected}
 
 
-def assemble(runtime: Path,dependencies: Path,bundle_dir: Path,target: Path,*,repo: Path=REPO_ROOT,
+def register_installed_source(dependencies: Path, target: Path) -> Path:
+    """Point the private dependency interpreter at this installed application.
+
+    Tool gateways are launched by the private interpreter as fresh ``-I`` processes, so the
+    registration has to live in that environment's ``site-packages`` — never an inherited
+    ``PYTHONPATH``. Rebuilding the dependency environment destroys it, so this is
+    idempotent and called again after a dependency repair.
+    """
+
+    dependencies, target = Path(dependencies), Path(target)
+    site_packages = dependencies / 'venv' / 'Lib' / 'site-packages'
+    site_packages.mkdir(parents=True, exist_ok=True)
+    path = site_packages / 'odessy-application.pth'
+    desired = str((target / 'src').resolve()) + '\n'
+    if not path.exists() or path.read_text(encoding='utf-8') != desired:
+        path.write_text(desired, encoding='utf-8')
+    return path
+
+
+def assemble(runtime: Path,dependencies: Path,bundle_dir: Path,target: Path,*,repo: Path=REPO_ROOT,harness_dir: Path|None=None,install_root: Path|None=None,
              run=run_step,validate=validate_runtimes,dependency_check=validate_dependencies) -> dict:
     for path in (runtime,dependencies,bundle_dir):
         if not path.is_absolute():
@@ -104,6 +148,15 @@ def assemble(runtime: Path,dependencies: Path,bundle_dir: Path,target: Path,*,re
     archive,tool=validate_bundle(bundle_dir,repo)
     if tool['runtime_versions']!=versions:
         raise ValueError('Tool bundle runtime versions differ from the selected runtimes.')
+    # The Harness engine is an opt-in runtime, but its staged bytes are checked here so a
+    # payload missing a sidecar (or carrying a different executable) never becomes 'ready'.
+    staged_harness=None
+    if harness_dir is not None:
+        if not harness_dir.is_absolute():
+            raise ValueError('Component paths must be absolute.')
+        staged=harness.verify(harness_dir)
+        staged_harness={**harness.installed_paths(install_root or target.parent),'version':staged['version'],
+                        'source_tag':staged['source_tag'],'files_verified':staged['files_verified']}
     snapshot=source_snapshot(repo)
     payload=sum(map(len,snapshot.values()))+tool['unpacked_bytes']
     required=payload*2+max(RESERVE_BYTES,(payload*2+9)//10)
@@ -134,8 +187,12 @@ def assemble(runtime: Path,dependencies: Path,bundle_dir: Path,target: Path,*,re
             'exit $LASTEXITCODE\n',encoding='utf-8')
         settings={'schema_version':1,'status':'ready','runtime_dir':str(runtime.resolve()),
                   'dependency_dir':str(dependencies.resolve()),'python':dep['python'],'runtime_versions':versions,
-                  'source_sha256':{name:text_hash(data) for name,data in snapshot.items()},'tool_sha256':tool['sha256']}
+                  'source_sha256':{name:text_hash(data) for name,data in snapshot.items()},'tool_sha256':tool['sha256'],
+                  'harness':staged_harness or {}}
         (output/'odessy-application.json').write_text(json.dumps(settings,indent=2),encoding='utf-8')
+        # Tool gateways are launched by the private interpreter as fresh processes.
+        # Register only this installed application, without inheriting checkout PYTHONPATH.
+        register_installed_source(dependencies, target)
         env=child_env(runtime)
         command=[dep['python'],'-I',str(output/'launch.py')]
         print('Checking assembled application startup...',flush=True)

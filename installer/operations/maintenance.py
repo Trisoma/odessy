@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 from installer.components import application
 from installer.components import connection
+from installer.components import harness
 from installer.components import model
 from installer.components import ollama_runtime
 from installer.core import pathing
@@ -104,8 +105,15 @@ def plan(root,bundle,executable,*,probe=running_processes,folders=None,validate_
     new=workflow.build_plan(root,Path(state['plan']['cache_dir']),bundle,state['plan']['endpoint'],state['plan']['timeout'])
     if new['model']!=state['plan']['model']:raise ValueError('This version changes the model; only application upgrades on the same model are supported for now.')
     if validate_base:
+        # The Harness payload is nested under runtime/, so it is required only when this
+        # installation recorded staging it. A record written before the component existed
+        # upgrades unchanged; a recorded payload that is now missing or edited refuses
+        # instead of being silently reattached to the new application.
+        required={'runtime','dependencies','ollama_runtime','model','configuration'}
+        if 'harness_runtime' in {step['name'] for step in state['steps'] if step.get('result') is not None}:
+            required.add('harness_runtime')
         for step in workflow.steps_for(new):
-            if step.name in {'runtime','dependencies','ollama_runtime','model','configuration'}:
+            if step.name in required:
                 if step.validate() is None:raise ValueError('Base component is missing and needs component repair: '+step.name)
     _,tool=application.validate_bundle(bundle)
     source=application.source_snapshot(application.REPO_ROOT)
@@ -145,6 +153,8 @@ def verify_staging(root,app,state_dir,plan):
 
 def _signature(root,path):
     entries=_tree(root,path)
+    if path == root/'runtime':
+        entries=[entry for entry in entries if not (entry['path']=='runtime/harness-runtime' or entry['path'].startswith('runtime/harness-runtime/'))]
     prefix=path.relative_to(root)
     normalized=[]
     for entry in entries:
@@ -158,10 +168,10 @@ def _components(data):
     names=data.get('components',['application','launcher'])
     if not isinstance(names,list) or not all(isinstance(name,str) for name in names) or len(names)>12 or len(set(names))!=len(names):raise ValueError('Maintenance component record is invalid.')
     for name in names:
-        if name in {'application','launcher','runtime','dependencies','ollama-runtime'}:continue
+        if name in {'application','launcher','runtime','dependencies','ollama-runtime','harness-runtime'}:continue
         if not isinstance(name,str) or not re.fullmatch(r'models/(?:blobs/sha256-[0-9a-f]{64}|manifests/registry\.ollama\.ai/library/[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*)',name):
             raise ValueError('Maintenance component path escapes the installation.')
-    return names
+    return sorted(names, key=lambda name: (0 if name=='runtime' else 1 if name=='harness-runtime' else 2))
 
 
 def _restore(root,data):
@@ -172,12 +182,12 @@ def _restore(root,data):
         raise ValueError('The installation record changed after upgrade; rollback stopped and files were preserved.')
     # Check all original copies before changing either component.
     for name in _components(data):
-        target=root/name;backup=folder/('backup-'+name)
+        target=(root/'runtime/harness-runtime' if name=='harness-runtime' else root/name);backup=folder/('backup-'+name)
         original=backup if backup.exists() else target
         if data['had_'+name] and (not original.exists() or _signature(root,original)!=data['old_signatures'][name]):
             raise ValueError('Original component or rollback backup changed; cannot restore automatically: '+name)
     for name in _components(data):
-        target=root/name;backup=folder/('backup-'+name);model.guard_path(target);model.guard_path(backup)
+        target=(root/'runtime/harness-runtime' if name=='harness-runtime' else root/name);backup=folder/('backup-'+name);model.guard_path(target);model.guard_path(backup)
         if backup.exists():
             _tree(root,backup)
             if target.exists():
@@ -223,19 +233,23 @@ def execute(root,bundle,executable,expected,*,probe=running_processes,folders=No
         if activation not in (['application'],['application','launcher']):raise ValueError('invalid activation scope')
         core_only=activation==['application']
         if core_only and preview['new_plan'].get('engine')!='role-aware-existing-installer-v1':raise ValueError('core-only proof requires role-aware plan')
+        # A rebuilt application must keep describing the staged Harness payload, otherwise
+        # the launcher stops exporting it and an installed engine silently disappears after
+        # an upgrade or repair. The stage is re-verified by ``assemble`` when it is present.
         identity=uuid.uuid4().hex;folder=root/'.installer/updates'/identity;model.guard_path(folder);folder.mkdir(parents=True)
         data=dict(schema_version=1,id=identity,install_dir=str(root),status='preparing',error=None,
                   old_state=read_state(root),had_application=(root/'application').exists(),had_launcher=(root/'launcher').exists())
         data['components']=[*activation,*reversed(preview.get('repair_components',[]))]
-        for name in _components(data):data['had_'+name]=(root/name).exists()
+        for name in _components(data):data['had_'+name]=((root/'runtime/harness-runtime') if name=='harness-runtime' else root/name).exists()
         data['old_state_sha256']=fingerprint(data['old_state'])
-        data['old_signatures']={name:_signature(root,root/name) for name in _components(data)}
+        data['old_signatures']={name:_signature(root,(root/'runtime/harness-runtime') if name=='harness-runtime' else root/name) for name in _components(data)}
         _save(root,data)
         try:
             if cancelled():raise KeyboardInterrupt()
             if repair is not None:repair(root,folder,preview,data)
             if cancelled():raise KeyboardInterrupt()
-            settings=assemble(root/'runtime',root/'dependencies',bundle,folder/'new-application')
+            staged_harness={'harness_dir':root/'runtime'/harness.COMPONENT_DIRECTORY} if (root/'runtime'/harness.COMPONENT_DIRECTORY).is_dir() else {}
+            settings=assemble(root/'runtime',root/'dependencies',bundle,folder/'new-application',install_root=root,**staged_harness)
             if not core_only:
                 launch=folder/'new-launcher';launch.mkdir()
                 shutil.copyfile(executable,launch/'OdessyLauncher.exe')
@@ -257,6 +271,8 @@ def execute(root,bundle,executable,expected,*,probe=running_processes,folders=No
                 if target.exists():target.rename(folder/('backup-'+name))
                 (folder/('new-'+name)).rename(target)
             if cancelled():raise KeyboardInterrupt()
+            if (root/'dependencies/venv').is_dir():
+                application.register_installed_source(root/'dependencies',root/'application')
             final_check(root/'application')
             new_state=copy.deepcopy(data['old_state']);new_state['plan']=preview['new_plan'];new_state['plan_sha256']=fingerprint(new_state['plan'])
             for step in new_state['steps']:

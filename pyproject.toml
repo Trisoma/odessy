@@ -8,6 +8,8 @@ requires-python = ">=3.10"
 dependencies = [
   "mcp>=2,<3",
   "jsonschema>=4",
+  "fastapi>=0.115,<1",
+  "httpx2>=2.13,<3",
   "tomli>=2.0.1; python_version < '3.11'",
 ]
 
@@ -72,3 +74,14 @@ build-backend = "setuptools.build_meta"
 # reads it by path at install time, and an installed application reads it when
 # reporting voice readiness.
 "odessy.setup" = ["voice-artifacts.json"]
+# The Harness engine's production inputs. `harness-artifacts.json` is the one
+# declaration of the tested runtime distribution and its digests (`pin.py` derives
+# its enforced constants from it), and `bundle/` is the plugin closure the engine
+# composes. Both must be in the wheel or an installed application would resolve a
+# different set from the checkout that was tested.
+"odessy.runtime_backends.harness" = [
+  "harness-artifacts.json",
+  "bundle/odessy-stream-bridge/package.json",
+  "bundle/odessy-stream-bridge/cordis.patch.yml",
+  "bundle/odessy-stream-bridge/lib/index.js",
+]

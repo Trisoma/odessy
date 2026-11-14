@@ -41,7 +41,7 @@ class EnvironmentTests(unittest.TestCase):
         self.assertIn('--no-index',install); self.assertIn('--require-hashes',install)
         self.assertIn('--no-compile',install); self.assertIn('--isolated',install)
         self.assertEqual(Path(install[0]).resolve(),(self.root/'environment'/'venv'/'Scripts'/'python.exe').resolve())
-        self.assertEqual(len(report['packages']),29)
+        self.assertEqual(len(report['packages']),31)
         self.assertFalse((self.root/'environment'/'.odessy-preparing').exists())
         self.assertTrue((self.root/'environment'/'odessy-dependencies.json').is_file())
         self.assertEqual(list(self.cache.glob('.odessy-wheelhouse-*')),[])
@@ -151,3 +151,12 @@ class EnvironmentTests(unittest.TestCase):
 
 if __name__=='__main__':
     unittest.main()
+
+
+def test_committed_dependency_release_matches_runtime_requirements():
+    manifest, _ = load_resources(DEFAULT_RESOURCES)
+    versions = {artifact.id: artifact.version for artifact in manifest.artifacts}
+    from packaging.requirements import Requirement
+    for value in ('fastapi>=0.115,<1', 'httpx2>=2.13,<3'):
+        requirement = Requirement(value)
+        assert versions[requirement.name] in requirement.specifier

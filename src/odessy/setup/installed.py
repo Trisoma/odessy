@@ -87,6 +87,29 @@ def spec(root):
             'ready':selection.model is not None and selection.role!='execution'}
 
 
+def harness_environment(info):
+    """Environment for the optional Harness/Node components of the active version.
+
+    Mirrors the legacy component launcher: only packaged files that actually exist are
+    named, so an installation without the optional runtime leaves legacy sessions working and
+    makes a Harness launch refuse with its own actionable error. The staged runtime directory
+    is owned by the active version, so it always wins over an inherited value.
+    """
+    base=Path(info['root'])/'versions'/info['version']
+    environment={}
+    staged=base/'harness'
+    if (staged/'harness-runtime.json').is_file():
+        environment['ODESSY_HARNESS_RUNTIME_DIR']=str(staged)
+    for candidate in (base/'node'/'node.exe', base/'node'/'bin'/'node'):
+        if candidate.is_file():
+            environment['ODESSY_HARNESS_NODE']=str(candidate)
+            break
+    tools=base/'tools'
+    if (tools/'dist'/'src'/'server.js').is_file():
+        environment['ODESSY_NODE_TOOLS_DIR']=str(tools)
+    return environment
+
+
 def serve(argv=None):
     parser=argparse.ArgumentParser(prog='python -m odessy.setup.installed',
         description='Start the installed coordinator on an authenticated loopback port.')
@@ -106,6 +129,11 @@ def serve(argv=None):
         raise ValueError('this installation is an execution node; start its service instead of a coordinator')
     if not info['model_configured']:
         raise ValueError('no model is configured; open Odessy management and configure one first')
+    for name,value in harness_environment(info).items():
+        if name=='ODESSY_HARNESS_RUNTIME_DIR':
+            os.environ[name]=value
+        else:
+            os.environ.setdefault(name,value)
     token=os.environ.get('ODESSY_API_TOKEN','').strip()
     if not token:
         raise ValueError('the launcher must supply an authenticated loopback token')

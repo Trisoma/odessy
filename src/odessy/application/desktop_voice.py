@@ -16,6 +16,22 @@ class DesktopVoice:
         self.wake=None;self._wake_controller=None;self._previous_handler=None;self._wake_handler=None
     @property
     def busy(self):return self.owner is not None or self._playback is not None
+    @property
+    def timing(self):
+        """The phase marks of the adapter that owns the current capture or playback.
+
+        One object is shared by the wake adapter and the push-to-talk adapter, so the
+        application can time the first engine text on the same turn the audio side
+        measured (prompt 13). ``None`` when no audio adapter exists yet.
+        """
+        if self.wake is not None:return getattr(self.wake,'timing',None)
+        return getattr(self.audio,'timing',None) if self.audio is not None else None
+    def _report_timing(self,c,snapshot):
+        """One bounded phase snapshot; it never carries text, paths or audio."""
+        try:c.emit('voice_timing',dict(snapshot))
+        except Exception:pass
+    def _timing_reporter(self,c):
+        return lambda snapshot:self._report_timing(c,snapshot)
     def snapshot(self,controller):
         own=self.owner==controller.id
         return {'supported':True,'state':self.state if own or self.owner is None else 'busy',
@@ -41,7 +57,8 @@ class DesktopVoice:
                 self.error='Wake audio unavailable; disable listening and retry, or use text.'
                 self.state='error';self._emit(c)
             self.wake=self.audio.make_wake(submit_voice=submit,stop_turn=stop,interactions=c.interactions,
-                report_status=status,report_audio_error=failure)
+                report_status=status,report_audio_error=failure,
+                report_timing=self._timing_reporter(c))
             self._previous_handler=c.interactions.handler
             async def handle(entry):
                 from odessy.voice.hybrid import AudioUnavailable
@@ -90,6 +107,10 @@ class DesktopVoice:
                     self.owner=None;self.capture_id=None;self.expected=None;self.state='idle';self._draining=None;self._emit(c)
             self._draining=asyncio.create_task(drain())
             raise
+    def _bind_timing(self,c):
+        """Point the capture adapter's phase reports at this session's event stream."""
+        bind=getattr(self.audio,'report_timing_to',None)
+        if bind is not None:bind(self._timing_reporter(c))
     def _entry(self,c,identifier):
         return next((e for e in c.interactions.pending if e['id']==identifier and c.interactions.is_pending(identifier)),None)
     async def start(self,c,expected=None,*,preview=False):
@@ -106,6 +127,7 @@ class DesktopVoice:
         try:
             self._preparing=True
             if self.audio is None:self.audio=self.factory()
+            self._bind_timing(c)
             await self._owned(c,self.audio.start())
             if epoch!=self._epoch:raise VoiceError('Capture superseded',410)
             if entry is not None:c.interactions.mark_ready(entry['id'])
@@ -163,6 +185,7 @@ class DesktopVoice:
         self.owner=c.id;self.state='speaking';self._speaking=True;self._emit(c)
         try:
             if self.audio is None:self.audio=self.factory()
+            self._bind_timing(c)
             await self._owned(c,self.audio.speak(text))
         except Exception:
             self.error='Audio output unavailable. The completed text answer was not retried.'

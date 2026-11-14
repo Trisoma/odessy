@@ -164,7 +164,7 @@ func ValidateHostIdentity(h HostIdentity) error {
 		return invalid("installation_id and fingerprint_sha256 are required")
 	}
 	switch h.TrustState {
-	case TrustLocal, TrustPaired, TrustRevoked, TrustUnknown:
+	case TrustLocal, TrustPaired, TrustSSH, TrustRevoked, TrustUnknown:
 	default:
 		return invalid("trust_state %q invalid", h.TrustState)
 	}
@@ -549,25 +549,79 @@ func ValidateBootstrap(f BootstrapFrame) (Settings, error) {
 	if len(f.Token) < 32 {
 		return Settings{}, invalid("internal token must be at least 32 characters")
 	}
-	if err := ValidateLinkBinary(f.LinkBinary); err != nil {
-		return Settings{}, err
+	if f.SSH != nil {
+		if err := ValidateSSHConfig(*f.SSH); err != nil {
+			return Settings{}, err
+		}
+	}
+	if f.LinkBinary != "" {
+		if err := ValidateLinkBinary(f.LinkBinary); err != nil {
+			return Settings{}, err
+		}
+	}
+	if f.SSH == nil && f.LinkBinary == "" {
+		return Settings{}, invalid("one monitoring provider is required")
 	}
 	return f.Settings.Normalized()
+}
+
+// ValidateSSHConfig validates the selected OpenSSH transport. The application
+// supplies the reviewed alias and host-key fingerprint; this service never
+// resolves or accepts a key itself.
+func ValidateSSHConfig(s SSHConfig) error {
+	if err := validateExecutable("ssh.binary", s.Binary); err != nil {
+		return err
+	}
+	if len(s.Alias) < 1 || len(s.Alias) > 64 {
+		return invalid("ssh.alias must be 1-64 characters")
+	}
+	for i, r := range s.Alias {
+		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.'
+		if !ok || (i == 0 && (r == '-' || r == '.')) {
+			return invalid("ssh.alias contains an unsafe character")
+		}
+	}
+	if err := ValidateHostID(s.HostID); err != nil {
+		return err
+	}
+	if len(s.FingerprintSHA256) < 1 || len(s.FingerprintSHA256) > 200 ||
+		strings.ContainsAny(s.FingerprintSHA256, " \t\r\n") {
+		return invalid("ssh.fingerprint_sha256 is invalid")
+	}
+	if len(s.Generation) < 1 || len(s.Generation) > 200 ||
+		strings.ContainsAny(s.Generation, "\r\n") {
+		return invalid("ssh.generation is invalid")
+	}
+	if len(s.DisplayName) > 200 || strings.ContainsAny(s.DisplayName, "\r\n") {
+		return invalid("ssh.display_name is invalid")
+	}
+	if s.ConfigPath != "" {
+		if strings.ContainsAny(s.ConfigPath, "|&;<>()$`\"'*?[]{}\n\r\t") ||
+			!strings.ContainsAny(s.ConfigPath, "/\\") {
+			return invalid("ssh.config_path must be a plain absolute path")
+		}
+	}
+	return nil
 }
 
 // ValidateLinkBinary rejects anything that is not an explicit executable path:
 // no shell metacharacters, no bare command names.
 func ValidateLinkBinary(p string) error {
+	return validateExecutable("link_binary", p)
+}
+
+func validateExecutable(label, p string) error {
 	if p == "" {
-		return invalid("link_binary is required")
+		return invalid("%s is required", label)
 	}
 	// A tilde is valid in Windows short paths (for example RUNNER~1).
 	// The worker is started directly, so a tilde is never shell-expanded.
 	if strings.ContainsAny(p, "|&;<>()$`\"'*?[]{}\n\r\t") {
-		return invalid("link_binary must be a plain path without shell metacharacters")
+		return invalid("%s must be a plain path without shell metacharacters", label)
 	}
 	if !strings.ContainsAny(p, "/\\") {
-		return invalid("link_binary must be an absolute executable path")
+		return invalid("%s must be an absolute executable path", label)
 	}
 	return nil
 }

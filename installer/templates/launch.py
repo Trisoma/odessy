@@ -10,6 +10,31 @@ import sys
 from pathlib import Path
 
 
+def staged_harness(root, record):
+    """Where this launch finds the Harness runtime, its Node and the tool server.
+
+    The assembled record is preferred, because the installer verified those files. A marker
+    written before the component existed has no record, so the layout is derived from the
+    resolver the engine itself uses instead of repeating ``<root>/application/tools`` here.
+    Nothing is guessed: a directory that is not there yields no path.
+    """
+    if isinstance(record,dict) and record.get('executable'):
+        return record
+    runtime=Path(root).parent/'runtime'/'harness-runtime'
+    if not runtime.is_dir():
+        return {}
+    try:
+        from odessy.runtime_backends.harness import resources
+        execname=resources.executable_declaration()['file']
+        environ={'ODESSY_HARNESS_RUNTIME_DIR':str(runtime)}
+        node=resources.installed_node(environ)
+        tools=resources.installed_node_tools_dir(environ)
+    except Exception:
+        return {}
+    return {'runtime_dir':str(runtime),'executable':str(runtime/execname),
+            'node_executable':str(node or ''),'node_tools_dir':str(tools or '')}
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser(description='Run the installed Odessy CLI in an explicit workspace.',allow_abbrev=False)
     parser.add_argument('--workspace',type=Path,help='Existing folder Odessy should operate in.')
@@ -61,8 +86,23 @@ def main(argv=None):
         if key.upper() in {'PYTHONHOME','PYTHONPATH','NODE_OPTIONS','NODE_PATH'}:
             os.environ.pop(key)
     os.environ['PATH']=os.pathsep.join((str(runtime/'node-runtime'),str(runtime/'python-runtime'),os.environ.get('PATH','')))
-    # Preserve ODESSY_* settings/API keys and the existing runtime's config precedence.
+    # The installed staged payload. Only paths that actually exist are exported: the
+    # Harness engine is opt-in, so a missing component must leave legacy sessions working
+    # and make a harness launch refuse with its own actionable error.
+    # Installed before the harness lookup so the layout resolver can be imported.
     sys.path.insert(0,str(root/'src'))
+    staged=staged_harness(root,settings.get('harness'))
+    if isinstance(staged,dict):
+        exe=Path(str(staged.get('executable','')))
+        if exe.is_file():
+            os.environ['ODESSY_HARNESS_RUNTIME_DIR']=str(exe.parent)
+        node=Path(str(staged.get('node_executable','')))
+        if node.is_file():
+            os.environ.setdefault('ODESSY_HARNESS_NODE',str(node))
+        tools=Path(str(staged.get('node_tools_dir','')))
+        if (tools/'dist'/'src'/'server.js').is_file():
+            os.environ.setdefault('ODESSY_NODE_TOOLS_DIR',str(tools))
+    # Preserve ODESSY_* settings/API keys and the existing runtime's config precedence.
     sys.argv=['odessy',*(forwarded or ['--help'])]
     runpy.run_module('odessy',run_name='__main__')
     return 0

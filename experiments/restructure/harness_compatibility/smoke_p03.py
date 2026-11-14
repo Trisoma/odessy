@@ -7,8 +7,9 @@ would, against the deterministic provider, and asserts:
 - the executable reports the pinned version and is recorded as identity;
 - the environment handed to the child is the allowlist (the base URL only arrives because
   it was named in ``ODESSY_HARNESS_PASS_ENV``);
-- the reviewed overlay leaves the model with **no tools** (the provider's request log is
-  empty of tools), so "no tools" is a property of the launched profile, not of a mock;
+- the reviewed overlay leaves the model with **no executable side-effecting tool**: the only
+  name that may appear in the provider's tool roster is ``ask_user_question``, which asks a
+  human and returns information (prompt 07). Any other name fails the check;
 - one turn returns the provider's whole text without any streaming claim;
 - close ends the child and leaves no process behind.
 
@@ -170,7 +171,10 @@ def main() -> int:
                     if line.strip()]
         roster = (requests[-1].get("tools") or []) if requests else None
         checks.append(("provider was called", bool(requests), f"{len(requests)} requests"))
-        checks.append(("no tool reached the model", roster == [], str(roster)))
+        # Prompt 07 mounts exactly one model-facing tool: the clarification tool. Anything
+        # else reaching the model is still a failure of the narrow profile.
+        checks.append(("only the clarification tool reached the model",
+                       set(roster or []) <= {"ask_user_question"}, str(roster)))
 
         diagnostics = runtime.diagnostics()
         ready = next((line for line in diagnostics if line.startswith("ready:")), "")

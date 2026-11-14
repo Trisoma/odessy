@@ -1,0 +1,230 @@
+{
+  "schema": 1,
+  "updated": "2026-11-10",
+  "owner": "Odessy (product declaration). The Harness side owns the runtime; this file is the declaration the Odessy build and installer read.",
+  "purpose": "One repository-owned declaration of the tested Harness runtime distribution, the SDK (declared, not used), the plugin closure that ships with the Odessy package, the platform/architecture requirements and the licences. `pin.py` derives its enforced constants from this file, so there is no second copy to drift.",
+  "runtime": {
+    "distribution": "deepseek-harness-runtime-bin",
+    "python_version": "0.2.1rc2",
+    "declared_version": "0.2.1-rc.2",
+    "source_tag": "dsh-v0.2.1-rc.2",
+    "source_commit": "687f282e8625c6b8d11ff58211a90524be2e4317",
+    "upstream": "https://github.com/deepseek-ai/deepseek-harness",
+    "license": "MIT",
+    "transport": "acp v1 over stdio (newline-delimited JSON-RPC 2.0 on stdin/stdout)",
+    "profile": "acp",
+    "wheel_index": "https://pypi.org/simple/deepseek-harness-runtime-bin/",
+    "wheels": {
+      "win_amd64": {
+        "file": "deepseek_harness_runtime_bin-0.2.1rc2-py3-none-win_amd64.whl",
+        "sha256": "d38c18f5117859feedaaa791a0eea37b8644bc187118e7e6f3afa231a5381cb7",
+        "bytes": 83860784,
+        "target": "win-x64",
+        "platform": "windows",
+        "architecture": "x86_64",
+        "executed": true,
+        "url": "https://files.pythonhosted.org/packages/bc/95/8164c49a5d3430add58db8aeba6546cd05c9ab7ddd2ea3e1acf174448d86/deepseek_harness_runtime_bin-0.2.1rc2-py3-none-win_amd64.whl",
+        "url_source": "PyPI JSON API for deepseek-harness-runtime-bin 0.2.1rc2 (re-read 2026-11-10); the digest it reports equals this declaration",
+        "archive_prefix": "deepseek_harness_runtime"
+      },
+      "manylinux_2_28_aarch64": {
+        "file": "deepseek_harness_runtime_bin-0.2.1rc2-py3-none-manylinux_2_28_aarch64.whl",
+        "sha256": "71ed869e3e9a0e3ea398521730889d2d7e154767834165f1553755818e3f2a78",
+        "bytes": 96833408,
+        "target": "linux-arm64",
+        "platform": "linux",
+        "architecture": "aarch64",
+        "executed": false,
+        "note": "Downloaded and hashed only. Never launched on this host; a Jetson/Linux qualification is a later installed gate, not evidence recorded here."
+      }
+    },
+    "executables": {
+      "win-x64": {
+        "file": "deepseek-harness-sdk-runtime-win-x64.exe",
+        "path_in_wheel": "deepseek_harness_runtime/runtime/deepseek-harness-sdk-runtime-win-x64.exe",
+        "sha256": "f9ed01f241df37c50c702d81b6c226d576210b8f3947699735ca90285ea13365",
+        "bytes": 273157120,
+        "reported_version": "0.2.1-rc.2",
+        "platform": "windows",
+        "architecture": "x86_64",
+        "sidecars": [
+          {
+            "file": "deepseek-harness-sdk-runtime-win-x64-rg.exe",
+            "path_in_wheel": "deepseek_harness_runtime/runtime/deepseek-harness-sdk-runtime-win-x64-rg.exe",
+            "sha256": "f9dde63498b3193f098355dbec97af99dc4f6b8fa0df5ed04114a03012c042cb",
+            "bytes": 5429760,
+            "purpose": "The runtime's own ripgrep used by its search rows. Shipped because the narrow profile disables those rows; the file is still verified so a staged payload is either the reviewed set or refused."
+          },
+          {
+            "file": "win-x64/downloads.json",
+            "path_in_wheel": "deepseek_harness_runtime/runtime/win-x64/downloads.json",
+            "sha256": "9bceba2e15ec4cb97a4d8fb714123950087b18c3dd73d0e570bbfde5aae2886e",
+            "bytes": 6630,
+            "purpose": "The runtime's own declaration of optional npm payloads (LibreOffice kit, pnpm). Recorded so the absence of a download at launch can be asserted, and so this file is not mistaken for something Odessy fetched."
+          }
+        ],
+        "bundled_not_used": [
+          "win-x64/office-skills/** (skill text for the office rows this profile disables)"
+        ],
+        "embedded_runtime_note": "The executable is a self-contained Node single-executable application; it does not expose a Node interpreter, so the separately launched tool server uses the installer's private node-runtime instead of this binary. Measured, not assumed: `--help`/`--version` accept no script or eval argument and the tool pipeline is spawned from `node-runtime/node.exe`."
+      }
+    },
+    "licenses": [
+      {
+        "file": "LICENSE",
+        "path_in_wheel": "deepseek_harness_runtime_bin-0.2.1rc2.dist-info/licenses/LICENSE",
+        "sha256": "ebb4f09972aee8608be255debaf78451a68e95c290f55c240dec2ecfa16ea6be",
+        "bytes": 1065,
+        "license": "MIT (upstream Harness)"
+      },
+      {
+        "file": "THIRD_PARTY_NOTICES.md",
+        "path_in_wheel": "deepseek_harness_runtime_bin-0.2.1rc2.dist-info/licenses/THIRD_PARTY_NOTICES.md",
+        "sha256": "aeea7aa256ede5349cc7903f56a859d54f10b82a45fba7dcce667eb69916dab0",
+        "bytes": 25003,
+        "license": "third-party notices for the bundled Node payload"
+      }
+    ],
+    "python_dependencies": {
+      "note": "Wheels the runtime-bin distribution pulls in, recorded with their digests so an installer resolves the same set. Installing them belongs to prompt 14.",
+      "wheels": {
+        "pydantic-2.14.3-py3-none-any.whl": "3f7b347782ab7e4cf4c798496ae3a82787d9f21ec12676a9c564355eeef8daa8",
+        "pydantic_core-2.50.4-cp311-cp311-win_amd64.whl": "15bece43a02ad543c621c8305e67dedb5f27d378c5ba741e5a2c36523f8ef37f",
+        "annotated_types-0.8.0-py3-none-any.whl": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0",
+        "typing_extensions-4.16.0-py3-none-any.whl": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+        "typing_inspection-0.4.5-py3-none-any.whl": "bc210535442b39e1bf2805e0c7a17dfd6a4ace760c84c7f7d16245d23a6b1c39"
+      }
+    }
+  },
+  "sdk": {
+    "distribution": "deepseek-harness-sdk",
+    "python_version": "0.2.1rc2",
+    "wheel": {
+      "file": "deepseek_harness_sdk-0.2.1rc2-py3-none-any.whl",
+      "sha256": "30fc72c67f20ff4b46c6952087ea596fc70c2692001aa372185a24f9866bdc46",
+      "bytes": 18112
+    },
+    "license": "MIT",
+    "used_by_production": false,
+    "note": "The production adapter speaks ACP to the executable and never imports this SDK. It is declared so that a future use cannot silently pick a different version; pyproject.toml does not depend on it."
+  },
+  "plugin_closure": {
+    "bundles": [
+      {
+        "name": "@odessy/dsh-stream-bridge",
+        "version": "0.0.3",
+        "path": "bundle/odessy-stream-bridge",
+        "license": "Apache-2.0",
+        "license_source": "repository LICENSE (Odessy)",
+        "origin": "odessy",
+        "published": false,
+        "purpose": "Forwards the pin's existing `agent/assistant-stream` frames, answers its existing `user-questions` seam, and reports the tools the runtime actually attached (read-only `ctx.tools.schemas` names), all over one token-authenticated loopback socket. No inference, no agent loop, no transcript, no tool registration.",
+        "manifest_key": "dsh.bundle.patch",
+        "patch": "cordis.patch.yml",
+        "entry": "lib/index.js",
+        "required": false,
+        "absent_effect": "The engine degrades to settlement-only text and no clarification tool; session creation still succeeds.",
+        "env_per_launch": [
+          "ODESSY_BRIDGE_PORT",
+          "ODESSY_BRIDGE_TOKEN"
+        ],
+        "files": [
+          {
+            "file": "package.json",
+            "bytes": 533,
+            "sha256": "f41f7fbbb417e7130ab93305ebcbe25e0ff9b5209f699487716a0fe38f46ff4d"
+          },
+          {
+            "file": "cordis.patch.yml",
+            "bytes": 1417,
+            "sha256": "226c3a4e54bc53a37c09762962615ead7b94a8041b5742b5bb6a6e31b09e72ae"
+          },
+          {
+            "file": "lib/index.js",
+            "bytes": 19735,
+            "sha256": "dc1c6aedacbe2ccbfb6fcab22409738e39cbbad2cd9098a0e56264d48246a88a"
+          }
+        ]
+      }
+    ],
+    "mounted_rows": [
+      {
+        "name": "@deepseek-ai/dsh-tool-ask-user",
+        "from": "the pinned runtime distribution",
+        "license": "MIT",
+        "purpose": "The model-facing clarification tool; it asks a human and returns the answer as an ordinary tool result.",
+        "side_effects": "none"
+      }
+    ],
+    "development_toolchain": {
+      "purpose": "`dsh plugin add` shells out to pnpm. The composed profile is what ships, so this is a build/developer prerequisite only.",
+      "node": "22.19.0",
+      "pnpm": "11.7.0",
+      "required_on_user_machine": false
+    },
+    "profile": {
+      "name": "acp",
+      "composed_by": "odessy.runtime_backends.harness.resources.compose_profile",
+      "why_not_plugin_add": "`dsh plugin add` runs pnpm, and a 273 MB offline installer must not require a package manager or a network fetch. The composed result is three small deterministic files plus a byte-identical copy of the packaged bundle, so Odessy can write it directly and verify every byte against this inventory.",
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-acp-app",
+        "@odessy/dsh-stream-bridge"
+      ],
+      "bundle_directory": "node_modules/@odessy/dsh-stream-bridge",
+      "files": {
+        "package.json": {
+          "purpose": "The profile package: its bundle list is what the runtime composes.",
+          "seeded": true
+        },
+        "cordis.yml": {
+          "purpose": "Profile root: an empty entry list; the tree is composed as patches.",
+          "seeded": true
+        },
+        "cordis.patch.yml": {
+          "purpose": "The user's own patch layer, left empty so a local edit survives.",
+          "seeded": false
+        }
+      },
+      "never_overwritten": [
+        "profiles/<profile>/cordis.patch.yml (the operator's own layer)",
+        "profiles/<profile>/package.json once it names additional bundles"
+      ]
+    }
+  },
+  "requirements": {
+    "host": {
+      "windows-x64": {
+        "runtime_wheel": "win_amd64",
+        "executable": "win-x64",
+        "qualification": "Source tests; a complete role-aware installer chain into a fresh isolated root (declared Node 22.23.0, bundled CPython 3.12.13, executable digest matched); an installed payload from a previous build of this source set driven through the HTTP application (report 14.rev1 7.6-7.7: streaming, approved and denied consent, bundled Node tool, clarification, Stop, restore, no leftover child); the wheel closure now declares fastapi/uvicorn with hashes, so a packaged service can serve /v1. Payload and NSIS are rebuilt from this tree (report 14.rev3). Not qualified: native setup click-through, end-user desktop (prompt 16), Linux/Jetson (17-20)."
+      }
+    },
+    "declared_not_qualified": {
+      "linux-arm64": "Runtime wheel recorded; no launch, no confinement measurement and no installed gate performed on this host (prompt 17-20 for remote directions)."
+    },
+    "confinement": {
+      "pin_vocabulary": [
+        "read-only",
+        "workspace-write",
+        "danger-full-access"
+      ],
+      "no_vocabulary_for": [
+        "network denial",
+        "hidden paths",
+        "extra writable roots",
+        "per-call mode"
+      ],
+      "owner": "Odessy providers keep the dimensions the pin cannot express; see doc/reports/08.md and harness/sandbox.py."
+    }
+  },
+  "upgrade_policy": {
+    "automatic_adoption": "never",
+    "procedure": [
+      "Record both wheel digests and the new executable digest here and in pin.py's derived constants.",
+      "Re-run experiments/restructure/harness_compatibility/smoke_acceptance.py and smoke_sdk.py.",
+      "Re-read every observed shape in the integration contract.",
+      "Re-run the installed qualification before any default change."
+    ]
+  }
+}

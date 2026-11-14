@@ -4,8 +4,14 @@ import os
 from pathlib import Path, PureWindowsPath
 import shutil
 import subprocess
+import threading
 import uuid
 import zipfile
+
+#: Bound on the compiler. Solid LZMA over a ~180 MB payload legitimately takes many
+#: minutes on a busy machine, so exceeding this is reported as "slow", never as a
+#: compiler error, and the partial file is kept for inspection.
+COMPILE_TIMEOUT = 5400
 
 
 def validate_members(entries):
@@ -56,7 +62,10 @@ Section "Preparing Odessy Setup"
   IfErrors failed
   System::Call 'kernel32::SetEnvironmentVariableW(w "ODESSY_SETUP_PAYLOAD", w "$INSTDIR") i .r0'
   HideWindow
-  Exec '"$INSTDIR\\desktop\\odessy_desktop.exe" --setup'
+  # The payload root is passed explicitly: the Flutter setup only discovers a
+  # payload beside the executable, and this bootstrap extracts it one level above
+  # desktop/. The environment variable stays for the Python helper.
+  Exec '"$INSTDIR\\desktop\\odessy_desktop.exe" --setup --payload "$INSTDIR"'
   IfErrors failed
   Goto done
 failed:
@@ -76,6 +85,88 @@ def compiler():
     raise RuntimeError('NSIS is required: set ODESSY_MAKENSIS to the trusted makensis.exe; no IExpress fallback')
 
 
+def _drained(command,log_path,*,timeout=COMPILE_TIMEOUT):
+    """Run the compiler and consume its output; return ``(exit code, lines)``.
+
+    ``makensis`` prints every packed file. When the caller's stdout is a pipe nobody
+    reads (a build agent, a redirected job), that pipe fills and the compiler blocks
+    forever on a write -- this is what produced an interrupted executable, not a slow
+    compressor. The child's output is a pipe this function owns and drains on its own
+    thread, and every line is mirrored into ``log_path`` so a stall or a failure can be
+    diagnosed without re-running the build.
+    """
+    log_path=Path(log_path);log_path.parent.mkdir(parents=True,exist_ok=True)
+    lines=[]
+    errors=[]
+    with open(log_path,'w',encoding='utf-8',errors='replace') as log:
+        process=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
+                                 text=True,encoding='utf-8',errors='replace',bufsize=1)
+        def drain():
+            stream=process.stdout
+            if stream is None:return
+            for line in stream:
+                lines.append(line.rstrip('\n'))
+                if not errors:
+                    try:
+                        log.write(line)
+                        log.flush()
+                    except Exception as error:
+                        errors.append(error)  # Keep draining even when the log fails.
+        reader=threading.Thread(target=drain,name='nsis-output',daemon=True)
+        reader.start()
+        try:
+            code=process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill();process.wait()
+            raise TimeoutError('NSIS compilation exceeded '+str(timeout)+'s; last output: '
+                               +' | '.join(lines[-5:])) from None
+        finally:
+            reader.join(timeout=10)
+    if errors:
+        raise errors[0]
+    return code,lines
+
+
+def compile_installer(source,output,*,compiler_path=None,log_path=None,timeout=COMPILE_TIMEOUT):
+    """Compile one written ``.nsi`` and publish the artifact only after success.
+
+    NSIS writes to ``<output>.incomplete``; it is renamed only when the compiler exited
+    0 *and* the file starts with the PE signature. An interrupted or failed build
+    therefore leaves a clearly named leftover and never a plausible installer.
+    ``compiler_path`` may be a sequence (tests drive a script through its interpreter);
+    production uses :func:`compiler` and the trusted local ``makensis.exe``.
+    """
+    source,output=Path(source),Path(output)
+    partial=output.with_name(output.name+'.incomplete')
+    partial.unlink(missing_ok=True)
+    log=Path(log_path) if log_path else source.with_name(source.stem+'.makensis.log')
+    chosen=compiler_path if compiler_path is not None else compiler()
+    command=[chosen] if isinstance(chosen,str) else list(chosen)
+    code,lines=_drained(command+['/V2',str(source)],log,timeout=timeout)
+    if code!=0:
+        raise RuntimeError('NSIS compilation failed with exit '+str(code)+' (log '+str(log)
+                           +'); last output: '+' | '.join(lines[-3:]))
+    if not partial.is_file() or partial.stat().st_size==0:
+        raise RuntimeError('NSIS exited 0 but wrote no installer: '+str(partial))
+    with open(partial,'rb') as stream:
+        header=stream.read(64)
+        valid=len(header)==64 and header[:2]==b'MZ'
+        if valid:
+            offset=int.from_bytes(header[0x3c:0x40],'little')
+            size=partial.stat().st_size
+            valid=64<=offset<=size-24
+        if valid:
+            stream.seek(offset)
+            pe=stream.read(24)
+            optional_size=int.from_bytes(pe[20:22],'little')
+            valid=(pe[:4]==b'PE\0\0' and optional_size>=2
+                   and offset+24+optional_size<=size)
+        if not valid:
+            raise RuntimeError('NSIS output is not a Windows executable: '+str(partial))
+    os.replace(partial,output)
+    return output
+
+
 def build(payload,output,stage):
     try:
         from tool.audit_setup_artifact import audit
@@ -90,7 +181,6 @@ def build(payload,output,stage):
         archive.extractall(files)
     icon=Path(__file__).resolve().parents[1]/'installer/assets/odessy-boat.ico'
     source=Path(stage)/'OdessySetup.nsi'
-    source.write_text(script(files,Path(output).resolve(),icon),encoding='utf-8-sig')
-    subprocess.run([compiler(),'/V2',str(source)],check=True,timeout=600)
-    if not Path(output).is_file():raise RuntimeError('NSIS did not produce an installer')
-    return Path(output)
+    partial=Path(output).with_name(Path(output).name+'.incomplete')
+    source.write_text(script(files,partial.resolve(),icon),encoding='utf-8-sig')
+    return compile_installer(source,output,log_path=Path(stage)/'makensis.log')

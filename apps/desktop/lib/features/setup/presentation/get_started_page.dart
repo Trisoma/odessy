@@ -3,6 +3,7 @@ import 'package:odessy_client/odessy_client.dart';
 
 import '../../../app/setup/native_picker.dart';
 import '../../../app/theme.dart';
+import '../../settings/presentation/model_credential_panel.dart';
 import '../controllers/installed_manage_controller.dart';
 import 'path_field.dart';
 import 'setup_shell.dart';
@@ -46,6 +47,8 @@ class _GetStartedPageState extends State<GetStartedPage> {
   String _savedChoice = 'local';
   String _localEndpoint = 'http://127.0.0.1:11434', _remoteEndpoint = '';
   bool initialised = false;
+  bool _credentialSaving = false;
+  bool get _busy => c.busy || _credentialSaving;
   late final ModelCatalogController catalog;
   final _modelChoiceKey = GlobalKey();
   final _voiceKey = GlobalKey();
@@ -214,7 +217,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
   }
 
   Future<void> _save() async {
-    if (!_valid || c.busy) return;
+    if (!_valid || _busy) return;
     if (choice == 'later') {
       _chooseModel();
       return;
@@ -247,7 +250,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
             : readyToStart
                 ? 'Start chatting'
                 : 'Save and continue',
-        onPrimary: c.busy
+        onPrimary: _busy
             ? null
             : choice == 'later'
                 ? _chooseModel
@@ -255,8 +258,8 @@ class _GetStartedPageState extends State<GetStartedPage> {
                     ? widget.onStart
                     : (_valid ? _save : null),
         secondaryLabel: 'Configure later',
-        onSecondary: c.busy ? null : () => _selectChoice('later'),
-        busy: c.busy,
+        onSecondary: _busy ? null : () => _selectChoice('later'),
+        busy: _busy,
         note: readyToStart
             ? 'Start chatting is available because a model is configured and the local coordinator is ready.'
             : configured
@@ -271,7 +274,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
               error: true,
               text: c.error,
               actionLabel: 'Retry',
-              onAction: c.busy ? null : c.refreshStatus,
+              onAction: _busy ? null : c.refreshStatus,
             ),
           if (c.notice.isNotEmpty) SetupMessage(text: c.notice),
           if (choice == 'done')
@@ -302,7 +305,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
                 ],
                 selected: {choice},
                 onSelectionChanged:
-                    c.busy ? null : (value) => _selectChoice(value.first),
+                    _busy ? null : (value) => _selectChoice(value.first),
               ),
             ),
             if (choice == 'local') _local(context),
@@ -321,7 +324,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
                 controller: workspace,
                 label: 'Workspace folder',
                 hint: 'Choose an existing folder',
-                enabled: !c.busy,
+                enabled: !_busy,
                 onBrowse: _browseWorkspace,
               ),
             ),
@@ -347,7 +350,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
                 DropdownMenuItem(value: 'ollama', child: Text('Ollama')),
                 DropdownMenuItem(value: 'lfm', child: Text('LFM')),
               ],
-              onChanged: c.busy
+              onChanged: _busy
                   ? null
                   : (value) => setState(() => localProvider = value!),
             ),
@@ -359,7 +362,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
                     controller: endpoint,
                     label: 'Ollama endpoint',
                     hint: 'http://127.0.0.1:11434',
-                    enabled: !c.busy,
+                    enabled: !_busy,
                     onChanged: (_) => setState(() {}),
                   ),
                 ),
@@ -367,7 +370,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
             ),
             OutlinedButton.icon(
               key: const Key('get-started-discover'),
-              onPressed: c.busy || c.discovering
+              onPressed: _busy || c.discovering
                   ? null
                   : () => c.discover(endpoint: endpoint.text.trim()),
               icon: const Icon(Icons.search, size: 18),
@@ -382,7 +385,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
             const SizedBox(height: OdessyTokens.spaceMedium),
             TextField(
               controller: localCredential,
-              enabled: !c.busy,
+              enabled: !_busy,
               onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
                 labelText: 'Local credential environment variable (optional)',
@@ -411,13 +414,13 @@ class _GetStartedPageState extends State<GetStartedPage> {
             DropdownMenuItem(value: name, child: Text(name)),
         ],
         onChanged:
-            c.busy ? null : (value) => setState(() => model.text = value ?? ''),
+            _busy ? null : (value) => setState(() => model.text = value ?? ''),
       );
     }
     return TextField(
       key: const Key('get-started-model'),
       controller: model,
-      enabled: !c.busy,
+      enabled: !_busy,
       onChanged: (_) => setState(() {}),
       decoration: InputDecoration(
         labelText: 'Model name',
@@ -434,7 +437,10 @@ class _GetStartedPageState extends State<GetStartedPage> {
   Widget _remote(BuildContext context) => SetupSection(
         title: 'Remote or cloud',
         description:
-            'Choose a supported provider preset or a compatible endpoint, then name the model. Authentication is referenced by environment-variable name only; no key is entered here.',
+            'Choose a supported provider, save its API key, then choose a model. '
+            'The key goes to the OS credential store (or this session only); it is '
+            'never written to the configuration, the workspace or a log. Nothing is '
+            'sent to the provider until you fetch models or send a message.',
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -451,12 +457,22 @@ class _GetStartedPageState extends State<GetStartedPage> {
                 DropdownMenuItem(
                     value: 'custom', child: Text('Custom endpoint')),
               ],
-              onChanged: c.busy
+              onChanged: _busy
                   ? null
                   : (value) => setState(() {
                         preset = value ?? 'openai';
                         model.clear();
                       }),
+            ),
+            const SizedBox(height: OdessyTokens.spaceMedium),
+            ModelCredentialPanel(
+              onSavingChanged: (value) {
+                if (mounted) setState(() => _credentialSaving = value);
+              },
+              backend: c.backend,
+              provider: preset,
+              endpoint: endpoint.text.trim(),
+              reference: credential.text.trim(),
             ),
             const SizedBox(height: OdessyTokens.spaceMedium),
             ModelPicker(
@@ -465,7 +481,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
               value: model,
               endpoint: endpoint.text.trim(),
               credential: credential.text.trim(),
-              enabled: !c.busy,
+              enabled: !_busy,
               fieldKey: const Key('get-started-remote-model'),
               onChanged: () => setState(() {}),
             ),
@@ -474,10 +490,12 @@ class _GetStartedPageState extends State<GetStartedPage> {
               key: const Key('get-started-remote-endpoint'),
               controller: endpoint,
               onChanged: (_) => setState(() {}),
-              enabled: !c.busy,
+              enabled: !_busy,
               decoration: const InputDecoration(
-                labelText: 'Endpoint (optional for presets)',
+                labelText: 'Endpoint (advanced; optional for presets)',
                 hintText: 'https://…',
+                helperText:
+                    'A key is stored per provider and endpoint. If you change this address, save the key again for the new address.',
               ),
             ),
             const SizedBox(height: OdessyTokens.spaceMedium),
@@ -485,12 +503,13 @@ class _GetStartedPageState extends State<GetStartedPage> {
               key: const Key('get-started-credential'),
               controller: credential,
               onChanged: (_) => setState(() {}),
-              enabled: !c.busy,
+              enabled: !_busy,
               decoration: const InputDecoration(
-                labelText: 'Credential environment variable (optional)',
+                labelText:
+                    'Advanced: credential environment variable (optional)',
                 hintText: 'ODESSY_CLOUD_API_KEY',
                 helperText:
-                    'The variable name only. Keys stay in the environment; they are never stored in settings.',
+                    'A variable name only. A key saved above takes precedence; the environment is the fallback for headless or scripted use.',
               ),
             ),
           ],
@@ -509,11 +528,11 @@ class _GetStartedPageState extends State<GetStartedPage> {
             ),
             const SizedBox(height: OdessyTokens.spaceMedium),
             OutlinedButton(
-              onPressed: c.busy ? null : _chooseModel,
+              onPressed: _busy ? null : _chooseModel,
               child: const Text('Change model'),
             ),
             OutlinedButton(
-              onPressed: c.busy ? null : c.refreshStatus,
+              onPressed: _busy ? null : c.refreshStatus,
               child: const Text('Re-read installation state'),
             ),
           ],
@@ -569,7 +588,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
             ListTile(
               key: Key('checklist-${item.$4}'),
               contentPadding: EdgeInsets.zero,
-              onTap: c.busy ? null : item.$5,
+              onTap: _busy ? null : item.$5,
               leading: Icon(
                 item.$2 ? Icons.check_circle : Icons.radio_button_unchecked,
                 size: 16,
@@ -602,7 +621,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
               SwitchListTile(
                 title: const Text('Enable existing voice assets'),
                 value: voiceEnabled,
-                onChanged: c.busy
+                onChanged: _busy
                     ? null
                     : (value) => setState(() => voiceEnabled = value),
               ),
@@ -610,7 +629,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
                 PathField(
                   controller: entry.value,
                   label: entry.key.replaceAll('_', ' '),
-                  enabled: !c.busy,
+                  enabled: !_busy,
                   onBrowse: () async {
                     final selected = await widget.picker.pickFile(
                       initial: entry.value.text,
@@ -621,7 +640,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
                   },
                 ),
               FilledButton(
-                onPressed: c.busy
+                onPressed: _busy
                     ? null
                     : () async {
                         final existing = c.spec['selection'];

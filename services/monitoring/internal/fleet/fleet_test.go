@@ -95,6 +95,45 @@ func newFleet(t *testing.T, ids ...string) (*Fleet, *recorder) {
 	return New(fakeClock{}, norm, norm.Intervals(), rec.sink), rec
 }
 
+func TestSSHAndPairedHostsShareOneSnapshotAndEventStream(t *testing.T) {
+	sshID, pairedID := hostID('a'), hostID('b')
+	f, rec := newFleet(t, sshID, pairedID)
+	if err := f.ApplyInventory(inv("r1",
+		identity(sshID, "ssh:g1", protocol.TrustSSH),
+		identity(pairedID, "g2", protocol.TrustPaired)), t0); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := f.Snapshot(t0)
+	if len(snapshot.Hosts) != 2 {
+		t.Fatalf("hosts = %d", len(snapshot.Hosts))
+	}
+	byID := map[string]HostView{}
+	for _, host := range snapshot.Hosts {
+		byID[host.HostID] = host
+	}
+	if byID[sshID].Trust != protocol.TrustSSH ||
+		byID[pairedID].Trust != protocol.TrustPaired {
+		t.Fatalf("trust = %+v", byID)
+	}
+	if rec.kinds(EventHostAdded) != 2 {
+		t.Fatalf("host.added = %d", rec.kinds(EventHostAdded))
+	}
+	// No heartbeat yet: an SSH inventory must not look green.
+	if byID[sshID].Connectivity != protocol.ConnectivityUnknown {
+		t.Fatalf("unnamed SSH host connectivity = %q", byID[sshID].Connectivity)
+	}
+	ref := protocol.HostRef{HostID: sshID, Generation: "ssh:g1"}
+	if err := f.AcceptHeartbeat(ref, protocol.Heartbeat{
+		HostID: sshID, Generation: "ssh:g1", BootID: "boot", Sequence: 1,
+		ObservedAt: t0, ReceivedAt: t0,
+	}, t0); err != nil {
+		t.Fatal(err)
+	}
+	if host, _ := f.Host(sshID, t0); host.Connectivity != protocol.ConnectivityOnline {
+		t.Fatalf("after heartbeat connectivity = %q", host.Connectivity)
+	}
+}
+
 func TestInventoryProjectionAndRevocationTombstone(t *testing.T) {
 	id := hostID('a')
 	f, rec := newFleet(t, id)
@@ -327,5 +366,21 @@ func TestPollableHonoursMonitoredHostsAndAccess(t *testing.T) {
 	ref := protocol.HostRef{HostID: id, Generation: "g1"}
 	if err := g.AcceptHeartbeat(ref, protocol.Heartbeat{HostID: id, Generation: "g1", BootID: "b1"}, t0); !errors.Is(err, ErrAccessDenied) {
 		t.Fatalf("expected access denial, got %v", err)
+	}
+}
+
+func TestPartialInventoryExposesFailureAndBlocksUnknownHost(t *testing.T) {
+	id := hostID('a')
+	f, _ := newFleet(t, id)
+	inventory := inv("r1", identity(id, "g1", protocol.TrustUnknown))
+	inventory.RefreshError = "paired provider unavailable"
+	if err := f.ApplyInventory(inventory, t0); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Pollable(t0)) != 0 {
+		t.Fatal("cached unknown host remained pollable")
+	}
+	if f.Snapshot(t0).Health.LastInventoryError == "" {
+		t.Fatal("provider failure was hidden")
 	}
 }

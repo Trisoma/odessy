@@ -194,6 +194,118 @@ def test_helper_cleanup_rejects_another_installations_cache(helper_cache):
     assert (path/'owned').exists()
 
 
+@pytest.mark.skipif(w.os.name != 'nt', reason='Windows helper cleanup')
+def test_uninstall_stays_running_until_maintenance_cache_is_removed(helper_cache, monkeypatch):
+    from odessy.setup.lifecycle import dispatch
+    helper, cache_record = helper_cache
+    root = helper.parents[2] / 'installed app'
+    record = installation(root)
+    record['windows_registration'] = cache_record['windows_registration']
+    w.atomic(root/'installation.json', record)
+    original_digest = w.digest
+    observations = []
+
+    def inspect_progress(path):
+        if path == helper/'owned':
+            journal = json.loads((root/'operation.json').read_text())
+            observations.append(journal)
+            assert journal['status'] == 'running'
+            assert journal['stage'] == 'maintenance-cache'
+            assert journal['files_done'] < journal['files_total']
+        return original_digest(path)
+
+    monkeypatch.setattr(w, 'digest', inspect_progress)
+    preview = dispatch({'action': 'uninstall-plan', 'root': str(root)})
+    result = dispatch({'action': 'uninstall', 'root': str(root), 'confirm': preview['plan_id']})
+    assert observations
+    assert result['helper_cleanup']['state'] == 'removed'
+    journal = json.loads((root/'operation.json').read_text())
+    assert journal['status'] == 'completed'
+    assert journal['files_done'] == journal['files_total']
+
+
+@pytest.mark.skipif(w.os.name != 'nt', reason='Windows helper cleanup')
+def test_uninstall_can_cancel_cache_cleanup_and_resume_after_fresh_review(helper_cache):
+    from odessy.setup.lifecycle import dispatch
+    helper, cache_record = helper_cache
+    root = helper.parents[2] / 'installed app'
+    record = installation(root)
+    record['windows_registration'] = cache_record['windows_registration']
+    w.atomic(root/'installation.json', record)
+
+    def cancel_during_cache():
+        path = root/'operation.json'
+        return path.exists() and json.loads(path.read_text()).get('stage') == 'maintenance-cache'
+
+    preview = dispatch({'action': 'uninstall-plan', 'root': str(root)})
+    with pytest.raises(KeyboardInterrupt):
+        dispatch({'action': 'uninstall', 'root': str(root), 'confirm': preview['plan_id']},
+                 cancelled=cancel_during_cache)
+    assert (helper/'owned').is_file()
+    assert json.loads((root/'operation.json').read_text())['status'] == 'interrupted'
+    with pytest.raises(ValueError):
+        dispatch({'action': 'uninstall', 'root': str(root), 'confirm': preview['plan_id']})
+    fresh = dispatch({'action': 'uninstall-plan', 'root': str(root)})
+    result = dispatch({'action': 'uninstall', 'root': str(root), 'confirm': fresh['plan_id']})
+    assert result['helper_cleanup']['state'] == 'removed'
+
+
+@pytest.mark.skipif(w.os.name != 'nt', reason='Windows helper cleanup')
+def test_helper_cleanup_overlaps_checksum_reads_and_preserves_changed_content(helper_cache, monkeypatch):
+    import threading
+    helper, record = helper_cache
+    (helper/'second').write_bytes(b'second')
+    record['windows_registration']['helper_files']['second'] = w.digest(helper/'second')
+    # The installed digest belongs to the old contents, so this file must survive.
+    (helper/'owned').write_text('user modification')
+    original_digest = w.digest
+    readers = threading.Barrier(2)
+    checked = set()
+    lock = threading.Lock()
+
+    def concurrent_digest(path):
+        with lock:
+            checked.add(path.name)
+        readers.wait(timeout=3)
+        return original_digest(path)
+
+    monkeypatch.setattr(w, 'digest', concurrent_digest)
+    result = w.helper_cleanup(record)
+    assert checked == {'owned', 'second'}
+    assert result['state'] == 'retained'
+    assert (helper/'owned').read_text() == 'user modification'
+    assert not (helper/'second').exists()
+
+
+@pytest.mark.skipif(w.os.name != 'nt', reason='Windows helper cleanup')
+def test_cache_cancellation_joins_only_the_current_bounded_batch(helper_cache, monkeypatch):
+    import threading
+    helper, record = helper_cache
+    inventory = record['windows_registration']['helper_files']
+    for number in range(11):
+        member = helper / f'file-{number}'
+        member.write_bytes(b'owned')
+        inventory[member.name] = inventory['owned']
+    original_digest = w.digest
+    lock = threading.Lock()
+    checked = []
+
+    def track_read(path):
+        value = original_digest(path)
+        with lock:
+            checked.append(path)
+        return value
+
+    monkeypatch.setattr(w, 'digest', track_read)
+    with pytest.raises(KeyboardInterrupt):
+        w.helper_cleanup(record, cancelled=lambda: len(checked) >= 4)
+    assert len(checked) == 4
+    assert sum(member.is_file() for member in helper.iterdir()) == 8
+    # All worker threads have joined before cancellation returns to the caller.
+    result = w.helper_cleanup(record)
+    assert result['state'] == 'removed'
+
+
 @pytest.mark.skipif(w.os.name!='nt',reason='Windows registration')
 def test_registration_records_helper_ownership_inventory(tmp_path,helper_cache,monkeypatch):
     helper,_=helper_cache
@@ -205,7 +317,7 @@ def test_registration_records_helper_ownership_inventory(tmp_path,helper_cache,m
     root=tmp_path/'installation';root.mkdir()
     record=installation(root)
     shortcut=tmp_path/'owned.lnk'
-    monkeypatch.setattr(w,'_cache_helper',lambda *args:helper)
+    monkeypatch.setattr(w,'_cache_helper',lambda *args,**kwargs:helper)
     monkeypatch.setattr(w,'_shortcut_path',lambda *args:shortcut)
     monkeypatch.setattr(w,'_write_shortcut',lambda *args:shortcut.write_bytes(b'shortcut'))
     monkeypatch.setattr(w,'_registry_owner',lambda *args:None)
@@ -274,3 +386,109 @@ print(p.pid, flush=True)
                 os.kill(pid, signal.SIGTERM)
         if helper.poll() is None: helper.kill()
         helper.communicate()
+
+def _payload(tmp_path, files):
+    """A minimal reviewed payload: a real manifest plus the declared members."""
+    payload = tmp_path / 'payload'
+    payload.mkdir(exist_ok=True)
+    manifest = {'schema_version': 1, 'components': ['desktop'], 'files': {}}
+    for name, content in files.items():
+        member = payload / name
+        member.parent.mkdir(parents=True, exist_ok=True)
+        member.write_bytes(content)
+        manifest['files'][name] = w.digest(member)
+    (payload / 'setup-context.json').write_text(json.dumps(manifest))
+    return payload, manifest
+
+
+@pytest.mark.skipif(w.os.name != 'nt', reason='Windows maintenance cache')
+def test_a_completed_copy_is_reused_without_rewriting_any_file(tmp_path, monkeypatch):
+    root = tmp_path / 'App'
+    record = installation(root)
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'local'))
+    payload, manifest = _payload(tmp_path, {'desktop/odessy_desktop.exe': b'exe',
+                                            'desktop/data.json': b'data'})
+    helper = w._cache_helper(root, record, payload)
+    stamps = {helper / name: (helper / name).stat().st_mtime_ns for name in manifest['files']}
+    # A second attempt verifies the cache and copies nothing.
+    assert w._cache_helper(root, record, payload) == helper
+    for path, stamp in stamps.items():
+        assert path.stat().st_mtime_ns == stamp
+    assert sorted(manifest['files']) == ['desktop/data.json', 'desktop/odessy_desktop.exe']
+
+
+@pytest.mark.skipif(w.os.name != 'nt', reason='Windows maintenance cache')
+def test_an_interrupted_copy_resumes_and_replaces_a_torn_file(tmp_path, monkeypatch):
+    root = tmp_path / 'App'
+    record = installation(root)
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'local'))
+    payload, manifest = _payload(tmp_path, {'desktop/odessy_desktop.exe': b'exe-' * 100,
+                                            'desktop/data.json': b'data'})
+    helper = w._cache_helper(root, record, payload)
+    kept = helper / 'desktop' / 'odessy_desktop.exe'
+    torn = helper / 'desktop' / 'data.json'
+    before = kept.stat().st_mtime_ns
+    torn.write_bytes(b'torn by an interrupted copy')
+    (helper / 'desktop' / 'stale.part').write_bytes(b'leftover')
+    w._cache_helper(root, record, payload)
+    assert torn.read_bytes() == b'data'
+    assert kept.stat().st_mtime_ns == before          # verified entries are not rewritten
+    assert w.digest(kept) == manifest['files']['desktop/odessy_desktop.exe']
+
+
+@pytest.mark.skipif(w.os.name != 'nt', reason='Windows maintenance cache')
+def test_cancelling_the_copy_records_it_and_owns_nothing(tmp_path, monkeypatch):
+    root = tmp_path / 'App'
+    record = installation(root)
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'local'))
+    payload, _ = _payload(tmp_path, {'desktop/odessy_desktop.exe': b'exe',
+                                     'desktop/data.json': b'data'})
+    journal_path = root / w.REGISTRATION_JOURNAL
+    monkeypatch.setattr(w, '_shortcut_path', lambda identity: tmp_path / 'shortcut.lnk')
+    monkeypatch.setattr(w, '_write_shortcut', lambda *a: pytest.fail('cancelled registration wrote a shortcut'))
+    monkeypatch.setattr(w, '_write_registry', lambda *a: pytest.fail('cancelled registration wrote a registry entry'))
+    with pytest.raises(w.Cancelled):
+        w.register(root, record, payload=payload, cancelled=lambda: True)
+    assert 'windows_registration' not in record
+    assert not journal_path.exists() or json.loads(journal_path.read_text())['status'] == 'cancelled'
+    assert not (tmp_path / 'local' / 'OdessyMaintenance').exists()
+
+
+@pytest.mark.skipif(w.os.name != 'nt', reason='Windows maintenance cache')
+def test_a_failed_copy_is_recorded_as_interrupted_without_false_success(tmp_path, monkeypatch):
+    root = tmp_path / 'App'
+    record = installation(root)
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'local'))
+    payload, _ = _payload(tmp_path, {'desktop/odessy_desktop.exe': b'exe'})
+    monkeypatch.setattr(w.shutil, 'copyfile',
+                        lambda *a: (_ for _ in ()).throw(OSError('disk full')))
+    monkeypatch.setattr(w, '_shortcut_path', lambda identity: tmp_path / 'shortcut.lnk')
+    with pytest.raises(OSError, match='disk full'):
+        w.register(root, record, payload=payload)
+    journal = json.loads((root / w.REGISTRATION_JOURNAL).read_text())
+    assert journal['status'] == 'interrupted' and 'disk full' in journal['error']
+    assert 'windows_registration' not in record
+
+
+@pytest.mark.skipif(w.os.name != 'nt', reason='Windows maintenance cache')
+def test_registration_progress_is_bounded_and_reported(tmp_path, monkeypatch):
+    root = tmp_path / 'App'
+    record = installation(root)
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'local'))
+    payload, _ = _payload(tmp_path, {'desktop/odessy_desktop.exe': b'exe' * 10,
+                                     'desktop/data.json': b'data'})
+    monkeypatch.setattr(w, '_shortcut_path', lambda identity: tmp_path / 'shortcut.lnk')
+    monkeypatch.setattr(w, '_write_shortcut', lambda path, target, arguments: Path(path).write_text('shortcut'))
+    monkeypatch.setattr(w, '_registry_owner', lambda key: None)
+    monkeypatch.setattr(w, '_write_registry', lambda key, values: None)
+    w.register(root, record, payload=payload)
+    journal = json.loads((root / w.REGISTRATION_JOURNAL).read_text())
+    assert journal['status'] == 'complete' and journal['stage'] == 'registered'
+    assert journal['files_done'] == journal['files_total'] == 2
+    assert journal['bytes_done'] == journal['bytes_total'] == 34
+    assert set(journal) <= {'schema_version', 'operation', 'status', 'stage', 'installation_id',
+                            'version', 'files_done', 'files_total', 'bytes_done', 'bytes_total',
+                            'reused', 'replaced', 'started_at', 'updated_at', 'finished_at',
+                            'logs', 'log_cursor', 'stage_started_at', 'error'}
+    shown = w.registration_progress(root)
+    assert shown['status'] == 'complete' and 'logs' not in shown

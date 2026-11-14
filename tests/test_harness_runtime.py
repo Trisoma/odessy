@@ -32,6 +32,7 @@ from odessy.runtime_backends.harness.process import (
     HarnessProtocolError,
     HarnessTransportError,
 )
+from odessy.runtime_backends.harness.sandbox import SANDBOX_PATCH_PREFIX
 
 FAKE_RUNTIME = r'''
 import json, os, subprocess, sys, threading, time
@@ -522,26 +523,30 @@ def test_an_extra_overlay_that_configures_a_route_is_allowed_and_loses_to_the_na
     environ = {"ODESSY_HARNESS_EXE": sys.executable, "ODESSY_HARNESS_PATCH": str(route), "ODESSY_HARNESS_HOME": str(tmp_path / "home")}
     config = from_environment(environ, workspace=tmp_path)
     ordered = config.ordered_patches()
-    # Patch layers apply in argv order, so the reviewed overlay must come last: a later
-    # layer could otherwise re-enable what it disabled.
-    assert ordered[-1].name == NARROW_PATCH_NAME
+    # Patch layers apply in argv order, so the reviewed overlay must come last of the layers
+    # that could touch the tool surface: a later layer could otherwise re-enable a tool row.
+    # The sandbox pin is emitted after it on purpose — it names no tool row, and Odessy's
+    # confinement must not be something an overlay can outrank (prompt 08).
+    assert ordered[-2].name == NARROW_PATCH_NAME
+    assert ordered[-1].name.startswith(SANDBOX_PATCH_PREFIX)
+    assert ordered[-2].read_text(encoding="utf-8") == NARROW_PATCH_TEXT
     assert ordered[0] == route
-    assert ordered[-1].read_text(encoding="utf-8") == NARROW_PATCH_TEXT
     argv = config.argv()
     emitted = [argv[index + 1] for index, item in enumerate(argv) if item == "--patch"]
     assert emitted[-1] == str(ordered[-1])
 
 
-def test_the_narrow_overlay_is_always_emitted_last(tmp_path):
-    """Verify the narrow overlay is always emitted last."""
+def test_the_narrow_overlay_precedes_only_the_sandbox_pin(tmp_path):
     extras = [tmp_path / "a.yml", tmp_path / "b.yml"]
     for path in extras:
         path.write_text("- id: acp\n", encoding="utf-8")
     narrow = tmp_path / NARROW_PATCH_NAME
     narrow.write_text(NARROW_PATCH_TEXT, encoding="utf-8")
+    sandbox = tmp_path / f"{SANDBOX_PATCH_PREFIX}test.patch.yml"
+    sandbox.write_text("- id: sandbox-policy\n", encoding="utf-8")
     config = HarnessConfig(command=(sys.executable,), home=tmp_path, workspace=tmp_path,
-                           patches=tuple(extras), narrow_patch=narrow)
-    assert config.ordered_patches() == [*extras, narrow]
+                           patches=tuple(extras), narrow_patch=narrow, sandbox_patch=sandbox)
+    assert config.ordered_patches() == [*extras, narrow, sandbox]
 
 
 # -- version pinning ---------------------------------------------------------
@@ -710,13 +715,35 @@ def test_startup_timeout_is_bounded_and_leaves_no_process(monkeypatch, tmp_path,
     monkeypatch.setenv("FAKE_MODE", "hang")
     config = make_config(tmp_path, fake, passthrough=("FAKE_MODE",), startup_timeout=0.6)
     runtime = HarnessRuntime(FakeSession(), config=config)
-    started = time.monotonic()
+    measured = {}
+    spawned = []
+    real_call, real_start = HarnessProcess.call, HarnessProcess.start
+
+    def start(process):
+        real_start(process)
+        spawned.append(process)
+
+    def call(process, method, *args, **kwargs):
+        if method != "initialize":
+            return real_call(process, method, *args, **kwargs)
+        measured["timeout"] = kwargs["timeout"]
+        started = time.monotonic()
+        try:
+            return real_call(process, method, *args, **kwargs)
+        finally:
+            measured["elapsed"] = time.monotonic() - started
+
+    monkeypatch.setattr(HarnessProcess, "start", start)
+    monkeypatch.setattr(HarnessProcess, "call", call)
     with pytest.raises(RuntimeUnavailable) as caught:
         run(runtime.start())
-    elapsed = time.monotonic() - started
-    assert elapsed < 3.0
+    # Measure the actual no-reply phase, excluding separately bounded version-probe,
+    # process creation and cleanup scheduling. Keep the configured timeout exact.
+    assert measured["timeout"] == config.startup_timeout == 0.6
+    assert measured["elapsed"] < 3.0
     assert "did not complete the handshake" in caught.value.public()["reason"]
-    assert runtime._process is None  # the failed child was not adopted
+    assert spawned and all(not child.alive and child.exit_code is not None for child in spawned)
+    assert runtime._process is None
 
 
 def test_a_crash_during_startup_reports_the_exit_code(monkeypatch, tmp_path, fake):

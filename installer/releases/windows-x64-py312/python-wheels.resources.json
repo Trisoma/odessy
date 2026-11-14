@@ -4,11 +4,15 @@
   "python_version": "3.12",
   "platform": "windows-x64",
   "download_manifest": "python-wheels-windows-x64.json",
-  "download_manifest_sha256": "2fd2487196f27269b9ee8c19601eddf171f49bbaca05e83991cd7407c0f583b3",
+  "download_manifest_sha256": "6375010d11357762ca502554479f8011878016407efe94af709a11f6b6163341",
   "lock_file": "requirements-windows-x64-py312.txt",
-  "lock_sha256": "c0222f3d5c6d8bbb3c1f63a6ef35980a2493a59388ea329eb5796bd29f26e762",
-  "dependency_spec_sha256": "bf0f0e8286cfc4a9c5f542c7e890909aec648e863539d395fef7032851669db0",
+  "lock_sha256": "d313dc8d47c96d3a79528e4231cff048be6213856b95327adc3f3f7c8b36e22d",
+  "dependency_spec_sha256": "bce63ff38603f587e5fe47295e3aec95883f8d287e27b889a086e170b427b4d4",
   "layout": {
+    "annotated-doc": {
+      "destination": "app",
+      "unpacked_bytes": 9565
+    },
     "annotated-types": {
       "destination": "app",
       "unpacked_bytes": 36347
@@ -32,6 +36,10 @@
     "cryptography": {
       "destination": "app",
       "unpacked_bytes": 10462548
+    },
+    "fastapi": {
+      "destination": "app",
+      "unpacked_bytes": 884063
     },
     "h11": {
       "destination": "app",

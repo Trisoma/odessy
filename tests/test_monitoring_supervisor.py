@@ -1,5 +1,5 @@
 import asyncio
-import httpx
+import httpx2 as httpx
 import pytest
 from odessy.monitoring.supervisor import MonitoringSupervisor, MonitorHTTPError, MonitorUnavailable
 from odessy.monitoring.settings import MonitoringSettings
@@ -31,4 +31,23 @@ def test_sse_limit_is_enforced_before_unterminated_line_is_accumulated():
             async for _ in monitor.events(): pass
         assert len(consumed) <= 33
         await monitor.close()
+    asyncio.run(run())
+
+
+def test_reconfigure_preserves_existing_runtime_forwarder():
+    import asyncio
+    from odessy.monitoring.settings import MonitoringSettings
+    from odessy.monitoring.supervisor import MonitoringSupervisor
+    from odessy.monitoring.runtime import RuntimeObservationSink
+    async def run():
+        supervisor = MonitoringSupervisor(MonitoringSettings())
+        async def send(value):
+            pass
+        sink = RuntimeObservationSink(send, host_id='fixture', generation='g')
+        supervisor.runtime_sink = sink
+        await supervisor.reconfigure(MonitoringSettings())
+        assert supervisor.runtime_sink is sink
+        assert not sink.closed
+        await supervisor.close()
+        assert sink.closed
     asyncio.run(run())

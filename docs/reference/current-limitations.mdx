@@ -18,6 +18,20 @@ installed application. As of November 4, 2026, PR #44 had not been merged into
 
 Configurable collaboration adds an authenticated loopback session API and coding jobs. It does not provide durable jobs, verified child-CLI confinement, mid-task model takeover, or hardware qualification. Coding-agent bills are outside the API budget. See [model collaboration](model-collaboration.mdx).
 
+## Harness coordination migration
+
+Explicit participant consultation works with the Harness backend. Harness-owned multi-agent
+delegation, background jobs and handoff execution are deferred: approved child execution,
+inherited permission ceilings, descendant cancellation and durable handoff output have not
+passed their acceptance gates. The plugin's subagent-service access remains unresolved;
+plugin loading or a consent exchange does not prove a child can execute safely.
+
+Unsupported Harness delegation must remain visibly refused. Existing supported legacy
+coordination is retained until its replacement is verified. This deferred scope does not
+block basic chat, streaming, reviewed tools or continued voice integration, and requires
+no user setup operation. Prompt 11's consultation slice is accepted; full coordination
+parity is not claimed. Prompt 12's application integration does not imply that parity.
+
 Keyboard input is available throughout an interactive voice session. The following
 October 22 verification figures are historical. Interactive voice commands share one controller and history with typed
 requests; this does not establish real-terminal or Jetson acceptance. Slow audio
@@ -246,13 +260,18 @@ Reference (outside this docs set, in the benchmark tree):
 benchmark/tts/jetson-voice-benchmark.mdx
 ```
 
-## Windows installation wizard
+## Windows installation
 
-As of October 22, 2026, the wizard on `chenyang/install-wizard` is an unfinished
-prototype, paused and deferred; see the [roadmap](../releases/v0.5.0.md). Functionality is
-incomplete; the interface and icon are not final. Offline tests and the latest
-visual refresh do not establish clean-machine or packaged-device readiness.
-`installation_ready` remains false. It is excluded from the current delivery scope.
+The Windows installer is the Flutter desktop setup application
+(`apps/desktop/lib/features/setup/`), packaged by `tool/build_setup_bundle.py`,
+`tool/audit_setup_artifact.py`, `tool/package_native_setup.py` and the NSIS bootstrap in
+`tool/windows_nsis.py`. The retired Tkinter wizard and its PyInstaller build are no longer
+part of the repository or the payload.
+
+The setup flow, component selection and maintenance are implemented and tested, but a
+clean-machine acceptance run from a signed release and the final license/redistribution
+review are still outstanding, so `installation_ready` remains false.
+
 
 ## Testing Limits
 

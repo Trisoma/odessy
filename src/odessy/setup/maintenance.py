@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import subprocess
 import signal
+import stat
 import sys
 import tempfile
 import time
@@ -40,9 +41,16 @@ def _digest(stream):
 def guard(path):
     path=Path(path).absolute()
     for item in (path,*path.parents):
-        if item.is_symlink() or (hasattr(item,'is_junction') and item.is_junction()):
+        # One uncached, non-following metadata read checks both links and all
+        # Windows reparse points. Repeating exists/is_symlink/lstat for every
+        # ancestor amplified filesystem/scanner work for large inventories.
+        try:
+            info=item.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(info.st_mode):
             raise ValueError('linked installation paths are not supported')
-        if os.name=='nt' and item.exists() and getattr(item.lstat(),'st_file_attributes',0)&1024:
+        if os.name=='nt' and getattr(info,'st_file_attributes',0)&1024:
             raise ValueError('reparse points are not supported')
     return path
 
@@ -223,7 +231,7 @@ class ManagedInstallation:
             data['absent_components']=review['absent']
             # What this payload actually ships, independent of what was requested.
             shipped={name.split('/')[0] for name in data['payload_manifest']['files']}
-            data['components']=sorted(shipped & {'runtime','desktop','node','tools','link','monitor'})
+            data['components']=sorted(shipped & {'runtime','desktop','node','tools','link','monitor','harness'})
             data['payload_root']=str(self.payload)
         data['plan_id']=hashlib.sha256(json.dumps(data,sort_keys=True,separators=(',',':')).encode()).hexdigest()
         return data
@@ -385,6 +393,14 @@ class ManagedInstallation:
             except (ValueError,OSError):
                 # A damaged or unsafe helper must not hide installation status.
                 pass
+        registration_progress=None
+        if os.name=='nt':
+            try:
+                from .windows_installation import registration_progress as read_registration_progress
+                registration_progress=read_registration_progress(self.root)
+            except (OSError,ValueError,ImportError,TypeError):
+                # A damaged or unavailable journal must not hide installation status.
+                registration_progress=None
         return {**snapshot(operation,log_cursor),'installation_format':'versioned','installation_id':record['id'],'active':active,
                 'versions':list(record['versions']),'operation':{key:value for key,value in operation.items() if key!='logs'} if operation else None,
                 'status':(operation or {}).get('status','idle'),
@@ -393,6 +409,7 @@ class ManagedInstallation:
                 'steps_total':(operation or {}).get('steps_total',0),
                 'files_written':written,'configuration':configuration,
                 'payload':payload,'registration':registration.get('state','none'),
+                'registration_progress':registration_progress,
                 'service_recorded':(self.root/'service.json').exists(),'ready':False}
 
     def rollback(self,version,*,confirm,expected_state=None,expected_operation=...):
@@ -414,7 +431,7 @@ class ManagedInstallation:
             atomic(self.root/'installation.json',record)
             return {'active':version,'service_started':False}
 
-    def uninstall(self,*,confirm,expected_state=None,expected_operation=...,cancelled=lambda:False):
+    def uninstall(self,*,confirm,expected_state=None,expected_operation=...,cancelled=lambda:False,cleanup=None):
         if Path(sys.executable).resolve().is_relative_to(self.root): raise ValueError('run uninstall from the external setup bootstrap')
         with self.lock():
             record=self.record()
@@ -428,6 +445,14 @@ class ManagedInstallation:
             progress.stage('uninstall')
             atomic(self.root/'operation.json',journal)
             removed=[];retained=[]
+            total=sum(len(files) for files in record['versions'].values())
+            total+=sum(len(files) for files in record.get('runtimes',{}).values())
+            journal.update(files_total=total,files_done=0)
+            progress.flush(force=True)
+            def file_done():
+                journal.update(files_done=journal['files_done']+1,
+                               removed_files=len(removed),retained_files=len(retained))
+                progress.flush()
             try:
                 # A fully removed version is forgotten: its file inventory is the
                 # bulk of this record, and keeping it grew the record past its
@@ -441,6 +466,7 @@ class ManagedInstallation:
                         path=guard(base/name)
                         if path.is_file() and digest(path)==sha: path.unlink();removed.append(f'{version}/{name}')
                         elif path.exists(): retained.append(f'{version}/{name}');kept[name]=sha
+                        file_done()
                     if kept: remaining_versions[version]=kept
                 remaining_runtimes={}
                 for runtime_id,files in record.get('runtimes',{}).items():
@@ -453,14 +479,16 @@ class ManagedInstallation:
                         path=guard(self.root/'runtimes'/runtime_id/name)
                         if path.is_file() and digest(path)==sha:path.unlink();removed.append('runtimes/'+runtime_id+'/'+name)
                         elif path.exists():retained.append('runtimes/'+runtime_id+'/'+name);kept[name]=sha
+                        file_done()
                     if kept: remaining_runtimes[runtime_id]=kept
                 record['versions']=remaining_versions
                 if 'runtimes' in record: record['runtimes']=remaining_runtimes
                 record['active']=None;atomic(self.root/'installation.json',record)
-                journal.update(finished_at=time.time(),status='completed',removed_files=len(removed),retained_files=len(retained));atomic(self.root/'operation.json',journal)
+                details=cleanup(progress) if cleanup is not None else {}
+                journal.update(finished_at=time.time(),status='completed',removed_files=len(removed),retained_files=len(retained));progress.flush(force=True)
             except BaseException as error:
                 journal['finished_at']=time.time()
                 journal.update(status='interrupted',removed_files=len(removed),retained_files=len(retained),error='cancelled' if isinstance(error,KeyboardInterrupt) else 'failed; inspect before retrying')
                 atomic(self.root/'operation.json',journal)
                 raise
-            return {'removed':removed,'retained':retained,'models_removed':False,'settings_removed':False}
+            return {'removed':removed,'retained':retained,'models_removed':False,'settings_removed':False,**details}

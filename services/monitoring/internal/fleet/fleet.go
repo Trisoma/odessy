@@ -53,6 +53,7 @@ var (
 type HostView struct {
 	HostID               string                  `json:"host_id"`
 	DisplayName          string                  `json:"display_name"`
+	FingerprintSHA256    string                  `json:"fingerprint_sha256,omitempty"`
 	Platform             *protocol.Platform      `json:"platform"`
 	Trust                protocol.TrustState     `json:"trust"`
 	Connectivity         protocol.Connectivity   `json:"connectivity"`
@@ -200,7 +201,7 @@ func (f *Fleet) ApplyInventory(inv protocol.Inventory, at time.Time) error {
 
 	f.leaseOK = true
 	f.lastRefresh = at
-	f.lastErr = ""
+	f.lastErr = inv.RefreshError
 	for _, ev := range events {
 		f.publish(ev)
 	}
@@ -590,6 +591,7 @@ func (f *Fleet) view(h *hostState, now time.Time) HostView {
 	v := HostView{
 		HostID:               h.identity.HostID,
 		DisplayName:          h.identity.Alias,
+		FingerprintSHA256:    h.identity.FingerprintSHA256,
 		Platform:             h.identity.Platform,
 		Trust:                f.trustState(h, now),
 		Connectivity:         f.connectivity(h, now),

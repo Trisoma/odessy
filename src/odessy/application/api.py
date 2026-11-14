@@ -15,7 +15,20 @@ from dataclasses import asdict
 import time
 from contextlib import asynccontextmanager
 
+async def _stop_when_asked(controller, stop_event):
+    """Barge-in: the voice session asked for the running turn to end.
+
+    A fresh wake phrase (or a client Stop) sets that event; the turn is ended through
+    the same cancellation implementation every other Stop uses (prompt 06), so a
+    barge-in does not create a second path. The caller cancels this waiter when the
+    turn ends on its own.
+    """
+    await stop_event.wait()
+    await controller.stop()
+
+
 from .session import public
+from odessy.application.durable import RuntimeSessionUnavailable
 from odessy.interaction.broker import InteractionError
 from odessy.models.cloud_model import CloudModelConfigError
 from odessy.runtime_backends import (
@@ -58,9 +71,46 @@ window.addEventListener('pagehide',()=>streamAbort?.abort());
 </script></html>'''
 
 
+def _factory_takes_restore(factory):
+    """Whether a controller factory accepts a ``restore`` session id.
+
+    Compositions predating durable sessions take no arguments; asking one for a restore and
+    quietly creating a new session instead would be the exact substitution this build refuses.
+    """
+    try:
+        parameters = inspect.signature(factory).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(parameter.name == "restore"
+               or parameter.kind == inspect.Parameter.VAR_KEYWORD
+               for parameter in parameters)
+
+
+def _factory_runtime_keyword(factory):
+    """The keyword a controller factory accepts for an explicit engine, or None.
+
+    ``runtime`` is this API's name and ``runtime_selection`` is the bootstrap function's;
+    a composition may declare either. The caller passes the keyword the factory actually
+    has — declaring one name and being called with the other is a TypeError at runtime,
+    not a capability answer.
+    """
+    try:
+        parameters = inspect.signature(factory).parameters
+    except (TypeError, ValueError):
+        return None
+    if "runtime" in parameters:
+        return "runtime"
+    if "runtime_selection" in parameters:
+        return "runtime_selection"
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD
+           for parameter in parameters.values()):
+        return "runtime"
+    return None
+
+
 def create_app(controller_factory, *, config=None, settings=None, jobs=None, token=None,
-               config_path=None, profiles=None, monitoring=None, runtime_configuration=None, desktop_voice=None,
-               usage_history=None):
+               config_path=None, profiles=None, monitoring=None,
+               runtime_configuration=None, desktop_voice=None, usage_history=None):
     """Build an app; the caller owns loopback-only binding and displaying its token."""
     try:
         from fastapi import FastAPI, Request, HTTPException
@@ -69,6 +119,10 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
         raise RuntimeError('Install odessy[ui] to run the HTTP server') from exc
 
     sessions, tasks = {}, {}
+    # Restore ids currently being opened. A reservation is taken *before* the await so two
+    # concurrent restores of one durable session cannot both build a controller: the loser
+    # would be overwritten in `sessions` and never closed.
+    opening: set[str] = set()
     configured_names = set(config.participants) if config is not None else set()
     static_profiles = {} if callable(profiles) else {
         name: value for name, value in (profiles or {}).items() if name not in configured_names}
@@ -80,8 +134,9 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             monitor_settings = MonitoringSettings.from_env()
         except ValueError:
             monitor_settings = MonitoringSettings()
-        if monitor_settings.enabled:
-            monitoring = MonitoringSupervisor(monitor_settings)
+        # Keep a disabled supervisor for SSH alias discovery. It starts no process
+        # and starts only when the user explicitly enables/saves monitoring.
+        monitoring = MonitoringSupervisor(monitor_settings)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -114,6 +169,8 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     from odessy.monitoring.api import register as register_monitoring
     register_monitoring(app, monitoring)
     app.state.monitoring = monitoring
+    from .ssh_connections import register as register_ssh_connections
+    register_ssh_connections(app, monitoring)
     app.state.sessions, app.state.turn_tasks = sessions, tasks
     from .lan_connections import register as register_lan_connections
     register_lan_connections(app)
@@ -182,8 +239,32 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
 
     @app.get('/v1/capabilities')
     async def capabilities():
+        from odessy.runtime_backends.contracts import DEFAULT_ENGINE, ENGINES
+        from odessy.runtime_backends.selection import available_engines, resolve_selection
+
+        # The default a session actually gets — the environment override is part of it.
+        # An invalid configured value is reported as an error instead of being flattened
+        # into "legacy", which would describe a state the service will not run.
+        effective, configuration_error = DEFAULT_ENGINE, ''
+        try:
+            effective = resolve_selection(None).engine
+        except RuntimeSelectionError:
+            # A fixed message: the exception text is diagnostic detail, and this endpoint is
+            # reachable by any local client. The configured value is reported by the
+            # administrator-facing record, not echoed here.
+            configuration_error = 'runtime selection is invalid'
+        runtime = {'default': effective, 'engines': list(available_engines()),
+                   'known': list(ENGINES)}
+        if configuration_error:
+            runtime['error'] = configuration_error
         return {'schema_version':1,'service_instance_id':app.state.service_instance_id,
-                'configuration':app.state.runtime_configuration,'restart_safe':restart_idle()}
+                'configuration':app.state.runtime_configuration,'restart_safe':restart_idle(),
+                # Which engines this build can inject, and what a session gets when it does
+                # not ask. Registration is all this can know: an engine's own dependencies
+                # (a pinned runtime, a profile) are checked when a session is created, where
+                # an unavailable one refuses with its actionable error instead of appearing
+                # available here.
+                'runtime': runtime}
 
     @app.get('/v1/usage/history')
     async def usage_history_report(days: int = 30, provider: str | None = None,
@@ -289,15 +370,52 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     def snapshot(controller):
         return controller.public_snapshot()
 
-    async def make_controller():
+    async def make_controller(restore=None, runtime=None):
         nonlocal pending_admissions
         admission_open()
         pending_admissions += 1
         try:
             try:
-                controller = controller_factory()
+                runtime_keyword = _factory_runtime_keyword(controller_factory)
+                if runtime is not None and runtime_keyword is None:
+                    # Asking for an engine this build cannot inject and answering with the
+                    # default would be a silent switch of the conversation's backend.
+                    raise HTTPException(501, 'This build cannot select a runtime engine')
+                if restore is not None:
+                    if not _factory_takes_restore(controller_factory):
+                        # Asking for a restore and creating a fresh session instead is the exact
+                        # substitution this build refuses to make silently.
+                        raise HTTPException(501, 'This build cannot restore durable sessions')
+                    if runtime is not None:
+                        controller = controller_factory(
+                            restore=restore, **{runtime_keyword: runtime})
+                    else:
+                        controller = controller_factory(restore=restore)
+                elif runtime is not None:
+                    controller = controller_factory(**{runtime_keyword: runtime})
+                else:
+                    controller = controller_factory()
                 if inspect.isawaitable(controller):
                     controller = await controller
+                controller._workspace_inspector = workspace_inspector
+                if restore is not None:
+                    # An explicit restore is answered now: either the runtime still has this
+                    # conversation, or the caller is told it does not. A controller that fails
+                    # preparation never enters `sessions`, so nothing else would ever close it:
+                    # its owned task, MCP servers and runtime child would outlive the refusal.
+                    try:
+                        await controller.prepare()
+                    except BaseException:
+                        try:
+                            await controller.close()
+                        except Exception:
+                            pass
+                        raise
+            except RuntimeSessionUnavailable as exc:
+                # A durable session exists under this identity and cannot be continued. The
+                # caller asked to continue it; beginning a fresh one instead would lose the
+                # conversation without anyone choosing that.
+                raise HTTPException(409, public(exc.public())) from exc
             except CloudModelConfigError as exc:
                 raise HTTPException(503, public(str(exc))) from exc
             except RuntimeUnavailable as exc:
@@ -803,11 +921,70 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                     'profiles': editable_profiles()}
 
     @app.post('/v1/sessions', status_code=201)
-    async def new_session():
-        controller = await make_controller()
-        controller._workspace_inspector = workspace_inspector
+    async def new_session(request: Request):
+        """Create a session, or explicitly continue a durable one.
+
+        The body is optional. ``{"restore": "<session id>"}`` continues the durable session
+        with that id: same application identity, same runtime session, settled content
+        reconstructed from the bounded projection. Nothing is replayed to the engine, so the
+        last prompt is never resubmitted by a reconnection.
+
+        ``{"runtime": "harness"}`` selects the engine for a **new** session. Omitting it keeps
+        this process's resolution (the installation's default, else legacy). An unknown name
+        is a 400, an engine this build cannot inject is a 501, and an engine whose
+        dependencies are missing is a 503 — never a silent fallback. A restored session keeps
+        the engine its history was written with; naming a different one is refused.
+        """
+        data = {}
+        raw = await request.body()
+        if raw.strip():
+            try:
+                data = json.loads(raw)
+            except (ValueError, UnicodeDecodeError):
+                raise HTTPException(400, 'Expected a JSON object')
+            if not isinstance(data, dict):
+                raise HTTPException(400, 'Expected a JSON object')
+            if set(data) - {'restore', 'runtime'}:
+                raise HTTPException(400, 'Unknown session fields')
+        restore = data.get('restore')
+        runtime = data.get('runtime')
+        if runtime is not None:
+            from odessy.runtime_backends.selection import normalize_engine
+
+            try:
+                runtime = normalize_engine(runtime)
+            except RuntimeSelectionError as exc:
+                raise HTTPException(400, public(str(exc))) from exc
+        if restore is not None:
+            if not isinstance(restore, str) or not re.fullmatch(r'[0-9a-f]{32}', restore):
+                raise HTTPException(400, 'restore must be a session id')
+            if restore in sessions or restore in opening:
+                # One live owner per durable session: a second controller would compete with the
+                # first for the same history (the runtime refuses a second resume anyway, and
+                # this answers with the useful reason instead of an opaque engine error).
+                raise HTTPException(409, 'Session is already open')
+            opening.add(restore)
+        try:
+            controller = await make_controller(restore=restore, runtime=runtime)
+        finally:
+            if restore is not None:
+                opening.discard(restore)
         sessions[controller.id] = controller
         return snapshot(controller)
+
+    @app.get('/v1/durable/sessions')
+    async def list_durable_sessions():
+        """Durable sessions this machine could continue, newest first.
+
+        Metadata and cursors only: a listing must not leak stored text, so the projection is
+        counted rather than returned.
+        """
+        from odessy.application.durable import default_store
+        try:
+            return {'sessions': default_store().list_records(),
+                    'open': sorted(sessions)}
+        except (OSError, ValueError) as exc:
+            raise HTTPException(503, f'Durable sessions are unavailable: {exc}') from exc
 
     @app.get('/v1/sessions/{sid}')
     async def get_session(sid: str):
@@ -849,7 +1026,7 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             else:await desktop_voice.cancel(controller)
         return admit_turn(controller,data)
 
-    def admit_turn(controller,data,spoken=False):
+    def admit_turn(controller,data,spoken=False,timing=None):
         sid=controller.id
         admission_open()
         if not isinstance(data.get('text'), str) or not data['text'].strip():
@@ -860,9 +1037,23 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             raise HTTPException(409, 'A turn is already running')
         turn_id = secrets.token_hex(16)
         epoch = controller.stop_epoch
+        # Written before the task starts: a crash between acceptance and execution then leaves a
+        # turn that a restore reports as "never sent" instead of silently forgetting the input.
+        record_queued = getattr(controller, 'record_queued_turn', None)
+        if record_queued is not None:
+            record_queued(turn_id, data['text'])
         async def run():
+            # This turn's voice phases: the audio adapter marked capture and recognition;
+            # the session marks the first engine text on the same object (prompt 13).
+            settled = False
+            controller.bind_turn_timing(timing)
             try:
                 result=await controller.run_turn(data['text'], participant=data.get('participant'), turn_id=turn_id, admitted_epoch=epoch)
+                settled = True
+                if timing is not None:
+                    # The committed answer is available now. Playback may take seconds;
+                    # it must not be included in first-text/model latency.
+                    controller.emit('voice_timing', timing.settle(settled=True))
                 if spoken and desktop_voice is not None:
                     await desktop_voice.speak(controller,result.final_text)
                 return result.final_text
@@ -871,6 +1062,11 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                 pass
             finally:
                 tasks.pop(sid, None)
+                if timing is not None:
+                    # A cancelled or failed turn has no committed answer, so it has no
+                    # first text to claim; that phase stays unmeasured.
+                    controller.emit('voice_timing', timing.settle(settled=settled))
+                controller.bind_turn_timing(None)
                 if desktop_voice is not None:await desktop_voice.typed(controller,False)
         tasks[sid] = asyncio.create_task(run())
         return {'turn_id': turn_id, 'session_id': sid, 'status': 'accepted'}
@@ -894,9 +1090,18 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                 async def submit_wake(text,stop_event,context):
                     c=controller
                     c.emit('voice_transcript',{'text':c._public(text),'source':'wake'})
-                    admit_turn(c,{'text':text})
+                    admit_turn(c,{'text':text},timing=desktop_voice.timing)
                     task=tasks.get(c.id)
-                    return (await asyncio.shield(task)) or '' if task is not None else ''
+                    # A fresh wake phrase during this turn sets ``stop_event``: the turn is
+                    # ended through the ordinary Stop path, not abandoned mid-request.
+                    watcher=asyncio.create_task(_stop_when_asked(c,stop_event)) if stop_event is not None else None
+                    try:
+                        return (await asyncio.shield(task)) or '' if task is not None else ''
+                    finally:
+                        if watcher is not None:
+                            watcher.cancel()
+                            with contextlib.suppress(asyncio.CancelledError, Exception):
+                                await watcher
                 async def stop_wake_turn():
                     await controller.stop()
                     task=tasks.get(sid)
@@ -911,7 +1116,7 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
                 return await desktop_voice.start(controller,data.get('expected_interaction_id'),preview=action=='test_input')
             if action=='finish_capture':
                 if not isinstance(data.get('capture_id'),str):raise VoiceError('capture_id is required',400)
-                async def submit(c,text):admit_turn(c,{'text':text},spoken=True)
+                async def submit(c,text):admit_turn(c,{'text':text},spoken=True,timing=desktop_voice.timing)
                 return await desktop_voice.finish(controller,data['capture_id'],submit)
             if action in ('cancel_capture','stop_playback'):
                 if action=='cancel_capture' and not isinstance(data.get('capture_id'),str):raise VoiceError('capture_id is required',400)
