@@ -1,6 +1,8 @@
 library;
 
 export 'src/agent_basics.dart';
+export 'src/basics_client.dart';
+import 'src/basics_client.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -282,6 +284,7 @@ class ApiFailure implements Exception {
 class LocalApi
     implements
         OdessyApi,
+        AgentBasicsConnection,
         SessionDirectoryApi,
         WorkspaceInspectorApi,
         WorkspaceAttachmentApi,
@@ -326,6 +329,17 @@ class LocalApi
   final Set<HttpClient> _streams = {};
   final Set<MonitoringClient> _monitoring = {};
   bool _closed = false;
+
+  @override
+  late final AgentBasicsClient agentBasics = AgentBasicsClient(
+      (path, method, body) => _json(
+          path,
+          method,
+          body,
+          method != 'GET' &&
+                  RegExp(r'/(terminals|checkpoints|restore)$').hasMatch(path)
+              ? const Duration(minutes: 5)
+              : const Duration(seconds: 12)));
 
   /// Read-only monitoring bound to this immutable origin and in-memory bearer.
   MonitoringClient createMonitoringClient() {

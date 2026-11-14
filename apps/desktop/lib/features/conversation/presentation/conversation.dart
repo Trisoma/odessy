@@ -23,8 +23,12 @@ class ConversationPage extends StatefulWidget {
       this.onOpenModels,
       this.onOpenInspector,
       this.accessMode,
+      this.accessModeDescription,
+      this.supportedAccessModes = const [],
       this.onAccessModeChanged});
   final AccessMode? accessMode;
+  final String? accessModeDescription;
+  final List<AccessMode> supportedAccessModes;
   final ValueChanged<AccessMode>? onAccessModeChanged;
   final DesktopSession controller;
   final WorkspaceInspectorController? inspector;
@@ -669,20 +673,30 @@ class _ConversationPageState extends State<ConversationPage> {
                               onPressed: () => widget.onOpenInspector!(),
                               icon: const Icon(Icons.attach_file, size: 20)),
                         PopupMenuButton<AccessMode>(
-                            tooltip: 'Service permissions',
+                            tooltip: widget.accessModeDescription ??
+                                'Service permissions',
                             onSelected: widget.onAccessModeChanged,
                             itemBuilder: (context) => [
                                   for (final mode in AccessMode.values)
                                     PopupMenuItem(
                                         value: mode,
-                                        enabled:
-                                            widget.onAccessModeChanged != null,
+                                        enabled: widget.onAccessModeChanged !=
+                                                null &&
+                                            (widget.supportedAccessModes
+                                                    .isEmpty ||
+                                                widget.supportedAccessModes
+                                                    .contains(mode)),
                                         child: Text(_accessLabel(mode))),
                                   if (widget.onAccessModeChanged == null)
                                     const PopupMenuItem(
                                         enabled: false,
                                         child: Text(
                                             'Service mode control is not available yet.')),
+                                  if (widget.accessModeDescription != null)
+                                    PopupMenuItem(
+                                        enabled: false,
+                                        child: Text(
+                                            widget.accessModeDescription!)),
                                 ],
                             child: Padding(
                                 padding: const EdgeInsets.symmetric(

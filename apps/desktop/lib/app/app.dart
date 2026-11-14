@@ -1,4 +1,6 @@
 import '../features/shell/presentation/app_icon_rail.dart';
+import '../features/history/controllers/basics_controller.dart';
+import '../features/history/presentation/basics_page.dart';
 import 'preferences/shell_layout_store.dart';
 import 'dart:async';
 import 'dart:io';
@@ -99,6 +101,8 @@ class OdessyApp extends StatefulWidget {
 
 class _OdessyAppState extends State<OdessyApp> {
   late final DesktopSession controller;
+  late final BasicsController basics;
+  String basicsTab = 'History';
   late final DesktopPreferencesController preferences;
   ProjectCatalogController? projects;
   WorkspaceInspectorController? inspector;
@@ -263,7 +267,41 @@ class _OdessyAppState extends State<OdessyApp> {
     }
   }
 
-  Future<void> _openSession(String sid) async {
+  Future<void> _openSession(String sid, {bool takeOwnership = false}) async {
+    if (!await _mayNavigate() ||
+        !mounted ||
+        controller.busy ||
+        basics.busy ||
+        controller.session?.running == true) {
+      return;
+    }
+    await voice.release();
+    final old = controller.session?.id;
+    if (old != null) sessionDrafts[old] = conversationDraft.text;
+    if (await controller.resumeSession(sid, takeOwnership: takeOwnership)) {
+      conversationDraft.text = sessionDrafts[sid] ?? '';
+      inspector?.invalidate();
+      inspectorOpen = false;
+      setState(() => page = 'Conversation');
+      _restoreInspectorIfReady();
+    }
+  }
+
+  Future<void> _openBasics([String tab = 'History']) async {
+    if (!await _mayNavigate() || !mounted) return;
+    // Existing navigation releases active audio deliberately; no audio resumes
+    // when returning. The external draft controller retains unsent text.
+    await voice.release();
+    if (!mounted) return;
+    scaffoldKey.currentState?.closeDrawer();
+    setState(() {
+      basicsTab = tab;
+      page = 'History & tools';
+    });
+    await basics.refresh();
+  }
+
+  Future<void> _resumeSavedConversation() async {
     if (!await _mayNavigate() ||
         !mounted ||
         controller.busy ||
@@ -271,15 +309,9 @@ class _OdessyAppState extends State<OdessyApp> {
       return;
     }
     await voice.release();
-    final old = controller.session?.id;
-    if (old != null) sessionDrafts[old] = conversationDraft.text;
-    if (await controller.resumeSession(sid)) {
-      conversationDraft.text = sessionDrafts[sid] ?? '';
-      inspector?.invalidate();
-      inspectorOpen = false;
-      setState(() => page = 'Conversation');
-      _restoreInspectorIfReady();
-    }
+    final receipt = await basics.resumeSelected();
+    if (receipt == null || !mounted) return;
+    await _openSession(receipt.sessionId, takeOwnership: true);
   }
 
   Future<void> _openInspector(
@@ -353,6 +385,7 @@ class _OdessyAppState extends State<OdessyApp> {
 
   Future<void> _restartSaved() async {
     if (restarting ||
+        basics.busy ||
         _settingsBusy ||
         controller.busy ||
         controller.session?.running == true) {
@@ -595,6 +628,7 @@ class _OdessyAppState extends State<OdessyApp> {
   void initState() {
     super.initState();
     controller = DesktopSession(widget.api ?? DisconnectedApi());
+    basics = BasicsController(controller);
     shellLayoutStore = widget.shellLayoutStore ??
         (controller.api.isDemo
             ? MemoryShellLayoutStore()
@@ -674,10 +708,14 @@ class _OdessyAppState extends State<OdessyApp> {
   @override
   void dispose() {
     unawaited(sessionModelCredentials.clear().catchError((Object _) {}));
-    for (final node in [...navigationFocus.values, ...drawerNavigationFocus.values]) {
+    for (final node in [
+      ...navigationFocus.values,
+      ...drawerNavigationFocus.values
+    ]) {
       node.dispose();
     }
     lifecycle.dispose();
+    basics.dispose();
     conversationDraft.dispose();
     monitoring.dispose();
     preferences.dispose();
@@ -725,6 +763,7 @@ class _OdessyAppState extends State<OdessyApp> {
           home: ListenableBuilder(
               listenable: Listenable.merge([
                 controller,
+                basics,
                 setup,
                 componentSettings,
                 readiness,
@@ -874,6 +913,10 @@ class _OdessyAppState extends State<OdessyApp> {
                                   style: TextStyle(
                                       color:
                                           Theme.of(context).colorScheme.error)),
+                            if (page == 'Conversation' && basics.error != null)
+                              ComponentStateBanner(
+                                  message: basics.error!,
+                                  tone: BannerTone.error),
                             if ([
                               'preparing',
                               'recording',
@@ -939,6 +982,12 @@ class _OdessyAppState extends State<OdessyApp> {
                               'Device details' => _devicePage(),
                               'Jobs' => JobsPage(controller: jobs),
                               'Handoffs' => HandoffPage(controller: handoffs),
+                              'History & tools' => BasicsPage(
+                                  controller: basics,
+                                  initialTab: basicsTab,
+                                  workspaceLabel: readiness
+                                      .current?.configuration?.workspace,
+                                  onResume: _resumeSavedConversation),
                               'Activity & usage' =>
                                 controller.api is UsageHistoryApi
                                     ? UsageHistoryDashboard(session: controller)
@@ -1062,6 +1111,21 @@ class _OdessyAppState extends State<OdessyApp> {
                                   final panelWidth = inspectorWidth.clamp(320.0,
                                       (box.maxWidth - 480).clamp(320.0, 480.0));
                                   final conversation = ConversationPage(
+                                      accessMode: basics.mode?.mode,
+                                      accessModeDescription:
+                                          basics.modeDescription,
+                                      supportedAccessModes:
+                                          basics.mode?.supported ?? const [],
+                                      onAccessModeChanged: basics.canAct &&
+                                              basics.mode?.supported
+                                                      .isNotEmpty ==
+                                                  true &&
+                                              !controller.busy &&
+                                              controller.session?.running !=
+                                                  true
+                                          ? (value) =>
+                                              unawaited(basics.setMode(value))
+                                          : null,
                                       draftController: conversationDraft,
                                       voice: voice,
                                       inspector: inspector,
@@ -1076,6 +1140,8 @@ class _OdessyAppState extends State<OdessyApp> {
                                       inspectorOpen && inspector != null
                                           ? WorkspaceInspector(
                                               controller: inspector!,
+                                              onOpenTerminal: () => unawaited(
+                                                  _openBasics('Terminal')),
                                               onClose: _closeInspector)
                                           : null;
                                   if (panel == null) return conversation;
@@ -1170,7 +1236,12 @@ class _OdessyAppState extends State<OdessyApp> {
               ? null
               : () => _newSession(context),
           hosts: deviceInventory.hosts,
-          projectNavigation: projects == null ? null : _projectNavigation(),
+          projectNavigation: projects == null
+              ? ListTile(
+                  leading: const Icon(Icons.history),
+                  title: const Text('Saved history & tools'),
+                  onTap: () => _openBasics())
+              : _projectNavigation(),
           sessionSearch: projects == null
               ? null
               : TextField(
@@ -1178,7 +1249,11 @@ class _OdessyAppState extends State<OdessyApp> {
                       hintText: 'Search chats',
                       prefixIcon: Icon(Icons.search, size: 18),
                       isDense: true),
-                  onChanged: projects!.search),
+                  onChanged: projects!.search,
+                  onSubmitted: (query) async {
+                    await _openBasics();
+                    await basics.search(query);
+                  }),
           conversationLabel: 'Assistant',
           navigationFocus: navigationFocus,
           selectedHostId:
@@ -1264,6 +1339,35 @@ class _OdessyAppState extends State<OdessyApp> {
             title: const Text('Projects',
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
             children: [
+              ListTile(
+                  leading: const Icon(Icons.history),
+                  title: const Text('Saved history & tools'),
+                  selected: page == 'History & tools',
+                  onTap: () => _openBasics()),
+              if (basics.supports('conversations'))
+                for (final project in basics.projects)
+                  ExpansionTile(
+                      title: Text(project.label),
+                      subtitle: const Text('Durable history'),
+                      children: [
+                        for (final chat in basics.conversations
+                            .where((r) => r.projectId == project.id))
+                          ListTile(
+                              dense: true,
+                              leading: Icon(
+                                  chat.pinned
+                                      ? Icons.push_pin_outlined
+                                      : Icons.chat_bubble_outline,
+                                  size: 18),
+                              title: Text(chat.title,
+                                  maxLines: 1, overflow: TextOverflow.ellipsis),
+                              onTap: basics.busy
+                                  ? null
+                                  : () async {
+                                      await _openBasics();
+                                      await basics.open(chat.id);
+                                    }),
+                      ]),
               TextButton.icon(
                   onPressed: c.loading ? null : c.refresh,
                   icon: const Icon(Icons.refresh),
@@ -1274,6 +1378,39 @@ class _OdessyAppState extends State<OdessyApp> {
                     title: Text(project.label),
                     subtitle: Text(c.status(project)),
                     children: [
+                      TextButton.icon(
+                          onPressed: basics.busy ||
+                                  !basics.supports('conversations')
+                              ? null
+                              : () async {
+                                  final confirmed = await showDialog<bool>(
+                                      context: context,
+                                      builder: (ctx) => AlertDialog(
+                                              title: const Text(
+                                                  'Create a durable project?'),
+                                              content: Text(
+                                                  'Copy the label "${project.label}" into a saved project. This keeps the existing live group and does not move messages, sessions, workspace bindings or permissions.'),
+                                              actions: [
+                                                TextButton(
+                                                    onPressed: () =>
+                                                        Navigator.pop(
+                                                            ctx, false),
+                                                    child:
+                                                        const Text('Cancel')),
+                                                FilledButton(
+                                                    onPressed: () =>
+                                                        Navigator.pop(
+                                                            ctx, true),
+                                                    child: const Text(
+                                                        'Create project'))
+                                              ]));
+                                  if (confirmed == true) {
+                                    await basics.createProject(project.label);
+                                  }
+                                },
+                          icon: const Icon(Icons.drive_file_move_outlined,
+                              size: 18),
+                          label: const Text('Copy label to saved project')),
                       for (final row in c.filteredSessions.where((s) =>
                           c.matches(project) &&
                           project.sessionIds.contains(s.id)))
@@ -1345,6 +1482,7 @@ class _OdessyAppState extends State<OdessyApp> {
               letterSpacing: 1)));
 
   Future<void> _newSession(BuildContext context) async {
+    if (basics.busy) return;
     if (!await _mayNavigate(deferDiscard: true) || !context.mounted) return;
     final approved = await showDialog<bool>(
         context: context,
@@ -1361,7 +1499,10 @@ class _OdessyAppState extends State<OdessyApp> {
                     child: const Text('Start new session')),
               ],
             ));
-    if (approved == true && mounted && await _discardApprovedSettings()) {
+    if (approved == true &&
+        mounted &&
+        !basics.busy &&
+        await _discardApprovedSettings()) {
       await voice.release();
       inspector?.invalidate();
       final old = controller.session?.id;
@@ -1374,6 +1515,10 @@ class _OdessyAppState extends State<OdessyApp> {
   }
 
   Future<void> _connectConfigured(Json spec) async {
+    if (basics.busy) {
+      throw StateError(
+          'Wait for the current history or tool operation before reconnecting.');
+    }
     if (_settingsBusy) {
       throw StateError(
           'Wait for the current settings operation before changing connection.');
@@ -1423,7 +1568,7 @@ class _OdessyAppState extends State<OdessyApp> {
   }
 
   Future<void> _connect(BuildContext context) async {
-    if (restarting) return;
+    if (restarting || basics.busy) return;
     if (_settingsBusy) {
       await showDialog<void>(
           context: context,

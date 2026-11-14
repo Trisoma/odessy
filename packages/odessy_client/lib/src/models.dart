@@ -7,7 +7,8 @@ class ChatMessage {
 
 class Session {
   Session(this.id,
-      {this.selectedProfile = 'auto',
+      {this.conversationId,
+      this.selectedProfile = 'auto',
       this.activeProfile,
       this.running = false,
       List<String>? availableProfiles,
@@ -21,6 +22,7 @@ class Session {
         pending = List.unmodifiable(pending.map(freezeJson)),
         events = List.unmodifiable(events);
   final String id, selectedProfile;
+  final String? conversationId;
   final String? activeProfile;
   final bool running;
 
@@ -54,6 +56,7 @@ class Session {
           .add(ChatMessage('user', transcripts.last.data['text'] as String));
     }
     return Session(json['id'] as String,
+        conversationId: json['conversation_id'] as String?,
         selectedProfile: json['selected_profile'] as String,
         activeProfile: json['active_profile'] as String?,
         running: json['running'] == true,
@@ -114,6 +117,7 @@ Session reduceSessionSnapshot(Session? current, Session incoming) {
   final events = incoming.events.where((e) => seen.add(e.id)).toList()
     ..sort((a, b) => a.id.compareTo(b.id));
   return Session(incoming.id,
+      conversationId: incoming.conversationId,
       selectedProfile: incoming.selectedProfile,
       activeProfile: incoming.activeProfile,
       running: incoming.running,
