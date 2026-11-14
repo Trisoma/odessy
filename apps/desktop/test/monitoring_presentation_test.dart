@@ -227,17 +227,9 @@ void main() {
         size: const Size(500, 500));
     await tester.tap(find.text('Settings'));
     expect(settings, 1);
-    await tester.scrollUntilVisible(find.text('Tools & installation'), 400,
-        scrollable: find.descendant(
-            of: find.byKey(const Key('device-sidebar-scroll')),
-            matching: find.byType(Scrollable)));
-    await tester.tap(find.text('Tools & installation'));
-    await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Runtime maintenance'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Runtime maintenance'));
-    await tester.tap(find.text('Settings'));
-    expect([tools, settings], [1, 2]);
+    expect(find.text('Tools & installation'), findsNothing);
+    expect(find.text('Runtime maintenance'), findsNothing);
+    expect(tools, 0);
   });
 
   testWidgets('sidebar keyboard activation inspects without implicit routing',

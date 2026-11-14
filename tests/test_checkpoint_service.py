@@ -25,6 +25,26 @@ def shutil_git() -> bool:
 needs_git = pytest.mark.skipif(not shutil_git(), reason='git is not installed')
 
 
+@pytest.mark.parametrize('payload', [None, b'', b'exact reviewed blob\r\n'])
+def test_git_never_inherits_coordinator_stdin(tmp_path, monkeypatch, payload):
+    """An installed service keeps stdin open; only explicit blob bytes reach Git."""
+    seen = []
+
+    def run(command, **kwargs):
+        seen.append(kwargs)
+        return subprocess.CompletedProcess(command, 0, stdout=b'result', stderr=b'')
+
+    monkeypatch.setattr(checkpoint_module.subprocess, 'run', run)
+    api = CheckpointService(inspector=None, request_grant=None, state_dir=tmp_path)
+    assert api._git(tmp_path, 'hash-object', input_bytes=payload) == b'result'
+    if payload is None:
+        assert seen[0]['stdin'] == subprocess.DEVNULL
+        assert 'input' not in seen[0]
+    else:
+        assert seen[0]['input'] == payload
+        assert 'stdin' not in seen[0]
+
+
 def git(root: Path, *args: str) -> str:
     return subprocess.run(['git', '-C', str(root), *args], capture_output=True,
                           text=True, timeout=60, check=True).stdout
@@ -377,3 +397,24 @@ def test_cancelled_async_approval_never_creates_checkpoint(tmp_path):
         await asyncio.wait_for(ended.wait(), 5)
         assert api.list('s1')['checkpoints'] == []
     asyncio.run(run())
+
+
+@needs_git
+def test_binary_and_runtime_database_are_excluded_and_preserved(tmp_path):
+    root, binding = workspace(tmp_path)
+    (root / 'binary.dat').write_bytes(b'\x00\xfforiginal')
+    (root / 'conversations.sqlite3').write_bytes(b'SQLite format 3\x00\x80')
+    api = service(tmp_path, binding)
+    created = api.create('s1', 'text-only checkpoint')
+    preview = api.preview('s1', created['id'])
+    assert 'binary.dat' in preview['unsupported']
+    assert 'conversations.sqlite3' in preview['unsupported']
+    requests = api.restore_policy_requests('s1', created['id'])
+    assert all(r['path'] not in ('binary.dat', 'conversations.sqlite3') for r in requests)
+    (root / 'binary.dat').write_bytes(b'\x00\xffkeep newer')
+    (root / 'readme.txt').write_text('edited', encoding='utf-8')
+    preview = api.preview('s1', created['id'])
+    api.restore('s1', created['id'], preview_hash=preview['preview_hash'],
+                expected_revision=preview['expected_revision'])
+    assert (root / 'readme.txt').read_text(encoding='utf-8') == 'Before\n'
+    assert (root / 'binary.dat').read_bytes() == b'\x00\xffkeep newer'

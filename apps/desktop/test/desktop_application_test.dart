@@ -94,7 +94,7 @@ void main() {
         find.descendant(
             of: find.byType(ConversationPage),
             matching: find.text('Activity & provenance')),
-        findsOneWidget);
+        findsNothing);
     await tester
         .tap(find.byKey(const ValueKey('nav-Activity & usage')).hitTestable());
     await tester.pumpAndSettle();

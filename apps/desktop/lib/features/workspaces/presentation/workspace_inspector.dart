@@ -6,11 +6,13 @@ class WorkspaceInspector extends StatelessWidget {
       {super.key,
       required this.controller,
       required this.onClose,
+      this.activity,
       this.onOpenTerminal});
 
   /// Integrator supplies a typed terminal-controller command when supported.
   /// Recorded Output remains separate and never launches a shell on tab open.
   final VoidCallback? onOpenTerminal;
+  final Widget? activity;
   final WorkspaceInspectorController controller;
   final VoidCallback onClose;
 
@@ -86,6 +88,8 @@ class WorkspaceInspector extends StatelessWidget {
                   Text(c.error!,
                       style: TextStyle(
                           color: Theme.of(context).colorScheme.error)),
+                if (c.panel == InspectorPanel.terminal && activity != null)
+                  activity!,
                 if (c.descriptor == null && !c.loading)
                   const Text(
                       'Select an authorized local workspace. Monitoring-only computers cannot provide files or commands.'),

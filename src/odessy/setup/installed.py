@@ -118,6 +118,12 @@ def serve(argv=None):
     if args.expected_fingerprint and configuration_descriptor(selection,workspace,owner=configuration_owner(args.root,info['installation_id']))['fingerprint'] != args.expected_fingerprint:
         raise ValueError('Saved configuration changed after restart review. Review it again.')
     workspace.mkdir(parents=True,exist_ok=True)
+    # Resolve helpers from this verified active version, never an installer cache.
+    base = Path(info['desktop']).parent.parent
+    if (base / 'tools').is_dir() and (base / 'node').is_dir():
+        os.environ['ODESSY_NODE_TOOLS_DIR'] = str(base / 'tools')
+        os.environ['PATH'] = str(base / 'node') + os.pathsep + os.environ.get('PATH', '')
+    os.environ['ODESSY_CONFIG_FILE'] = str(Path(args.root) / 'profile' / 'odessy.env')
     return run(selection,workspace=workspace,host=args.host,port=args.port,token=token,
                watch_stdin=args.exit_on_stdin_close,configuration_owner=configuration_owner(args.root,info['installation_id']))
 

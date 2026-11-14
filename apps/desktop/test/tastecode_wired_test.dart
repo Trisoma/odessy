@@ -299,13 +299,23 @@ void main() {
     await capture('conversation-1280');
     tester.view.physicalSize = const Size(1600, 1050);
     await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Files · Output · Changes').last);
+    await tester.pumpAndSettle();
+    tester
+        .widget<WorkspaceInspector>(find.byType(WorkspaceInspector))
+        .controller
+        .show(InspectorPanel.terminal);
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Activity & provenance'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('command_output'));
     await tester.pumpAndSettle();
-    expect(find.text('Inspect recorded output'), findsOneWidget);
+    expect(find.textContaining('Recorded command output · read only.'),
+        findsOneWidget);
     await capture('01b-activity-expanded');
     await tester.tap(find.text('Activity & provenance'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Close workspace panel'));
     await tester.pumpAndSettle();
     expect(find.byTooltip('Activity & usage'), findsOneWidget);
     await tester.enterText(

@@ -30,6 +30,11 @@ class ApplicationTests(unittest.TestCase):
         (self.repo/'tools/package-lock.json').write_text(json.dumps({'packages':{'':{'version':'0.1.0'}}}))
         (self.repo/'tools/tsconfig.json').write_text('{}')
         (self.repo/'tools/src/server.ts').write_text('export {};')
+        (self.repo/'tools/copy-resources.cjs').write_text('// fixture')
+        helper=self.repo/'tools/src/agent_basics_terminal'
+        helper.mkdir()
+        (helper/'helper.cjs').write_text('// fixture')
+        (helper/'dependency-receipt.json').write_text('{}')
         self.versions={'python-runtime':{'version':'3.12.13','bits':64},'node-runtime':{'version':'22.23.0','bits':64}}
         self.runtime=self.root/'runtime'; self.deps=self.root/'deps'; self.bundle=self.root/'bundle'
         self.calls=[]

@@ -204,9 +204,14 @@ class CheckpointService:
         if env:
             environment.update(env)
         try:
+            # The installed coordinator owns a long-lived stdin pipe. Git must
+            # never inherit it: Windows launchers can otherwise wait for its EOF.
+            # Blob-writing commands still receive their exact reviewed bytes.
+            standard_input = ({'stdin': subprocess.DEVNULL} if input_bytes is None
+                              else {'input': input_bytes})
             result = subprocess.run(['git', '-c', 'core.fsmonitor=false',
                                     '-C', str(root), *args],
-                                    input=input_bytes, capture_output=True,
+                                    **standard_input, capture_output=True,
                                     timeout=GIT_TIMEOUT, env=environment, check=False)
         except FileNotFoundError:
             raise CheckpointError(501, 'Git is not available on this computer') from None
@@ -276,6 +281,16 @@ class CheckpointService:
                     unsupported.append(path)
                     continue
                 data = candidate.read_bytes()
+                # Restore policy/hooks screen text writes. Binary snapshots cannot
+                # satisfy that contract and are explicitly excluded, never lost.
+                if b'\x00' in data:
+                    unsupported.append(path)
+                    continue
+                try:
+                    data.decode('utf-8')
+                except UnicodeDecodeError:
+                    unsupported.append(path)
+                    continue
             except (OSError, ValueError, Exception):
                 unsupported.append(path)
                 continue
@@ -445,6 +460,24 @@ class CheckpointService:
                 'preview_hash': _hash_bytes(_canonical(payload).encode()),
                 'changes': changes,
                 'unsupported': unsupported}
+
+    def restore_policy_requests(self, sid: str, checkpoint_id: str) -> list[dict[str, str]]:
+        """Trusted hook inputs for every file the exact restore will write."""
+        binding = self._binding(sid)
+        entry = self._entry(binding, checkpoint_id)
+        requests = []
+        for path, digest in sorted(entry['files_sha256'].items()):
+            self._safe_path(binding, path)
+            data = self._git(Path(binding.root_path), 'cat-file', 'blob',
+                             f'{REF_PREFIX}{entry["checkpoint"]["id"]}:{path}')
+            if len(data) > MAX_FILE_BYTES or _hash_bytes(data) != digest:
+                raise CheckpointError(409, 'Checkpoint content changed; restore refused')
+            try:
+                content = data.decode('utf-8')
+            except UnicodeDecodeError:
+                raise CheckpointError(403, 'Checkpoint content cannot be screened safely') from None
+            requests.append({'path': path, 'content': content})
+        return requests
 
     def preview(self, sid: str, checkpoint_id: str) -> dict[str, Any]:
         binding = self._binding(sid)

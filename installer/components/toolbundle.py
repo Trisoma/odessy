@@ -15,7 +15,9 @@ from installer.components.runtime import destination
 
 def source_files(repo: Path) -> list[Path]:
     tools=repo/'tools'
-    paths=[tools/name for name in ('package.json','package-lock.json','tsconfig.json')]
+    paths=[tools/name for name in ('package.json','package-lock.json','tsconfig.json','copy-resources.cjs')]
+    paths.extend(tools/'src'/'agent_basics_terminal'/name
+                 for name in ('helper.cjs','dependency-receipt.json'))
     for folder in ('src','tests','vendor'):
         paths.extend(sorted((tools/folder).rglob('*.ts')))
     if any(not p.is_file() or p.is_symlink() for p in paths):
@@ -57,6 +59,8 @@ def build_bundle(runtime: Path,output_dir: Path,*,repo: Path=REPO_ROOT,run=run_s
         print('Compiling existing tool-server sources...',flush=True)
         run([str(node),str(tools/'node_modules'/'typescript'/'bin'/'tsc'),'-p',str(tools/'tsconfig.json')],
             cwd=tools,env=env,label='Tool server TypeScript compilation')
+        run([str(node),str(tools/'copy-resources.cjs')], cwd=tools,env=env,
+            label='Owned terminal resource copy')
         run([str(node),'-e',"require('koffi'); import('@modelcontextprotocol/sdk/server/mcp.js').then(()=>console.log('ok'))"],
             cwd=tools,env=env,label='Native dependency and MCP import verification')
         entry=tools/'dist'/'src'/'server.js'

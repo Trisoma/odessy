@@ -6,6 +6,7 @@ The callback must screen the exact shell grant with existing policy/hooks/broker
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import os
@@ -36,7 +37,13 @@ class LocalTerminalService:
             metadata = json.loads((self.module_root / 'node-pty/package.json').read_text('utf-8'))
             if metadata.get('version') != '1.1.0' or not self.node.is_file() or not self.helper.is_file():
                 raise ValueError('Unqualified PTY inputs')
-        except (OSError, ValueError):
+            receipt = json.loads(self.helper.with_name('dependency-receipt.json').read_text('utf-8'))
+            if os.name == 'nt':
+                for entry in receipt['native_sha256']:
+                    native = self.module_root / 'node-pty' / entry['path']
+                    if hashlib.sha256(native.read_bytes()).hexdigest() != entry['sha256']:
+                        raise ValueError('PTY native hash mismatch')
+        except (OSError, ValueError, KeyError, TypeError):
             raise TerminalError(501, 'Pinned node-pty 1.1.0 and the owned helper must be packaged first') from None
         self.mode_revision = mode_revision
         self.handles = {}

@@ -32,6 +32,7 @@ import 'dart:ui' show AppExitResponse;
 import 'package:flutter/material.dart';
 import 'package:odessy_client/odessy_client.dart';
 import '../features/conversation/presentation/conversation.dart';
+import '../features/conversation/presentation/session_activity.dart';
 import '../features/conversation/presentation/activity_usage_page.dart';
 import '../features/conversation/presentation/usage_history_dashboard.dart';
 import '../features/settings/presentation/settings.dart';
@@ -1064,10 +1065,12 @@ class _OdessyAppState extends State<OdessyApp> {
                               'Settings' => SettingsPage(
                                   preferencesController: preferences,
                                   readiness: readiness,
-                                  onRestartSaved:
-                                      ((configuredCoordinator != null || widget.onRestartSaved != null) && readiness.current?.configuration != null)
-                                          ? _restartSaved
-                                          : null,
+                                  onRestartSaved: ((configuredCoordinator != null ||
+                                              widget.onRestartSaved != null) &&
+                                          readiness.current?.configuration !=
+                                              null)
+                                      ? _restartSaved
+                                      : null,
                                   key: ValueKey(
                                       (controller.api, settingsSection)),
                                   initialSection: settingsSection,
@@ -1075,27 +1078,25 @@ class _OdessyAppState extends State<OdessyApp> {
                                   componentController: componentSettings,
                                   configurationBackend: setup.backend,
                                   formController: _collaborationForm(),
-                                  installationRoot: widget.installed?['root'] as String? ??
-                                      '',
+                                  installationRoot:
+                                      widget.installed?['root'] as String? ??
+                                          '',
                                   installed: widget.installed != null,
-                                  modelConfigured: (widget.installed?['model_configured'] == true ||
-                                      (setup.activeSelection ?? (setup.saved ? setup.selection : const {}))['model'] !=
-                                          null),
+                                  modelConfigured:
+                                      (widget.installed?['model_configured'] == true ||
+                                          (setup.activeSelection ??
+                                                  (setup.saved
+                                                      ? setup.selection
+                                                      : const {}))['model'] !=
+                                              null),
                                   voiceEnabled: (widget.installed?['voice_enabled'] == true ||
-                                      ((setup.activeSelection ?? (setup.saved ? setup.selection : const {}))['voice']
-                                              as Map?)?['enabled'] ==
-                                          true),
+                                      ((setup.activeSelection ?? (setup.saved ? setup.selection : const {}))['voice'] as Map?)?['enabled'] == true),
                                   themeMode: preferenceMode,
                                   onToggleTheme: _toggleTheme,
                                   onOpenDevices: () => _navigate('Devices'),
-                                  onOpenConversation: () =>
-                                      _navigate('Conversation'),
-                                  onConnectSaved: setup.busy ||
-                                          setup.completing ||
-                                          controller.session?.running == true ||
-                                          (widget.installed != null && widget.onConfigured == null)
-                                      ? null
-                                      : _activateSaved,
+                                  onOpenPairingTools: () => _navigate('Local pairing'),
+                                  onOpenConversation: () => _navigate('Conversation'),
+                                  onConnectSaved: setup.busy || setup.completing || controller.session?.running == true || (widget.installed != null && widget.onConfigured == null) ? null : _activateSaved,
                                   onOpenInstaller: () => _navigate('Installer'),
                                   onOpenMaintenance: () => _navigate('Maintenance'),
                                   maintenanceBlocked: controller.session?.running == true,
@@ -1140,6 +1141,13 @@ class _OdessyAppState extends State<OdessyApp> {
                                       inspectorOpen && inspector != null
                                           ? WorkspaceInspector(
                                               controller: inspector!,
+                                              activity: controller.session
+                                                          ?.events.isNotEmpty ==
+                                                      true
+                                                  ? SessionActivity(
+                                                      events: controller
+                                                          .session!.events)
+                                                  : null,
                                               onOpenTerminal: () => unawaited(
                                                   _openBasics('Terminal')),
                                               onClose: _closeInspector)
@@ -1237,23 +1245,14 @@ class _OdessyAppState extends State<OdessyApp> {
               : () => _newSession(context),
           hosts: deviceInventory.hosts,
           projectNavigation: projects == null
-              ? ListTile(
-                  leading: const Icon(Icons.history),
-                  title: const Text('Saved history & tools'),
-                  onTap: () => _openBasics())
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                      _projectSectionHeading(context, 'Projects'),
+                      _projectSectionHeading(context, 'Recent'),
+                    ])
               : _projectNavigation(),
-          sessionSearch: projects == null
-              ? null
-              : TextField(
-                  decoration: const InputDecoration(
-                      hintText: 'Search chats',
-                      prefixIcon: Icon(Icons.search, size: 18),
-                      isDense: true),
-                  onChanged: projects!.search,
-                  onSubmitted: (query) async {
-                    await _openBasics();
-                    await basics.search(query);
-                  }),
+          onSearch: () => _openBasics(),
           conversationLabel: 'Assistant',
           navigationFocus: navigationFocus,
           selectedHostId:
@@ -1298,135 +1297,180 @@ class _OdessyAppState extends State<OdessyApp> {
                 icon: Icons.swap_horiz,
                 selected: page == 'Handoffs',
                 onTap: () => _navigate('Handoffs')),
-          ],
-          destinations: [
-            SidebarDestination(
-                label: 'Installation',
-                icon: Icons.settings_outlined,
-                selected: page == 'Installer' || page == 'Maintenance',
-                onTap: () => _openSettings(SettingsSections.installation)),
-            SidebarDestination(
-                label: 'Runtime maintenance',
-                icon: Icons.handyman_outlined,
-                selected: page == 'Maintenance',
-                onTap: controller.session?.running == true
-                    ? null
-                    : () => _navigate('Maintenance')),
-            SidebarDestination(
-                label: 'Local pairing tools',
-                icon: Icons.shield_outlined,
-                selected: page == 'Local pairing',
-                onTap: () => _navigate('Local pairing')),
           ]);
+
+  Widget _projectSectionHeading(BuildContext context, String label,
+          {Widget? action}) =>
+      Padding(
+          padding: EdgeInsets.fromLTRB(12, label == 'Projects' ? 0 : 16, 4, 4),
+          child: SizedBox(
+              height: 32,
+              child: Row(children: [
+                Expanded(
+                    child: Semantics(
+                        header: true,
+                        child: Text(label,
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelMedium
+                                ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant)))),
+                if (action != null)
+                  SizedBox(width: 32, height: 32, child: action),
+              ])));
 
   Widget _projectNavigation() => ListenableBuilder(
       listenable: projects!,
       builder: (context, _) {
         final c = projects!;
+        Widget heading(String label, {Widget? action}) =>
+            _projectSectionHeading(context, label, action: action);
         Widget sessionLink(SessionSummary row) => ListTile(
             dense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            visualDensity: const VisualDensity(vertical: -1),
             selected: controller.session?.id == row.id,
             title: Text(row.id, maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text('${row.engine} · ${row.selectedProfile}'),
+            trailing: row.running ? const Icon(Icons.circle, size: 8) : null,
             onTap: row.running ||
                     controller.busy ||
                     controller.session?.running == true
                 ? null
                 : () => _openSession(row.id));
-        return ExpansionTile(
-            initiallyExpanded: true,
-            tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-            title: const Text('Projects',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+        Widget savedLink(SavedConversation chat, {bool nested = true}) =>
+            ListTile(
+                dense: true,
+                contentPadding:
+                    EdgeInsets.only(left: nested ? 32 : 12, right: 12),
+                visualDensity: const VisualDensity(vertical: -1),
+                selected: basics.selected?.id == chat.id,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
+                title: Text(chat.title,
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                trailing: chat.pinned
+                    ? const Icon(Icons.push_pin_outlined, size: 14)
+                    : null,
+                onTap: basics.busy
+                    ? null
+                    : () async {
+                        await _openBasics();
+                        await basics.open(chat.id);
+                      });
+        final saved = basics.conversations.where((r) => !r.archived).toList();
+        return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              ListTile(
-                  leading: const Icon(Icons.history),
-                  title: const Text('Saved history & tools'),
-                  selected: page == 'History & tools',
-                  onTap: () => _openBasics()),
+              heading('Projects',
+                  action: PopupMenuButton<String>(
+                      tooltip: 'Project actions',
+                      constraints:
+                          const BoxConstraints(minWidth: 32, minHeight: 32),
+                      padding: const EdgeInsets.all(6),
+                      icon: const Icon(Icons.more_horiz, size: 18),
+                      onSelected: (value) {
+                        if (value == 'refresh') {
+                          unawaited(c.refresh());
+                          unawaited(basics.refresh());
+                        }
+                        if (value == 'manage') _navigate('Workspaces');
+                        if (value == 'history') _openBasics();
+                      },
+                      itemBuilder: (_) => const [
+                            PopupMenuItem(
+                                value: 'refresh',
+                                child: Text('Refresh sessions')),
+                            PopupMenuItem(
+                                value: 'manage',
+                                child: Text('Manage workspaces')),
+                            PopupMenuItem(
+                                value: 'history',
+                                child: Text('History & tools')),
+                          ])),
               if (basics.supports('conversations'))
                 for (final project in basics.projects)
                   ExpansionTile(
-                      title: Text(project.label),
-                      subtitle: const Text('Durable history'),
+                      key: PageStorageKey('saved-project-${project.id}'),
+                      dense: true,
+                      visualDensity: const VisualDensity(vertical: -2),
+                      tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+                      leading: const Icon(Icons.folder_outlined, size: 18),
+                      title: Text(project.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 14)),
                       children: [
-                        for (final chat in basics.conversations
-                            .where((r) => r.projectId == project.id))
-                          ListTile(
-                              dense: true,
-                              leading: Icon(
-                                  chat.pinned
-                                      ? Icons.push_pin_outlined
-                                      : Icons.chat_bubble_outline,
-                                  size: 18),
-                              title: Text(chat.title,
-                                  maxLines: 1, overflow: TextOverflow.ellipsis),
-                              onTap: basics.busy
-                                  ? null
-                                  : () async {
-                                      await _openBasics();
-                                      await basics.open(chat.id);
-                                    }),
+                        for (final chat
+                            in saved.where((r) => r.projectId == project.id))
+                          savedLink(chat)
                       ]),
-              TextButton.icon(
-                  onPressed: c.loading ? null : c.refresh,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Refresh sessions')),
-              if (c.error != null) Text(c.error!),
               for (final project in c.records)
                 ExpansionTile(
-                    title: Text(project.label),
-                    subtitle: Text(c.status(project)),
+                    key: PageStorageKey('live-project-${project.id}'),
+                    dense: true,
+                    visualDensity: const VisualDensity(vertical: -2),
+                    tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+                    leading: const Icon(Icons.folder_outlined, size: 18),
+                    title: Text(project.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 14)),
                     children: [
-                      TextButton.icon(
-                          onPressed: basics.busy ||
-                                  !basics.supports('conversations')
-                              ? null
-                              : () async {
-                                  final confirmed = await showDialog<bool>(
-                                      context: context,
-                                      builder: (ctx) => AlertDialog(
-                                              title: const Text(
-                                                  'Create a durable project?'),
-                                              content: Text(
-                                                  'Copy the label "${project.label}" into a saved project. This keeps the existing live group and does not move messages, sessions, workspace bindings or permissions.'),
-                                              actions: [
-                                                TextButton(
-                                                    onPressed: () =>
-                                                        Navigator.pop(
-                                                            ctx, false),
-                                                    child:
-                                                        const Text('Cancel')),
-                                                FilledButton(
-                                                    onPressed: () =>
-                                                        Navigator.pop(
-                                                            ctx, true),
-                                                    child: const Text(
-                                                        'Create project'))
-                                              ]));
-                                  if (confirmed == true) {
-                                    await basics.createProject(project.label);
-                                  }
-                                },
-                          icon: const Icon(Icons.drive_file_move_outlined,
-                              size: 18),
-                          label: const Text('Copy label to saved project')),
-                      for (final row in c.filteredSessions.where((s) =>
+                      Align(
+                          alignment: Alignment.centerRight,
+                          child: PopupMenuButton<String>(
+                              tooltip: 'Live project actions',
+                              onSelected: (_) async {
+                                final confirmed = await showDialog<bool>(
+                                    context: context,
+                                    builder: (ctx) => AlertDialog(
+                                            title: const Text(
+                                                'Create a durable project?'),
+                                            content: Text(
+                                                'Copy the label "${project.label}" into a saved project. Messages, workspace bindings and permissions stay with their existing owners.'),
+                                            actions: [
+                                              TextButton(
+                                                  onPressed: () =>
+                                                      Navigator.pop(ctx, false),
+                                                  child: const Text('Cancel')),
+                                              FilledButton(
+                                                  onPressed: () =>
+                                                      Navigator.pop(ctx, true),
+                                                  child: const Text(
+                                                      'Create project'))
+                                            ]));
+                                if (confirmed == true) {
+                                  await basics.createProject(project.label);
+                                }
+                              },
+                              itemBuilder: (_) => [
+                                    PopupMenuItem(
+                                        value: 'copy',
+                                        enabled: !basics.busy &&
+                                            basics.supports('conversations'),
+                                        child: const Text(
+                                            'Copy label to saved project'))
+                                  ])),
+                      for (final row in c.filteredSessions.where((r) =>
                           c.matches(project) &&
-                          project.sessionIds.contains(s.id)))
+                          project.sessionIds.contains(r.id)))
                         sessionLink(row),
                     ]),
-              const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Recent', style: TextStyle(fontSize: 12)))),
-              for (final row in c.filteredSessions.where((s) => !c.records
-                  .any((p) => c.matches(p) && p.sessionIds.contains(s.id))))
+              if (c.error != null)
+                Padding(
+                    padding: const EdgeInsets.all(12), child: Text(c.error!)),
+              heading('Recent'),
+              for (final chat in saved.take(12)) savedLink(chat, nested: false),
+              for (final row in c.filteredSessions.where((r) => !c.records
+                  .any((p) => c.matches(p) && p.sessionIds.contains(r.id))))
                 sessionLink(row),
-              TextButton(
-                  onPressed: () => _navigate('Workspaces'),
-                  child: const Text('Manage workspaces')),
+              if (saved.isEmpty && c.filteredSessions.isEmpty)
+                const Padding(
+                    padding: EdgeInsets.all(12),
+                    child:
+                        Text('No chats yet', style: TextStyle(fontSize: 13))),
             ]);
       });
 

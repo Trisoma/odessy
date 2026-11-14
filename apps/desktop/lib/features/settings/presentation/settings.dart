@@ -62,6 +62,7 @@ class SettingsPage extends StatefulWidget {
     this.onOpenGetStarted,
     this.onOpenVoice,
     this.onOpenDevices,
+    this.onOpenPairingTools,
     this.onOpenConversation,
     this.installed = false,
     this.modelConfigured = false,
@@ -80,7 +81,7 @@ class SettingsPage extends StatefulWidget {
   final SettingsFormController<int>? formController;
   final String installationRoot, initialSection;
   final VoidCallback? onOpenManagement, onOpenGetStarted, onOpenDevices;
-  final VoidCallback? onOpenConversation;
+  final VoidCallback? onOpenConversation, onOpenPairingTools;
   final VoidCallback? onOpenVoice;
   final VoidCallback? onOpenInstaller, onOpenMaintenance;
   final bool maintenanceBlocked;
@@ -597,6 +598,16 @@ class _SettingsPageState extends State<SettingsPage> {
                       onPressed: widget.onOpenDevices,
                       icon: const Icon(Icons.devices_other, size: 18),
                       label: const Text('Open devices'))),
+          ]),
+        if (section == SettingsSections.devices &&
+            widget.onOpenPairingTools != null)
+          _card(context, 'Local pairing tools', [
+            const Text(
+                'Manage local pairing identity and permissions through the existing maintenance tools.'),
+            OutlinedButton.icon(
+                onPressed: widget.onOpenPairingTools,
+                icon: const Icon(Icons.shield_outlined, size: 18),
+                label: const Text('Open local pairing tools')),
           ]),
         if (section == SettingsSections.advanced)
           RuntimeInventory(session: widget.controller),

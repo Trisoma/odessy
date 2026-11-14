@@ -179,3 +179,10 @@ Changes made for Odessy:
 
 Per-file verdicts, line counts, and the reasoning for each decision are recorded in
 `docs/execution/PORT-MANIFEST.md`.
+# Interactive terminal helper
+
+The optional local interactive terminal uses node-pty 1.1.0 (MIT) and
+node-addon-api 7.1.1 (MIT). Exact registry integrity and Windows native SHA-256
+values are recorded in `tools/src/agent_basics_terminal/dependency-receipt.json`.
+Their upstream LICENSE files must accompany the packaged node_modules trees.
+The Odessy-owned helper is separate from these dependencies.

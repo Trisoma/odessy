@@ -787,6 +787,9 @@ class SessionController:
         return {'status': outcome.execution, **outcome.public()}
 
     async def close(self):
+        composition = getattr(self, '_basics_composition', None)
+        if composition is not None:
+            await composition.close_session(self.id)
         if self.engine == 'legacy':
             await self.stop()
         else:

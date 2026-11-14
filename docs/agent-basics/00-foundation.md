@@ -1,0 +1,17 @@
+# 00 — Source-verified foundation and contracts (sequential)
+
+Read COMMON.md and requirements. Time is limited: inspect only relevant source/reports, reuse receipts. Establish branch, status, actual entry points, installed/cached tools and available reference licenses. Do not run historical prompt packs. Produce a source-backed capability map, correcting any stale audit statements (including voice-named memory now used by text, and Harness capability flags versus actual connected behavior).
+
+Inspect application/{api,session,bootstrap,session_directory,execution_access,workspace_inspector}.py, runtime_backends/{contracts,harness}, models/usage_history.py, voice/memory.py, Dart session/client/project catalog/inspector and package builders. Inspect reference TasteCode store/history/terminal/checkpoint/permission adapters and Harness persistence/checkpoint/session-query/compaction implementations. Reuse shipped supported seams; the sibling reference tree must never become an undeclared dependency.
+
+Replace doc/contracts.md and doc/ownership.md with exact frozen interfaces and exclusive paths. Define persisted conversation representation independently from runtime continuation; choose conservative per-engine behavior from source evidence. SQLite with transactional migrations is the default unless a demonstrated existing backend avoids duplicate ownership. Keep usage/telemetry DBs intact. Specify context assembly, explicit memory and lexical RAG hooks now so Wave 2 does not redesign Wave 1. Identify whether an existing local PTY dependency works on Windows; define a concrete reusable path and dependency gate early.
+
+Implement only minimal shared mount/adapter seams and typed contracts needed for independent workers, preserving the currently working product. Stub capability flags must remain false until implemented. No fake success endpoints. Reserve exact API integration changes for 06/07; foundation must not require workers to edit shared api.py/session.py. Define a functional automatic approval-review mechanism using existing policy rules if possible, with clear escalation and no paid reviewer dependency. Record how Full control stays inside granted authority.
+
+Produce doc/reports/00.md with READY only after contracts, exact file ownership, test scheduling and build/cache constraints are resolved. Otherwise state specific blockers. Include a start command/instruction for each Wave 1 agent. Do not run 01–03 yourself.
+
+Freeze a required continuation matrix: at minimum Custom must continue a durable conversation after service restart with earlier context. Inspect pinned Harness restoration support and explicitly classify its required behavior as continued runtime or read-only history for this milestone; do not quietly defer supported restoration. 07 enforces this matrix. Distinguish Cordis runtime plugins, MCP tool extensions and Python application modules in the reuse map; no assumption that every backend feature is already pluggable.
+
+## Hard time limit and isolation
+
+Hard wall-clock limit: **45 minutes**, including inspection, code, tests and handoff. Reserve the last 10 minutes for checks/reporting. At the limit stop, report unfinished requirement IDs and recovery steps; never claim incomplete work finished. Read COMMON.md branch/worktree workflow. Use your assigned isolated worktree. Scoped local task commits are authorized; no push or develop merge.

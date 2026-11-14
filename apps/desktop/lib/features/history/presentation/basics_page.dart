@@ -133,11 +133,14 @@ class _BasicsPageState extends State<BasicsPage> {
                 ]));
   }
 
-  Widget _button(String label, VoidCallback? action, {IconData? icon}) =>
-      OutlinedButton.icon(
-          onPressed: c.busy ? null : action,
-          icon: Icon(icon ?? Icons.arrow_forward, size: 17),
-          label: Text(label));
+  Widget _button(String label, VoidCallback? action, {IconData? icon}) => Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: OutlinedButton.icon(
+              onPressed: c.busy ? null : action,
+              icon: Icon(icon ?? Icons.arrow_forward, size: 17),
+              label: Text(label))));
   Widget _unavailable(String feature) => Padding(
       padding: const EdgeInsets.symmetric(vertical: 24),
       child: Text(
@@ -182,39 +185,50 @@ class _BasicsPageState extends State<BasicsPage> {
                 ])),
             if (c.busy) const LinearProgressIndicator(),
             Expanded(
-                child: ListView(padding: const EdgeInsets.all(20), children: [
-              for (final entry in c.session.session?.pending ??
-                  const <Map<String, dynamic>>[])
-                InteractionCard(
-                    key: ValueKey((c.session.session?.id, entry['id'])),
-                    entry: entry,
-                    controller: c.session),
-              if (c.error != null)
-                Semantics(
-                    liveRegion: true,
-                    child: Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: Text(c.error!,
-                            style: TextStyle(
-                                color: Theme.of(context).colorScheme.error)))),
-              if (c.notice != null)
-                Semantics(
-                    liveRegion: true,
-                    child: Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: Text(c.notice!))),
-              if (c.capabilities == null)
-                const Text(
-                    'Connect and refresh to discover supported capabilities.'),
-              ...switch (tab) {
-                'Context' => _context(),
-                'Memory' => _memory(),
-                'Documents' => _documents(),
-                'Terminal' => _terminal(),
-                'Checkpoints' => _checkpoints(),
-                _ => _history()
-              },
-            ]))
+                child: Align(
+                    alignment: Alignment.topCenter,
+                    child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 960),
+                        child: ListView(
+                            padding: const EdgeInsets.fromLTRB(28, 24, 28, 32),
+                            children: [
+                              for (final entry in c.session.session?.pending ??
+                                  const <Map<String, dynamic>>[])
+                                InteractionCard(
+                                    key: ValueKey(
+                                        (c.session.session?.id, entry['id'])),
+                                    entry: entry,
+                                    controller: c.session),
+                              if (c.error != null)
+                                Semantics(
+                                    liveRegion: true,
+                                    child: Padding(
+                                        padding:
+                                            const EdgeInsets.only(bottom: 12),
+                                        child: Text(c.error!,
+                                            style: TextStyle(
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .error)))),
+                              if (c.notice != null)
+                                Semantics(
+                                    liveRegion: true,
+                                    child: Padding(
+                                        padding:
+                                            const EdgeInsets.only(bottom: 12),
+                                        child: Text(c.notice!))),
+                              if (c.capabilities == null)
+                                const Text(
+                                    'Connect and refresh to discover supported capabilities.'),
+                              ...switch (tab) {
+                                'Context' => _context(),
+                                'Memory' => _memory(),
+                                'Documents' => _documents(),
+                                'Terminal' => _terminal(),
+                                'Checkpoints' => _checkpoints(),
+                                _ => _history()
+                              },
+                            ]))))
           ]));
   List<Widget> _history() => [
         const Text(
@@ -693,8 +707,9 @@ class _BasicsPageState extends State<BasicsPage> {
               title: Text(cp.label),
               subtitle: Text(
                   '${cp.data['created_at']} · revision ${cp.data['revision']}'),
-              trailing: _button('Preview', () => c.previewCheckpoint(cp),
-                  icon: Icons.visibility_outlined)),
+              trailing: IntrinsicWidth(
+                  child: _button('Preview', () => c.previewCheckpoint(cp),
+                      icon: Icons.visibility_outlined))),
         if (c.preview != null) ...[
           _heading('Exact restore preview'),
           Text(

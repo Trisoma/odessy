@@ -4,6 +4,7 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import shutil
 import uuid
 from pathlib import Path
 
@@ -34,17 +35,138 @@ class PersistentComposition:
                 db.execute("INSERT OR IGNORE INTO schema_extensions(name,version) VALUES ('conversation_workspace_binding',1)")
         settle_after_restart(self.service.store)
         self.modes = AccessModeService(self.dependencies, resolve_scope=self.scope)
+        self.service.after_delete = self.close_conversation
+        self.service.register_before_delete(self.guard_delete)
         app.state.conversations = self.service
         register_conversations(app, self.dependencies, service=self.service)
         register_access_modes(app, self.dependencies, service=self.modes)
+        from .context.composition import build_wave2_services
+        self.wave2 = build_wave2_services(
+            store=self.service.store,
+            resolve_conversation_owner=self.resolve_conversation_owner,
+            resolve_context_workspace=self.resolve_context_workspace,
+            resolve_project_workspace=self.resolve_project_workspace,
+            read_context_file=self.read_context_file,
+            session_conversation=lambda sid: self.dependencies.find_session(sid)._conversation_id,
+            service_instance_id=self.dependencies.service_instance_id)
+        self.context_provider = self.wave2.context
+        for registrar in self.wave2.registrars:
+            registrar(app, self.dependencies)
+        from .checkpoints.service import CheckpointService
+        from .checkpoints.routes import register as register_checkpoints
+        self.checkpoints = CheckpointService(
+            inspector=app.state.workspace_inspector, request_grant=self.request_grant,
+            state_dir=path.parent / 'checkpoints', mode_revision=self.mode_revision)
+        register_checkpoints(app, self.dependencies, service=self.checkpoints)
+        self.terminals = None
+        # Only an explicitly configured, package-owned resource closure may mount PTY.
+        from odessy.tools.node_mcp import _node_tools_dir, _public_repo_root
+        tools = _node_tools_dir(_public_repo_root())
+        node = shutil.which('node')
+        if tools and node:
+            from .terminals.service import LocalTerminalService, TerminalError
+            from .terminals.routes import register_local
+            try:
+                self.terminals = LocalTerminalService(
+                    inspector=app.state.workspace_inspector, request_grant=self.request_grant,
+                    node=node, module_root=Path(tools) / 'node_modules',
+                    helper=Path(tools) / 'dist/src/agent_basics_terminal/helper.cjs',
+                    mode_revision=self.mode_revision)
+            except TerminalError:
+                pass  # Missing packaged closure is an honest unsupported capability.
+            if self.terminals is not None:
+                register_local(app, self.dependencies, service=self.terminals)
 
         @app.get('/v1/agent-basics/capabilities')
         async def capabilities():
             return {'version': 1, 'service_instance_id': self.dependencies.service_instance_id,
                     'conversations': True, 'custom_continuation': True,
                     'harness_continuation': False, 'access_modes': True,
-                    'context': False, 'memory': False, 'retrieval': False,
-                    'terminal': False, 'checkpoints': False}
+                    **self.wave2.capability_flags,
+                    'terminal': self.terminals is not None, 'checkpoints': True}
+
+    def mode_revision(self, sid):
+        return self.modes.snapshot(sid)['revision']
+
+    async def request_grant(self, sid, plan):
+        """Direct UI effects use live policy/hooks and the existing exact broker."""
+        from odessy.runtime.types import ToolRequest
+        from odessy.runtime.hooks import load_hooks, screen_request
+        from odessy.execution.escalation import EscalationError
+        controller = self.dependencies.find_session(sid)
+        binding = self.app.state.workspace_inspector.binding(sid)
+        identity, revision = binding.identity(), self.mode_revision(sid)
+        if controller.engine != 'legacy':
+            return False
+        action = plan.get('action')
+        if action == 'terminal.create':
+            # A shell grant cannot be scoped to a safe-looking individual command.
+            command = os.environ.get('COMSPEC', 'cmd.exe') if os.name == 'nt' else '/bin/sh'
+            requests = [ToolRequest('terminal.run', {
+                'command': command, 'cwd': str(binding.root_path),
+                'sandbox_permissions': 'danger-full-access',
+                'justification': plan['disclosure']})]
+        elif action == 'checkpoint.create':
+            requests = [ToolRequest('filesystem.list', {'path': '.'})]
+        elif action == 'checkpoint.restore':
+            requests = [ToolRequest('filesystem.write', item) for item in
+                        self.checkpoints.restore_policy_requests(sid, plan['checkpoint_id'])]
+        else:
+            return False
+        hooks = load_hooks(binding.root_path)
+        for request in requests:
+            decision = binding.policy.evaluate(request)
+            screened = await screen_request(hooks, request, decision)
+            if screened.action == 'deny':
+                return False
+            if action == 'terminal.create':
+                try:
+                    binding.policy.preflight_execution_mode(request, screened)
+                except EscalationError:
+                    return False
+        approved = await controller.confirm_action({
+            **plan, 'operation': action, 'execution_target': 'local',
+            'workspace_id': binding.workspace_id,
+            'risk': 'high',
+            'scopes': ['sandbox_escalation'] if action == 'terminal.create' else ['authorization'],
+            'authoritative_prompt': (plan.get('disclosure') or
+                f"Approve {action} for this exact workspace and reviewed content?"),
+            'service_instance_id': self.dependencies.service_instance_id,
+            'mode_revision': revision})
+        self.app.state.workspace_inspector.binding(sid, binding)
+        if not (approved is True and not controller._closed
+                and self.dependencies.find_session(sid) is controller
+                and binding.identity() == identity and self.mode_revision(sid) == revision):
+            return False
+        # Hook configuration and policy can change while a human reviews a grant.
+        hooks = load_hooks(binding.root_path)
+        for request in requests:
+            screened = await screen_request(hooks, request, binding.policy.evaluate(request))
+            if screened.action == 'deny':
+                return False
+            if action == 'terminal.create':
+                try:
+                    binding.policy.preflight_execution_mode(request, screened)
+                except EscalationError:
+                    return False
+        return True
+
+    async def close_session(self, sid):
+        if self.terminals is not None:
+            await self.terminals.close_session(sid)
+
+    def guard_delete(self, cid):
+        if any(c.running for c in tuple(self.app.state.sessions.values())
+               if getattr(c, '_conversation_id', None) == cid):
+            raise Conflict('Stop the live turn before deleting its conversation')
+
+    async def close_conversation(self, cid):
+        # SQLite cascades conversation-derived summaries/usage/search records.
+        # Project memory/documents and workspace checkpoints have separate owners.
+        for sid, controller in tuple(self.app.state.sessions.items()):
+            if getattr(controller, '_conversation_id', None) == cid:
+                await controller.close()
+                self.app.state.sessions.pop(sid, None)
 
     def settings(self):
         from odessy.runtime_backends.selection import resolve_selection

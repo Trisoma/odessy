@@ -9,7 +9,6 @@ import '../../../widgets/pixel_boat.dart';
 import '../controllers/voice_controller.dart';
 import 'interaction_card.dart';
 import 'message_content.dart';
-import 'session_activity.dart';
 import '../../workspaces/controllers/workspace_inspector_controller.dart';
 
 class ConversationPage extends StatefulWidget {
@@ -331,18 +330,6 @@ class _ConversationPageState extends State<ConversationPage> {
         _welcome(context),
       for (final message in s?.messages ?? [])
         _content(_message(context, message.role, message.text)),
-      if (s != null && s.events.isNotEmpty)
-        _content(Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            decoration: BoxDecoration(
-                border: Border.all(color: Theme.of(context).dividerColor),
-                borderRadius: BorderRadius.circular(10)),
-            child: SessionActivity(
-                events: s.events,
-                showUsage: false,
-                onOpenOutput: widget.onOpenInspector == null
-                    ? null
-                    : () => widget.onOpenInspector!(InspectorPanel.terminal)))),
       for (final entry in s?.pending ?? [])
         _content(InteractionCard(
             key: ValueKey(entry['id']),
@@ -523,20 +510,21 @@ class _ConversationPageState extends State<ConversationPage> {
             Padding(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                child: Wrap(
-                    spacing: 8,
-                    runSpacing: 4,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      Icon(Icons.folder_outlined,
-                          size: 16, color: scheme.secondary),
-                      Text(
+                child: Row(children: [
+                  Icon(Icons.folder_outlined,
+                      size: 16, color: scheme.secondary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                      child: Text(
                           widget.readiness?.current?.configuration?.workspace ??
                               'Workspace not reported',
-                          style: Theme.of(context).textTheme.bodySmall),
-                      const Text('· Coordinator computer',
-                          style: TextStyle(fontSize: 11)),
-                    ])),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall)),
+                  if (!narrow)
+                    const Text('· Coordinator computer',
+                        style: TextStyle(fontSize: 11)),
+                ])),
             const Divider(height: 1),
             if (widget.inspector != null)
               ListenableBuilder(
@@ -562,7 +550,7 @@ class _ConversationPageState extends State<ConversationPage> {
                 child: TextField(
                     key: const Key('composer'),
                     controller: input,
-                    minLines: 2,
+                    minLines: narrow ? 1 : 2,
                     maxLines: narrow ? 3 : 5,
                     textInputAction: TextInputAction.newline,
                     enabled: c.connected &&
@@ -722,7 +710,7 @@ class _ConversationPageState extends State<ConversationPage> {
                       ]);
                   final model =
                       SizedBox(width: 180, child: _modelPicker(context));
-                  if (box.maxWidth < 650 ||
+                  if (box.maxWidth < 500 ||
                       MediaQuery.textScalerOf(context).scale(14) > 20) {
                     return Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -744,15 +732,16 @@ class _ConversationPageState extends State<ConversationPage> {
                 })),
           ])),
       const SizedBox(height: 8),
-      if (c.route.isNotEmpty)
+      if (c.route.isNotEmpty && !narrow)
         Text(c.route, style: Theme.of(context).textTheme.bodySmall),
       Wrap(spacing: 16, runSpacing: 4, children: [
         Text(c.status, style: Theme.of(context).textTheme.bodySmall),
-        Text(
-            running
-                ? 'Stop does not undo completed actions.'
-                : 'Enter to send · Shift+Enter for a new line',
-            style: Theme.of(context).textTheme.bodySmall),
+        if (!narrow)
+          Text(
+              running
+                  ? 'Stop does not undo completed actions.'
+                  : 'Enter to send · Shift+Enter for a new line',
+              style: Theme.of(context).textTheme.bodySmall),
         if (c.api.isDemo)
           Text('Demo · no model or tool executes',
               style: Theme.of(context).textTheme.bodySmall),

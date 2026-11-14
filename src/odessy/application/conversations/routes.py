@@ -175,6 +175,9 @@ def register(app, dependencies, *, service: ConversationService) -> None:
                                       'message': 'expected_revision is required'})
         await call(service.delete, conversation_id,
                    expected_revision=data['expected_revision'])
+        close_owners = getattr(service, 'after_delete', None)
+        if close_owners is not None:
+            await close_owners(conversation_id)
         return Response(status_code=204)
 
     @app.post('/v1/conversations/{conversation_id}/resume')

@@ -84,22 +84,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Toggle light / dark theme'));
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('Tools & installation'), 180,
-        scrollable: find
-            .descendant(
-                of: find.byKey(const Key('device-sidebar-scroll')),
-                matching: find.byType(Scrollable))
-            .first);
-    await tester.tap(find.text('Tools & installation'));
+    await tester.tap(find.byTooltip('Settings').first);
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('Installation'), 160,
-        scrollable: find.descendant(
-            of: find.byKey(const Key('device-sidebar-scroll')),
-            matching: find.byType(Scrollable)));
-    await tester.drag(
-        find.byKey(const Key('device-sidebar-scroll')), const Offset(0, -220));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Installation'));
+    await tester
+        .tap(find.byKey(const ValueKey('settings-section-Installation')));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Install Odessy'));
     await tester.tap(find.text('Install Odessy'));

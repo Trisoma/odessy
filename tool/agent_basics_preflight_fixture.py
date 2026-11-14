@@ -6,6 +6,8 @@ import asyncio
 from pathlib import Path
 import socket
 import tempfile
+import subprocess
+from types import SimpleNamespace
 
 import uvicorn
 
@@ -24,8 +26,24 @@ class FixtureAgent:
 
 def main():
     with tempfile.TemporaryDirectory(prefix='odessy-basics-preflight-') as profile:
-        app = create_app(lambda: SessionController(model_factory=lambda _: object(),
-            agent_factory=FixtureAgent, profiles={'current': {}}),
+        workspace = Path(profile) / 'workspace'
+        workspace.mkdir()
+        (workspace / 'boat.md').write_text('# Aurora\nAurora is the blue Odessy boat.\n', encoding='utf-8')
+        subprocess.run(['git', 'init', '-q', str(workspace)], check=True)
+        subprocess.run(['git', '-C', str(workspace), 'add', 'boat.md'], check=True)
+        subprocess.run(['git', '-C', str(workspace), '-c', 'user.name=Fixture',
+                        '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'fixture'], check=True)
+        def factory():
+            from odessy.authority.policy import OdessyPolicy
+            controller = SessionController(model_factory=lambda _: object(),
+                agent_factory=FixtureAgent, profiles={'current': {}})
+            controller.resources = SimpleNamespace(
+                task=asyncio.create_task(asyncio.Event().wait()), closing=asyncio.Event())
+            controller._workspace_root = workspace
+            controller._workspace_policy_factory = lambda: OdessyPolicy(workspace)
+            controller._workspace_authorized = lambda: True
+            return controller
+        app = create_app(factory,
             token='preflight-fixture-only', config_path=Path(profile) / 'profile.env',
             conversations_enabled=True, profiles={'current': {}})
         with socket.socket() as listener:
