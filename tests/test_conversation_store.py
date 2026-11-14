@@ -169,11 +169,15 @@ def test_delete_requires_revision_and_invalidates_owned_data(tmp_path):
     store.append(conversation['id'], event_id='u', kind='user',
                  payload={'text': 'delete me'})
     assert store.search(query='delete')['matches']
+    cleaned = []
+    store.register_before_delete(cleaned.append)
     with pytest.raises(Conflict):
         store.delete(conversation['id'], expected_revision=0)
     with pytest.raises(NotFound):
         store.delete('e' * 32, expected_revision=0)
+    assert cleaned == []
     store.delete(conversation['id'], expected_revision=1)
+    assert cleaned == [conversation['id']]
     with pytest.raises(NotFound):
         store.get(conversation['id'])
     assert store.search(query='delete')['matches'] == []

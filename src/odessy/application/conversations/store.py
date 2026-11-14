@@ -676,13 +676,21 @@ class ConversationStore:
     def delete(self, conversation_id: str, *, expected_revision: int) -> None:
         _check_id(conversation_id)
         expected_revision = _check_int(expected_revision, 'expected_revision', 0)
-        for callback in tuple(self._before_delete):
-            try:
-                callback(conversation_id)
-            except Exception as exc:  # a derived index that cannot be invalidated blocks it
-                raise StorageError(f'Deletion refused: derived data cleanup failed: {exc}') from exc
-
         def work(db):
+            row = db.execute('SELECT revision FROM conversations WHERE id = ?',
+                             (conversation_id,)).fetchone()
+            if row is None:
+                raise NotFound('Conversation not found')
+            if row[0] != expected_revision:
+                raise Conflict('Conversation changed; reload before deleting')
+            # Hold the write transaction across validation and invalidation so a
+            # concurrent writer cannot change the reviewed revision in between.
+            for callback in tuple(self._before_delete):
+                try:
+                    callback(conversation_id)
+                except Exception as exc:
+                    raise StorageError(
+                        f'Deletion refused: derived data cleanup failed: {exc}') from exc
             cursor = db.execute('DELETE FROM conversations WHERE id = ? AND revision = ?',
                                 (conversation_id, expected_revision))
             if cursor.rowcount != 1:
@@ -698,7 +706,13 @@ class ConversationStore:
         self._write('delete', work)
 
     def register_before_delete(self, callback: Callable[[str], None]) -> None:
-        """Wave 2 derived-index invalidation runs before the rows disappear."""
+        """Invalidate only after revision validation, inside the write transaction.
+
+        Callbacks must not open another write transaction on this database or
+        call this store's write methods. Prefer extension foreign-key cascades
+        for same-database rows. External cache invalidation must be idempotent:
+        a later callback or commit failure can still refuse the deletion.
+        """
         self._before_delete.append(callback)
 
     def prepare_resume(self, conversation_id: str) -> Mapping[str, Any]:

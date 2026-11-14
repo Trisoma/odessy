@@ -90,3 +90,9 @@ on restart; they were never claimed as saved.
   prepare context or call a model.
 * `ConversationRecorder` — the only write path 06 wires into session/agent-loop
   lifecycle; 04 must not append core events directly.
+
+Deletion invalidation callbacks run after revision/existence validation inside the
+store write transaction. They must not start another write transaction on the same
+SQLite database or call store write methods. Same-database derived rows should use
+foreign-key cascades; external cache invalidation must be idempotent if a later
+callback or commit fails. Stale/missing deletes invoke no cleanup callbacks.
