@@ -60,7 +60,7 @@ window.addEventListener('pagehide',()=>streamAbort?.abort());
 
 def create_app(controller_factory, *, config=None, settings=None, jobs=None, token=None,
                config_path=None, profiles=None, monitoring=None, runtime_configuration=None, desktop_voice=None,
-               usage_history=None):
+               usage_history=None, agent_basics=None):
     """Build an app; the caller owns loopback-only binding and displaying its token."""
     try:
         from fastapi import FastAPI, Request, HTTPException
@@ -288,6 +288,15 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
 
     def snapshot(controller):
         return controller.public_snapshot()
+
+    # Optional additive feature modules share existing authentication and live
+    # session ownership. No new route or capability is enabled by default.
+    if agent_basics is not None:
+        from .agent_basics import AgentBasics, BasicsDependencies
+        if not isinstance(agent_basics, AgentBasics):
+            raise TypeError('agent_basics must be AgentBasics')
+        app.state.agent_basics = agent_basics
+        agent_basics.mount(app, BasicsDependencies(app.state.service_instance_id, find))
 
     async def make_controller():
         nonlocal pending_admissions

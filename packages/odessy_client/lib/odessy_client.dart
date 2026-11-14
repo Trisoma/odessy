@@ -1,5 +1,7 @@
 library;
 
+export 'src/agent_basics.dart';
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
