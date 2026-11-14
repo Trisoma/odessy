@@ -475,6 +475,7 @@ class _OdessyAppState extends State<OdessyApp> {
     }
     if (!await _mayNavigate() || !mounted) return;
     if (page == 'Conversation' && route != page) await voice.release();
+    if (!mounted) return;
     setState(() => page = route);
     scaffoldKey.currentState?.closeDrawer();
   }
@@ -1109,6 +1110,7 @@ class _OdessyAppState extends State<OdessyApp> {
   Future<void> _inspectDevice(String id) async {
     if (!await _mayNavigate() || !mounted) return;
     await voice.release();
+    if (!mounted) return;
     deviceInventory.select(id);
     setState(() => page = 'Device details');
     scaffoldKey.currentState?.closeDrawer();

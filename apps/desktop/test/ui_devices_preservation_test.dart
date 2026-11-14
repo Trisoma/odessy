@@ -103,14 +103,19 @@ void main() {
 
     // A refresh for host_a is still in flight when the user selects host_b.
     final slow = Completer<Json>();
-    fake.metricReply =
-        (id) => id == 'host_a' ? slow.future : Future.value(honestReport(id));
-    unawaited(controller.refreshSelected());
+    final started = Completer<void>();
+    fake.metricReply = (id) {
+      if (id != 'host_a') return Future.value(honestReport(id));
+      started.complete();
+      return slow.future;
+    };
+    final refresh = controller.refreshSelected();
+    await started.future;
     controller.select('host_b');
     await until(() => controller.metrics?['host_id'] == 'host_b');
 
     slow.complete(honestReport('host_a'));
-    await Future<void>.delayed(const Duration(milliseconds: 5));
+    await refresh;
     expect(controller.selectedId, 'host_b');
     expect(controller.metrics?['host_id'], 'host_b');
   });

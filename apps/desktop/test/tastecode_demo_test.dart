@@ -105,6 +105,7 @@ void main() {
     expect(find.text('Simulated listening · microphone is not accessed'),
         findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('demo-composer')));
+    await tester.pump();
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'Demo composer');
     await tester.enterText(
         find.byKey(const ValueKey('demo-composer')), 'Review the fixture');

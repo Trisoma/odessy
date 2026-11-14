@@ -236,21 +236,29 @@ class _DemoWorkspaceState extends State<DemoWorkspace> {
                 _header(fullSidebar, wide),
                 const Divider(height: 1),
                 Expanded(
-                    child: switch (destination) {
-                  DemoDestination.assistant => _conversation(wide),
-                  DemoDestination.settings => const DemoSettings(),
-                  DemoDestination.devices => const DemoDevices(),
-                  DemoDestination.workspaces =>
-                    DemoWorkspaces(onOpen: () => selectSession(0)),
-                  DemoDestination.activityUsage =>
-                    UsageHistoryDashboard(session: retainedSession),
-                  DemoDestination.jobs => JobsPage(controller: retainedJobs),
-                  DemoDestination.handoffs => const DemoHandoffs(),
-                  DemoDestination.installation ||
-                  DemoDestination.maintenance ||
-                  DemoDestination.pairing =>
-                    _retainedTools(),
-                }),
+                    child: IndexedStack(
+                  index: destination == DemoDestination.settings ? 0 : 1,
+                  sizing: StackFit.expand,
+                  children: [
+                    const DemoSettings(),
+                    switch (destination) {
+                      DemoDestination.assistant => _conversation(wide),
+                      DemoDestination.settings => const SizedBox.shrink(),
+                      DemoDestination.devices => const DemoDevices(),
+                      DemoDestination.workspaces =>
+                        DemoWorkspaces(onOpen: () => selectSession(0)),
+                      DemoDestination.activityUsage =>
+                        UsageHistoryDashboard(session: retainedSession),
+                      DemoDestination.jobs =>
+                        JobsPage(controller: retainedJobs),
+                      DemoDestination.handoffs => const DemoHandoffs(),
+                      DemoDestination.installation ||
+                      DemoDestination.maintenance ||
+                      DemoDestination.pairing =>
+                        _retainedTools(),
+                    },
+                  ],
+                )),
                 if (destination == DemoDestination.assistant) _composer(),
               ])),
               if (wide &&

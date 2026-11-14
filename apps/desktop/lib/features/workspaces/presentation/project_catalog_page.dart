@@ -194,6 +194,10 @@ class _ProjectCatalogPageState extends State<ProjectCatalogPage> {
                             Padding(
                                 padding: const EdgeInsets.only(top: 8),
                                 child: DropdownButtonFormField<String>(
+                                    key: ValueKey((
+                                      project.id,
+                                      project.sessionIds.join(',')
+                                    )),
                                     isExpanded: true,
                                     decoration: const InputDecoration(
                                         labelText:

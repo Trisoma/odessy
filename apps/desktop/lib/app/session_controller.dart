@@ -140,42 +140,39 @@ class DesktopSession extends ChangeNotifier {
   String _safeError(Object e) => e is ApiFailure
       ? e.toString()
       : e is StateError
-      ? e.message
-      : 'Connection unavailable. Check that the local service is running.';
+          ? e.message
+          : 'Connection unavailable. Check that the local service is running.';
 
   void _listen(int epoch) {
     final sid = session!.id;
-    _subscription = api
-        .events(sid, lastEvent)
-        .listen(
-          (event) async {
-            if (_disposed || epoch != _epoch) return;
-            if (event.type == 'selection') {
-              route =
-                  '${event.data['profile']} · ${event.data['reason'] ?? ''}';
-            }
-            if (event.type == 'stopped') {
-              status = 'Stopped · completed actions remain completed';
-            }
-            if (event.type == 'error') {
-              final detail = event.data['message'];
-              final text = detail is String
-                  ? detail.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ').trim()
-                  : '';
-              error = text.isEmpty
-                  ? 'The turn failed without an error detail.'
-                  : text.substring(0, text.length > 600 ? 600 : text.length);
-              status = 'Failed';
-            }
-            await refresh(epoch: epoch);
-            if (event.type == 'error' && epoch == _epoch && !_disposed) {
-              status = 'Failed';
-              _notify();
-            }
-          },
-          onError: (Object e) => _disconnected(epoch, e),
-          onDone: () => _disconnected(epoch, StateError('Closed')),
-        );
+    _subscription = api.events(sid, lastEvent).listen(
+      (event) async {
+        if (_disposed || epoch != _epoch) return;
+        if (event.type == 'selection') {
+          route = '${event.data['profile']} · ${event.data['reason'] ?? ''}';
+        }
+        if (event.type == 'stopped') {
+          status = 'Stopped · completed actions remain completed';
+        }
+        if (event.type == 'error') {
+          final detail = event.data['message'];
+          final text = detail is String
+              ? detail.replaceAll(RegExp(r'[\x00-\x1f\x7f]'), ' ').trim()
+              : '';
+          error = text.isEmpty
+              ? 'The turn failed without an error detail.'
+              : text.substring(0, text.length > 600 ? 600 : text.length);
+          status = 'Failed';
+        }
+        await refresh(epoch: epoch);
+        if (event.type == 'error' && epoch == _epoch && !_disposed) {
+          status = 'Failed';
+          _notify();
+        }
+      },
+      onError: (Object e) => _disconnected(epoch, e),
+      onDone: () => _disconnected(epoch, StateError('Closed')),
+    );
   }
 
   void _disconnected(int epoch, Object error) {
@@ -298,8 +295,8 @@ class DesktopSession extends ChangeNotifier {
       throw StateError('Safe settings updates are unavailable.');
     }
     final epoch = _epoch;
-    final result = await (transport as ConsultationLimitApi)
-        .readConsultationLimit();
+    final result =
+        await (transport as ConsultationLimitApi).readConsultationLimit();
     if (_disposed || epoch != _epoch || !identical(transport, api)) {
       throw StateError('Connection changed.');
     }
@@ -448,7 +445,8 @@ class DesktopSession extends ChangeNotifier {
       if (!_disposed && epoch == _epoch) {
         busy = false;
         status = 'Offline';
-        error = 'The previous session could not be closed. Reconnect or restart the app to continue.';
+        error =
+            'The previous session could not be closed. Reconnect or restart the app to continue.';
         _notify();
       }
     }
@@ -478,13 +476,18 @@ class DesktopSession extends ChangeNotifier {
           'Select an idle session with no pending interactions.',
         );
       }
+      final available = fresh.availableProfiles ?? await transport.profiles();
+      if (_disposed || epoch != _epoch || !identical(transport, api))
+        return false;
       ++_epoch;
       _retry?.cancel();
       _retry = null;
       await _subscription?.cancel();
       if (_disposed || !identical(transport, api)) return false;
       session = fresh;
-      profiles = fresh.availableProfiles ?? profiles;
+      profiles = available;
+      connected = true;
+      error = '';
       route = '';
       status = 'Ready';
       _listen(_epoch);

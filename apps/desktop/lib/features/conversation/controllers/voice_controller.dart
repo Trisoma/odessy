@@ -36,6 +36,13 @@ class VoiceController extends ChangeNotifier {
   int _epoch = 0;
   int _operation = 0, _event = 0;
   Future<void>? _refreshing;
+  int _readVersion = 0;
+
+  void _invalidateRead() {
+    _readVersion++;
+    _refreshing = null;
+  }
+
   Future<VoiceSnapshot>? _starting;
   Future<void>? _releasing;
   VoiceSnapshot? snapshot;
@@ -99,6 +106,7 @@ class VoiceController extends ChangeNotifier {
       if (event.type == 'voice_state') {
         try {
           snapshot = VoiceSnapshot.fromJson(event.data);
+          _invalidateRead();
           if (!_disposed) notifyListeners();
         } catch (_) {/* Unknown event remains in activity. */}
       } else if (event.type == 'voice_transcript') {
@@ -119,7 +127,7 @@ class VoiceController extends ChangeNotifier {
     if (api is! DesktopVoiceApi || sid == null) return;
     final pending = _refreshing;
     if (pending != null) return pending;
-    final task = _refresh(api as DesktopVoiceApi, sid, epoch);
+    final task = _refresh(api as DesktopVoiceApi, sid, epoch, _readVersion);
     _refreshing = task;
     try {
       await task;
@@ -128,15 +136,16 @@ class VoiceController extends ChangeNotifier {
     }
   }
 
-  Future<void> _refresh(DesktopVoiceApi api, String sid, int epoch) async {
+  Future<void> _refresh(
+      DesktopVoiceApi api, String sid, int epoch, int readVersion) async {
     try {
       final value = await api.voiceState(sid);
-      if (!_disposed && epoch == _epoch) {
+      if (!_disposed && epoch == _epoch && readVersion == _readVersion) {
         snapshot = value;
         notifyListeners();
       }
     } catch (_) {
-      if (!_disposed && epoch == _epoch) {
+      if (!_disposed && epoch == _epoch && readVersion == _readVersion) {
         error = 'Desktop audio unavailable. Text remains available.';
         notifyListeners();
       }
@@ -174,6 +183,7 @@ class VoiceController extends ChangeNotifier {
       }
       final value = await task;
       if (!_disposed && epoch == _epoch && operation == _operation) {
+        _invalidateRead();
         snapshot = value;
       }
     } catch (_) {

@@ -209,19 +209,17 @@ class _DemoDevicesState extends State<DemoDevices> {
                 builder: (context, size) => size.maxWidth < 600
                     ? Column(children: [
                         SizedBox(
-                            height: 204,
                             child: Row(children: [
-                              computer(
-                                  'This computer',
-                                  'Local coordinator · sample',
-                                  Icons.laptop_windows)
-                            ])),
+                          computer(
+                              'This computer',
+                              'Local coordinator · sample',
+                              Icons.laptop_windows)
+                        ])),
                         SizedBox(
-                            height: 204,
                             child: Row(children: [
-                              computer('Jetson', 'Existing SSH alias · sample',
-                                  Icons.memory)
-                            ]))
+                          computer('Jetson', 'Existing SSH alias · sample',
+                              Icons.memory)
+                        ]))
                       ])
                     : Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -301,11 +299,9 @@ class _DemoDevicesState extends State<DemoDevices> {
                             ('Temperature', '45°C', 'Sample sensor value')
                           ])
                             SizedBox(
-                                height: 155,
                                 child: Row(children: [
-                                  metric(item.$1, item.$2, item.$3,
-                                      DemoColors.mint)
-                                ]))
+                              metric(item.$1, item.$2, item.$3, DemoColors.mint)
+                            ]))
                         ])
                       : Row(children: [
                           metric('CPU', '23%', 'Sample utilization',

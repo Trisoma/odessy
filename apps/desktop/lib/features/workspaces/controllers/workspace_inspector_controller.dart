@@ -198,6 +198,20 @@ class WorkspaceInspectorController extends ChangeNotifier {
     notifyListeners();
   }
 
+  bool _canRespond(String requestId) =>
+      _snapshot?.pending.any((entry) {
+        final expiry = entry['expires_at'];
+        final channels = entry['allowed_channels'];
+        return entry['id'] == requestId &&
+            entry['kind'] == 'approval' &&
+            expiry is num &&
+            expiry.isFinite &&
+            expiry > DateTime.now().millisecondsSinceEpoch / 1000 &&
+            channels is List &&
+            channels.contains('authenticated_ui');
+      }) ??
+      false;
+
   bool canDecide(ProposedChange proposal) =>
       !_disposed &&
       sessionApi.identity == serviceIdentity &&
@@ -206,7 +220,8 @@ class WorkspaceInspectorController extends ChangeNotifier {
       validateProposal != null &&
       !deciding &&
       changes.contains(proposal) &&
-      _pending.contains(proposal.requestId);
+      _pending.contains(proposal.requestId) &&
+      _canRespond(proposal.requestId);
 
   Future<void> decide(ProposedChange proposal, bool approved) async {
     if (!canDecide(proposal)) {
@@ -217,10 +232,12 @@ class WorkspaceInspectorController extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
-      if (!await validateProposal!(proposal)) {
+      if (approved && !await validateProposal!(proposal)) {
         throw StateError('Proposal changed');
       }
-      if (!_current(epoch) || !_pending.contains(proposal.requestId)) return;
+      if (!_current(epoch) ||
+          !_pending.contains(proposal.requestId) ||
+          !_canRespond(proposal.requestId)) return;
       await resolveApproval!(proposal.sessionId, proposal.requestId, approved);
       if (!_current(epoch)) return;
       _pending.remove(proposal.requestId);

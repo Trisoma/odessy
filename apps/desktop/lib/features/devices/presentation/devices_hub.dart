@@ -300,7 +300,11 @@ class _DevicesHubState extends State<DevicesHub> {
                 const Text(
                     'Only fields the collector reported are shown. Unknown, denied and stale readings are labelled, never replaced by zero.'),
                 const SizedBox(height: 12),
-                if (c.hosts.isEmpty)
+                if (c.hosts.isEmpty && c.loadingInventory)
+                  const LinearProgressIndicator()
+                else if (c.hosts.isEmpty && c.inventoryError != null)
+                  Text(c.inventoryError!)
+                else if (c.hosts.isEmpty)
                   const Card(
                       child: ListTile(
                           leading: Icon(Icons.devices_other_outlined),
