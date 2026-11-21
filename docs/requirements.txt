@@ -1,0 +1,5 @@
+# Pin below 8.2: 8.2.x fails in the LaTeX transform while reading sources.
+sphinx>=8.1,<8.2
+furo>=2024
+myst-parser>=3.0,<5
+sphinxcontrib-mermaid==2.0.0

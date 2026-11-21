@@ -1,6 +1,6 @@
 ---
 name: odessy-docs
-description: Write or review Odessy documentation, onboarding, contributor guides, and translations in a direct maintainer voice. Use for prose edits and documentation checks. Application behavior, policy changes, and release operations require their own scope.
+description: Write or review Odessy docs, examples, user-facing text, translations, and code comments. Use concrete steps and the maintainer’s direct voice.
 ---
 
 # Write Odessy docs
@@ -13,6 +13,10 @@ Check changed facts against source, tests, or the exact release artifact. Put th
 
 Use the English page as the canonical source. Update its Chinese and Spanish counterparts together. Compare copied commands byte for byte with their source and across translations. Check paths, backslashes and quoting in the rendered text. Keep model IDs intact. Check relative links, translated anchors, images, and the run, change, and test routes.
 
-For a comment-only edit, keep the reason behind a guard or ordering rule. Preserve API contracts, directives, test rationale, and strings that affect behavior.
+Follow the MLX quick start’s structure. Lead with a runnable example and its expected result. Put setup, diagnostics, and reference details where readers need them. Check that a newcomer can find how to run it, which file to change, and the test command and working directory.
+
+In code comments, explain the reason behind a guard, ordering rule, or tradeoff. Remove comments that repeat the code. Preserve API contracts, directives, test rationale, and strings that affect behavior.
+
+In contributor docs and roadmap updates, welcome focused CI and behavior-preserving refactors. Link existing issues to milestones with a finish condition and say what can wait. Before proposing a new runtime or optional integration, name the everyday task it helps, who can maintain it, and how to verify it.
 
 Example: “Open **Output** after the command runs. Check the exit code and compare the hostname with your laptop.”

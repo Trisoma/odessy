@@ -7,6 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:odessy_desktop/app/app.dart';
 import 'package:odessy_desktop/app/preferences/desktop_preferences.dart';
 
+import 'component_settings_test.dart' show SavedComponents;
+
 void main() {
   testWidgets('render desktop preview artifacts', (tester) async {
     await (FontLoader('OdessySans')
@@ -22,7 +24,10 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final key = GlobalKey();
     await tester.pumpWidget(RepaintBoundary(
-        key: key, child: OdessyApp(preferencesStore: _CapturePreferences())));
+        key: key,
+        child: OdessyApp(
+            preferencesStore: _CapturePreferences(),
+            setupBackend: SavedComponents())));
     // Bounded pumps: screens with ongoing activity (audio/probe state) never
     // settle, so pumpAndSettle would time out and hide real failures.
     Future<void> settle() async {
@@ -59,10 +64,7 @@ void main() {
     await tester.tap(find.byTooltip('Toggle light / dark theme'));
     await settle();
     await tester.runAsync(() => capture('settings-tts-dark'));
-    // The settings pane may still hold its bounded setup-request timeout after
-    // the captures; unmount and elapse it so teardown has no pending timer.
     await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump(const Duration(seconds: 31));
   });
 }
 
