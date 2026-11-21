@@ -691,6 +691,45 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
                     'enabled': saved.settings.enabled}
 
+    @app.get('/v1/settings/roles')
+    async def get_roles():
+        async with settings_lock:
+            if app.state.config is None:
+                raise HTTPException(503, 'Collaboration settings unavailable')
+            return {'instance_id': app.state.runtime_instance_id,
+                    'revision': settings_revision,
+                    'roles': app.state.config.settings.roles,
+                    'participant_roles': {
+                        name: profile.roles
+                        for name, profile in app.state.config.participants.items()}}
+
+    @app.put('/v1/settings/roles')
+    async def put_roles(request: Request):
+        from odessy.collaboration.roles import declared_roles, resolve_role
+        data = await body(request)
+        if (set(data) != {'instance_id', 'revision', 'roles'}
+                or not isinstance(data['instance_id'], str)
+                or type(data['revision']) is not int or data['revision'] < 0
+                or not isinstance(data['roles'], dict)):
+            raise HTTPException(400, 'Invalid role bindings')
+        async with settings_lock:
+            if app.state.config is None:
+                raise HTTPException(503, 'Collaboration settings unavailable')
+            if data['instance_id'] != app.state.runtime_instance_id or data['revision'] != settings_revision:
+                raise HTTPException(409, 'Settings changed; reload before saving')
+            document = app.state.config.public_dict()
+            document['settings']['roles'] = data['roles']
+            try:
+                saved = await save_coordinated(document)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(400, str(exc))
+            return {'instance_id': app.state.runtime_instance_id,
+                    'revision': settings_revision,
+                    'roles': saved.settings.roles,
+                    'known_roles': declared_roles(saved),
+                    'resolved': {role: resolve_role(saved, role)
+                                 for role in declared_roles(saved)}}
+
     def editable_profiles():
         return [{'name': name, 'adapter': profile.adapter, 'provider': profile.provider,
                  'model': profile.model, 'endpoint': profile.endpoint}

@@ -52,6 +52,7 @@ class ParticipantProfile:
     credential_env: str = ''
     host: str = 'local'
     capabilities: tuple[str, ...] = ('consult',)
+    roles: tuple[str, ...] = ()
     command: tuple[str, ...] = ()
     workspace: str = ''
     allowed_modes: tuple[str, ...] = ('advice',)
@@ -76,10 +77,12 @@ class ParticipantProfile:
                 raise ValueError('endpoint must be an HTTP URL without credentials, query, or fragment')
         if not self.host.strip():
             raise ValueError('host must not be empty')
-        for name in ('capabilities', 'command', 'allowed_modes'):
+        for name in ('capabilities', 'roles', 'command', 'allowed_modes'):
             values = _strings(getattr(self, name), name)
             if name != 'command' and any(not _NAME.fullmatch(value) for value in values):
                 raise ValueError(f'invalid {name} name')
+            if name == 'roles' and len(values) > 32:
+                raise ValueError('a participant may declare at most 32 roles')
             object.__setattr__(self, name, values)
         _count(self.timeout, 'timeout', 1, 3600)
         _count(self.max_tokens, 'max_tokens', 1, 1_000_000)
@@ -118,6 +121,7 @@ class CollaborationSettings:
     max_context_chars: int = 8000
     max_rounds: int = 1
     rules: tuple = ()
+    roles: dict = field(default_factory=dict)
 
     def __post_init__(self):
         if type(self.enabled) is not bool or type(self.automatic) is not bool:
@@ -146,6 +150,20 @@ class CollaborationSettings:
                 raise ValueError('invalid rule participant')
             normalized.append(dict(rule))
         object.__setattr__(self, 'rules', tuple(normalized))
+        roles = self.roles
+        if not isinstance(roles, Mapping) or len(roles) > 128:
+            raise ValueError('roles must be a table with at most 128 entries')
+        normalized_roles = {}
+        for role, targets in roles.items():
+            if not isinstance(role, str) or not _NAME.fullmatch(role):
+                raise ValueError('invalid role name')
+            names = _strings(targets, 'role targets')
+            if any(not _NAME.fullmatch(name) for name in names):
+                raise ValueError('invalid role target name')
+            if len(set(names)) != len(names):
+                raise ValueError('duplicate role target')
+            normalized_roles[role] = names
+        object.__setattr__(self, 'roles', normalized_roles)
 
 
 @dataclass(frozen=True)
