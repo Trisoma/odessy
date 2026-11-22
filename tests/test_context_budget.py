@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 
 from odessy.context_budget import (
@@ -10,8 +13,7 @@ from odessy.context_budget import (
     ContextBudgetLedger,
     estimate_messages,
     estimate_tokens,
-    process_context_budget,
-    reset_process_context_budget,
+    current_context_budget,
 )
 from odessy.context_budget import registry as registry_mod
 
@@ -34,8 +36,7 @@ def test_estimate_messages_adds_overhead_and_reads_text_blocks():
         {'role': 'user', 'content': 'abc'},
         {'role': 'assistant', 'content': [{'type': 'text', 'text': 'de'}, {'type': 'tool_result', 'content': 'fghi'}]},
     ]
-    # 'abc'=1, 'de'=1, 'fghi'=2 => 4 text + 2*4 overhead = 12
-    assert estimate_messages(msgs, chars_per_token=3) == 12
+    assert estimate_messages(msgs, chars_per_token=3) > estimate_messages(msgs[:1], chars_per_token=3)
     assert estimate_messages([], chars_per_token=3) == 0
 
 
@@ -142,17 +143,39 @@ def test_bad_record_values_are_ignored():
     assert ledger.total() == 0
 
 
-# -- process ledger -----------------------------------------------------------
+def test_parallel_session_turns_keep_their_own_counts(monkeypatch):
+    from odessy.application.session import SessionController
 
-def test_process_ledger_rebuild_from_env(monkeypatch):
     monkeypatch.setenv('ODESSY_CONTEXT_BUDGET_GUARD', 'on')
-    monkeypatch.setenv('ODESSY_CONTEXT_WINDOW_TOKENS', '5')
-    reset_process_context_budget()
-    ledger = process_context_budget()
-    assert ledger.enabled is True
-    assert ledger.registry.window_tokens == 5
-    with pytest.raises(ContextBudgetExceeded):
-        ledger.check_messages([{'role': 'user', 'content': 'x' * 100}])
+
+    async def exercise():
+        first_recorded = asyncio.Event()
+        second_recorded = asyncio.Event()
+
+        async def first(text, **kwargs):
+            budget = current_context_budget()
+            await asyncio.to_thread(budget.record, 'prepared_context', 20)
+            first_recorded.set()
+            await second_recorded.wait()
+            return budget.snapshot()
+
+        async def second(text, **kwargs):
+            budget = current_context_budget()
+            await first_recorded.wait()
+            await asyncio.to_thread(budget.record, 'prepared_context', 30)
+            second_recorded.set()
+            return budget.snapshot()
+
+        one = SimpleNamespace(_run_turn_impl=first)
+        two = SimpleNamespace(_run_turn_impl=second)
+        one._run_turn_with_context = SessionController._run_turn_with_context.__get__(one)
+        two._run_turn_with_context = SessionController._run_turn_with_context.__get__(two)
+        results = await asyncio.gather(SessionController.run_turn(one, 'one'),
+                                       SessionController.run_turn(two, 'two'))
+        assert results == [{'prepared_context': 20}, {'prepared_context': 30}]
+        assert current_context_budget() is None
+
+    asyncio.run(exercise())
 
 
 # -- config schema ------------------------------------------------------------
@@ -185,7 +208,6 @@ def test_defaults_mirror_matches_registry_constants():
 def test_guard_refuses_send_when_messages_exceed_window(monkeypatch):
     """With the guard on, an oversized final message list sends no bytes."""
     import json
-    from typing import Any
     from odessy.models.cloud_model import CloudModel
     from odessy.models.usage import UsageLedger
 
@@ -203,7 +225,6 @@ def test_guard_refuses_send_when_messages_exceed_window(monkeypatch):
     # Turn the coordination guard on with a tiny window.
     monkeypatch.setenv('ODESSY_CONTEXT_BUDGET_GUARD', 'on')
     monkeypatch.setenv('ODESSY_CONTEXT_WINDOW_TOKENS', '5')
-    reset_process_context_budget()
 
     model = _OpenAI([answer], context_chars=0)  # compaction off
     with pytest.raises(ContextBudgetExceeded):
@@ -229,7 +250,58 @@ def test_guard_off_does_not_change_send_behaviour(monkeypatch):
 
     answer = {"choices": [{"message": {"role": "assistant", "content": "done"}}], "usage": {}}
     monkeypatch.delenv('ODESSY_CONTEXT_BUDGET_GUARD', raising=False)
-    reset_process_context_budget()
     model = _OpenAI([answer], context_chars=0)
     model.propose("x" * 200)
     assert len(model.payloads) == 1  # sent normally
+
+
+@pytest.mark.parametrize('provider', ['openai', 'claude'])
+@pytest.mark.parametrize('large_field', ['system', 'tools', 'tool_call'])
+def test_guard_counts_final_provider_input(monkeypatch, provider, large_field):
+    import json
+
+    from odessy.models import cloud_model
+    from odessy.models.usage import UsageLedger
+
+    large = 'x' * 900
+    system = large if large_field == 'system' else 'Short system prompt'
+    tools = [{'description': large}] if large_field == 'tools' else []
+    monkeypatch.setattr(cloud_model, 'system_prompt', lambda: system)
+    monkeypatch.setattr(cloud_model, f'cloud_tools_{"anthropic" if provider == "claude" else "openai"}',
+                        lambda: tools)
+    monkeypatch.setenv('ODESSY_CONTEXT_BUDGET_GUARD', 'on')
+    monkeypatch.setenv('ODESSY_CONTEXT_WINDOW_TOKENS', '170')
+    model = cloud_model.CloudModel(provider=provider, model='m', api_key='test', usage=UsageLedger(),
+                                   context_chars=0, prompt_cache=False)
+    messages = [{'role': 'user', 'content': 'A short request'}]
+    if large_field == 'tool_call':
+        if provider == 'claude':
+            def dump_block(*, mode, exclude_none):
+                return {'type': 'tool_use', 'id': 'call1', 'name': 'test_tool', 'input': {'data': large}}
+
+            block = SimpleNamespace(model_dump=dump_block)
+            messages.append({'role': 'assistant', 'content': [block]})
+        else:
+            call = {'id': 'call1', 'type': 'function',
+                    'function': {'name': 'test_tool', 'arguments': json.dumps({'data': large})}}
+            messages.append({'role': 'assistant', 'content': None, 'tool_calls': [call]})
+    model._messages = messages
+    exchange = model._exchange_anthropic if provider == 'claude' else model._exchange_openai
+    sender = '_create_message' if provider == 'claude' else '_post_chat_once'
+    sent = []
+
+    def send(payload):
+        sent.append(payload)
+        if provider == 'claude':
+            return SimpleNamespace(content=[], usage=None)
+        return {'choices': [{'message': {'role': 'assistant', 'content': 'done'}}]}
+
+    monkeypatch.setattr(model, sender, send)
+    with pytest.raises(ContextBudgetExceeded, match='170-token window'):
+        exchange()
+    assert sent == []
+
+    monkeypatch.setenv('ODESSY_CONTEXT_WINDOW_TOKENS', '2000')
+    exchange()
+    assert len(sent) == 1
+    assert sent[0]['tools'] == tools

@@ -231,7 +231,7 @@ SETTINGS: tuple[Setting, ...] = (
     _s("ODESSY_CONTEXT_BUDGET_GUARD", "flag",
        "on or off: guard requests against a context-window estimate", allow_empty=True),
     _s("ODESSY_CONTEXT_WINDOW_TOKENS", "int",
-       "estimated context window the guard refuses to exceed",
+       "estimated cloud input token limit (0 disables rejection)",
        minimum=0, allow_empty=True),
     _s("ODESSY_CONTEXT_CHARS_PER_TOKEN", "int",
        "conservative characters-per-token ratio used by the estimate",

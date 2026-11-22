@@ -922,11 +922,11 @@ class SessionController:
 
     async def run_turn(self, text, participant=None, **kwargs):
         attachments = kwargs.pop('attachments', ())
-        # Reset the opt-in context-budget ledger at the very start of a turn, so
-        # prepared-context contributors recorded during prepare() are not wiped.
-        # No-op by default. Both paths below (with/without recorder) pass here.
-        from odessy.context_budget import process_context_budget
-        process_context_budget().start_turn()
+        from odessy.context_budget import context_budget_turn
+        with context_budget_turn():
+            return await self._run_turn_with_context(text, participant, attachments, **kwargs)
+
+    async def _run_turn_with_context(self, text, participant, attachments, **kwargs):
         recorder = getattr(self, '_conversation_recorder', None)
         if recorder is None:
             return await self._run_turn_impl(text, participant=participant, **kwargs)

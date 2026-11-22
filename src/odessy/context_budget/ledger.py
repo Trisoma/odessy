@@ -20,11 +20,14 @@ Safety / design rules:
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
-from .estimator import estimate_messages, estimate_tokens
+from .estimator import estimate_cloud_input, estimate_messages, estimate_tokens
 from .registry import BudgetRegistry
 
 
@@ -115,10 +118,8 @@ class ContextBudgetLedger:
     def check(self) -> None:
         """Raise if the summed contributors exceed the configured window.
 
-        Prefer :meth:`check_messages` at the actual send point: a prepared message
-        list already *contains* the injected context and memory, so guarding it is
-        the authoritative measure. This method is for callers that only have
-        per-source counts and want a coarse guard.
+        The cloud guard estimates the final request separately to avoid double
+        counting prepared context that already appears in the messages.
         """
 
         if not self.enabled:
@@ -129,21 +130,16 @@ class ContextBudgetLedger:
         self._guard(total, breakdown)
 
     def check_messages(self, messages: Iterable[Any]) -> None:
-        """Guard the whole request from the final message list, before any send.
+        """Check an estimate of messages alone."""
+        if self.enabled and self.registry.window_tokens > 0:
+            total = estimate_messages(messages, chars_per_token=self.registry.chars_per_token)
+            self._guard(total, {})
 
-        This is the authoritative pre-request check. It estimates the complete
-        message list once (which already includes any injected context/memory/tool
-        results), so there is no double counting. No-op unless both the guard flag
-        and a positive window are configured, and never mutates ``messages``.
-        """
-
-        if not self.enabled:
-            return
-        window = self.registry.window_tokens
-        if window <= 0:
-            return
-        total = estimate_messages(messages, chars_per_token=self.registry.chars_per_token)
-        self._guard(total, {})
+    def check_cloud_input(self, payload: Mapping[str, Any]) -> None:
+        """Check the final input after the cloud adapter has built the request."""
+        if self.enabled and self.registry.window_tokens > 0:
+            total = estimate_cloud_input(payload, chars_per_token=self.registry.chars_per_token)
+            self._guard(total, {})
 
     def _guard(self, total: int, breakdown: Mapping[str, int]) -> None:
         window = self.registry.window_tokens
@@ -165,27 +161,30 @@ def _ceil_div(value: int, divisor: int) -> int:
     return (value + divisor - 1) // divisor
 
 
-# -- process-wide ledger, mirroring usage.py's process ledger -----------------
-
-_process_ledger: ContextBudgetLedger | None = None
-_process_lock = threading.Lock()
+_turn_ledger: ContextVar[ContextBudgetLedger | None] = ContextVar('context_budget', default=None)
 
 
-def process_context_budget() -> ContextBudgetLedger:
-    """Return the process-wide ledger, built once from the environment."""
-
-    global _process_ledger
-    with _process_lock:
-        if _process_ledger is None:
-            _process_ledger = ContextBudgetLedger(registry=BudgetRegistry.from_env())
-        return _process_ledger
+def current_context_budget() -> ContextBudgetLedger | None:
+    return _turn_ledger.get()
 
 
-def reset_process_context_budget(registry: BudgetRegistry | None = None) -> None:
-    """Replace the process ledger. Used at turn setup and in tests."""
+@contextmanager
+def context_budget_turn() -> Iterator[None]:
+    """Keep counts separate across turns, including their worker threads."""
+    registry = BudgetRegistry.from_env()
+    token = _turn_ledger.set(ContextBudgetLedger(registry))
+    try:
+        yield
+    finally:
+        _turn_ledger.reset(token)
 
-    global _process_ledger
-    with _process_lock:
-        _process_ledger = ContextBudgetLedger(
-            registry=registry if registry is not None else BudgetRegistry.from_env()
-        )
+
+def check_cloud_input(payload: Mapping[str, Any]) -> None:
+    ledger = current_context_budget()
+    if ledger is None:
+        # Direct calls and probes can use the guard without opening a session.
+        registry = BudgetRegistry.from_env()
+        if not registry.enabled or registry.window_tokens <= 0:
+            return
+        ledger = ContextBudgetLedger(registry)
+    ledger.check_cloud_input(payload)

@@ -76,22 +76,23 @@ Or select the backend persistently with `ODESSY_MODEL_BACKEND=claude`.
 | `ODESSY_CLOUD_CONTEXT_CHARS` | all | Characters of tool results one turn re-sends before the oldest are compacted, default 24000; `0` turns compaction off |
 | `ODESSY_CLOUD_KEEP_RECENT_RESULTS` | all | How many of the latest tool results are never compacted, default 2 |
 
-### Optional context-window guard
+### Optional cloud input limit
 
-The compaction above bounds only tool-result characters within one turn; the
-summary, injected context and the model's own messages are counted separately, so
-a request can still approach or exceed the model window. An opt-in coordination
-layer adds a conservative, pre-request estimate of the **whole** message list:
+Set these in `config/odessy.env` and restart the service to reject an oversized
+cloud request before sending it:
 
-| Setting | Scope | Effect |
-|---|---|---|
-| `ODESSY_CONTEXT_BUDGET_GUARD` | all | `on` enables the coordination layer; default `off` (fully no-op) |
-| `ODESSY_CONTEXT_WINDOW_TOKENS` | all | Window the guard refuses to exceed; `0` (default) records usage but never refuses |
-| `ODESSY_CONTEXT_CHARS_PER_TOKEN` | all | Conservative characters-per-token ratio, default 3 (lower = more cautious) |
+```dotenv
+ODESSY_CONTEXT_BUDGET_GUARD=on
+ODESSY_CONTEXT_WINDOW_TOKENS=32000
+```
 
-The guard is a coarse ceiling, not a tokenizer: it never edits messages or
-compression output, never changes authority or approvals, and does not replace
-per-provider token accounting. When it refuses, no request bytes are sent.
+The estimate includes the system prompt, messages, tool calls, and tool
+schemas sent to Claude and OpenAI-compatible providers, including DeepSeek.
+Choose a limit below your model’s context window to leave room for its reply.
+
+The guard is off by default. A limit of `0` disables rejection. Lower
+`ODESSY_CONTEXT_CHARS_PER_TOKEN` from its default of `3` to reject requests
+earlier. The guard leaves the request intact and does not use a provider tokenizer.
 
 ### DeepSeek with low reasoning effort
 

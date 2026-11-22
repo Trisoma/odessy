@@ -51,20 +51,16 @@ def _isolate_config_environment(
 
     saved = dict(os.environ)
     from odessy.models.usage import reset_process_ledger
-    from odessy.context_budget import reset_process_context_budget
 
     # The cloud usage ledger is per process; each test starts with an empty one, and
     # without the developer's budget or price settings.
     for name in list(os.environ):
         if name.startswith(("ODESSY_CLOUD_BUDGET_", "ODESSY_CLOUD_PRICE_", "ODESSY_INTERACTION_")):
             monkeypatch.delenv(name, raising=False)
-    # The context-budget ledger is opt-in and per process; reset it so one test's
-    # flag or contributors never leak into the next (test env has the guard off).
-    for name in list(os.environ):
-        if name.startswith("ODESSY_CONTEXT_"):
-            monkeypatch.delenv(name, raising=False)
+    for name in ('ODESSY_CONTEXT_BUDGET_GUARD', 'ODESSY_CONTEXT_WINDOW_TOKENS',
+                 'ODESSY_CONTEXT_CHARS_PER_TOKEN'):
+        monkeypatch.delenv(name, raising=False)
     reset_process_ledger()
-    reset_process_context_budget()
     monkeypatch.setenv(
         "ODESSY_CONFIG_FILE",
         str(tmp_path_factory.mktemp("config") / "missing.env"),
@@ -98,7 +94,6 @@ def _isolate_config_environment(
         monkeypatch.delenv(name, raising=False)
     yield
     reset_process_ledger()
-    reset_process_context_budget()
     os.environ.clear()
     os.environ.update(saved)
 
@@ -122,3 +117,24 @@ def _hermetic_harness_credentials(request, monkeypatch):
     monkeypatch.setattr(credentials, '_backend', lambda: EmptyVault())
     yield
     credentials.clear_sessions()
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_harness_protocol_host(request, monkeypatch):
+    """Protocol fakes do not test or depend on the runner's kernel confinement.
+
+    Keep the sandbox contract tests on their own explicit/capable registries and
+    leave the separate native sandbox acceptance tests unchanged.
+    """
+    module = request.module.__name__.split('.')[-1]
+    if module in {
+        'test_harness_approval', 'test_harness_installed', 'test_harness_questions',
+        'test_harness_resources', 'test_harness_review_regressions',
+        'test_harness_routes', 'test_harness_runtime', 'test_harness_stop',
+        'test_harness_stream', 'test_harness_upstreams',
+    }:
+        from odessy.execution.providers import UnconfinedProvider
+        from odessy.execution.registry import ProviderRegistry
+        from odessy.runtime_backends.harness import sandbox
+        monkeypatch.setattr(sandbox, 'host_registry',
+                            lambda: ProviderRegistry([UnconfinedProvider()]))

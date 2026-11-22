@@ -33,7 +33,7 @@ CHARS_PER_TOKEN_ENV = "ODESSY_CONTEXT_CHARS_PER_TOKEN"
 
 
 def _on(value: object) -> bool:
-    return isinstance(value, str) and value.strip().lower() not in {"", "0", "off", "false", "no"}
+    return isinstance(value, str) and value.strip().lower() in {"1", "on", "true", "yes"}
 
 
 def _non_negative_int(raw: object, default: int) -> int:
@@ -88,4 +88,4 @@ class BudgetRegistry:
 def _process_env() -> Mapping[str, str]:
     import os
 
-    return dict(os.environ)
+    return os.environ

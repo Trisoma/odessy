@@ -696,7 +696,7 @@
     {
       "name": "ODESSY_CONTEXT_WINDOW_TOKENS",
       "kind": "int",
-      "summary": "estimated context window the guard refuses to exceed",
+      "summary": "estimated cloud input token limit (0 disables rejection)",
       "source": "runtime environment",
       "screen": "Advanced runtime settings",
       "status": "unavailable",
