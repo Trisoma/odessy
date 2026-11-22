@@ -1427,6 +1427,29 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     async def submit_session_job(sid: str, request: Request):
         return await submit(await body(request), sid)
 
+    @app.post('/v1/sessions/{sid}/plan')
+    async def submit_plan(sid: str, request: Request):
+        """Build a role-based work plan from an intent and submit it for approval.
+
+        The request blocks until the high-risk approval is answered through the
+        usual approvals endpoint. Approval only authorizes the plan; execution is
+        performed separately via the agent.run tooling.
+        """
+        controller = find(sid)
+        submit_plan_fn = getattr(controller, 'submit_plan', None)
+        if not callable(submit_plan_fn):
+            raise HTTPException(503, 'Planning is not configured for this session')
+        data = await body(request)
+        if set(data) - {'intent', 'workspace'} or not isinstance(data.get('intent'), str):
+            raise HTTPException(400, 'An intent string and optional workspace are required')
+        workspace = data.get('workspace', '')
+        if not isinstance(workspace, str):
+            raise HTTPException(400, 'workspace must be a string')
+        try:
+            return await submit_plan_fn(data['intent'], workspace=workspace)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(400, str(exc))
+
     @app.get('/v1/sessions/{sid}/jobs')
     async def list_session_jobs(sid: str, request: Request):
         params = request.query_params

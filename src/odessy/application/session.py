@@ -891,6 +891,38 @@ class SessionController:
     def answer_question(self, question_id, answer, *, channel='authenticated_ui'):
         return self.interactions.resolve_question(question_id, answer, channel=channel)
 
+    async def submit_plan(self, intent, workspace=''):
+        """Turn ``intent`` into a role-based plan and submit it for approval.
+
+        The plan is an untrusted proposal built from configured roles; it is
+        mapped to an ``agent.run`` request so the ordinary high-risk approval
+        path (preflight, SHA-256 binding, typed confirmation) is reused. This
+        method does not start any work — approval only authorizes the request;
+        execution belongs to the caller via the existing run tools.
+        """
+        from odessy.collaboration.planner import (
+            plan_from_intent, to_run_arguments, validate_plan,
+        )
+        from odessy.runtime.types import PolicyDecision
+
+        collaboration = self.collaboration
+        config = getattr(collaboration, 'config', None)
+        if config is None or not isinstance(intent, str) or not intent.strip():
+            return {'status': 'error', 'reason': 'planning unavailable'}
+        plan = plan_from_intent(config, intent, workspace=workspace or '')
+        if plan is None:
+            return {'status': 'error', 'reason': 'intent does not describe a supported two-step handoff'}
+        okay, reason = validate_plan(plan, config)
+        if not okay:
+            return {'status': 'error', 'reason': reason}
+        if self.runs is None:
+            return {'status': 'error', 'reason': 'handoff runs are unavailable'}
+        arguments = to_run_arguments(plan, config)
+        decision = PolicyDecision('confirm', 'Submit a planned agent handoff', 'high')
+        request = ToolRequest('agent.run', arguments)
+        approved = await self.confirm(decision, request)
+        return {'status': 'approved' if approved else 'declined', 'plan': plan.public_dict()}
+
     async def _consult_participant(self, participant, text):
         """One explicit consultation, on the engine-independent product path.
 
