@@ -691,6 +691,45 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             return {'instance_id': app.state.runtime_instance_id, 'revision': settings_revision,
                     'enabled': saved.settings.enabled}
 
+    @app.get('/v1/settings/roles')
+    async def get_roles():
+        async with settings_lock:
+            if app.state.config is None:
+                raise HTTPException(503, 'Collaboration settings unavailable')
+            return {'instance_id': app.state.runtime_instance_id,
+                    'revision': settings_revision,
+                    'roles': app.state.config.settings.roles,
+                    'participant_roles': {
+                        name: profile.roles
+                        for name, profile in app.state.config.participants.items()}}
+
+    @app.put('/v1/settings/roles')
+    async def put_roles(request: Request):
+        from odessy.collaboration.roles import declared_roles, resolve_role
+        data = await body(request)
+        if (set(data) != {'instance_id', 'revision', 'roles'}
+                or not isinstance(data['instance_id'], str)
+                or type(data['revision']) is not int or data['revision'] < 0
+                or not isinstance(data['roles'], dict)):
+            raise HTTPException(400, 'Invalid role bindings')
+        async with settings_lock:
+            if app.state.config is None:
+                raise HTTPException(503, 'Collaboration settings unavailable')
+            if data['instance_id'] != app.state.runtime_instance_id or data['revision'] != settings_revision:
+                raise HTTPException(409, 'Settings changed; reload before saving')
+            document = app.state.config.public_dict()
+            document['settings']['roles'] = data['roles']
+            try:
+                saved = await save_coordinated(document)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(400, str(exc))
+            return {'instance_id': app.state.runtime_instance_id,
+                    'revision': settings_revision,
+                    'roles': saved.settings.roles,
+                    'known_roles': declared_roles(saved),
+                    'resolved': {role: resolve_role(saved, role)
+                                 for role in declared_roles(saved)}}
+
     def editable_profiles():
         return [{'name': name, 'adapter': profile.adapter, 'provider': profile.provider,
                  'model': profile.model, 'endpoint': profile.endpoint}
@@ -1417,6 +1456,29 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
     async def submit_session_job(sid: str, request: Request):
         return await submit(await body(request), sid)
 
+    @app.post('/v1/sessions/{sid}/plan')
+    async def submit_plan(sid: str, request: Request):
+        """Build a role-based work plan from an intent and submit it for approval.
+
+        The request blocks until the high-risk approval is answered through the
+        usual approvals endpoint. Approval only authorizes the plan; execution is
+        performed separately via the agent.run tooling.
+        """
+        controller = find(sid)
+        submit_plan_fn = getattr(controller, 'submit_plan', None)
+        if not callable(submit_plan_fn):
+            raise HTTPException(503, 'Planning is not configured for this session')
+        data = await body(request)
+        if set(data) - {'intent', 'workspace'} or not isinstance(data.get('intent'), str):
+            raise HTTPException(400, 'An intent string and optional workspace are required')
+        workspace = data.get('workspace', '')
+        if not isinstance(workspace, str):
+            raise HTTPException(400, 'workspace must be a string')
+        try:
+            return await submit_plan_fn(data['intent'], workspace=workspace)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(400, str(exc))
+
     @app.get('/v1/sessions/{sid}/jobs')
     async def list_session_jobs(sid: str, request: Request):
         params = request.query_params
@@ -1472,14 +1534,14 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             raise HTTPException(503, 'Handoff runs are not configured for this session')
         return selected
 
-    async def confirmed_run(sid, name, values, action):
+    async def confirmed_run(sid, name, values, action, *, selector=None):
         """Each handoff decision is one approval, bound to what `confirm` shows."""
         nonlocal pending_admissions
         from odessy.runtime.types import ToolRequest
         admission_open()
         pending_admissions += 1
         try:
-            runs = runs_of(sid)
+            runs = (selector or runs_of)(sid)
             approved = await find(sid).confirm({'reason': 'Hand work between coding agents', 'risk': 'high'},
                                                ToolRequest(name, values))
             if not approved:
@@ -1535,5 +1597,65 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             return public(await runs_of(sid).cancel(run_id))
         except KeyError:
             raise HTTPException(404, 'Run not found')
+
+    def plan_runs_of(sid):
+        selected = getattr(find(sid), 'plan_runs', None)
+        if selected is None:
+            raise HTTPException(503, 'Plan runs are not configured for this session')
+        return selected
+
+    @app.post('/v1/sessions/{sid}/plan-runs', status_code=202)
+    async def submit_plan_run(sid: str, request: Request):
+        data = await body(request)
+        if set(data) - {'steps', 'workspace'} or 'steps' not in data:
+            raise HTTPException(400, 'steps is required')
+        steps = data['steps']
+        if not isinstance(steps, list) or len(steps) < 2:
+            raise HTTPException(400, 'steps must be a list of at least two steps')
+        for step in steps:
+            if (not isinstance(step, dict) or
+                    set(step) != {'role', 'participant', 'task', 'mode'} or
+                    not all(isinstance(step[key], str) for key in step)):
+                raise HTTPException(400, 'each step needs string role, participant, task and mode')
+        workspace = data.get('workspace', '')
+        if not isinstance(workspace, str):
+            raise HTTPException(400, 'workspace must be a string')
+        values = {'steps': steps, 'workspace': workspace}
+        return await confirmed_run(sid, 'agent.plan_run', values,
+                                   lambda manager: manager.start_plan(steps, workspace=workspace or None, approved=True),
+                                   selector=plan_runs_of)
+
+    @app.get('/v1/sessions/{sid}/plan-runs/{run_id}')
+    async def get_plan_run(sid: str, run_id: str):
+        try:
+            return public(plan_runs_of(sid).get(run_id))
+        except KeyError:
+            raise HTTPException(404, 'Plan run not found')
+
+    @app.get('/v1/sessions/{sid}/plan-runs/{run_id}/artifact')
+    async def get_plan_run_artifact(sid: str, run_id: str):
+        try:
+            return public(plan_runs_of(sid).artifact(run_id))
+        except KeyError:
+            raise HTTPException(404, 'Plan run not found')
+        except ValueError as exc:
+            raise HTTPException(409, str(exc))
+
+    @app.post('/v1/sessions/{sid}/plan-runs/{run_id}/continue')
+    async def continue_plan_run(sid: str, run_id: str, request: Request):
+        data = await body(request)
+        if set(data) != {'artifact_sha256'} or not isinstance(data['artifact_sha256'], str):
+            raise HTTPException(400, 'artifact_sha256 is required')
+        values = {'run_id': run_id, 'artifact_sha256': data['artifact_sha256']}
+        return await confirmed_run(sid, 'agent.plan_continue', values,
+                                   lambda manager: manager.continue_plan(**values, approved=True),
+                                   selector=plan_runs_of)
+
+    @app.post('/v1/sessions/{sid}/plan-runs/{run_id}/cancel')
+    async def cancel_plan_run(sid: str, run_id: str):
+        try:
+            return public(await plan_runs_of(sid).cancel(run_id))
+        except KeyError:
+            raise HTTPException(404, 'Plan run not found')
 
     return app
