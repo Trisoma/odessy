@@ -15,7 +15,7 @@ from .maintenance import guard,digest
 MANAGE_ACTIONS={'plan','repair-plan','install','inspect','verify','repair','rollback','uninstall','service-plan','service-install','start','stop','status','service-remove'}
 PACKAGE_ACTIONS={'package-review','package-install','package-launch','package-status','package-verify',
     'package-repair-review','package-repair','package-rollback-review','package-rollback',
-    'package-configure-review','package-configure','package-uninstall-review','package-uninstall',
+    'package-configure-review','package-configure','package-voice-configure-review','package-voice-configure','package-uninstall-review','package-uninstall',
     'package-register','installed-spec','package-launch-ack','package-launch-status','package-launch-pending',
     'voice-plan','voice-install','voice-status','voice-python-install'}
 
@@ -57,8 +57,8 @@ def _packaged(parameters,*,cancelled=lambda:False):
         # (action/root/payload/selection) stays usable here. `install_root` is
         # the installation whose runtime receives the Python packages, and it is
         # normalised before use.
-        allowed={'action','payload','confirm','features'} if action=='voice-install' else {
-            'action','payload','install_root','features'}
+        allowed={'action','payload','confirm','features','tts_provider'} if action=='voice-install' else {
+            'action','payload','install_root','features','tts_provider'}
         data={key:value for key,value in parameters.items() if key in allowed}
         if 'install_root' in data:
             value=data.get('install_root')
@@ -109,15 +109,21 @@ def _packaged(parameters,*,cancelled=lambda:False):
         manager=ManagedInstallation(root)
         record=manager.record()
         return dict(manager.verify(),registration=(record.get('windows_registration') or record.get('linux_registration') or {}).get('state','none'))
-    if action in ('package-configure-review','package-configure'):
+    if action in ('package-configure-review','package-configure','package-voice-configure-review','package-voice-configure'):
         from .contracts import SetupSelection
         from .maintenance import ManagedInstallation
         data,root=_versioned_root(parameters,'packaged configuration')
-        selection=SetupSelection.from_dict(data.get('selection'))
         manager=ManagedInstallation(root)
-        plan=manager.configuration_plan(selection,data.get('workspace') or None)
+        selection=data.get('selection')
+        workspace=data.get('workspace') or None
+        if action.startswith('package-voice-'):
+            voice=fields(selection, {'voice'}, 'voice configuration')['voice']
+            if action.endswith('-review'):return manager.voice_configuration_plan(voice)
+            return manager.configure_voice(voice,data.get('confirm'))
+        selection=SetupSelection.from_dict(selection)
+        plan=manager.configuration_plan(selection,workspace)
         if action.endswith('-review'):return plan
-        return manager.configure(selection,data.get('workspace') or None,data.get('confirm'))
+        return manager.configure(selection,workspace,data.get('confirm'))
     if action in ('package-uninstall-review','package-uninstall'):
         from .lifecycle import dispatch
         data,root=_versioned_root(parameters,'packaged uninstall')

@@ -166,6 +166,9 @@ class OdessyPolicy:
         (the host decides at the call), and None on a target this side cannot probe.
         """
 
+        if request.name=='ssh.run':
+            return {'target':'ssh','mode':'danger-full-access','isolation':'preferred',
+                    'network':'allow','provider':'openssh','enforcement':'none'}
         mode = self._effective_mode(request, decision)
         if mode is None:
             return None
@@ -213,6 +216,19 @@ class OdessyPolicy:
                 risk="high",
                 rule="tool_not_allowed",
             )
+        if request.name=='ssh.run':
+            if self.isolation_for('ssh.run')=='required':
+                return PolicyDecision('deny','SSH cannot enforce the required remote sandbox','high',rule='ssh_isolation_required')
+            command=request.arguments.get('command');timeout=request.arguments.get('timeout',20)
+            if (set(request.arguments)-{'command','timeout'} or not isinstance(command,str)
+                    or not command.strip() or len(command)>8192 or any(c in command for c in '\x00\r\n')
+                    or type(timeout) is not int or not 1<=timeout<=60):
+                return PolicyDecision('deny','Invalid SSH command or timeout','high',rule='tool_arguments')
+            finding=classify_command(command)
+            if finding is not None and finding.action=='deny':
+                return PolicyDecision('deny',finding.reason,'high',rule=finding.rule)
+            return PolicyDecision('confirm','Remote SSH command runs with the remote account permissions and no sandbox',
+                                  'high',rule='ssh_exact_command')
         if request.name == "user.ask":
             from odessy.interaction.context import current_interactions
             if _ESCALATION_ARGUMENT_NAMES & set(request.arguments):

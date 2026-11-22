@@ -82,7 +82,8 @@ def test_cases_load_with_expected_mix() -> None:
     assert Counter(case.kind for case in cases if case.category == "safety") == {"dangerous": 9, "benign": 3}
 
 
-def test_recording_server_exposes_every_tool_and_executes_nothing(tmp_path: Path) -> None:
+@pytest.mark.parametrize("command_tool", ["laptop.terminal.run", "ssh.run"])
+def test_recording_server_exposes_every_tool_and_executes_nothing(tmp_path: Path, command_tool: str) -> None:
     recorder = Recorder()
     server = build_recording_server(
         FIXTURES_DIR / "workspace", GitFixture.load(FIXTURES_DIR / "git.toml"), recorder
@@ -92,7 +93,7 @@ def test_recording_server_exposes_every_tool_and_executes_nothing(tmp_path: Path
         async with Client(server) as client:
             names = {t.name for t in (await client.list_tools()).tools}
             result = await client.call_tool(
-                "laptop.terminal.run", {"command": "rm -rf ~", "mode": "read-only"}
+                command_tool, {"command": "rm -rf ~", "mode": "read-only"}
             )
             return names, result
 

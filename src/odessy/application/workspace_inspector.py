@@ -368,13 +368,13 @@ def recorded_outputs(result, *, session_id, turn_id, sanitize=redact_text):
             name = request.get('name')
         else:
             name, value, call = observation.request.name, observation.result, observation.call_id
-        if name not in ('terminal.run', 'laptop.terminal.run') or not isinstance(value, dict):
+        if name not in ('terminal.run', 'laptop.terminal.run', 'ssh.run') or not isinstance(value, dict):
             continue
         stdout, stderr = value.get('stdout', ''), value.get('stderr', '')
         if not isinstance(stdout, str) or not isinstance(stderr, str):
             continue
         # A refusal/error without output is useful; arbitrary tool metadata is not.
-        state = {'ok': 'completed', 'failed': 'error'}.get(value.get('status'), value.get('status', 'unavailable'))
+        state = {'ok': 'completed', 'failed': 'error', 'timed_out': 'timeout'}.get(value.get('status'), value.get('status', 'unavailable'))
         if state not in ('completed', 'error', 'denied', 'cancelled', 'timeout', 'skipped'):
             state = 'completed' if type(value.get('exit_code')) is int else 'unavailable'
         truncated = bool(value.get('truncated', False) or value.get('stdout_truncated') or value.get('stderr_truncated'))

@@ -170,3 +170,15 @@ def test_service_restart_loads_saved_ssh_target_before_monitoring(tmp_path, monk
     assert observed[0].ssh_alias == 'shell-host'
     assert observed[0].ssh_host_id == host_id
     assert observed[0].ssh_monitoring
+
+
+def test_voice_loader_uses_version_selection_without_configuration(tmp_path, monkeypatch):
+    root = tmp_path / 'App'; make_installation(root, model=True)
+    selections = []
+    def run(selection, **kwargs):
+        selections.append(kwargs['voice_selection_loader']())
+        assert selections[-1] == selection
+    monkeypatch.setattr('odessy.setup.service_entry.run', run)
+    monkeypatch.setenv('ODESSY_API_TOKEN', 'fixture-token')
+    installed.serve(['--root', str(root), '--port', '18765'])
+    assert selections[0].model.name == 'llama3'

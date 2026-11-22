@@ -1,23 +1,18 @@
 # Current support and release status
 
-**Developer Preview · v0.5.0-alpha**  
-Documentation reviewed: November 15, 2026.
+**English** | [简体中文](zh-CN/current-status.md) | [Español](es/current-status.md)
+
+**Developer Preview · v0.5.0-alpha**
 
 ## Source and release baseline
 
-This documentation targets the implementation merged by [PR #67](https://github.com/Trisoma/odessy/pull/67)
-into `develop` at `3a52fcc69efe750c5f97526920c8bbc757bb65f6`.
-The reviewed feature tip was `b89361b58b4aa0da8efb3b313eaac89dd2ccdcb8`.
-Required hosted jobs passed on that PR head; the last CodeRabbit check was cancelled.
-That is not a claim that every review finding is resolved.
+[v0.5.0-alpha](https://github.com/Trisoma/odessy/releases/tag/v0.5.0-alpha) is a public prerelease, published November 19, 2026. It includes a Windows x64 installer.
 
-The local develop integration combines this implementation with the refreshed
-developer-preview documentation. Earlier `80f2580` source lacked these modules;
-check your actual source revision when diagnosing an unavailable feature.
-Documentation alone does not enable a runtime capability.
+The installer was built from application source `6f96e71` and predates the security fixes in `08efca9`. The [verification record](verification/windows-piper-installer-2026-11-18.md) identifies the EXE by checksum and records the isolated upgrade and Piper synthesis checks for that file. [Run from source](getting-started.md) to use the later fixes.
 
-`v0.5.0-alpha` is the intended next preview label, not a claim that an artifact
-has been published. The older `v0.5.0-unstable` release remains a separate snapshot.
+## First contributor run
+
+Follow [Getting started](getting-started.md), then check one approved local command in the [manual](GOLDEN_PATH.md). See [Contributing](../CONTRIBUTING.md) for component checks.
 
 ## Capability matrix
 
@@ -31,9 +26,10 @@ has been published. The older `v0.5.0-unstable` release remains a separate snaps
 | Context/memory/retrieval | Explicit project facts, opt-in bounded lexical indexing and Custom context/citations | Source validation and current live workspace authority remain required. No automatic cloud indexing. |
 | Interactive terminal | Local Windows PTY with verified packaged Node/native helper and explicit grant | Runs with user OS permissions; no remote PTY, restored handles or replayed input. Missing closure means unavailable. |
 | Checkpoints | Git-backed bounded text snapshots and preview; supported non-Windows restoration uses exact approval and a safety snapshot | Windows restoration is disabled in the service and UI pending handle-based safety. Creation/list/preview remain available; binary/sensitive/unsupported files are excluded. |
-| Monitoring | Optional Go aggregation with local/paired telemetry and read-only SSH target support | Connectivity, permission and freshness are separate; SSH execution/workspace capabilities remain false. |
-| Voice | Existing provider/controller lifecycle and scoped prior audio evidence | Microphone, echo, model assets and device/provider compatibility require their own checks. |
-| Setup | Windows Flutter setup, private runtime closure and versioned maintenance | Final merged source has not been qualified as one new coherent installed release candidate. |
+| Monitoring | Optional Go aggregation with local/paired telemetry and read-only SSH status | Connectivity, permission and freshness remain separate. Monitoring DTOs grant no execution or workspace access. |
+| SSH execution | Explicit temporary Custom target selection and exactly approved `ssh.run` commands | Separate from monitoring; no remote sandbox, PTY, file inspector or Harness SSH execution. Reconnect after service restart. |
+| Voice | Piper recommended for CPU; Kokoro selectable; optional Whisper input and separate wake downloads | Installed Piper model load/synthesis verified; microphone, playback, echo and wake require device-specific acceptance. |
+| Setup | Windows installer with a bundled runtime and optional Piper/Kokoro | Download the published alpha. See above for the installer’s source and checks. |
 
 ## Platform matrix
 
@@ -45,7 +41,8 @@ has been published. The older `v0.5.0-unstable` release remains a separate snaps
 | macOS | Unqualified. |
 
 No general minimum RAM/GPU specification, complete sandbox, autonomous coordination
-parity, MCU support or general remote execution over SSH is claimed.
+parity or MCU support is claimed. SSH command execution has the bounded Custom scope
+above; it is not a general remote IDE or confinement guarantee.
 
 ## Gates before a beta claim
 

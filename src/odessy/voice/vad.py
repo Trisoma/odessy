@@ -60,7 +60,7 @@ class SileroSpeechDetector:
     """openWakeWord's bundled Silero VAD, behind a lazy import."""
 
     def __init__(self, *, frame_bytes: int = VAD_FRAME_BYTES,
-                 threshold: float = DEFAULT_VAD_THRESHOLD) -> None:
+                 threshold: float = DEFAULT_VAD_THRESHOLD, model_path=None) -> None:
         self.frame_bytes = frame_bytes
         self._threshold = threshold
         try:
@@ -72,7 +72,8 @@ class SileroSpeechDetector:
             ) from error
         self._numpy = numpy
         from odessy.voice.assets import asset_dir
-        model = asset_dir() / 'silero_vad.onnx'
+        from pathlib import Path
+        model = Path(model_path) if model_path is not None else asset_dir() / 'silero_vad.onnx'
         self._vad: Any = VAD(model_path=str(model)) if model.is_file() else VAD()
 
     def is_speech(self, pcm: bytes) -> bool:

@@ -76,7 +76,8 @@ def test_single_mode_never_offers_the_laptop_tool() -> None:
     names = model_tool_names("single")
     assert "laptop.terminal.run" not in names
     assert "terminal.run" in names
-    assert model_tool_names("split") == list(TOOL_REQUEST_SCHEMAS)
+    assert "ssh.run" not in names  # No execution target has been selected.
+    assert model_tool_names("split") == [name for name in TOOL_REQUEST_SCHEMAS if name != "ssh.run"]
 
 
 def test_laptop_requests_use_the_one_command_tool_in_single_mode() -> None:
@@ -94,7 +95,7 @@ def test_rendered_contracts_follow_the_mode(single: None) -> None:
 
 def test_split_mode_contracts_are_unchanged() -> None:
     # conftest pins split.
-    assert {tool["function"]["name"] for tool in build_openai_tools()} == set(TOOL_REQUEST_SCHEMAS)
+    assert {tool["function"]["name"] for tool in build_openai_tools()} == set(TOOL_REQUEST_SCHEMAS) - {"ssh.run"}
     assert tool_description("terminal.run").startswith("Run a shell command in the local workspace")
 
 

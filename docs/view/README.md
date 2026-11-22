@@ -6,6 +6,13 @@ A visual guide to the recorded production Flutter interface for developers. Clic
 
 [Conversation](#conversation-and-history) · [Other pages](#navigation-pages) · [Settings](#settings) · [Workspace panels](#workspace-and-agent-panels) · [Verification](#capture-and-verification)
 
+## Latest affected-screen captures
+
+See [SSH setup, direct saved-chat navigation and the compact inspector](ssh-history-inspector/README.md)
+for the November 17 source preview. Those images are production-widget renders
+with deterministic test APIs; their manifest explicitly distinguishes them from
+the earlier connected-service gallery below. Use them for the changed states.
+
 ## Main page
 
 [Odessy main conversation in dark mode](conversation/main-dark.png)

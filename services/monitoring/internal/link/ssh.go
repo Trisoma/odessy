@@ -194,6 +194,16 @@ func (s *SSHLink) commandArgs(knownPath, keyAlias, remote string) []string {
 		"-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15",
 		"-o", "ServerAliveCountMax=2", "-o", "LogLevel=ERROR",
 	}
+	if s.cfg.PasswordURL != "" {
+		for i, v := range args {
+			if v == "BatchMode=yes" {
+				args[i] = "BatchMode=no"
+			}
+		}
+		args = append([]string{"-o", "PreferredAuthentications=password", "-o", "PubkeyAuthentication=no",
+			"-o", "KbdInteractiveAuthentication=no", "-o", "NumberOfPasswordPrompts=1",
+			"-o", "ProxyCommand=none", "-o", "ProxyJump=none", "-o", "PermitLocalCommand=no"}, args...)
+	}
 	if s.cfg.ConfigPath != "" {
 		args = append([]string{"-F", s.cfg.ConfigPath}, args...)
 	}
@@ -219,6 +229,14 @@ func (s *SSHLink) run(ctx context.Context, remote string) (string, time.Duration
 	}
 	args := s.commandArgs(known.Name(), keyAlias, remote)
 	cmd := exec.CommandContext(ctx, s.cfg.Binary, args...)
+	if s.cfg.PasswordURL != "" {
+		helper, err := os.Executable()
+		if err != nil {
+			return "", 0, err
+		}
+		cmd.Env = append(os.Environ(), "SSH_ASKPASS="+helper, "SSH_ASKPASS_REQUIRE=force", "DISPLAY=odessy:0",
+			"ODESSY_SSH_ASKPASS=1", "ODESSY_SSH_PASSWORD_URL="+s.cfg.PasswordURL, "ODESSY_SSH_PASSWORD_TOKEN="+s.cfg.PasswordToken)
+	}
 	cmd.WaitDelay = time.Second
 	stdout := &boundedBuffer{limit: 32 << 10}
 	stderr := &boundedBuffer{limit: 4096}

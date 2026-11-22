@@ -628,6 +628,90 @@
       "platform": "windows",
       "architecture": "x86_64",
       "provenance": "runtime-pin-verified"
+    },
+    {
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice"
+      ],
+      "id": "py-piper_tts",
+      "label": "Piper 1.3.0 speech engine (GPL-3.0-or-later)",
+      "kind": "wheel",
+      "file": "piper_tts-1.3.0-cp39-abi3-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/10/a5/d782d469fc19db9bf19f1725d4a6ef77d2413515b61f5017340688f5d093/piper_tts-1.3.0-cp39-abi3-win_amd64.whl",
+      "sha256": "dc6b5be4e15f3c0f4a6067b515bc6202ddf3e2b0c6cbd6c8bdeccab2453c89c7",
+      "size_bytes": 13826773,
+      "license": "GPL-3.0-or-later",
+      "provenance": "pypi-digest"
+    },
+    {
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice"
+      ],
+      "id": "piper-model",
+      "label": "Piper English voice (LJ Speech, medium)",
+      "kind": "file",
+      "file": "en_US-ljspeech-medium.onnx",
+      "field": "tts_model",
+      "url": "https://huggingface.co/rhasspy/piper-voices/resolve/0ca208afc2a2ee102b1e961e72e0a7e4907be3d0/en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx",
+      "sha256": "6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22",
+      "size_bytes": 63531379,
+      "license": "MIT",
+      "provenance": "file-only"
+    },
+    {
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice"
+      ],
+      "id": "piper-config",
+      "label": "Piper voice configuration",
+      "kind": "file",
+      "file": "en_US-ljspeech-medium.onnx.json",
+      "field": "piper_config",
+      "url": "https://huggingface.co/rhasspy/piper-voices/resolve/0ca208afc2a2ee102b1e961e72e0a7e4907be3d0/en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx.json",
+      "sha256": "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860",
+      "size_bytes": 4972,
+      "license": "MIT",
+      "provenance": "file-only"
+    },
+    {
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice"
+      ],
+      "id": "piper-model-card",
+      "label": "Piper voice model card",
+      "kind": "file",
+      "file": "piper-ljspeech-MODEL_CARD",
+      "field": "piper_model_card",
+      "url": "https://huggingface.co/rhasspy/piper-voices/resolve/0ca208afc2a2ee102b1e961e72e0a7e4907be3d0/en/en_US/ljspeech/medium/MODEL_CARD",
+      "sha256": "fbee1529c89d36b3fe76d7e9f3f832dce17f44900a52d76a9bda735654766b4d",
+      "size_bytes": 517,
+      "license": "MIT",
+      "provenance": "file-only"
+    },
+    {
+      "platform": "windows",
+      "architecture": "x86_64",
+      "features": [
+        "voice"
+      ],
+      "id": "piper-repository-license",
+      "label": "Piper voice repository license",
+      "kind": "file",
+      "file": "piper-voices-README.md",
+      "field": "piper_license",
+      "url": "https://huggingface.co/rhasspy/piper-voices/resolve/0ca208afc2a2ee102b1e961e72e0a7e4907be3d0/README.md",
+      "sha256": "33e93643fce5180886300f9f0070eeeab8af148efb8e84361f8904def80fd9fb",
+      "size_bytes": 497,
+      "license": "MIT",
+      "provenance": "file-only"
     }
   ]
 }

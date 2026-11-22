@@ -45,17 +45,20 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
       sourceRoot: sourceRoot,
       payloadRoot: payloadRoot,
       timeout: timeout,
-      isolated: isolated);
+      isolated: isolated,
+      pythonPath: pythonPath);
   LocalSetupBackend._({
     required this.python,
     required this.sourceRoot,
     required this.payloadRoot,
     required this.timeout,
     required this.isolated,
+    required this.pythonPath,
   });
   factory LocalSetupBackend({
     String python = const String.fromEnvironment('ODESSY_SETUP_PYTHON'),
     String sourceRoot = const String.fromEnvironment('ODESSY_SETUP_ROOT'),
+    String pythonPath = const String.fromEnvironment('ODESSY_SETUP_PYTHONPATH'),
     String? executablePath,
     String payloadRoot = '',
     Duration timeout = const Duration(seconds: 30),
@@ -85,6 +88,7 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
       payloadRoot: payload,
       timeout: timeout,
       isolated: root.isEmpty && installedPython != null,
+      pythonPath: pythonPath,
     );
   }
 
@@ -177,9 +181,33 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
     return '$home${Platform.pathSeparator}odessy-setup.json';
   }
 
-  final String python, sourceRoot, payloadRoot;
+  final String python, sourceRoot, payloadRoot, pythonPath;
   final bool isolated;
   final Duration timeout;
+
+  /// Shared by checkout helpers and their owned service; never used by an
+  /// isolated packaged interpreter. Model selection still comes from the spec.
+  Map<String, String> get processEnvironment => {
+        'PYTHONUNBUFFERED': '1',
+        if (payloadRoot.isNotEmpty) 'ODESSY_SETUP_PAYLOAD': payloadRoot,
+        if (sourceRoot.isNotEmpty)
+          'PYTHONPATH': [
+            '$sourceRoot${Platform.pathSeparator}${Directory('$sourceRoot${Platform.pathSeparator}bootstrap').existsSync() ? 'bootstrap' : 'src'}',
+            if (pythonPath.isNotEmpty && !isolated) pythonPath,
+          ].join(Platform.isWindows ? ';' : ':'),
+        if (!isolated &&
+            sourceRoot.isNotEmpty &&
+            const bool.fromEnvironment('ODESSY_LOCAL_DESKTOP')) ...{
+          'ODESSY_CONFIG_FILE':
+              '$sourceRoot/build/local-desktop/state/odessy.env',
+          'ODESSY_COLLABORATION_FILE':
+              '$sourceRoot/build/local-desktop/state/collaboration.toml',
+          'ODESSY_LINK_STATE_DIR': '$sourceRoot/build/local-desktop/state/link',
+          'ODESSY_MONITOR_STATE_DIR':
+              '$sourceRoot/build/local-desktop/state/monitor',
+          'ODESSY_MONITORING': 'off',
+        },
+      };
   Process? _process;
   Directory? _cancelDirectory;
   Completer<void>? _settled;
@@ -230,16 +258,7 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
         python,
         [if (isolated) '-I', '-m', 'odessy.setup.bridge'],
         workingDirectory: sourceRoot.isEmpty ? null : sourceRoot,
-        environment: {
-          'PYTHONUNBUFFERED': '1',
-          if (const bool.fromEnvironment('ODESSY_LOCAL_DESKTOP'))
-            'ODESSY_LINK_STATE_DIR':
-                '${const String.fromEnvironment('ODESSY_DESKTOP_ROOT')}/build/local-desktop/state/link',
-          if (payloadRoot.isNotEmpty) 'ODESSY_SETUP_PAYLOAD': payloadRoot,
-          if (sourceRoot.isNotEmpty)
-            'PYTHONPATH':
-                '$sourceRoot${Platform.pathSeparator}${Directory('$sourceRoot${Platform.pathSeparator}bootstrap').existsSync() ? 'bootstrap' : 'src'}',
-        },
+        environment: processEnvironment,
         runInShell: false,
       );
       _process = process;
@@ -260,6 +279,20 @@ class LocalSetupBackend implements SetupBackend, SetupMetadataBackend {
       final value = jsonDecode(results[0] as String);
       if (value is! Json) {
         throw const FormatException('Invalid setup response.');
+      }
+      // Carry explicit checkout dependencies to the configured child too.
+      // Packaged interpreters retain their existing isolation.
+      if (!isolated &&
+          sourceRoot.isNotEmpty &&
+          pythonPath.isNotEmpty &&
+          value['status'] == 'ok' &&
+          {'resume', 'launch'}.contains(request.operation) &&
+          value['result'] is Json &&
+          value['result']['pythonpath'] is String) {
+        value['result']['pythonpath'] = [
+          value['result']['pythonpath'],
+          pythonPath
+        ].join(Platform.isWindows ? ';' : ':');
       }
       final reply = SetupReply.fromJson(value, request.id);
       if ((results[2] != 0) && reply.ok) {

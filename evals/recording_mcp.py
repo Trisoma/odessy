@@ -33,7 +33,7 @@ FIXED_TIME = "2026-10-17T14:30:00+08:00"
 #: Arguments the agent loop injects for process-spawning tools after policy.
 _INJECTED_ARGUMENTS = ("mode", "isolation")
 
-_TERMINAL_TOOLS = frozenset({"terminal.run", "laptop.terminal.run"})
+_TERMINAL_TOOLS = frozenset({"terminal.run", "laptop.terminal.run", "ssh.run"})
 
 #: The Node tool server's ``SKIP_DIRS`` and result ceiling. A leftover ``__pycache__``
 #: in a fixture once failed every search that reached it, which the real server skips.

@@ -47,3 +47,36 @@ def test_silero_uses_512_sample_chunks_instead_of_upstream_480_default(
 
     detector = SileroSpeechDetector()
     assert detector.is_speech(bytes(VAD_FRAME_BYTES)) is expected
+
+
+def test_wake_uses_vad_beside_selected_model_with_an_isolated_profile(tmp_path, monkeypatch):
+    import asyncio
+    from odessy.voice.config import VoiceConfig
+    from odessy.voice.hybrid import HybridAudioAdapter
+    from odessy.voice import hybrid, assets
+    resources = tmp_path / 'selected-models'
+    resources.mkdir()
+    (resources / 'hey_jarvis.onnx').write_bytes(b'wake')
+    (resources / 'silero_vad.onnx').write_bytes(b'vad')
+    monkeypatch.setattr(assets, 'asset_dir', lambda: tmp_path / 'isolated-empty-profile')
+    package = ModuleType('openwakeword')
+    module = ModuleType('openwakeword.vad')
+    class VAD:
+        def __init__(self, model_path=None):
+            if model_path != str(resources / 'silero_vad.onnx'):
+                raise FileNotFoundError('VAD must use selected wake resources')
+    module.VAD = VAD
+    monkeypatch.setitem(sys.modules, 'openwakeword', package)
+    monkeypatch.setitem(sys.modules, 'openwakeword.vad', module)
+    # This initialization test must not depend on the optional voice extra.
+    monkeypatch.setitem(sys.modules, 'numpy', ModuleType('numpy'))
+    monkeypatch.setattr(hybrid, '_recognition_missing', lambda c: None)
+    async def run():
+        adapter = HybridAudioAdapter(VoiceConfig('', '', '', '', wake_model=resources / 'hey_jarvis.onnx'),
+            lambda *a: None, stream_factory=lambda: object(), wake_factory=lambda: object(),
+            stt_factory=lambda: object())
+        try:
+            assert await adapter._ensure_components()
+        finally:
+            await adapter.aclose()
+    asyncio.run(run())

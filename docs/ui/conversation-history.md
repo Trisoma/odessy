@@ -44,9 +44,21 @@ user_version`.
 
 ## History versus resumability
 
-Reading history never creates a runtime. Listing, opening, searching, exporting,
+Reading history through the history API never creates a runtime. Listing, opening, searching, exporting,
 renaming, pinning, archiving and deleting do not construct an engine or session;
 they are authenticated HTTP reads/writes against the service's database.
+
+In the desktop, selecting a saved chat opens the conversation directly. A current
+matching live session is reused; otherwise a compatible continuable Custom chat
+requests an explicit service resume automatically. No message/tool is resent.
+Harness history-only chats and refused continuations stay readable, with the
+actual limitation/error shown. Workspace binding and fresh grants remain service
+requirements. History details remain available for diagnosing binding failures.
+
+Right-click a saved chat or use its keyboard-accessible overflow for rename,
+pin/unpin, archive/unarchive, export and confirmed deletion. These management
+actions target that row and do not change the selected transcript or resume it.
+An active live conversation must be switched away from before deletion.
 
 `continuation` is reported per conversation:
 

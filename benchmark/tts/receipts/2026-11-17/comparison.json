@@ -1,0 +1,453 @@
+{
+  "schema": 1,
+  "utc": "2026-11-17T05:41:39.443193+00:00",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "processor": "Intel64 Family 6 Model 186 Stepping 2, GenuineIntel",
+  "logical_cpus": 16,
+  "texts": {
+    "short": "Odessy is ready to help you.",
+    "answer": "Odessy is ready. This is a short local speech performance test. The model generates speech on this computer. We are measuring how long it takes to produce the complete answer before any audio is played."
+  },
+  "repeats": 2,
+  "thread_order": [
+    1,
+    2,
+    4,
+    8,
+    0
+  ],
+  "benchmark_sha256": "fa2a45526e2d575f4b6e4fd66272edec2c33ab8acba5ac68a5553f3201c641eb",
+  "scope": "CPU synthesis only; no speaker playback, agent, STT, or perceived quality measurement. First audio is an API chunk, not sub-phrase streaming. 0 means ONNX default.",
+  "assets": {
+    "kokoro": {
+      "model_sha256": "ae315a79b623f244700e4afb9246c46a26066782e049ba174bf3ba433970ee9c",
+      "auxiliary_sha256": "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
+    },
+    "piper": {
+      "model_sha256": "6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22",
+      "auxiliary_sha256": "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860"
+    }
+  },
+  "profiles": [
+    {
+      "engine": "kokoro",
+      "threads": 1,
+      "error": "Profile timed out after 50s: Timeout (0:00:35)!\nThread 0x000006c8 (most recent call first):\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\onnxruntime\\capi\\onnxruntime_inference_collection.py\", line 395 in run\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 136 in _infer\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 225 in _create_batch\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 318 in _create_batches\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 298 in create_timed\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 258 in create\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 37 in measure\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 79 in worker\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 113 in main\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 186 in <module>\n"
+    },
+    {
+      "engine": "piper",
+      "threads": 1,
+      "load_seconds": 0.7954429000019445,
+      "cold_short": {
+        "wall_seconds": 0.2410124000016367,
+        "first_audio_seconds": 0.2409544000038295,
+        "audio_seconds": 1.9504761904761905,
+        "rtf": 0.12356592773521413,
+        "chunks": 1,
+        "process_cpu_seconds": 0.234375
+      },
+      "runs": [
+        {
+          "text": "short",
+          "repeat": 0,
+          "wall_seconds": 0.171416400000453,
+          "first_audio_seconds": 0.17136089999985415,
+          "audio_seconds": 1.9736961451247166,
+          "rtf": 0.0868504508274354,
+          "chunks": 1,
+          "process_cpu_seconds": 0.171875
+        },
+        {
+          "text": "answer",
+          "repeat": 0,
+          "wall_seconds": 1.1410592000029283,
+          "first_audio_seconds": 0.12195420000352897,
+          "audio_seconds": 12.364625850340136,
+          "rtf": 0.09228416725375795,
+          "chunks": 4,
+          "process_cpu_seconds": 1.140625
+        },
+        {
+          "text": "answer",
+          "repeat": 1,
+          "wall_seconds": 4.322059199999785,
+          "first_audio_seconds": 0.22236810000322293,
+          "audio_seconds": 12.445895691609977,
+          "rtf": 0.347267830865188,
+          "chunks": 4,
+          "process_cpu_seconds": 3.9375
+        },
+        {
+          "text": "short",
+          "repeat": 1,
+          "wall_seconds": 0.6703007000032812,
+          "first_audio_seconds": 0.6701709999979357,
+          "audio_seconds": 1.9388662131519274,
+          "rtf": 0.34571787132934956,
+          "chunks": 1,
+          "process_cpu_seconds": 0.671875
+        }
+      ],
+      "versions": {
+        "onnxruntime": "1.32.0",
+        "numpy": "2.4.6",
+        "piper-tts": "1.3.0"
+      },
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "median": {
+        "short": {
+          "wall_seconds": 0.4208585500018671,
+          "first_audio_seconds": 0.42076594999889494,
+          "audio_seconds": 1.9562811791383221,
+          "rtf": 0.2162841610783925,
+          "process_cpu_seconds": 0.421875
+        },
+        "answer": {
+          "wall_seconds": 2.7315592000013567,
+          "first_audio_seconds": 0.17216115000337595,
+          "audio_seconds": 12.405260770975056,
+          "rtf": 0.21977599905947295,
+          "process_cpu_seconds": 2.5390625
+        }
+      }
+    },
+    {
+      "engine": "kokoro",
+      "threads": 2,
+      "error": "Profile timed out after 50s: Timeout (0:00:35)!\nThread 0x00006e0c (most recent call first):\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\onnxruntime\\capi\\onnxruntime_inference_collection.py\", line 395 in run\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 136 in _infer\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 225 in _create_batch\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 318 in _create_batches\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 298 in create_timed\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 258 in create\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 37 in measure\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 84 in worker\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 113 in main\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 186 in <module>\n"
+    },
+    {
+      "engine": "piper",
+      "threads": 2,
+      "load_seconds": 0.883924300003855,
+      "cold_short": {
+        "wall_seconds": 0.16956510000454728,
+        "first_audio_seconds": 0.16949680000107037,
+        "audio_seconds": 1.8692063492063493,
+        "rtf": 0.09071502462879143,
+        "chunks": 1,
+        "process_cpu_seconds": 0.28125
+      },
+      "runs": [
+        {
+          "text": "short",
+          "repeat": 0,
+          "wall_seconds": 0.11818449999555014,
+          "first_audio_seconds": 0.11812539999664295,
+          "audio_seconds": 1.8692063492063493,
+          "rtf": 0.06322710172995634,
+          "chunks": 1,
+          "process_cpu_seconds": 0.203125
+        },
+        {
+          "text": "answer",
+          "repeat": 0,
+          "wall_seconds": 0.6899329000007128,
+          "first_audio_seconds": 0.07337859999825014,
+          "audio_seconds": 12.49233560090703,
+          "rtf": 0.05522849545849688,
+          "chunks": 4,
+          "process_cpu_seconds": 1.375
+        },
+        {
+          "text": "answer",
+          "repeat": 1,
+          "wall_seconds": 1.2932321000043885,
+          "first_audio_seconds": 0.06883620000007795,
+          "audio_seconds": 12.538775510204081,
+          "rtf": 0.10313862776727709,
+          "chunks": 4,
+          "process_cpu_seconds": 2.484375
+        },
+        {
+          "text": "short",
+          "repeat": 1,
+          "wall_seconds": 0.4596471000040765,
+          "first_audio_seconds": 0.4595030999989831,
+          "audio_seconds": 1.9504761904761905,
+          "rtf": 0.23565891357630875,
+          "chunks": 1,
+          "process_cpu_seconds": 0.78125
+        }
+      ],
+      "versions": {
+        "onnxruntime": "1.32.0",
+        "numpy": "2.4.6",
+        "piper-tts": "1.3.0"
+      },
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "median": {
+        "short": {
+          "wall_seconds": 0.2889157999998133,
+          "first_audio_seconds": 0.288814249997813,
+          "audio_seconds": 1.90984126984127,
+          "rtf": 0.14944300765313254,
+          "process_cpu_seconds": 0.4921875
+        },
+        "answer": {
+          "wall_seconds": 0.9915825000025507,
+          "first_audio_seconds": 0.07110739999916404,
+          "audio_seconds": 12.515555555555554,
+          "rtf": 0.07918356161288698,
+          "process_cpu_seconds": 1.9296875
+        }
+      }
+    },
+    {
+      "engine": "kokoro",
+      "threads": 4,
+      "error": "Profile timed out after 50s: Timeout (0:00:35)!\nThread 0x00000f5c (most recent call first):\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\onnxruntime\\capi\\onnxruntime_inference_collection.py\", line 395 in run\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 136 in _infer\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 225 in _create_batch\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 318 in _create_batches\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 298 in create_timed\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 258 in create\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 37 in measure\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 84 in worker\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 113 in main\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 186 in <module>\n"
+    },
+    {
+      "engine": "piper",
+      "threads": 4,
+      "load_seconds": 0.9180020999992848,
+      "cold_short": {
+        "wall_seconds": 0.13869890000205487,
+        "first_audio_seconds": 0.13862649999646237,
+        "audio_seconds": 1.9504761904761905,
+        "rtf": 0.07111027587995977,
+        "chunks": 1,
+        "process_cpu_seconds": 0.421875
+      },
+      "runs": [
+        {
+          "text": "short",
+          "repeat": 0,
+          "wall_seconds": 0.08047580000129528,
+          "first_audio_seconds": 0.08037290000356734,
+          "audio_seconds": 1.8924263038548752,
+          "rtf": 0.04252519627177342,
+          "chunks": 1,
+          "process_cpu_seconds": 0.3125
+        },
+        {
+          "text": "answer",
+          "repeat": 0,
+          "wall_seconds": 0.4844004999977187,
+          "first_audio_seconds": 0.06352619999961462,
+          "audio_seconds": 12.376235827664399,
+          "rtf": 0.03913956607993411,
+          "chunks": 4,
+          "process_cpu_seconds": 1.921875
+        },
+        {
+          "text": "answer",
+          "repeat": 1,
+          "wall_seconds": 0.4519383000006201,
+          "first_audio_seconds": 0.04679190000024391,
+          "audio_seconds": 12.620045351473923,
+          "rtf": 0.03581114706119794,
+          "chunks": 4,
+          "process_cpu_seconds": 1.8125
+        },
+        {
+          "text": "short",
+          "repeat": 1,
+          "wall_seconds": 0.07930470000428613,
+          "first_audio_seconds": 0.07921540000097593,
+          "audio_seconds": 1.9736961451247166,
+          "rtf": 0.040180805034340746,
+          "chunks": 1,
+          "process_cpu_seconds": 0.3125
+        }
+      ],
+      "versions": {
+        "onnxruntime": "1.32.0",
+        "numpy": "2.4.6",
+        "piper-tts": "1.3.0"
+      },
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "median": {
+        "short": {
+          "wall_seconds": 0.07989025000279071,
+          "first_audio_seconds": 0.07979415000227164,
+          "audio_seconds": 1.933061224489796,
+          "rtf": 0.04135300065305708,
+          "process_cpu_seconds": 0.3125
+        },
+        "answer": {
+          "wall_seconds": 0.4681693999991694,
+          "first_audio_seconds": 0.055159049999929266,
+          "audio_seconds": 12.49814058956916,
+          "rtf": 0.037475356570566026,
+          "process_cpu_seconds": 1.8671875
+        }
+      }
+    },
+    {
+      "engine": "kokoro",
+      "threads": 8,
+      "error": "Profile timed out after 50s: Timeout (0:00:35)!\nThread 0x000009a4 (most recent call first):\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\onnxruntime\\capi\\onnxruntime_inference_collection.py\", line 395 in run\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 136 in _infer\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 225 in _create_batch\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 318 in _create_batches\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 298 in create_timed\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 258 in create\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 37 in measure\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 84 in worker\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 113 in main\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 186 in <module>\n"
+    },
+    {
+      "engine": "piper",
+      "threads": 8,
+      "load_seconds": 1.0228024999960326,
+      "cold_short": {
+        "wall_seconds": 0.11961929999961285,
+        "first_audio_seconds": 0.11955540000053588,
+        "audio_seconds": 1.8575963718820863,
+        "rtf": 0.0643946671140494,
+        "chunks": 1,
+        "process_cpu_seconds": 0.5625
+      },
+      "runs": [
+        {
+          "text": "short",
+          "repeat": 0,
+          "wall_seconds": 0.062222900000051595,
+          "first_audio_seconds": 0.06209659999876749,
+          "audio_seconds": 1.9272562358276644,
+          "rtf": 0.03228574324644996,
+          "chunks": 1,
+          "process_cpu_seconds": 0.5
+        },
+        {
+          "text": "answer",
+          "repeat": 0,
+          "wall_seconds": 0.39424069999950007,
+          "first_audio_seconds": 0.048511900000448804,
+          "audio_seconds": 12.561995464852608,
+          "rtf": 0.03138360470695535,
+          "chunks": 4,
+          "process_cpu_seconds": 3.109375
+        },
+        {
+          "text": "answer",
+          "repeat": 1,
+          "wall_seconds": 0.38110880000022007,
+          "first_audio_seconds": 0.043948600003204774,
+          "audio_seconds": 12.445895691609977,
+          "rtf": 0.030621243295260222,
+          "chunks": 4,
+          "process_cpu_seconds": 3.109375
+        },
+        {
+          "text": "short",
+          "repeat": 1,
+          "wall_seconds": 0.06716700000106357,
+          "first_audio_seconds": 0.06709840000257827,
+          "audio_seconds": 1.9388662131519274,
+          "rtf": 0.03464241088191083,
+          "chunks": 1,
+          "process_cpu_seconds": 0.484375
+        }
+      ],
+      "versions": {
+        "onnxruntime": "1.32.0",
+        "numpy": "2.4.6",
+        "piper-tts": "1.3.0"
+      },
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "median": {
+        "short": {
+          "wall_seconds": 0.06469495000055758,
+          "first_audio_seconds": 0.06459750000067288,
+          "audio_seconds": 1.933061224489796,
+          "rtf": 0.03346407706418039,
+          "process_cpu_seconds": 0.4921875
+        },
+        "answer": {
+          "wall_seconds": 0.38767474999986007,
+          "first_audio_seconds": 0.04623025000182679,
+          "audio_seconds": 12.503945578231292,
+          "rtf": 0.031002424001107788,
+          "process_cpu_seconds": 3.109375
+        }
+      }
+    },
+    {
+      "engine": "kokoro",
+      "threads": 0,
+      "error": "Profile timed out after 50s: Timeout (0:00:35)!\nThread 0x000070b0 (most recent call first):\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\onnxruntime\\capi\\onnxruntime_inference_collection.py\", line 395 in run\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 136 in _infer\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 225 in _create_batch\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 318 in _create_batches\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 298 in create_timed\n  File \"D:\\Odessy-test\\versions\\fb4f06126beb405eb495030bcae75a7a\\Lib\\site-packages\\kokoro_onnx\\__init__.py\", line 258 in create\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 37 in measure\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 91 in worker\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 122 in main\n  File \"C:\\Users\\13647\\OneDrive\\Desktop\\MiMundo\\GitHub\\odessy\\odessy\\benchmark\\tts_cpu_compare.py\", line 197 in <module>\n"
+    },
+    {
+      "engine": "piper",
+      "threads": 0,
+      "load_seconds": 0.9812782000008156,
+      "cold_short": {
+        "wall_seconds": 0.13796620000357507,
+        "first_audio_seconds": 0.13786300000356277,
+        "audio_seconds": 1.9272562358276644,
+        "rtf": 0.07158684841111705,
+        "chunks": 1,
+        "process_cpu_seconds": 0.953125
+      },
+      "runs": [
+        {
+          "text": "short",
+          "repeat": 0,
+          "wall_seconds": 0.06483550000120886,
+          "first_audio_seconds": 0.06474750000052154,
+          "audio_seconds": 1.9504761904761905,
+          "rtf": 0.033240856934213525,
+          "chunks": 1,
+          "process_cpu_seconds": 0.625
+        },
+        {
+          "text": "answer",
+          "repeat": 0,
+          "wall_seconds": 0.4142541000037454,
+          "first_audio_seconds": 0.045472600002540275,
+          "audio_seconds": 12.283356009070296,
+          "rtf": 0.033724830551019706,
+          "chunks": 4,
+          "process_cpu_seconds": 3.953125
+        },
+        {
+          "text": "answer",
+          "repeat": 1,
+          "wall_seconds": 0.4216588000053889,
+          "first_audio_seconds": 0.051221200003055856,
+          "audio_seconds": 12.666485260770974,
+          "rtf": 0.03328932938573709,
+          "chunks": 4,
+          "process_cpu_seconds": 4.0625
+        },
+        {
+          "text": "short",
+          "repeat": 1,
+          "wall_seconds": 0.08074899999337504,
+          "first_audio_seconds": 0.08062559999962104,
+          "audio_seconds": 1.9853061224489796,
+          "rtf": 0.0406733244210051,
+          "chunks": 1,
+          "process_cpu_seconds": 0.6875
+        }
+      ],
+      "versions": {
+        "onnxruntime": "1.32.0",
+        "numpy": "2.4.6",
+        "piper-tts": "1.3.0"
+      },
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "median": {
+        "short": {
+          "wall_seconds": 0.07279224999729195,
+          "first_audio_seconds": 0.07268655000007129,
+          "audio_seconds": 1.967891156462585,
+          "rtf": 0.036957090677609314,
+          "process_cpu_seconds": 0.65625
+        },
+        "answer": {
+          "wall_seconds": 0.41795645000456716,
+          "first_audio_seconds": 0.048346900002798066,
+          "audio_seconds": 12.474920634920636,
+          "rtf": 0.0335070799683784,
+          "process_cpu_seconds": 4.0078125
+        }
+      }
+    }
+  ]
+}

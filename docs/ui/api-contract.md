@@ -39,8 +39,9 @@ an implicit request target. There are no direct provider/native calls in widgets
 | Monitoring inventory/detail | GET `/v1/monitoring/hosts`, GET `/v1/monitoring/hosts/{id}` |
 | Monitoring metrics/history | GET `/v1/monitoring/hosts/{id}/metrics`, GET `/v1/monitoring/hosts/{id}/history` |
 | Monitoring events | GET `/v1/monitoring/events`, `Last-Event-ID: epoch:sequence` |
-| SSH connection actions | GET `/v1/ssh/aliases`, GET `/v1/ssh/target`, POST `/v1/ssh/inspect`, POST `/v1/ssh/test`, POST/DELETE `/v1/ssh/target` |
+| SSH connection actions | POST `/v1/ssh/connect`, GET `/v1/ssh/aliases`, GET `/v1/ssh/target`, POST `/v1/ssh/inspect`, POST `/v1/ssh/test`, POST/DELETE `/v1/ssh/target` |
 | SSH typed readiness | GET `/v1/ssh/computer` |
+| Explicit temporary Custom SSH execution selection | GET/POST/DELETE `/v1/ssh/execution`; POST requires `{"confirmed":true}` |
 
 Stop returns HTTP 200 with a body that says what was actually established, not merely that the
 request was accepted:
@@ -130,8 +131,31 @@ The Python public route preserves all repeated `series` values when forwarding
 to the Go service; other query fields retain their existing handling.
 These routes add no pairing, trust or configuration mutations. HTTP 503 stays
 unavailable while conversation APIs remain usable; it never activates demo data.
-SSH actions only inspect/test/save/remove one user-selected alias; they write no
-`known_hosts` or key file, and no SSH execution route exists in this slice.
+`TemporarySshConnectionApi.connectSsh(target, {port, password})` sends authenticated
+POST `/v1/ssh/connect` with `{target: string, port?: integer|null, password?: string}`.
+Target accepts an existing alias or IPv4/DNS `user@hostname`; port is 1–65535 and
+overrides OpenSSH config. Unknown fields, invalid target/port/password and bodies
+above 8192 bytes are refused. The service validates existing host trust before
+login. An unsuccessful probe returns `connected=false` with structured `test` and
+`identity`, preserving the prior monitor. A successful monitor transition returns
+`connected=true`, `target`, `test`, `identity`; target includes `temporary=true`,
+`port`, authentication method and password-required status, never credentials.
+The bounded hostname returned after a successful login supplies `display_name`
+for unlabelled direct addresses. It cannot change endpoint identity or authority.
+Monitoring host DTOs preserve explicit `connection.method` and optional
+`connection.alias` independently of certificate-pairing trust.
+
+Connect never writes configuration. DELETE `/v1/ssh/target` disconnects a temporary
+target without configuration writes. Legacy inspect/test/save/remove routes remain
+compatible and preserve their existing persistence semantics. Restart forgets the
+temporary connection, but may reload an older independently persisted target.
+Passwords travel only in authenticated request bodies, never URLs. Blank on Connect
+means key/agent and never reuses an old password. The service owns a bounded
+in-memory lease (eight hours maximum); the packaged monitor provides askpass.
+Host-key files are never written. No remote execution route is added. Redirects
+and automatic mutation retries are refused; bounded errors remain visible.
+`SSH_NO_SHELL` with `authenticated=true` is transport authentication to a Git-only
+endpoint, not a monitorable computer. See [SSH setup](../setup/ssh-computers.md).
 
 A `run` session event carries the same snapshot as GET: `steps` are the agents and
 `transfers` the data moving between them. Runs do not survive a service restart.

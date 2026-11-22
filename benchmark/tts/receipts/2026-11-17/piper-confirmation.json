@@ -1,0 +1,624 @@
+{
+  "schema": 1,
+  "utc": "2026-11-17T05:46:22.238533+00:00",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "processor": "Intel64 Family 6 Model 186 Stepping 2, GenuineIntel",
+  "logical_cpus": 16,
+  "texts": {
+    "short": "Odessy is ready to help you.",
+    "answer": "Odessy is ready. This is a short local speech performance test. The model generates speech on this computer. We are measuring how long it takes to produce the complete answer before any audio is played."
+  },
+  "repeats": 3,
+  "thread_order": [
+    1,
+    2,
+    4,
+    8,
+    16,
+    0
+  ],
+  "benchmark_sha256": "8838c8093f912d054efb2e297dead27b02d4f27d6f689abbbe609ccb4010a94d",
+  "scope": "CPU synthesis only; no speaker playback, agent, STT, or perceived quality measurement. First audio is an API chunk, not sub-phrase streaming. 0 means ONNX default.",
+  "assets": {
+    "piper": {
+      "model_sha256": "6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22",
+      "auxiliary_sha256": "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860"
+    }
+  },
+  "profiles": [
+    {
+      "engine": "piper",
+      "threads": 1,
+      "load_seconds": 0.9279716000019107,
+      "cold_short": {
+        "wall_seconds": 0.25024190000112867,
+        "first_audio_seconds": 0.2501607999947737,
+        "audio_seconds": 1.9388662131519274,
+        "rtf": 0.12906609971521538,
+        "chunks": 1,
+        "process_cpu_seconds": 0.234375
+      },
+      "runs": [
+        {
+          "text": "short",
+          "repeat": 0,
+          "wall_seconds": 0.17313780000404222,
+          "first_audio_seconds": 0.17307720000098925,
+          "audio_seconds": 1.8692063492063493,
+          "rtf": 0.09262637058640166,
+          "chunks": 1,
+          "process_cpu_seconds": 0.171875
+        },
+        {
+          "text": "answer",
+          "repeat": 0,
+          "wall_seconds": 1.499833399997442,
+          "first_audio_seconds": 0.11940229999891017,
+          "audio_seconds": 12.620045351473923,
+          "rtf": 0.11884532568833227,
+          "chunks": 4,
+          "process_cpu_seconds": 1.46875
+        },
+        {
+          "text": "answer",
+          "repeat": 1,
+          "wall_seconds": 4.3165451000022586,
+          "first_audio_seconds": 0.43573920000198996,
+          "audio_seconds": 12.480725623582767,
+          "rtf": 0.3458569020895705,
+          "chunks": 4,
+          "process_cpu_seconds": 4.09375
+        },
+        {
+          "text": "short",
+          "repeat": 1,
+          "wall_seconds": 0.6868384999979753,
+          "first_audio_seconds": 0.6866191000008257,
+          "audio_seconds": 1.9504761904761905,
+          "rtf": 0.3521388793934932,
+          "chunks": 1,
+          "process_cpu_seconds": 0.671875
+        },
+        {
+          "text": "short",
+          "repeat": 2,
+          "wall_seconds": 0.7278172000005725,
+          "first_audio_seconds": 0.7276306999992812,
+          "audio_seconds": 2.043356009070295,
+          "rtf": 0.35618717285184265,
+          "chunks": 1,
+          "process_cpu_seconds": 0.734375
+        },
+        {
+          "text": "answer",
+          "repeat": 2,
+          "wall_seconds": 4.357894499997201,
+          "first_audio_seconds": 0.4610534999956144,
+          "audio_seconds": 12.515555555555556,
+          "rtf": 0.3481982466261968,
+          "chunks": 4,
+          "process_cpu_seconds": 4.03125
+        }
+      ],
+      "versions": {
+        "onnxruntime": "1.32.0",
+        "numpy": "2.4.6",
+        "piper-tts": "1.3.0"
+      },
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "median": {
+        "short": {
+          "wall_seconds": 0.6868384999979753,
+          "first_audio_seconds": 0.6866191000008257,
+          "audio_seconds": 1.9504761904761905,
+          "rtf": 0.3521388793934932,
+          "process_cpu_seconds": 0.671875
+        },
+        "answer": {
+          "wall_seconds": 4.3165451000022586,
+          "first_audio_seconds": 0.43573920000198996,
+          "audio_seconds": 12.515555555555556,
+          "rtf": 0.3458569020895705,
+          "process_cpu_seconds": 4.03125
+        }
+      }
+    },
+    {
+      "engine": "piper",
+      "threads": 2,
+      "load_seconds": 0.8161210999969626,
+      "cold_short": {
+        "wall_seconds": 0.16151549999631243,
+        "first_audio_seconds": 0.16145220000180416,
+        "audio_seconds": 1.9736961451247166,
+        "rtf": 0.08183402515897722,
+        "chunks": 1,
+        "process_cpu_seconds": 0.265625
+      },
+      "runs": [
+        {
+          "text": "short",
+          "repeat": 0,
+          "wall_seconds": 0.10092599999916274,
+          "first_audio_seconds": 0.10086310000042431,
+          "audio_seconds": 1.9388662131519274,
+          "rtf": 0.05205413313953823,
+          "chunks": 1,
+          "process_cpu_seconds": 0.21875
+        },
+        {
+          "text": "answer",
+          "repeat": 0,
+          "wall_seconds": 0.6879708999986178,
+          "first_audio_seconds": 0.06885480000346433,
+          "audio_seconds": 12.445895691609977,
+          "rtf": 0.05527692960357948,
+          "chunks": 4,
+          "process_cpu_seconds": 1.296875
+        },
+        {
+          "text": "answer",
+          "repeat": 1,
+          "wall_seconds": 0.6816061999998055,
+          "first_audio_seconds": 0.07044470000255387,
+          "audio_seconds": 12.434285714285714,
+          "rtf": 0.054816675091896125,
+          "chunks": 4,
+          "process_cpu_seconds": 1.265625
+        },
+        {
+          "text": "short",
+          "repeat": 1,
+          "wall_seconds": 0.3458487000025343,
+          "first_audio_seconds": 0.34568620000209194,
+          "audio_seconds": 1.9620861678004535,
+          "rtf": 0.17626580609873987,
+          "chunks": 1,
+          "process_cpu_seconds": 0.5625
+        },
+        {
+          "text": "short",
+          "repeat": 2,
+          "wall_seconds": 0.4090360999980476,
+          "first_audio_seconds": 0.4089001999964239,
+          "audio_seconds": 1.9504761904761905,
+          "rtf": 0.20971089111228025,
+          "chunks": 1,
+          "process_cpu_seconds": 0.671875
+        },
+        {
+          "text": "answer",
+          "repeat": 2,
+          "wall_seconds": 2.548050700002932,
+          "first_audio_seconds": 0.27469440000277245,
+          "audio_seconds": 12.248526077097505,
+          "rtf": 0.20802916889464104,
+          "chunks": 4,
+          "process_cpu_seconds": 4.734375
+        }
+      ],
+      "versions": {
+        "onnxruntime": "1.32.0",
+        "numpy": "2.4.6",
+        "piper-tts": "1.3.0"
+      },
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "median": {
+        "short": {
+          "wall_seconds": 0.3458487000025343,
+          "first_audio_seconds": 0.34568620000209194,
+          "audio_seconds": 1.9504761904761905,
+          "rtf": 0.17626580609873987,
+          "process_cpu_seconds": 0.5625
+        },
+        "answer": {
+          "wall_seconds": 0.6879708999986178,
+          "first_audio_seconds": 0.07044470000255387,
+          "audio_seconds": 12.434285714285714,
+          "rtf": 0.05527692960357948,
+          "process_cpu_seconds": 1.296875
+        }
+      }
+    },
+    {
+      "engine": "piper",
+      "threads": 4,
+      "load_seconds": 0.9432301999986521,
+      "cold_short": {
+        "wall_seconds": 0.15107980000175303,
+        "first_audio_seconds": 0.15101490000233753,
+        "audio_seconds": 1.8924263038548752,
+        "rtf": 0.07983391463857972,
+        "chunks": 1,
+        "process_cpu_seconds": 0.375
+      },
+      "runs": [
+        {
+          "text": "short",
+          "repeat": 0,
+          "wall_seconds": 0.0728737999961595,
+          "first_audio_seconds": 0.07281309999962104,
+          "audio_seconds": 1.9040362811791383,
+          "rtf": 0.03827332531238846,
+          "chunks": 1,
+          "process_cpu_seconds": 0.25
+        },
+        {
+          "text": "answer",
+          "repeat": 0,
+          "wall_seconds": 0.47150759999931324,
+          "first_audio_seconds": 0.054741799998737406,
+          "audio_seconds": 12.596825396825395,
+          "rtf": 0.03743066885075194,
+          "chunks": 4,
+          "process_cpu_seconds": 1.84375
+        },
+        {
+          "text": "answer",
+          "repeat": 1,
+          "wall_seconds": 0.4443893999996362,
+          "first_audio_seconds": 0.051618699995742645,
+          "audio_seconds": 12.387845804988661,
+          "rtf": 0.03587301674522603,
+          "chunks": 4,
+          "process_cpu_seconds": 1.6875
+        },
+        {
+          "text": "short",
+          "repeat": 1,
+          "wall_seconds": 0.07175959999585757,
+          "first_audio_seconds": 0.07169150000117952,
+          "audio_seconds": 1.9504761904761905,
+          "rtf": 0.036790810544751196,
+          "chunks": 1,
+          "process_cpu_seconds": 0.296875
+        },
+        {
+          "text": "short",
+          "repeat": 2,
+          "wall_seconds": 0.07296820000192383,
+          "first_audio_seconds": 0.0729053000031854,
+          "audio_seconds": 2.043356009070295,
+          "rtf": 0.03570997891606935,
+          "chunks": 1,
+          "process_cpu_seconds": 0.265625
+        },
+        {
+          "text": "answer",
+          "repeat": 2,
+          "wall_seconds": 1.332978099999309,
+          "first_audio_seconds": 0.05113100000016857,
+          "audio_seconds": 12.666485260770976,
+          "rtf": 0.10523662030600067,
+          "chunks": 4,
+          "process_cpu_seconds": 3.84375
+        }
+      ],
+      "versions": {
+        "onnxruntime": "1.32.0",
+        "numpy": "2.4.6",
+        "piper-tts": "1.3.0"
+      },
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "median": {
+        "short": {
+          "wall_seconds": 0.0728737999961595,
+          "first_audio_seconds": 0.07281309999962104,
+          "audio_seconds": 1.9504761904761905,
+          "rtf": 0.036790810544751196,
+          "process_cpu_seconds": 0.265625
+        },
+        "answer": {
+          "wall_seconds": 0.47150759999931324,
+          "first_audio_seconds": 0.051618699995742645,
+          "audio_seconds": 12.596825396825395,
+          "rtf": 0.03743066885075194,
+          "process_cpu_seconds": 1.84375
+        }
+      }
+    },
+    {
+      "engine": "piper",
+      "threads": 8,
+      "load_seconds": 0.9409627000059118,
+      "cold_short": {
+        "wall_seconds": 0.12438829999882728,
+        "first_audio_seconds": 0.12431749999814201,
+        "audio_seconds": 1.8808163265306121,
+        "rtf": 0.06613527235180704,
+        "chunks": 1,
+        "process_cpu_seconds": 0.5625
+      },
+      "runs": [
+        {
+          "text": "short",
+          "repeat": 0,
+          "wall_seconds": 0.06659689999651164,
+          "first_audio_seconds": 0.06653129999904195,
+          "audio_seconds": 2.0085260770975055,
+          "rtf": 0.03315710000277912,
+          "chunks": 1,
+          "process_cpu_seconds": 0.5
+        },
+        {
+          "text": "answer",
+          "repeat": 0,
+          "wall_seconds": 0.38397059999988414,
+          "first_audio_seconds": 0.04552919999696314,
+          "audio_seconds": 12.353015873015874,
+          "rtf": 0.03108314633017154,
+          "chunks": 4,
+          "process_cpu_seconds": 3.0625
+        },
+        {
+          "text": "answer",
+          "repeat": 1,
+          "wall_seconds": 0.39075250000314554,
+          "first_audio_seconds": 0.049888200002897065,
+          "audio_seconds": 12.631655328798185,
+          "rtf": 0.03093438586091653,
+          "chunks": 4,
+          "process_cpu_seconds": 3.109375
+        },
+        {
+          "text": "short",
+          "repeat": 1,
+          "wall_seconds": 0.05992500000138534,
+          "first_audio_seconds": 0.05984600000374485,
+          "audio_seconds": 1.9272562358276644,
+          "rtf": 0.031093426440854357,
+          "chunks": 1,
+          "process_cpu_seconds": 0.5
+        },
+        {
+          "text": "short",
+          "repeat": 2,
+          "wall_seconds": 0.06216549999953713,
+          "first_audio_seconds": 0.062060700001893565,
+          "audio_seconds": 1.9156462585034013,
+          "rtf": 0.032451450638962924,
+          "chunks": 1,
+          "process_cpu_seconds": 0.5
+        },
+        {
+          "text": "answer",
+          "repeat": 2,
+          "wall_seconds": 0.3836391000004369,
+          "first_audio_seconds": 0.04500730000290787,
+          "audio_seconds": 12.294965986394558,
+          "rtf": 0.031202941140704796,
+          "chunks": 4,
+          "process_cpu_seconds": 3.125
+        }
+      ],
+      "versions": {
+        "onnxruntime": "1.32.0",
+        "numpy": "2.4.6",
+        "piper-tts": "1.3.0"
+      },
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "median": {
+        "short": {
+          "wall_seconds": 0.06216549999953713,
+          "first_audio_seconds": 0.062060700001893565,
+          "audio_seconds": 1.9272562358276644,
+          "rtf": 0.032451450638962924,
+          "process_cpu_seconds": 0.5
+        },
+        "answer": {
+          "wall_seconds": 0.38397059999988414,
+          "first_audio_seconds": 0.04552919999696314,
+          "audio_seconds": 12.353015873015874,
+          "rtf": 0.03108314633017154,
+          "process_cpu_seconds": 3.109375
+        }
+      }
+    },
+    {
+      "engine": "piper",
+      "threads": 16,
+      "load_seconds": 1.2154802000004565,
+      "cold_short": {
+        "wall_seconds": 0.14642800000001444,
+        "first_audio_seconds": 0.14634449999721255,
+        "audio_seconds": 1.9040362811791383,
+        "rtf": 0.07690399676067831,
+        "chunks": 1,
+        "process_cpu_seconds": 1.296875
+      },
+      "runs": [
+        {
+          "text": "short",
+          "repeat": 0,
+          "wall_seconds": 0.28404890000092564,
+          "first_audio_seconds": 0.28395720000116853,
+          "audio_seconds": 1.9272562358276644,
+          "rtf": 0.14738512436512638,
+          "chunks": 1,
+          "process_cpu_seconds": 3.3125
+        },
+        {
+          "text": "answer",
+          "repeat": 0,
+          "wall_seconds": 4.719064900004014,
+          "first_audio_seconds": 0.28844129999924917,
+          "audio_seconds": 12.387845804988661,
+          "rtf": 0.3809431417126308,
+          "chunks": 4,
+          "process_cpu_seconds": 23.5
+        },
+        {
+          "text": "answer",
+          "repeat": 1,
+          "wall_seconds": 9.03841540000576,
+          "first_audio_seconds": 1.3326593000019784,
+          "audio_seconds": 12.422675736961452,
+          "rtf": 0.7275739616315968,
+          "chunks": 4,
+          "process_cpu_seconds": 29.265625
+        },
+        {
+          "text": "short",
+          "repeat": 1,
+          "wall_seconds": 1.9220951999959652,
+          "first_audio_seconds": 1.921830899998895,
+          "audio_seconds": 1.9040362811791383,
+          "rtf": 1.0094845455390395,
+          "chunks": 1,
+          "process_cpu_seconds": 6.078125
+        },
+        {
+          "text": "short",
+          "repeat": 2,
+          "wall_seconds": 1.59831220000342,
+          "first_audio_seconds": 1.5981182000032277,
+          "audio_seconds": 1.9040362811791383,
+          "rtf": 0.8394336892643725,
+          "chunks": 1,
+          "process_cpu_seconds": 5.28125
+        },
+        {
+          "text": "answer",
+          "repeat": 2,
+          "wall_seconds": 10.009357799994177,
+          "first_audio_seconds": 1.4619452999977511,
+          "audio_seconds": 12.538775510204081,
+          "rtf": 0.7982723505854732,
+          "chunks": 4,
+          "process_cpu_seconds": 29.484375
+        }
+      ],
+      "versions": {
+        "onnxruntime": "1.32.0",
+        "numpy": "2.4.6",
+        "piper-tts": "1.3.0"
+      },
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "median": {
+        "short": {
+          "wall_seconds": 1.59831220000342,
+          "first_audio_seconds": 1.5981182000032277,
+          "audio_seconds": 1.9040362811791383,
+          "rtf": 0.8394336892643725,
+          "process_cpu_seconds": 5.28125
+        },
+        "answer": {
+          "wall_seconds": 9.03841540000576,
+          "first_audio_seconds": 1.3326593000019784,
+          "audio_seconds": 12.422675736961452,
+          "rtf": 0.7275739616315968,
+          "process_cpu_seconds": 29.265625
+        }
+      }
+    },
+    {
+      "engine": "piper",
+      "threads": 0,
+      "load_seconds": 1.1064958999995724,
+      "cold_short": {
+        "wall_seconds": 0.14171970000461442,
+        "first_audio_seconds": 0.1416365000040969,
+        "audio_seconds": 1.9620861678004535,
+        "rtf": 0.07222909081688582,
+        "chunks": 1,
+        "process_cpu_seconds": 0.953125
+      },
+      "runs": [
+        {
+          "text": "short",
+          "repeat": 0,
+          "wall_seconds": 0.07302870000421535,
+          "first_audio_seconds": 0.07294240000192076,
+          "audio_seconds": 1.9504761904761905,
+          "rtf": 0.03744147217012994,
+          "chunks": 1,
+          "process_cpu_seconds": 0.75
+        },
+        {
+          "text": "answer",
+          "repeat": 0,
+          "wall_seconds": 0.4229629000037676,
+          "first_audio_seconds": 0.051371699999435805,
+          "audio_seconds": 12.41106575963719,
+          "rtf": 0.03407949874694178,
+          "chunks": 4,
+          "process_cpu_seconds": 4.203125
+        },
+        {
+          "text": "answer",
+          "repeat": 1,
+          "wall_seconds": 0.3774587000007159,
+          "first_audio_seconds": 0.04319920000125421,
+          "audio_seconds": 12.434285714285714,
+          "rtf": 0.03035628331807228,
+          "chunks": 4,
+          "process_cpu_seconds": 3.859375
+        },
+        {
+          "text": "short",
+          "repeat": 1,
+          "wall_seconds": 0.06062539999402361,
+          "first_audio_seconds": 0.060563599996385165,
+          "audio_seconds": 1.9388662131519274,
+          "rtf": 0.03126848030193256,
+          "chunks": 1,
+          "process_cpu_seconds": 0.5625
+        },
+        {
+          "text": "short",
+          "repeat": 2,
+          "wall_seconds": 0.0629683999941335,
+          "first_audio_seconds": 0.06288939999649301,
+          "audio_seconds": 1.9272562358276644,
+          "rtf": 0.032672562591082546,
+          "chunks": 1,
+          "process_cpu_seconds": 0.625
+        },
+        {
+          "text": "answer",
+          "repeat": 2,
+          "wall_seconds": 0.4063564000025508,
+          "first_audio_seconds": 0.04843049999908544,
+          "audio_seconds": 12.422675736961452,
+          "rtf": 0.03271085944821935,
+          "chunks": 4,
+          "process_cpu_seconds": 4.046875
+        }
+      ],
+      "versions": {
+        "onnxruntime": "1.32.0",
+        "numpy": "2.4.6",
+        "piper-tts": "1.3.0"
+      },
+      "providers": [
+        "CPUExecutionProvider"
+      ],
+      "median": {
+        "short": {
+          "wall_seconds": 0.0629683999941335,
+          "first_audio_seconds": 0.06288939999649301,
+          "audio_seconds": 1.9388662131519274,
+          "rtf": 0.032672562591082546,
+          "process_cpu_seconds": 0.625
+        },
+        "answer": {
+          "wall_seconds": 0.4063564000025508,
+          "first_audio_seconds": 0.04843049999908544,
+          "audio_seconds": 12.422675736961452,
+          "rtf": 0.03271085944821935,
+          "process_cpu_seconds": 4.046875
+        }
+      }
+    }
+  ]
+}

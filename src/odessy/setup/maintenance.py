@@ -25,9 +25,10 @@ class Cancelled(RuntimeError):
     pass
 
 # One installed version is described by every file it owns, digests included, which
-# is roughly 1.5 MiB for a full desktop installation. History is kept so rollback
-# works, so the ceiling has to allow several versions rather than a couple.
-MAX_RECORD_BYTES=16*1024*1024
+# can exceed 3.5 MiB for a full Windows voice installation. Rollback inventories
+# and the maintenance helper are retained across upgrades, so allow several full
+# versions. Reads and atomic writes share this finite ceiling.
+MAX_RECORD_BYTES=64*1024*1024
 
 def digest(path):
     with Path(path).open('rb') as stream:
@@ -83,7 +84,10 @@ def atomic(path,data):
     fd,name=tempfile.mkstemp(prefix='.setup-',dir=path.parent)
     try:
         with os.fdopen(fd,'w',encoding='utf-8') as stream:
-            json.dump(data,stream,indent=2);stream.flush();os.fsync(stream.fileno())
+            json.dump(data,stream,indent=2);stream.flush()
+            if os.fstat(stream.fileno()).st_size>MAX_RECORD_BYTES:
+                raise ValueError('setup record exceeds limit')
+            os.fsync(stream.fileno())
         # A just-written file can be briefly locked by a scanner or indexer; a
         # replace that fails is retried rather than leaving a torn journal.
         for attempt in range(10):
@@ -271,6 +275,31 @@ class ManagedInstallation:
             return {'configured':True,'model_configured':selection.model is not None,'role':selection.role,
                     'workspace':configuration['workspace'],'ready':False}
 
+    def voice_configuration_plan(self, voice):
+        """Bind a voice-only change to one exact current configuration snapshot."""
+        record=self.record()
+        if not record['active']: raise ValueError('repair the installation before changing configuration')
+        previous=read_json(self.root/'configuration.json')
+        if not isinstance(voice, dict): raise ValueError('voice must be an object')
+        selection=SetupSelection.from_dict({**previous['selection'],
+            'voice':{**previous['selection'].get('voice', {}), **voice}})
+        configuration={'schema_version':1,'selection':public(selection),
+            'workspace':str(validated_workspace(previous['workspace'],self.root))}
+        plan={'installation_id':record['id'],'active':record['active'],
+            'configuration':configuration,'previous':previous}
+        plan['plan_id']=hashlib.sha256(json.dumps(plan,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+        return plan
+
+    def configure_voice(self, voice, confirm):
+        with self.lock():
+            plan=self.voice_configuration_plan(voice)
+            if confirm!=plan['plan_id']: raise ValueError('review the exact configuration change before applying it')
+            configuration=plan['configuration']
+            atomic(self.root/'configuration.json',configuration)
+            record=self.record();record['selection']=configuration['selection']
+            atomic(self.root/'installation.json',record)
+            return {'configured':True,'ready':False}
+
     def install(self,bundle,selection,confirm,*,cancelled=lambda:False):
         plan=self.plan(bundle,selection)
         if confirm!=plan['plan_id']: raise ValueError('review the exact installation plan before applying')
@@ -327,6 +356,12 @@ class ManagedInstallation:
                         if digest(destination)!=sha:raise ValueError('copied component checksum mismatch')
                         journal['steps_done']+=1;progress.flush()
                 stage('configuration')
+                previous = record.get('active')
+                if previous:
+                    from .voice_install import prepare_piper_upgrade
+                    previous_python = self.root/'versions'/previous/('Scripts/python.exe' if os.name=='nt' else 'bin/python')
+                    selection = prepare_piper_upgrade(selection, previous_python, python,
+                        cancelled=cancelled, payload=self.payload)
                 if selection.model:
                     from .configuration import environment_text
                     from .planning import build_plan
@@ -382,7 +417,8 @@ class ManagedInstallation:
             value=read_json(self.root/'configuration.json')
             configuration={'workspace':value.get('workspace'),
                            'model_configured':(value.get('selection') or {}).get('model') is not None,
-                           'role':(value.get('selection') or {}).get('role')}
+                           'role':(value.get('selection') or {}).get('role'),
+                           'voice_enabled':((value.get('selection') or {}).get('voice') or {}).get('enabled', False)}
         registration=record.get('windows_registration') or record.get('linux_registration') or {}
         helper=registration.get('helper')
         payload=None

@@ -5,6 +5,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 
 def _install_fake_onnx_modules(monkeypatch):
     state: dict[str, object] = {}
@@ -112,3 +114,50 @@ def test_voice_config_reads_onnx_settings(monkeypatch, tmp_path: Path) -> None:
 
     assert config.onnx_provider == "tensorrt"
     assert config.onnx_cache_dir == tmp_path / "ort-cache"
+
+
+def test_auto_prefers_available_gpu_and_never_names_absent_cuda(tmp_path):
+    from odessy.voice.onnx_runtime import build_execution_providers
+    assert build_execution_providers('auto', available=['DmlExecutionProvider', 'CPUExecutionProvider']) == ['DmlExecutionProvider', 'CPUExecutionProvider']
+    assert build_execution_providers('auto', available=['CPUExecutionProvider']) == ['CPUExecutionProvider']
+    providers = build_execution_providers('auto', cache_dir=tmp_path, available=['TensorrtExecutionProvider', 'CPUExecutionProvider'])
+    assert [p[0] if isinstance(p, tuple) else p for p in providers] == ['TensorrtExecutionProvider', 'CPUExecutionProvider']
+
+
+@pytest.mark.parametrize('provider', ['auto', 'cuda'])
+def test_gpu_initialization_failure_falls_back_only_in_auto(monkeypatch, provider):
+    _install_fake_onnx_modules(monkeypatch)
+    runtime = importlib.import_module('odessy.voice.onnx_runtime')
+    ort = sys.modules['onnxruntime']
+    ort.get_available_providers = lambda: ['CUDAExecutionProvider', 'CPUExecutionProvider']
+    attempts = []
+    def session(path, providers):
+        attempts.append(providers)
+        if providers != ['CPUExecutionProvider']:
+            raise RuntimeError('GPU driver unavailable')
+        return object()
+    ort.InferenceSession = session
+    if provider == 'auto':
+        assert runtime.build_kokoro('model', 'voices', provider=provider) is not None
+        assert attempts[-1] == ['CPUExecutionProvider']
+        assert len(attempts) == 2
+    else:
+        with pytest.raises(RuntimeError, match='GPU driver'):
+            runtime.build_kokoro('model', 'voices', provider=provider)
+        assert len(attempts) == 1
+
+
+def test_directml_session_uses_required_options(monkeypatch):
+    _install_fake_onnx_modules(monkeypatch)
+    runtime = importlib.import_module('odessy.voice.onnx_runtime')
+    ort = sys.modules['onnxruntime']
+    ort.get_available_providers = lambda: ['DmlExecutionProvider', 'CPUExecutionProvider']
+    ort.SessionOptions = types.SimpleNamespace
+    ort.ExecutionMode = types.SimpleNamespace(ORT_SEQUENTIAL='sequential')
+    def session(path, providers, sess_options):
+        assert providers == ['DmlExecutionProvider', 'CPUExecutionProvider']
+        assert not sess_options.enable_mem_pattern
+        assert sess_options.execution_mode == 'sequential'
+        return object()
+    ort.InferenceSession = session
+    assert runtime.build_kokoro('model', 'voices') is not None

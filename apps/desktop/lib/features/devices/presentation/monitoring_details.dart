@@ -163,8 +163,11 @@ class MonitoringDetails extends StatelessWidget {
                                   _notice(context, 'Monitoring needs attention',
                                       error!),
                                 _card(context, 'Device state', [
-                                  _row(context, 'Connection method',
-                                      connectionMethodLabel(host!.trust)),
+                                  _row(
+                                      context,
+                                      'Connection method',
+                                      connectionMethodLabel(host!.trust,
+                                          method: host!.connectionMethod)),
                                   _row(context, 'Connection',
                                       '${_status(host!.connectivity)}${_historical ? ' · last report' : ''}'),
                                   _row(context, 'Trust',

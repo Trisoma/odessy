@@ -73,6 +73,16 @@ class VoiceConfig:
             )
 
     @classmethod
+    def from_selection(cls, voice):
+        """Use saved audio fields directly, without inheriting a stale process env."""
+        from dataclasses import asdict
+        values = asdict(voice)
+        values.pop('enabled')
+        if not values.get('wake_model'):
+            values['wake_model'] = asset_dir() / DEFAULT_WAKE_MODEL
+        return cls(**values)
+
+    @classmethod
     def from_env(cls) -> "VoiceConfig":
         load_config_env()
         wake_model = os.environ.get("ODESSY_WAKE_MODEL", "").strip()

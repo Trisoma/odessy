@@ -2,52 +2,43 @@
 
 One computer model carries its connection method and capabilities. Existing paired
 computers and SSH computers share the monitoring fleet; SSH does not replace pairing,
-identity or execution grants. This production SSH path is **monitoring-only**:
-`execution=false`, `workspace=false`. Start with the offline fixtures below, then
-use an existing trusted alias for an explicitly selected live check.
+identity or execution grants. The monitoring DTO retains `execution=false`,
+`workspace=false`. A separate temporary **Custom command execution** selection
+exposes `ssh.run`, with exact approval in every mode, pinned endpoint/key and no
+remote sandbox. See the [command loop](../../../docs/setup/ssh-computers.md#agent-command-loop-custom-preview).
+Start with the offline fixtures below, then
+use an existing trusted target for an explicitly selected live check.
 
-## First useful status with an existing alias
+## First useful status with an address or existing alias
 
 After [development setup](../../../CONTRIBUTING.md#development-setup), connect the
 desktop to the local Odessy service. No model key is needed for SSH setup. An
 installed coordinator needs its optional monitoring component; a source checkout
 needs the existing Go monitor binary. See configuration below if it is not found.
 
-1. Reuse an existing OpenSSH `Host` alias, for example `jetson`, with its trusted
-   `known_hosts` entry and a working key/agent. Odessy uses non-interactive SSH;
-   unlock a protected key in your own terminal/agent. Do not paste secrets into
-   Odessy or bypass host checking to make a test pass.
-2. Open **Connect a computer**, choose the alias and review the resolved address
-   and trusted fingerprint. **Test connection** performs one bounded login. A
-   successful test proves transport only; it does not save a target or enable polling.
-3. Choose **Save SSH computer** to opt into read-only monitoring. Inspect the
-   computer's method, monitoring access and readiness, then the metrics' source
-   timestamps and stale groups. The SSH collector currently supplies Linux load
-   averages and root-disk capacity; memory, network, GPU and other unsupported
-   groups remain unavailable. Online is not proof every collector is healthy.
-4. **Optional granted task:** unavailable on this SSH path. Do not invent an SSH
-   execution command or use the compatibility spike as a production launch path.
-   Existing paired execution still requires its own workspace/grants and consent.
-5. For a live recovery check on an authorized test connection, interrupt only that
-   connection, observe stale/unavailable state, restore it and wait for a new source
-   timestamp. Check one owned monitor remains and no old collector survives closure.
-   **Forget SSH computer** removes Odessy's saved target/monitoring selection; it
-   does not revoke OS keys or change `authorized_keys`. Verify independent OS access
-   separately if that distinction is part of the acceptance task.
+1. Enter `user@hostname` and an optional port/password, then **Connect**. A blank
+   password uses the existing key/agent. Optional aliases live under **Advanced**
+   and fill the same Address field. Never bypass host checking.
+2. Connect verifies identity and login, then starts the existing read-only monitor.
+   Inspect source timestamps, stale groups and supported capabilities. Linux load
+   averages and root-disk capacity are available; unsupported groups remain unavailable.
+3. Connections created by Connect last only for the running service. **Disconnect**
+   removes that runtime selection and closes its password lease without writing
+   configuration or revoking independent OS SSH access. Reconnect after restart.
+4. **Optional command target:** explicitly select **Use for agent commands** after
+   login. New Custom chats discover `ssh.run` through the existing tool interface;
+   the existing approval broker binds each command/target. Disconnect revokes old
+   server objects. LAN selection is mutually exclusive; pairing grants are separate.
 
-API contributors can trace the same authenticated journey through
-`GET /v1/ssh/aliases`, `POST /v1/ssh/inspect`, `POST /v1/ssh/test`,
-`POST /v1/ssh/target`, `GET /v1/ssh/computer`,
-`GET /v1/monitoring/hosts/{host_id}/metrics`, and `DELETE /v1/ssh/target`.
-The computer summary may have no timestamp before its first sample; use the metrics
-sample/group timestamps for metric freshness. Never put the API token in a URL/log.
+See the [connection guide](../../../docs/setup/ssh-computers.md) for trust,
+password lifetime, retained legacy configuration and GitHub's Git-only behavior.
 
 ## One-laptop fixture checks
 
 From the repository root, using the prepared Python environment:
 
 ```powershell
-python -m pytest -q tests/test_ssh_fresh_bootstrap.py tests/test_ssh_connections_api.py tests/test_ssh_connection.py
+python -m pytest -q tests/test_ssh_execution.py tests/test_ssh_fresh_bootstrap.py tests/test_ssh_connections_api.py tests/test_ssh_connection.py tests/test_ssh_onboarding.py tests/test_ssh_password.py
 ```
 
 Then from `services/monitoring`:
@@ -69,12 +60,33 @@ and removal. Go fixtures cover fixed commands, unsupported collectors, scheduler
 recovery, provider coexistence and lifecycle. Fixtures do not establish real SSH
 authentication, installed support, remote Stop or physical network recovery.
 
+For the native simulated-computer pipeline, build the existing helper and test
+child into an isolated folder (no remote host or downloads):
+
+```powershell
+# From services/monitoring
+go build -o ../../.qualification/ssh-direct-connect/odessy-monitor.exe ./cmd/odessy-monitor
+go build -o ../../.qualification/ssh-direct-connect/fakessh.exe ./internal/testsupport/fakessh
+# Return to the repository root
+$env:ODESSY_TEST_MONITOR_BIN = (Resolve-Path .qualification/ssh-direct-connect/odessy-monitor.exe).Path
+$env:ODESSY_TEST_SSH_BIN = (Resolve-Path .qualification/ssh-direct-connect/fakessh.exe).Path
+python -m pytest -q tests/test_ssh_temporary_integration.py
+```
+
+The two native cases exercise key/agent and password paths through authenticated
+application routes, real Go monitoring, fresh samples, hostname display, disconnect
+and restart. Password mode invokes the actual askpass helper and checks rejection
+of an incorrect password. The SSH child simulates authentication/remote commands;
+OpenSSH config resolution and isolated known-host lookup remain real. This is
+not a live SSH server or hardware qualification. The test-only child is never a
+production fallback or release helper.
+
 ## Minimal provider/collector seam and lifecycle
 
 | Piece | Owner and contract |
 | --- | --- |
 | [`identity.py`](identity.py) | Resolve with `ssh -G`, read existing trusted keys, construct restrictive argv. Resolving alone does not connect; inspection may discover advertised keys for comparison, never accept them. |
-| [`application/ssh_connections.py`](../application/ssh_connections.py) | Alias review/test and atomic saved selection with rollback; no polling, key installation or trust-file edits. |
+| [`application/ssh_connections.py`](../application/ssh_connections.py) | Temporary address/port/password connect and runtime rollback; legacy saved APIs retained; no polling, key installation or trust-file edits. |
 | [`monitoring/supervisor.py`](../monitoring/supervisor.py) | Verify selected identity, pass private bootstrap configuration, own Go process/reconfigure/close and bounded child teardown. |
 | [Go `link.Link`](../../../services/monitoring/internal/link/worker.go) | `Inventory(ctx)`, `Heartbeat(ctx, HostRef)`, `Sample(ctx, HostRef, groups)`, `Close()`. Preserve host/generation, source times and unsupported quality; use bounded contexts/output. |
 | [Go SSH provider](../../../services/monitoring/internal/link/ssh.go) | Fixed read-only commands through one bounded OpenSSH child per request. No second polling loop, arbitrary command API, history or event bus. |
@@ -89,14 +101,14 @@ Rust worker and its independent monitoring permission remain active consumers.
 
 ## Configuration and failure recovery
 
-Prefer the saved UI selection over manually setting every variable. Advanced
+Prefer the temporary Connect UI over manually setting every variable. These legacy persisted inputs remain supported; temporary Connect does not change them. Advanced
 checkout inputs are read by [`MonitoringSettings`](../monitoring/settings.py):
 
 | Variable | Meaning |
 | --- | --- |
 | `ODESSY_SSH_MONITORING=on` | Enable SSH inventory and read-only status polling. |
 | `ODESSY_SSH_COMPUTER=on` | Enable SSH inventory only. |
-| `ODESSY_SSH_ALIAS` | Existing OpenSSH `Host` alias. |
+| `ODESSY_SSH_ALIAS` | OpenSSH alias or IPv4/DNS `user@hostname`. |
 | `ODESSY_SSH_HOST_ID` | Optional `host_` + 64 lowercase hex; defaults to alias digest. |
 | `ODESSY_SSH_DISPLAY_NAME` | Optional display name. |
 | `ODESSY_SSH_CONFIG` | Optional explicit `ssh -F` file. |
@@ -114,7 +126,7 @@ Installed builds resolve their packaged helper; they do not require Go or Node S
 | --- | --- |
 | No aliases | Use a concrete Host entry, refresh aliases, and check the selected config/Include paths. |
 | Unknown/changed key (409) | Verify identity independently and deliberately resolve your own OpenSSH trust; Odessy refuses to replace it. |
-| BatchMode authentication failure | Check alias/user, key and unlocked agent with your own SSH client; a password prompt cannot be handled by this path. |
+| BatchMode authentication failure | Check alias/user, key and unlocked agent with your own SSH client; or enter a password in the temporary Connect form. |
 | Save returns 503 / monitoring unavailable | Check the monitor helper path/component and local-service diagnostic. Failed reconfiguration restores the previous target; do not assume it saved. |
 | Online with missing metric | Inspect source timestamp and collector quality. Unsupported is not zero; transport success does not grant execution or monitoring consent. |
 | Forget does not revoke SSH login | Expected: forgetting an app target is separate from OS key revocation. |

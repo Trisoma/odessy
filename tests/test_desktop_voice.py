@@ -12,6 +12,136 @@ class Audio:
 
 def controller():return SessionController(model_factory=lambda _:object(),agent_factory=lambda *a,**k:object(),profiles={'local':{}})
 
+
+@pytest.mark.parametrize('action', ['test_output', 'start_capture'])
+@pytest.mark.parametrize('error_kind', ['runtime', 'device'])
+def test_voice_failures_do_not_expose_backend_exception_text(action, error_kind):
+    httpx = pytest.importorskip('httpx')
+    from odessy.application.desktop_voice import DesktopVoice
+    from odessy.application.api import create_app
+    from odessy.voice.native_audio import AudioDeviceUnavailable
+
+    private = 'private-driver-path /users/private/token-secret Traceback internal.py:123'
+    error = AudioDeviceUnavailable if error_kind == 'device' else RuntimeError
+
+    class BrokenAudio(Audio):
+        async def start(self):
+            raise error(private)
+        async def speak(self, text):
+            raise error(private)
+
+    async def run():
+        voice = DesktopVoice(BrokenAudio, host='local')
+        created = []
+        def factory():
+            session = controller()
+            created.append(session)
+            return session
+        app = create_app(factory, token='secret', desktop_voice=voice)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test',
+                                     headers={'Authorization': 'Bearer secret'}) as client:
+            sid = (await client.post('/v1/sessions')).json()['id']
+            route = f'/v1/sessions/{sid}/voice'
+            response = await client.post(route, json={'action': action})
+            assert response.status_code == 503
+            state = await client.get(route)
+            events = created[0].events
+            for public_text in (response.text, state.text, str(events)):
+                assert 'token-secret' not in public_text
+                assert 'private-driver-path' not in public_text
+            if error_kind == 'device':
+                assert 'Settings > Audio devices' in state.json()['message']
+        await voice.close()
+    asyncio.run(run())
+
+
+def test_explicit_output_failure_is_not_acknowledged_as_idle_success_and_retry_clears_error():
+    httpx=pytest.importorskip('httpx')
+    from odessy.application.desktop_voice import DesktopVoice
+    from odessy.application.api import create_app
+    class Speaker(Audio):
+        failed=True
+        async def speak(self,text):
+            if self.failed:raise RuntimeError('unavailable device')
+    async def run():
+        audio=Speaker();voice=DesktopVoice(lambda:audio,host='local')
+        app=create_app(controller,token='secret',desktop_voice=voice)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),base_url='http://test',headers={'Authorization':'Bearer secret'}) as client:
+            sid=(await client.post('/v1/sessions')).json()['id'];route=f'/v1/sessions/{sid}/voice'
+            failed=await client.post(route,json={'action':'test_output'})
+            assert failed.status_code==503
+            assert (await client.get(route)).json()['state']=='error'
+            audio.failed=False
+            retried=await client.post(route,json={'action':'test_output'})
+            assert retried.status_code==200
+            assert retried.json()['state']=='idle' and retried.json()['message']==''
+        await voice.close()
+    asyncio.run(run())
+
+
+def test_spoken_turn_plays_genuine_stream_before_completion_without_duplicate_final():
+    from types import SimpleNamespace
+    from odessy.application.desktop_voice import DesktopVoice
+    from odessy.runtime.speech import current_speech
+    async def run():
+        heard=[]; first=asyncio.Event()
+        class Speaker(Audio):
+            async def speak(self,text):heard.append(text);first.set()
+        c=controller();v=DesktopVoice(Speaker,host='local')
+        async def turn():
+            stream=current_speech();assert stream is not None
+            stream.begin();stream.feed('First sentence. ')
+            await asyncio.wait_for(first.wait(),1)
+            stream.feed('Second sentence.');stream.end()
+            return SimpleNamespace(final_text='First sentence. Second sentence.')
+        result=await v.run_spoken(c,turn)
+        assert result.final_text=='First sentence. Second sentence.'
+        assert heard==['First sentence.','Second sentence.']
+        assert not v.busy
+        await v.close();await c.close()
+    asyncio.run(run())
+
+
+def test_spoken_turn_stop_discards_queued_speech_but_keeps_text_result():
+    from types import SimpleNamespace
+    from odessy.application.desktop_voice import DesktopVoice
+    from odessy.runtime.speech import current_speech
+    async def run():
+        heard=[];first=asyncio.Event()
+        class Speaker(Audio):
+            async def speak(self,text):heard.append(text);first.set()
+        c=controller();v=DesktopVoice(Speaker,host='local')
+        async def turn():
+            stream=current_speech();stream.begin();stream.feed('First. ')
+            await asyncio.wait_for(first.wait(),1)
+            await v.stop_playback(c)
+            stream.feed('Second.');stream.end()
+            return SimpleNamespace(final_text='First. Second.')
+        result=await v.run_spoken(c,turn)
+        assert result.final_text=='First. Second.' and heard==['First.']
+        await v.close();await c.close()
+    asyncio.run(run())
+
+
+def test_spoken_turn_queue_overflow_speaks_final_suffix_once():
+    from types import SimpleNamespace
+    from odessy.application.desktop_voice import DesktopVoice
+    from odessy.runtime.speech import current_speech
+    async def run():
+        heard=[]
+        class Speaker(Audio):
+            async def speak(self,text):heard.append(text);await asyncio.sleep(.001)
+        c=controller();v=DesktopVoice(Speaker,host='local')
+        text=' '.join(f'Sentence {i}.' for i in range(30))
+        async def turn():
+            stream=current_speech();stream.begin();stream.feed(text);stream.end()
+            return SimpleNamespace(final_text=text)
+        await v.run_spoken(c,turn)
+        assert ' '.join(heard)==text
+        assert len(heard)<=9
+        await v.close();await c.close()
+    asyncio.run(run())
+
 def test_wake_owns_one_microphone_and_uses_the_same_broker_until_explicit_stop():
     from odessy.application.desktop_voice import DesktopVoice, VoiceError
     class Wake:
@@ -216,3 +346,109 @@ def test_cancelled_request_retains_audio_lease_until_worker_finishes(stage):
         await v.close();await a.close();await b.close()
     asyncio.run(run())
 
+
+
+def test_streamed_turn_releases_playback_for_exact_spoken_question_without_replaying():
+    from types import SimpleNamespace
+    from odessy.application.desktop_voice import DesktopVoice, VoiceError
+    from odessy.runtime.speech import current_speech
+    async def run():
+        heard = []
+        class Speaker(Audio):
+            async def speak(self, text): heard.append(text)
+        c = controller(); c.interactions.start_turn()
+        voice = DesktopVoice(lambda: Speaker('Odessy'), host='local')
+        calls = 0
+        async def turn():
+            nonlocal calls
+            calls += 1
+            result = await c.interactions.ask('Which project?')
+            assert result['answer'] == 'Odessy'
+            return SimpleNamespace(final_text='Project selected.')
+        task = asyncio.create_task(voice.run_spoken(c, turn))
+        try:
+            for _ in range(20):
+                if c.interactions.pending: break
+                await asyncio.sleep(0)
+            entry = c.interactions.pending[0]
+            with pytest.raises(VoiceError): await voice.start(c, 'stale-question')
+            capture = await voice.start(c, entry['id'])
+            await voice.finish(c, capture['capture_id'], None)
+            assert (await asyncio.wait_for(task, 1)).final_text == 'Project selected.'
+            assert calls == 1 and heard == ['Project selected.']
+            assert not voice.busy
+        finally:
+            task.cancel(); await asyncio.gather(task, return_exceptions=True)
+            await voice.close(); await c.close()
+    asyncio.run(run())
+
+
+def test_cancel_suspended_spoken_turn_preserves_other_capture():
+    from odessy.application.desktop_voice import DesktopVoice
+    async def run():
+        a, b = controller(), controller()
+        a.interactions.start_turn()
+        voice = DesktopVoice(lambda: Audio(), host='local')
+        async def turn():
+            await a.interactions.ask('Which project?')
+        task = asyncio.create_task(voice.run_spoken(a, turn))
+        try:
+            for _ in range(30):
+                if a.interactions.pending:
+                    break
+                await asyncio.sleep(0)
+            entry = a.interactions.pending[0]
+            await voice.start(a, entry['id'])
+            await voice.cancel(a)
+            capture = await voice.start(b)
+            epoch = voice._epoch
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            assert voice.owner == b.id
+            assert voice.capture_id == capture['capture_id']
+            assert voice._epoch == epoch
+            assert voice._draining is None
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await voice.close()
+            await a.close()
+            await b.close()
+    asyncio.run(run())
+
+
+def test_concurrent_spoken_question_pause_is_single_entry():
+    from odessy.application.desktop_voice import DesktopVoice, VoiceError
+    async def run():
+        c = controller()
+        c.interactions.start_turn()
+        voice = DesktopVoice(lambda: Audio(), host='local')
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def cancel_audio():
+            entered.set()
+            await release.wait()
+        voice._cancel_audio = cancel_audio
+        async def turn():
+            await c.interactions.ask('Which project?')
+        task = asyncio.create_task(voice.run_spoken(c, turn))
+        try:
+            for _ in range(30):
+                if c.interactions.pending:
+                    break
+                await asyncio.sleep(0)
+            pause = voice._spoken_pause[1]
+            first = asyncio.create_task(pause())
+            await entered.wait()
+            with pytest.raises(VoiceError):
+                await pause()
+            release.set()
+            await first
+            capture = await voice.start(c, c.interactions.pending[0]['id'])
+            assert voice.owner == c.id and voice.capture_id == capture['capture_id']
+        finally:
+            release.set()
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await voice.close()
+            await c.close()
+    asyncio.run(run())

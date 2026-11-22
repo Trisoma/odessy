@@ -62,7 +62,7 @@ func TestBinaryBootstrapSmokeWithFakeChild(t *testing.T) {
 	t.Cleanup(cancel)
 	cmd := exec.CommandContext(ctx, monitor)
 	cmd.WaitDelay = time.Second
-	cmd.Env = append(os.Environ(), "FAKEWORKER_HOST_ID="+hostID)
+	cmd.Env = append(os.Environ(), "FAKEWORKER_HOST_ID="+hostID, "FAKEWORKER_DELAY_MS=500")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -145,6 +145,11 @@ func TestBinaryBootstrapSmokeWithFakeChild(t *testing.T) {
 	}
 	if resp, _ := do(http.MethodGet, "/internal/v1/monitoring", "wrong-token", ""); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("wrong token must fail, got %d", resp.StatusCode)
+	}
+	if resp, data := do(http.MethodGet, "/internal/v1/hosts/"+hostID, token, ""); resp.StatusCode != http.StatusOK {
+		_ = stdin.Close()
+		<-exited
+		t.Fatalf("ready must include the initial inventory, got %d %s", resp.StatusCode, data)
 	}
 
 	deadline := time.Now().Add(8 * time.Second)

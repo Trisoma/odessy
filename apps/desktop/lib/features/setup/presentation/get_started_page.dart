@@ -53,12 +53,15 @@ class _GetStartedPageState extends State<GetStartedPage> {
   final _modelChoiceKey = GlobalKey();
   final _voiceKey = GlobalKey();
   bool showVoice = false, voiceEnabled = false;
+  String ttsProvider = 'piper';
   final voicePaths = <String, TextEditingController>{
     for (final name in [
       'whisper_bin',
       'whisper_model',
       'kokoro_model',
       'kokoro_voices',
+      'tts_executable',
+      'tts_model',
     ])
       name: TextEditingController(),
   };
@@ -142,6 +145,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
     final audio = selection is Map ? selection['voice'] : null;
     if (audio is Map) {
       voiceEnabled = audio['enabled'] == true;
+      ttsProvider = audio['tts_provider'] as String? ?? 'kokoro';
       for (final entry in voicePaths.entries) {
         entry.value.text = '${audio[entry.key] ?? ''}';
       }
@@ -344,6 +348,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             DropdownButtonFormField<String>(
+              isExpanded: true,
               initialValue: localProvider,
               decoration: const InputDecoration(labelText: 'Local backend'),
               items: const [
@@ -405,6 +410,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
     ];
     if (names.isNotEmpty) {
       return DropdownButtonFormField<String>(
+        isExpanded: true,
         key: const Key('get-started-model-list'),
         initialValue:
             names.contains(model.text.trim()) ? model.text.trim() : null,
@@ -445,6 +451,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             DropdownButtonFormField<String>(
+              isExpanded: true,
               initialValue: preset,
               decoration: const InputDecoration(labelText: 'Provider'),
               items: const [
@@ -615,7 +622,7 @@ class _GetStartedPageState extends State<GetStartedPage> {
         child: SetupSection(
           title: 'Voice configuration',
           description:
-              'Select existing Whisper and Kokoro files. Saving validates configuration; it does not download assets or start microphone capture.',
+              'Choose Piper or Kokoro and select its existing files. Saving does not download assets or start microphone capture.',
           child: Column(
             children: [
               SwitchListTile(
@@ -625,7 +632,30 @@ class _GetStartedPageState extends State<GetStartedPage> {
                     ? null
                     : (value) => setState(() => voiceEnabled = value),
               ),
-              for (final entry in voicePaths.entries)
+              DropdownButtonFormField<String>(
+                isExpanded: true,
+                key: const Key('get-started-tts-provider'),
+                initialValue: ttsProvider,
+                decoration:
+                    const InputDecoration(labelText: 'Speech output engine'),
+                items: [
+                  const DropdownMenuItem(value: 'piper', child: Text('Piper')),
+                  const DropdownMenuItem(
+                      value: 'kokoro', child: Text('Kokoro')),
+                  if (!const ['piper', 'kokoro'].contains(ttsProvider))
+                    DropdownMenuItem(
+                        value: ttsProvider,
+                        child: Text('Custom: $ttsProvider')),
+                ],
+                onChanged: _busy
+                    ? null
+                    : (value) =>
+                        setState(() => ttsProvider = value ?? ttsProvider),
+              ),
+              for (final entry in voicePaths.entries.where((entry) =>
+                  ttsProvider != 'kokoro'
+                      ? !entry.key.startsWith('kokoro_')
+                      : !entry.key.startsWith('tts_')))
                 PathField(
                   controller: entry.value,
                   label: entry.key.replaceAll('_', ' '),
@@ -648,7 +678,11 @@ class _GetStartedPageState extends State<GetStartedPage> {
                           ...?existing is Json ? existing : null,
                           'role': c.role,
                           'voice': {
+                            ...?existing is Json && existing['voice'] is Json
+                                ? existing['voice'] as Json
+                                : null,
                             'enabled': voiceEnabled,
+                            'tts_provider': ttsProvider,
                             for (final entry in voicePaths.entries)
                               entry.key: entry.value.text.trim(),
                           },

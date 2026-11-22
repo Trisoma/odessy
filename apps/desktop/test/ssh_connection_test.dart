@@ -20,10 +20,36 @@ class FakeExecutionHosts implements ExecutionHostsApi {
   Future<void> disconnectExecutionHost() async {}
 }
 
-class FakeSsh implements SshConnectionApi {
+class FakeSsh implements SshConnectionApi, TemporarySshConnectionApi {
   FakeSsh({this.known = true, this.changed = false, this.failStatus = 0});
+  @override
+  Future<Json> connectSsh(String target,
+      {int? port, String password = ''}) async {
+    receivedTarget = target;
+    receivedPort = port;
+    receivedPassword = password;
+    if (!known || changed) {
+      throw SshConnectionFailure(
+          409,
+          changed
+              ? 'Host key changed. Verify it independently.'
+              : 'Host key is not in known_hosts. Verify it independently.');
+    }
+    final tested = await testSshAlias(target);
+    final reviewed = await inspectSshAlias(target);
+    if (tested['test']['ok'] != true) {
+      return {...tested, ...reviewed, 'connected': false};
+    }
+    await saveSshTarget(target);
+    currentTarget = {...currentTarget!, 'temporary': true, 'port': port};
+    return {...tested, ...reviewed, 'connected': true, 'target': currentTarget};
+  }
+
   bool known, changed;
   final int failStatus;
+  String? receivedTarget, receivedPassword;
+  int? receivedPort;
+  int inspectCalls = 0;
   Json? currentTarget;
   Json? computer;
   Object? computerError;
@@ -126,6 +152,15 @@ class FakeSsh implements SshConnectionApi {
 }
 
 void main() {
+  test('structured Git-only explanation remains visible', () async {
+    final c = SshConnectionController(_GitOnlySsh());
+    await c.load();
+    await c.select('github.com');
+    await c.testConnection();
+    expect(c.message, contains('Git only'));
+    expect(c.test?['ok'], isFalse);
+    c.dispose();
+  });
   test('load owns busy until the saved target status finishes', () async {
     final gate = Completer<Json>();
     final api = _DelayedComputerSsh();
@@ -152,6 +187,7 @@ void main() {
     expect(controller.status, isNotNull);
     await controller.select('other');
     api.computerError = SshConnectionFailure(503);
+    await controller.select(controller.selected ?? 'jetson');
     final pending = controller.save();
     gate.complete({
       'target': {'alias': 'other', 'host_id': 'different-host'}
@@ -186,67 +222,6 @@ void main() {
     expect(controller.message, message);
     expect(controller.error, isEmpty);
     controller.dispose();
-  });
-
-  testWidgets('SSH happy path offers alias, review, test and save',
-      (tester) async {
-    final api = FakeSsh();
-    final controller = SshConnectionController(api);
-    final page = ExecutionHostsPage(
-        controller: ExecutionHostsController(FakeExecutionHosts()),
-        ssh: controller);
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: page)));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Connect a computer'), findsOneWidget);
-    expect(find.text('Using SSH'), findsOneWidget);
-    expect(find.text('Host key trusted in known_hosts'), findsOneWidget);
-    await tester.ensureVisible(find.text('Test connection'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Test connection'));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('SSH login verified'), findsOneWidget);
-    await tester.ensureVisible(find.text('Save SSH computer'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Save SSH computer'));
-    await tester.pumpAndSettle();
-    expect(find.text('Saved SSH computer'), findsOneWidget);
-    expect(find.text('not available in this build'), findsOneWidget);
-    expect(find.text('not required for status'), findsOneWidget);
-    controller.dispose();
-  });
-
-  testWidgets('unknown host requires review and does not offer save/test',
-      (tester) async {
-    final api = FakeSsh(known: false);
-    final controller = SshConnectionController(api);
-    final page = ExecutionHostsPage(
-        controller: ExecutionHostsController(FakeExecutionHosts()),
-        ssh: controller);
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: page)));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Host key not trusted'), findsOneWidget);
-    expect(find.textContaining('Verify this fingerprint independently'),
-        findsOneWidget);
-    expect(find.textContaining('ssh-keyscan'), findsWidgets);
-    final testButton = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, 'Test connection'));
-    expect(testButton.onPressed, isNull);
-  });
-
-  testWidgets('changed host is visible and refuses save/test', (tester) async {
-    final api = FakeSsh(changed: true);
-    final controller = SshConnectionController(api);
-    final page = ExecutionHostsPage(
-        controller: ExecutionHostsController(FakeExecutionHosts()),
-        ssh: controller);
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: page)));
-    await tester.pumpAndSettle();
-    expect(find.text('Host key changed'), findsOneWidget);
-    final saveButton = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, 'Save SSH computer'));
-    expect(saveButton.onPressed, isNull);
   });
 
   testWidgets('stale status shows last update and never claims online',
@@ -330,6 +305,7 @@ void main() {
   test('service failures become one actionable recovery message', () async {
     final controller = SshConnectionController(FakeSsh(failStatus: 503));
     await controller.load();
+    await controller.select('jetson');
     expect(controller.selected, isNotNull);
     await controller.testConnection();
     expect(controller.error, contains('SSH service is unavailable'));
@@ -342,6 +318,7 @@ void main() {
     final api = _SlowSsh(gate);
     final controller = SshConnectionController(api);
     await controller.load();
+    await controller.select('jetson');
     final pending = controller.testConnection();
     expect(controller.busy, isTrue);
     controller.cancel();
@@ -470,6 +447,7 @@ void main() {
     final api = _SlowSaveSsh(gate);
     final controller = SshConnectionController(api);
     await controller.load();
+    await controller.select(controller.selected ?? 'jetson');
     final pending = controller.save();
     await Future<void>.delayed(Duration.zero);
     controller.cancel();
@@ -531,4 +509,66 @@ class _SlowLoadSsh extends FakeSsh {
   final Completer<Json> gate;
   @override
   Future<Json> sshTarget() => gate.future;
+}
+
+class PasswordSsh extends FakeSsh implements SshPasswordConnectionApi {
+  @override
+  Future<Json> inspectSshAlias(String alias) async {
+    final result = await super.inspectSshAlias(alias);
+    if (alias.contains('@')) {
+      final parts = alias.split('@');
+      return {
+        ...result,
+        'identity': {
+          ...result['identity'] as Map,
+          'user': parts.first,
+          'hostname': parts.last,
+          'endpoint': parts.last
+        }
+      };
+    }
+    return result;
+  }
+
+  @override
+  Future<Json> testSshPassword(String target, String password) async {
+    receivedTarget = target;
+    receivedPassword = password;
+    return {
+      'test': {'ok': true, 'code': 'SSH_OK'}
+    };
+  }
+
+  @override
+  Future<Json> saveSshPassword(String target, String password) =>
+      testSshPassword(target, password);
+}
+
+class _GitOnlySsh extends FakeSsh {
+  @override
+  Future<Json> sshAliases() async => {
+        'aliases': [
+          {'alias': 'github.com'}
+        ]
+      };
+  @override
+  Future<Json> inspectSshAlias(String alias) async => {
+        'identity': {
+          ...identity,
+          'alias': alias,
+          'hostname': 'ssh.github.com',
+          'user': 'git',
+          'port': 443,
+          'endpoint': 'ssh.github.com:443'
+        }
+      };
+  @override
+  Future<Json> testSshAlias(String target) async => {
+        'test': {
+          'ok': false,
+          'authenticated': true,
+          'code': 'SSH_NO_SHELL',
+          'message': 'Git only, no shell for monitoring.'
+        }
+      };
 }

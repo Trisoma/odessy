@@ -130,8 +130,41 @@ const wakeRoot = r'C:\Users\me\AppData\Local\Odessy\wake';
 String wakePath(String file) => '$wakeRoot\\$file';
 
 /// The artifacts a request selects, mirroring the helper's per-feature filter.
-List<Map<String, Object>> featureEntries(Set<String> features) => [
-      if (features.contains('voice')) ...voicePlanEntries,
+List<Map<String, Object>> featureEntries(Set<String> features,
+        {String provider = 'kokoro'}) =>
+    [
+      if (features.contains('voice')) ...[
+        ...voicePlanEntries.where((entry) =>
+            provider != 'piper' || !'${entry['id']}'.contains('kokoro')),
+        if (provider == 'piper') ...[
+          for (final pair in [
+            ('piper-model', 'tts_model', 'en_US-ljspeech-medium.onnx'),
+            ('piper-config', 'piper_config', 'en_US-ljspeech-medium.onnx.json')
+          ])
+            {
+              'id': pair.$1,
+              'label': pair.$1,
+              'kind': 'file',
+              'field': pair.$2,
+              'file': pair.$3,
+              'size_bytes': 1024,
+              'license': 'MIT',
+              'url': 'https://example.invalid/${pair.$3}',
+              'sha256': 'a' * 64
+            },
+          {
+            'id': 'py-piper',
+            'label': 'Piper',
+            'kind': 'wheel',
+            'field': '',
+            'file': 'piper-1.0.whl',
+            'size_bytes': 1024,
+            'license': 'GPL-3.0-or-later',
+            'url': 'https://example.invalid/piper.whl',
+            'sha256': 'a' * 64
+          },
+        ],
+      ],
       if (features.contains('wake')) ...[...wakeArtifacts, ...wakeWheels],
     ];
 
@@ -145,6 +178,7 @@ class FlowBackend implements SetupBackend {
   bool installed = false;
   bool voiceInstalled = false;
   bool voiceDependenciesInstalled = false;
+  bool piperModelLoads = true;
   bool wakeInstalled = false;
   bool wakeDependenciesInstalled = false;
   Completer<SetupReply>? pendingVoiceInstall;
@@ -251,8 +285,13 @@ class FlowBackend implements SetupBackend {
           'workspace': r'C:\Users\me\Documents\Odessy',
           'payload': r'C:\Users\me\AppData\Local\OdessyMaintenance\id\hash',
         },
-      'package-configure-review' => {'plan_id': 'config-1'},
-      'package-configure' => {'configured': true, 'model_configured': true},
+      'package-configure-review' || 'package-voice-configure-review' => {
+          'plan_id': 'config-1'
+        },
+      'package-configure' || 'package-voice-configure' => {
+          'configured': true,
+          'model_configured': true
+        },
       'package-uninstall-review' => {
           'plan_id': 'uninstall-1',
           'operation': 'uninstall',
@@ -265,7 +304,9 @@ class FlowBackend implements SetupBackend {
         },
       'package-launch' => launchResponse,
       'voice-plan' => () {
-          final entries = featureEntries(selected);
+          final entries = featureEntries(selected,
+              provider:
+                  request.parameters['tts_provider'] as String? ?? 'kokoro');
           final outstanding = [
             for (final entry in entries)
               if (!artifactReady(entry)) entry
@@ -293,7 +334,9 @@ class FlowBackend implements SetupBackend {
           };
         }(),
       'voice-status' => () {
-          final entries = featureEntries(selected);
+          final entries = featureEntries(selected,
+              provider:
+                  request.parameters['tts_provider'] as String? ?? 'kokoro');
           Map<String, Object> component(Map<String, Object> entry) {
             final ready = artifactReady(entry);
             final wake = entry['field'] == 'wake_model';
@@ -331,7 +374,10 @@ class FlowBackend implements SetupBackend {
           ];
           final depsReady = dependenciesReady(selected);
           final wake = selected.contains('wake');
-          final ready = missing.isEmpty && depsReady;
+          final ready = missing.isEmpty &&
+              depsReady &&
+              (request.parameters['tts_provider'] != 'piper' ||
+                  piperModelLoads);
           return {
             'platform': 'windows',
             'root': voiceRoot,
@@ -390,8 +436,15 @@ class FlowBackend implements SetupBackend {
                 : const {},
             'progress': const {},
             'paths': {
+              if (ready &&
+                  selected.contains('voice') &&
+                  request.parameters['tts_provider'] == 'piper')
+                'tts_executable':
+                    '${request.parameters['install_root']}\\versions\\${'a' * 32}\\Scripts\\python.exe',
               if (voiceInstalled)
-                for (final entry in voiceArtifacts)
+                for (final entry in entries.where((item) =>
+                    item['kind'] != 'wheel' &&
+                    !'${item['id']}'.startsWith('wake')))
                   entry['field'] as String: voicePath(voiceTarget(entry)),
               if (wakeInstalled)
                 for (final entry in wakeArtifacts)
@@ -402,7 +455,9 @@ class FlowBackend implements SetupBackend {
       'voice-install' => () {
           if (selected.contains('voice')) voiceInstalled = true;
           if (selected.contains('wake')) wakeInstalled = true;
-          final entries = featureEntries(selected);
+          final entries = featureEntries(selected,
+              provider:
+                  request.parameters['tts_provider'] as String? ?? 'kokoro');
           return {
             'installed': entries,
             'preserved': const [],
@@ -411,7 +466,8 @@ class FlowBackend implements SetupBackend {
             'features': selected.toList()..sort(),
             'missing': const [],
             'paths': {
-              for (final entry in [...voiceArtifacts, ...wakeArtifacts])
+              for (final entry
+                  in entries.where((item) => item['kind'] != 'wheel'))
                 if (artifactReady(entry))
                   entry['field'] as String: entry['field'] == 'wake_model'
                       ? wakePath(entry['file'] as String)
@@ -437,8 +493,17 @@ class FlowBackend implements SetupBackend {
             'installed': true,
             'verified': true,
             'severity': 'info',
-            'python': voicePath('Scripts\\python.exe'),
-            'wheels': featureEntries(selected)
+            'python':
+                '${request.parameters['install_root']}\\versions\\${'a' * 32}\\Scripts\\python.exe',
+            'paths': {
+              if (selected.contains('voice') &&
+                  request.parameters['tts_provider'] == 'piper')
+                'tts_executable':
+                    '${request.parameters['install_root']}\\versions\\${'a' * 32}\\Scripts\\python.exe'
+            },
+            'wheels': featureEntries(selected,
+                    provider: request.parameters['tts_provider'] as String? ??
+                        'kokoro')
                 .where((entry) => entry['kind'] == 'wheel')
                 .length,
             'features': selected.toList()..sort(),

@@ -1,5 +1,17 @@
 import 'models.dart';
 
+abstract interface class LiveVoiceConfigurationApi {
+  Future<Json> applyVoiceConfiguration(String fingerprint);
+}
+
+class VoiceActionFailure implements Exception {
+  const VoiceActionFailure(this.status, this.message);
+  final int status;
+  final String message;
+  @override
+  String toString() => message;
+}
+
 abstract interface class DesktopVoiceApi {
   Future<VoiceSnapshot> voiceState(String session);
   Future<VoiceSnapshot> voiceCommand(String session, String action,

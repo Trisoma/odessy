@@ -43,6 +43,10 @@ COMPONENT_FIELDS = {
     'whisper_model': 'Whisper model',
     'kokoro_model': 'Kokoro model',
     'kokoro_voices': 'Kokoro voices',
+    'tts_model': 'Piper voice model',
+    'piper_config': 'Piper voice configuration',
+    'piper_model_card': 'Piper voice model card',
+    'piper_license': 'Piper voice license',
     'wake_model': 'Wake-word model',
     'wake_melspectrogram': 'Wake audio features',
     'wake_embedding': 'Wake audio embedding',
@@ -544,7 +548,7 @@ def _finding(check, severity, message, path='', fix_hint='', *, ready=False):
 
 
 def status(payload=None, *, manifest=None, root=None, install_root=None, features=None,
-           runner=None):
+           runner=None, tts_provider='kokoro', _interpreter=None):
     """Report readiness as structured findings, one per component and per feature.
 
     Each finding carries a stable `check_id`, a severity and a remedy, so
@@ -553,9 +557,10 @@ def status(payload=None, *, manifest=None, root=None, install_root=None, feature
     error, because it will not be used.
     """
     platform, _ = _platform()
-    entries = manifest if manifest is not None else load_manifest(manifest_path(payload))
+    entries = manifest if manifest is not None else _provider_entries(load_manifest(manifest_path(payload)), tts_provider)
     selected = _feature_list(features)
     entries = _selected(entries, selected)
+    interpreter = _interpreter or _runtime_python(install_root)
     voice_root = Path(root) if root is not None else default_root()
     recorded = {item.get('path'): item.get('sha256')
                 for item in _record(voice_root).get('artifacts', [])
@@ -612,7 +617,7 @@ def status(payload=None, *, manifest=None, root=None, install_root=None, feature
     python_findings = []
     for name in (selected or FEATURES):
         python_findings.append(python_status(voice_root, install_root=install_root,
-                                            feature=name, runner=runner))
+                                            feature=name, runner=runner, tts_provider=tts_provider, _interpreter=interpreter))
     findings.extend(python_findings)
     wake = _wake_session_finding(components, python_findings, selected, install_root, runner)
     if wake:
@@ -637,6 +642,15 @@ def status(payload=None, *, manifest=None, root=None, install_root=None, feature
                            and feature_python is not None and feature_python['ready'])
     if wake is not None:
         readiness['wake'] = wake['ready']
+    piper = None
+    if tts_provider == 'piper' and (selected is None or 'voice' in selected):
+        piper = _piper_finding(components, python_findings, interpreter, runner)
+        if install_root and _runtime_python(install_root) != interpreter:
+            piper = _finding('piper-session', 'warning',
+                'The active runtime changed during verification. Retry speech setup.', ready=False)
+        findings.append(piper)
+        readiness['voice'] = readiness.get('voice', False) and piper['ready']
+        severity = max((item['severity'] for item in findings), key=_severity_rank, default='info')
     return {
         'platform': platform, 'root': str(voice_root), 'wake_root': str(wake_root()),
         'features': list(selected) if selected is not None else list(FEATURES),
@@ -647,9 +661,31 @@ def status(payload=None, *, manifest=None, root=None, install_root=None, feature
         'readiness': readiness,
         'progress': progress, 'findings': findings, 'severity': severity,
         'python': python_findings[0] if python_findings else None,
-        'wake': wake,
-        'paths': {item['field']: item['path'] for item in components if item['state'] == 'ready'},
+        'wake': wake, 'piper': piper,
+        'paths': {**{item['field']: item['path'] for item in components if item['state'] == 'ready'},
+                  **({'tts_executable': piper['executable']} if piper and piper['ready'] else {})},
     }
+
+
+def _piper_finding(components, python_findings, interpreter, runner):
+    model = next((item for item in components if item['field'] == 'tts_model'), None)
+    config = next((item for item in components if item['field'] == 'piper_config'), None)
+    dependencies = next((item for item in python_findings if item['check_id'] == 'setup/voice/python/voice'), None)
+    ready = interpreter and model and config and model['state'] == config['state'] == 'ready' and dependencies and dependencies['ready']
+    if ready:
+        try:
+            result = (runner or _run)([str(interpreter), '-I', '-c',
+                'import sys; from piper import PiperVoice; PiperVoice.load(sys.argv[1], use_cuda=False)', model['path']], timeout=120)
+            ready = result.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            ready = False
+    finding = _finding('piper-session', 'info' if ready else 'warning',
+        'Piper engine and voice model loaded successfully.' if ready else
+        'Piper is not ready: its engine, verified model and matching configuration must be installed and loadable.',
+        model['path'] if model else '', '' if ready else 'Install the selected speech components, then retry.', ready=bool(ready))
+    if ready:
+        finding['executable'] = str(interpreter)
+    return finding
 
 
 def _wake_session_finding(components, python_findings, selected, install_root=None, runner=None):
@@ -709,14 +745,14 @@ def _wheel_files(voice_root):
     return sorted(directory.glob('*.whl')) if directory.is_dir() else []
 
 
-def python_status(voice_root, *, install_root=None, feature='voice', runner=None):
+def python_status(voice_root, *, install_root=None, feature='voice', runner=None, tts_provider='kokoro', _interpreter=None):
     """Is the Python side of one feature installed? Checked, never assumed.
 
     Without an installation to inspect the answer is `info` with the wheels
     waiting: nothing has been installed into an application runtime yet, and
     that is a normal intermediate state, not a failure.
     """
-    modules = FEATURE_MODULES[feature]
+    modules = _feature_modules(feature, tts_provider)
     label = 'voice' if feature == 'voice' else 'wake-word'
     cached = _wheel_files(voice_root)
     if not cached:
@@ -724,7 +760,7 @@ def python_status(voice_root, *, install_root=None, feature='voice', runner=None
                         f'The Python {label} dependencies have not been downloaded.',
                         Path(voice_root) / WHEEL_DIR,
                         'Download the speech components to fetch them.')
-    interpreter = _runtime_python(install_root) if install_root else None
+    interpreter = _interpreter or (_runtime_python(install_root) if install_root else None)
     if interpreter is None:
         return _finding(f'python/{feature}', 'info',
                         f'{len(cached)} Python speech packages are downloaded and waiting for '
@@ -1079,15 +1115,15 @@ def requirements_text(entries):
 
 
 def python_install(install_root, voice_root, *, entries=None, payload=None,
-                   cancelled=lambda: False, runner=None, features=None):
+                   cancelled=lambda: False, runner=None, features=None, tts_provider='kokoro', _interpreter=None):
     """Install hash-locked cached wheels without racing another speech writer."""
     with _operation_locks([Path(voice_root)], cancelled=cancelled):
         return _python_install_locked(install_root, voice_root, entries=entries,
-            payload=payload, cancelled=cancelled, runner=runner, features=features)
+            payload=payload, cancelled=cancelled, runner=runner, features=features, tts_provider=tts_provider, _interpreter=_interpreter)
 
 
 def _python_install_locked(install_root, voice_root, *, entries=None, payload=None,
-                   cancelled=lambda: False, runner=None, features=None):
+                   cancelled=lambda: False, runner=None, features=None, tts_provider='kokoro', _interpreter=None):
     """Install the cached wheels into the installed application runtime.
 
     Offline and hash-locked: `--no-index --no-deps --require-hashes` with the
@@ -1100,10 +1136,10 @@ def _python_install_locked(install_root, voice_root, *, entries=None, payload=No
     wheels = _wheel_files(root)
     if not wheels:
         raise ValueError('speech components have not been downloaded yet')
-    interpreter = _runtime_python(install_root)
+    interpreter = _interpreter or _runtime_python(install_root)
     if interpreter is None:
         raise ValueError('no installed Odessy runtime was found to install speech into')
-    all_entries = entries if entries is not None else load_manifest(manifest_path(payload))
+    all_entries = entries if entries is not None else _provider_entries(load_manifest(manifest_path(payload)), tts_provider)
     wheel_entries = [entry for entry in _selected(all_entries, selected)
                      if entry['kind'] == 'wheel']
     expected = {entry['file'] for entry in wheel_entries}
@@ -1128,7 +1164,7 @@ def _python_install_locked(install_root, voice_root, *, entries=None, payload=No
                 'manual_step': 'Retry the dependency install, or continue with text only.'}
     imports = {}
     for name in (selected or FEATURES):
-        modules = FEATURE_MODULES[name]
+        modules = _feature_modules(name, tts_provider)
         check = run([str(interpreter), '-I', '-c',
                      'import ' + ', '.join(modules) + ';print("ok")'])
         imports[name] = {'verified': check.returncode == 0,
@@ -1143,6 +1179,8 @@ def _python_install_locked(install_root, voice_root, *, entries=None, payload=No
     return {'installed': True, 'verified': verified,
             'severity': 'info' if verified else 'error',
             'python': str(interpreter), 'wheels': len(wheels), 'log': log[-25:],
+            'paths': {**paths(root, all_entries), **({'tts_executable': str(interpreter)}
+                      if verified and tts_provider == 'piper' and 'voice' in imports else {})},
             'features': list(selected or FEATURES),
             'imports': {name: 'ok' if item['verified'] else item['error']
                         for name, item in imports.items()},
@@ -1152,23 +1190,67 @@ def _python_install_locked(install_root, voice_root, *, entries=None, payload=No
                  + ' could not be imported.')}
 
 
+def _provider_entries(entries, tts_provider):
+    if tts_provider not in ('piper', 'kokoro'):
+        raise ValueError('Choose Piper or Kokoro for setup speech output')
+    excluded = ('kokoro-', 'py-kokoro', 'py-phonemizer', 'py-espeakng_loader') if tts_provider == 'piper' else ('piper-', 'py-piper')
+    return [entry for entry in entries if not entry['id'].startswith(excluded)]
+
+
+def prepare_piper_upgrade(selection, previous_runtime, interpreter, *, cancelled=lambda: False, payload=None):
+    """Transfer only automatically managed Piper to a new, unactivated runtime.
+
+    No download or external-provider mutation: the selected cached wheels and
+    model must still verify. Failure leaves the previous version active.
+    """
+    from dataclasses import replace
+    voice = selection.voice
+    if (not voice.enabled or voice.tts_provider != 'piper' or not previous_runtime
+            or os.path.normcase(os.path.abspath(voice.tts_executable)) != os.path.normcase(os.path.abspath(previous_runtime))):
+        return selection
+    root = default_root()
+    recovery = ('The previous version remains active. In Manage Odessy, review and confirm '
+                '"Pause speech for update", then retry Repair or update files. '
+                'Speech stays off until you explicitly enable saved speech; its files and device choices are preserved.')
+    try:
+        result = python_install(None, root, payload=payload, features=['voice'], tts_provider='piper',
+                                cancelled=cancelled, _interpreter=interpreter)
+    except ValueError as error:
+        if cancelled(): raise
+        raise ValueError(f'Piper upgrade could not complete: {error}. {recovery}') from error
+    if cancelled():
+        raise ValueError('cancelled')
+    current = status(payload, root=root, features=['voice'], tts_provider='piper', _interpreter=interpreter)
+    if (not result['verified'] or not current['ready']
+            or current['paths'].get('tts_model') != voice.tts_model):
+        raise ValueError(f'Piper could not be verified in the replacement runtime. {recovery}')
+    return replace(selection, voice=replace(voice, tts_executable=str(interpreter)))
+
+
+def _feature_modules(feature, tts_provider):
+    modules = FEATURE_MODULES[feature]
+    return tuple(name for name in modules if name != 'kokoro_onnx') + ('piper',) if feature == 'voice' and tts_provider == 'piper' else modules
+
+
 def dispatch(parameters, *, cancelled=lambda: False):
     """Entry point used by the setup bridge. No path arrives from the caller."""
     action = parameters.get('action')
     payload = parameters.get('payload') or None
     root = default_root()
     entries = load_manifest(manifest_path(payload))
+    tts_provider = parameters.get('tts_provider', 'kokoro')
+    entries = _provider_entries(entries, tts_provider)
     features = parameters.get('features')
     if action == 'voice-plan':
         return plan(payload, manifest=entries, root=root, features=features)
     if action == 'voice-status':
         return status(payload, manifest=entries, root=root, features=features,
-                      install_root=parameters.get('install_root') or None)
+                      install_root=parameters.get('install_root') or None, tts_provider=tts_provider)
     if action == 'voice-install':
         value = plan(payload, manifest=entries, root=root, features=features)
         value['entries'] = _selected(entries, _feature_list(features))
         return install(value, confirm=parameters.get('confirm'), cancelled=cancelled)
     if action == 'voice-python-install':
         return python_install(parameters.get('install_root'), root, entries=entries,
-                              features=features, cancelled=cancelled)
+                              features=features, cancelled=cancelled, tts_provider=tts_provider)
     raise ValueError('unsupported voice operation')

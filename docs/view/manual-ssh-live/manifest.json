@@ -1,0 +1,83 @@
+{
+  "captured_on": "2026-11-18",
+  "timezone": "Asia/Shanghai",
+  "capture_kind": "Real installed application, full Odessy window, live SSH connection; not a demo or simulated widget render.",
+  "installed_executable": "D:/Odessy-test/versions/3b24e8b4c22d475cbb67c7bcf1816440/desktop/odessy_desktop.exe",
+  "installed_executable_sha256": "4a1a91a9bd67433cc5fb6fcdf4c6e62c992109f9489de88cdd5f090da05cf25c",
+  "privacy_edits": "Private account/address/port and the address helper example were replaced with an opaque decorative mosaic independent of original pixels. No cropping, UI reconstruction or status alterations. No password was revealed.",
+  "observed": [
+    "SSH login verified",
+    "Session online and ready",
+    "Transport verified",
+    "Monitoring read-only",
+    "Agent commands not selected",
+    "Devices lists localhost online with telemetry allowed"
+  ],
+  "identity_note": "The connected Debian computer is named localhost. The separate jetson card is a saved entry, not this live SSH connection.",
+  "evidence_limit": "Connection/setup evidence only. No fresh SSH command was executed and no remote tool-output screenshot was captured. Does not establish behavior of the current source checkout.",
+  "images": [
+    {
+      "file": "01-ssh-connected.png",
+      "description": "Real installed SSH connection form after a successful login.",
+      "width": 1536,
+      "height": 912,
+      "sha256": "e158fdc899670412e4ba20e9f0b103d6d3e5c0e8ff2cffbd6bec48312edc25ae",
+      "privacy_replacements_xyxy_exclusive": [
+        [
+          397,
+          253,
+          568,
+          278
+        ],
+        [
+          448,
+          293,
+          566,
+          312
+        ],
+        [
+          397,
+          337,
+          455,
+          360
+        ],
+        [
+          494,
+          741,
+          685,
+          761
+        ]
+      ]
+    },
+    {
+      "file": "02-devices-overview.png",
+      "description": "Real Devices overview: localhost is online via read-only SSH monitoring.",
+      "width": 1536,
+      "height": 912,
+      "sha256": "ab67757371c08276fb522544dff94d2889bbc0694903ab2826b48c6529ff6a74",
+      "privacy_replacements_xyxy_exclusive": [
+        [
+          765,
+          313,
+          921,
+          334
+        ]
+      ]
+    },
+    {
+      "file": "03-enable-agent-commands.png",
+      "description": "Verified read-only SSH connection with the separate command-selection button visible.",
+      "width": 1536,
+      "height": 912,
+      "sha256": "0e1f16341b836b8036badeda6bb112d2fbd1bbad353e91b87aa7c04bdef7a320",
+      "privacy_replacements_xyxy_exclusive": [
+        [
+          494,
+          373,
+          686,
+          396
+        ]
+      ]
+    }
+  ]
+}

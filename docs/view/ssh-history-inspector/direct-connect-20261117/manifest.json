@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "captured_date": "2026-11-17",
+  "timezone": "Asia/Shanghai",
+  "branch": "fix/ssh-history-inspector",
+  "base_commit": "3b7cea13922d773f95275c970f1d50c275cd5a04",
+  "dirty_working_tree": true,
+  "scope": "Production Flutter widgets with simulated SSH APIs; native backend pipeline separately tested with simulated SSH child. No live Jetson or installed qualification.",
+  "source_sha256": {
+    "src/odessy/ssh/identity.py": "4ed8dc3e2cbbf4c938f9642d78072a8954c8aac8aca14c1954f2fc7e4f1e5c84",
+    "src/odessy/application/ssh_connections.py": "c1520da1e9a6202f501a34c046246c53e44bdb19863f0b5d28586cbce5e23438",
+    "src/odessy/monitoring/settings.py": "b178384744d74080603ed2d70d9d05b1d3e2e6da58aa357bc7b1def2a4da865d",
+    "src/odessy/monitoring/supervisor.py": "891442408147ed35d418325225801cd3cc9755f958cb33662227812eac3a91f0",
+    "packages/odessy_client/lib/odessy_client.dart": "e0d4e1654af36d711742b09c2b3f1b6e9c60582638ed04074850c4b4e6d4e60a",
+    "packages/odessy_client/lib/src/monitoring/client.dart": "85e3c7a2bd8d442403f637665b82df164b54235bfad17802c4d618726689d28f",
+    "apps/desktop/lib/app/ssh_connection_controller.dart": "21eef340e7cb7e9377e579a686281e03cae5756ad622275d6baada44728dfe2a",
+    "apps/desktop/lib/features/devices/presentation/execution_hosts_page.dart": "a30f458669ee5739167f6751db9276fb84932911dc95cf306688b581720b5856",
+    "apps/desktop/lib/features/devices/presentation/devices_hub.dart": "4519688db2201e11598a71320a2852d3cf66fb7d7283e90c4b47a09c8c48b8b1",
+    "apps/desktop/lib/features/devices/presentation/devices.dart": "4321cd20c5f9f1c58f9892e5f9ad9d371399921df325a43e74f49fc638e8d4be",
+    "apps/desktop/lib/features/devices/presentation/monitoring_details.dart": "a8183698f3f5f1eb1d3ed6f2b5afd3cf4818bad4e4fdb2f8d0e2c4e4613635cd",
+    "apps/desktop/lib/features/monitoring/presentation/metric_presentation.dart": "7854ed7fb7924459586d960b210cccc7dcba2b0671995dcc3e69563087f31730",
+    "apps/desktop/test/ssh_direct_connect_test.dart": "f8bd315d1a4f22aa45716b19fc7da859c0928f4435e82923319e9e6637c77681",
+    "apps/desktop/test/ssh_connected_device_test.dart": "f062b309616d0ea9b7a28be8677feac1eafdcc533f50d91f27be6a65c4f144ff",
+    "tests/test_ssh_temporary_integration.py": "dabab400211d1bc38ee6013e2ae321052f5504f0828da70718833b5bb8e59856",
+    "services/monitoring/internal/testsupport/fakessh/main.go": "596479ea04772239730438d8b610778df73b4411a34624df4ae7ecb317dd19bc"
+  },
+  "images_sha256": {
+    "01-address-entry.png": "9933c27ac442c54a6cbece007e49b50f2e398b764d31b087b92b417a706e1f41",
+    "02-optional-port-password.png": "c8cddd74858e3b9f832f97f783df8ee4b6ec5178b6109252bca5508d12a3f471",
+    "03-connected-read-only.png": "9f9097b1de524207f93f3542e4d5296ccb25f84af25bee6c86bbf8b62799d585",
+    "04-unknown-key-refused.png": "7e909aa98cb54cb614cd6b363a7916d97a38267cd8a0f1a8209966e3328f49c4",
+    "05-changed-key-refused.png": "f098dbf53cf5a000eeaa78059abcc3a213924d55ea7db2ba5c0774a2c9bfe1b4",
+    "06-narrow-dark.png": "d53d97b9712c4f187324ada9bf2e99eebb09bdb24fd37cee4dfbf2f28a147eee",
+    "07-connecting.png": "e61561062d72bc91e705c855d93625e1513f2953f54368ba94333d1ad6a8e000",
+    "08-devices-overview.png": "445a341798fb9b352ddea539841cc3080164024551709401cd4ec8ddbf0863fd",
+    "09-device-details.png": "ef433cdcacd8da0a97406a4e037f860678e64fdef610a39294b528494936c22e",
+    "10-devices-overview-narrow.png": "297aca0efb2079f2d0ac369731008451b8b1a98db5b533919c5d0d966a77661f",
+    "11-device-details-narrow.png": "9d485944016f4a97945881c330160db23401e3f1a0ee082f440154dd9ae10ab7"
+  },
+  "checks": {
+    "flutter_affected_passed": 84,
+    "dart_client_passed": 68,
+    "python_passed": 80,
+    "analysis": "desktop and client clean",
+    "dart_client_skipped": 2,
+    "go_packages_passed": 9
+  }
+}

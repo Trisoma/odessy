@@ -1,6 +1,7 @@
 import '../features/shell/presentation/app_icon_rail.dart';
 import '../features/history/controllers/basics_controller.dart';
 import '../features/history/presentation/basics_page.dart';
+import '../features/history/presentation/saved_chat.dart';
 import 'preferences/shell_layout_store.dart';
 import 'dart:async';
 import 'dart:io';
@@ -34,6 +35,7 @@ import 'ux_copy.dart';
 import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:odessy_client/odessy_client.dart';
 
 import '../features/conversation/presentation/conversation.dart';
@@ -307,6 +309,30 @@ class _OdessyAppState extends State<OdessyApp> {
     await basics.refresh();
   }
 
+  Future<void> _openSavedConversation(String id) async {
+    if (basics.busy ||
+        controller.busy ||
+        controller.session?.running == true ||
+        !await _mayNavigate() ||
+        !mounted) {
+      return;
+    }
+    await voice.release();
+    await basics.open(id);
+    if (!mounted || basics.selected?.id != id || basics.error != null) return;
+    scaffoldKey.currentState?.closeDrawer();
+    inspector?.invalidate();
+    setState(() {
+      page = 'Saved conversation';
+      inspectorOpen = false;
+    });
+    if (controller.connected && controller.session?.conversationId == id) {
+      await _openSession(controller.session!.id);
+    } else if (basics.selected!.continuable && basics.live) {
+      await _resumeSavedConversation();
+    }
+  }
+
   Future<void> _resumeSavedConversation() async {
     if (!await _mayNavigate() ||
         !mounted ||
@@ -377,7 +403,22 @@ class _OdessyAppState extends State<OdessyApp> {
     final sshApi = api is SshConnectionApi ? api as SshConnectionApi : null;
     if (sshConnections == null || !identical(sshConnections!.api, sshApi)) {
       sshConnections?.dispose();
-      sshConnections = SshConnectionController(sshApi);
+      sshConnections =
+          SshConnectionController(sshApi, beforeExecutionChange: (enabled) {
+        if (controller.busy || controller.session?.running == true) {
+          throw StateError(
+              'Stop the active turn before changing SSH execution.');
+        }
+        if (enabled &&
+            (controller.newSessionRuntime ?? controller.engineDefault) !=
+                'legacy') {
+          throw StateError(
+              'Select Custom for new chats before enabling SSH commands.');
+        }
+      }, onExecutionChanged: () async {
+        await controller.reloadExecutionTarget();
+        if (!controller.connected) throw StateError(controller.error);
+      });
     }
     return sshConnections!;
   }
@@ -711,6 +752,23 @@ class _OdessyAppState extends State<OdessyApp> {
     componentSettings = ComponentSettingsController(
       setup.backend,
       root: widget.installed?['root'] as String? ?? '',
+      applyVoice: (fingerprint) async {
+        final api = controller.api;
+        if (api is! LiveVoiceConfigurationApi) {
+          return 'Saved. Restart the coordinator to apply audio settings.';
+        }
+        final reply = await (api as LiveVoiceConfigurationApi)
+            .applyVoiceConfiguration(fingerprint);
+        if (!identical(api, controller.api)) {
+          throw StateError('Connection changed while applying audio settings.');
+        }
+        await readiness.bind(api);
+        await voice.refresh();
+        if (reply['status'] != 'applied' && reply['status'] != 'deferred') {
+          throw StateError('Invalid audio configuration acknowledgment.');
+        }
+        return reply['message'] as String;
+      },
     );
     maintenance = MaintenanceController(LocalSetupBackend());
     installerEngine = MaintenanceController(LocalSetupBackend());
@@ -836,7 +894,8 @@ class _OdessyAppState extends State<OdessyApp> {
               ]),
               builder: (context, _) =>
                   LayoutBuilder(builder: (context, constraints) {
-                    final narrow = constraints.maxWidth < 900;
+                    final narrow = constraints.maxWidth < 900 ||
+                        (inspectorOpen && constraints.maxWidth < 1100);
                     final sidebar = _sidebar(context);
 
                     return Scaffold(
@@ -1060,7 +1119,11 @@ class _OdessyAppState extends State<OdessyApp> {
                               'Device details' => _devicePage(),
                               'Jobs' => JobsPage(controller: jobs),
                               'Handoffs' => HandoffPage(controller: handoffs),
+                              'Saved conversation' => SavedChatView(
+                                  controller: basics,
+                                  onManage: () => _openBasics()),
                               'History & tools' => BasicsPage(
+                                  onOpenConversation: _openSavedConversation,
                                   controller: basics,
                                   initialTab: basicsTab,
                                   workspaceLabel: readiness
@@ -1191,9 +1254,15 @@ class _OdessyAppState extends State<OdessyApp> {
                                       }),
                                   onOpenManagement: widget.installed == null ? null : () => setState(() => page = 'Manage installation')),
                               _ => LayoutBuilder(builder: (context, box) {
-                                  final sideBySide = box.maxWidth >= 920;
-                                  final panelWidth = inspectorWidth.clamp(320.0,
-                                      (box.maxWidth - 480).clamp(320.0, 480.0));
+                                  // Keep the inspector on the right. Reserve a usable chat
+                                  // width; very small windows use a dismissible sheet.
+                                  final sideBySide = box.maxWidth >= 608;
+                                  final panelWidth = sideBySide
+                                      ? inspectorWidth.clamp(
+                                          280.0,
+                                          (box.maxWidth - 328)
+                                              .clamp(280.0, 480.0))
+                                      : (box.maxWidth - 48).clamp(0.0, 390.0);
                                   final conversation = ConversationPage(
                                       accessMode: basics.mode?.mode,
                                       accessModeDescription:
@@ -1235,61 +1304,78 @@ class _OdessyAppState extends State<OdessyApp> {
                                                   _openBasics('Terminal')),
                                               onClose: _closeInspector)
                                           : null;
-                                  return Stack(children: [
-                                    Positioned.fill(
-                                      right: panel != null && sideBySide
-                                          ? panelWidth + 8
-                                          : 0,
-                                      child: Offstage(
-                                        offstage: panel != null && !sideBySide,
-                                        child: conversation,
-                                      ),
-                                    ),
-                                    if (panel != null && sideBySide)
-                                      Positioned(
-                                        top: 0,
-                                        bottom: 0,
-                                        right: panelWidth,
-                                        width: 8,
-                                        child: Semantics(
-                                          label: 'Resize workspace inspector',
-                                          child: MouseRegion(
-                                            cursor:
-                                                SystemMouseCursors.resizeColumn,
-                                            child: GestureDetector(
-                                              key: const Key(
-                                                  'inspector-resize-handle'),
-                                              behavior: HitTestBehavior.opaque,
-                                              onHorizontalDragUpdate: (event) =>
-                                                  setState(() =>
-                                                      inspectorWidth =
-                                                          (inspectorWidth -
-                                                                  event
-                                                                      .delta.dx)
-                                                              .clamp(320.0,
-                                                                  480.0)),
-                                              onHorizontalDragEnd: (_) =>
-                                                  _saveShellLayout(),
-                                              child: Center(
-                                                  child: Container(
-                                                      width: 1,
-                                                      color: Theme.of(context)
-                                                          .dividerColor)),
+                                  return CallbackShortcuts(
+                                      bindings: {
+                                        if (panel != null)
+                                          const SingleActivator(
+                                                  LogicalKeyboardKey.escape):
+                                              _closeInspector,
+                                      },
+                                      child: Stack(children: [
+                                        Positioned.fill(
+                                          right: panel != null && sideBySide
+                                              ? panelWidth + 8
+                                              : 0,
+                                          bottom: 0,
+                                          child: conversation,
+                                        ),
+                                        if (panel != null && !sideBySide)
+                                          Positioned.fill(
+                                            child: ModalBarrier(
+                                              color: Colors.black26,
+                                              dismissible: true,
+                                              onDismiss: _closeInspector,
+                                              semanticsLabel:
+                                                  'Close workspace inspector',
                                             ),
                                           ),
-                                        ),
-                                      ),
-                                    if (panel != null)
-                                      Positioned(
-                                        top: 0,
-                                        bottom: 0,
-                                        right: 0,
-                                        width: sideBySide
-                                            ? panelWidth
-                                            : box.maxWidth,
-                                        child: panel,
-                                      ),
-                                  ]);
+                                        if (panel != null && sideBySide)
+                                          Positioned(
+                                            top: 0,
+                                            bottom: 0,
+                                            right: panelWidth,
+                                            width: 8,
+                                            child: Semantics(
+                                              label:
+                                                  'Resize workspace inspector',
+                                              child: MouseRegion(
+                                                cursor: SystemMouseCursors
+                                                    .resizeColumn,
+                                                child: GestureDetector(
+                                                  key: const Key(
+                                                      'inspector-resize-handle'),
+                                                  behavior:
+                                                      HitTestBehavior.opaque,
+                                                  onHorizontalDragUpdate:
+                                                      (event) => setState(() =>
+                                                          inspectorWidth =
+                                                              (inspectorWidth -
+                                                                      event
+                                                                          .delta
+                                                                          .dx)
+                                                                  .clamp(320.0,
+                                                                      480.0)),
+                                                  onHorizontalDragEnd: (_) =>
+                                                      _saveShellLayout(),
+                                                  child: Center(
+                                                      child: Container(
+                                                          width: 1,
+                                                          color: Theme.of(
+                                                                  context)
+                                                              .dividerColor)),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        if (panel != null)
+                                          Positioned(
+                                            top: 0,
+                                            bottom: 0,
+                                            right: 0,
+                                            width: panelWidth,
+                                            child: panel,
+                                          ),
+                                      ]));
                                 }),
                             }),
                           ])),
@@ -1443,26 +1529,32 @@ class _OdessyAppState extends State<OdessyApp> {
                     controller.session?.running == true
                 ? null
                 : () => _openSession(row.id));
-        Widget savedLink(SavedConversation chat, {bool nested = true}) =>
-            ListTile(
-                dense: true,
-                contentPadding:
-                    EdgeInsets.only(left: nested ? 32 : 12, right: 12),
-                visualDensity: const VisualDensity(vertical: -1),
-                selected: basics.selected?.id == chat.id,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10)),
-                title: Text(chat.title,
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
-                trailing: chat.pinned
-                    ? const Icon(Icons.push_pin_outlined, size: 14)
-                    : null,
-                onTap: basics.busy
-                    ? null
-                    : () async {
-                        await _openBasics();
-                        await basics.open(chat.id);
-                      });
+        Widget
+            savedLink(SavedConversation chat, {bool nested = true}) =>
+                SavedChatMenu(
+                    controller: basics,
+                    chat: chat,
+                    child:
+                        ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.only(
+                                left: nested ? 32 : 12, right: 12),
+                            visualDensity: const VisualDensity(vertical: -1),
+                            selected: page == 'Conversation'
+                                ? controller.session?.conversationId == chat.id
+                                : basics.selected?.id == chat.id,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10)),
+                            title: Text(chat.title,
+                                maxLines: 1, overflow: TextOverflow.ellipsis),
+                            trailing:
+                                chat.pinned
+                                    ? const Icon(Icons.push_pin_outlined,
+                                        size: 14)
+                                    : null,
+                            onTap: basics.busy
+                                ? null
+                                : () => _openSavedConversation(chat.id)));
         final saved = basics.conversations.where((r) => !r.archived).toList();
         return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,

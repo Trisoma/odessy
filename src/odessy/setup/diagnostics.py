@@ -68,9 +68,7 @@ def sample_audio(audio,config,owner):
 
 
 def voice_config(selection):
-    values=asdict(selection.voice)
-    values.pop('enabled')
-    return VoiceConfig(**values)
+    return VoiceConfig.from_selection(selection.voice)
 
 
 def observe(selection,section):
@@ -84,12 +82,15 @@ def observe(selection,section):
     voice=selection.voice
     if section in ('stt','tts'):
         selector=getattr(voice,section+'_provider')
-        keys={'whisper.cpp':('whisper_bin','whisper_model'),'kokoro':('kokoro_model','kokoro_voices')}.get(selector,())
+        keys={'whisper.cpp':('whisper_bin','whisper_model'),'kokoro':('kokoro_model','kokoro_voices'),
+              'piper':('tts_executable','tts_model')}.get(selector,())
         missing=[]
         for key in keys:
             value=getattr(voice,key)
-            found=shutil.which(os.path.expanduser(value)) if key.endswith('_bin') else value and Path(value).expanduser().is_file()
+            found=shutil.which(os.path.expanduser(value)) if key.endswith(('_bin','_executable')) else value and Path(value).expanduser().is_file()
             if not found:missing.append(key)
+        if selector=='piper' and not Path(voice.tts_model+'.json').is_file():
+            missing.append('tts_model .onnx.json companion')
         if selector=='kokoro':
             missing.extend(name for name in ('kokoro_onnx','onnxruntime') if importlib.util.find_spec(name) is None)
         return {'status':'missing' if missing else 'configured_unverified','message':

@@ -646,5 +646,5 @@ def test_proposal_offers_every_tool() -> None:
 
     model.propose("what time is it?")
 
-    assert len(model.calls[0]["tools"]) == len(TOOL_REQUEST_SCHEMAS)
+    assert {tool["function"]["name"] for tool in model.calls[0]["tools"]} == set(TOOL_REQUEST_SCHEMAS) - {"ssh.run"}
     assert "maps to" not in model.calls[0]["messages"][0]["content"]

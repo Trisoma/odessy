@@ -40,7 +40,7 @@ class _ExecutionHostsPageState extends State<ExecutionHostsPage> {
               style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 8),
           const Text(
-              'Use an existing OpenSSH alias. This build supports read-only monitoring over SSH; execution is not available yet.'),
+              'Connect with SSH, then explicitly select it for agent commands. OdessyExecutor LAN remains experimental.'),
           const SizedBox(height: 12),
           if (widget.ssh == null)
             const Card(
@@ -107,129 +107,271 @@ class _ExecutionHostsPageState extends State<ExecutionHostsPage> {
       });
 }
 
-class _SshSection extends StatelessWidget {
+class _SshSection extends StatefulWidget {
   const _SshSection({required this.controller});
   final SshConnectionController controller;
+  @override
+  State<_SshSection> createState() => _SshSectionState();
+}
+
+class _SshSectionState extends State<_SshSection> {
+  final targetInput = TextEditingController();
+  final portInput = TextEditingController();
+  final passwordInput = TextEditingController();
+  bool obscurePassword = true;
+  bool initialized = false;
+  SshConnectionApi? inputService;
+  String validation = '';
+  SshConnectionController get controller => widget.controller;
+
+  @override
+  void dispose() {
+    targetInput.dispose();
+    portInput.dispose();
+    passwordInput.clear();
+    passwordInput.dispose();
+    super.dispose();
+  }
+
+  Future<void> _connect() async {
+    final address = targetInput.text.trim();
+    final rawPort = portInput.text.trim();
+    final port = rawPort.isEmpty ? null : int.tryParse(rawPort);
+    if (address.isEmpty ||
+        (rawPort.isNotEmpty && (port == null || port < 1 || port > 65535))) {
+      setState(() => validation = address.isEmpty
+          ? 'Enter user@hostname, for example jaimef@10.1.1.2.'
+          : 'Port must be a number between 1 and 65535.');
+      return;
+    }
+    setState(() => validation = '');
+    var password = passwordInput.text;
+    passwordInput.clear();
+    try {
+      await controller.connect(address, port: port, password: password);
+    } finally {
+      password = '';
+    }
+  }
+
+  void _edited() {
+    initialized = true;
+    validation = '';
+    controller.editTarget(targetInput.text);
+  }
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
       listenable: controller,
       builder: (context, _) {
         final c = controller;
+        if (!identical(inputService, c.api)) {
+          inputService = c.api;
+          targetInput.clear();
+          portInput.clear();
+          passwordInput.clear();
+          initialized = false;
+          validation = '';
+        }
         if (c.api == null) {
           return const Card(
               child: Padding(
                   padding: EdgeInsets.all(16),
-                  child: Text(
-                      'Connect the local Odessy service to inspect and test SSH aliases. No model key is required.')));
+                  child: Text('Connect the local Odessy service to use SSH.')));
         }
-        final identity = c.identity;
-        final test = c.test;
-        final status = c.status;
+        if (!initialized && c.hasTarget) {
+          initialized = true;
+          targetInput.text = '${c.target?['target']?['alias'] ?? ''}';
+          final port = c.target?['target']?['port'];
+          portInput.text = port is int ? '$port' : '';
+        }
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(children: [
-                      const Icon(Icons.terminal_outlined),
-                      const SizedBox(width: 8),
-                      Text('Using SSH',
-                          style: Theme.of(context).textTheme.titleMedium),
-                    ]),
-                    const SizedBox(height: 8),
-                    const Text(
-                        'Select a Host entry from your OpenSSH configuration. Keys, agent and known_hosts stay yours.'),
-                    const SizedBox(height: 12),
-                    if (c.aliases.isEmpty)
-                      const Text(
-                          'No aliases found. Add a Host entry to ~/.ssh/config, then refresh.')
-                    else
-                      DropdownButtonFormField<String>(
-                        key: ValueKey('ssh-alias-${c.selected}'),
-                        initialValue: c.selected,
-                        decoration:
-                            const InputDecoration(labelText: 'SSH alias'),
-                        items: [
-                          for (final alias in c.aliases)
-                            DropdownMenuItem(value: alias, child: Text(alias))
-                        ],
-                        onChanged: c.busy
-                            ? null
-                            : (value) {
-                                if (value != null) c.select(value);
-                              },
-                      ),
-                    const SizedBox(height: 10),
-                    Wrap(spacing: 8, runSpacing: 8, children: [
-                      OutlinedButton.icon(
-                          onPressed: c.busy ? null : c.refreshAliases,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('Refresh aliases')),
-                      OutlinedButton(
-                          onPressed: c.busy || c.selected == null
-                              ? null
-                              : () => c.inspect(c.selected!),
-                          child: const Text('Recheck identity')),
-                      FilledButton(
-                          onPressed: c.busy ||
-                                  c.selected == null ||
-                                  !c.known ||
-                                  c.changed
-                              ? null
-                              : c.testConnection,
-                          child: const Text('Test connection')),
-                      FilledButton.tonal(
-                          onPressed: c.busy ||
-                                  c.selected == null ||
-                                  !c.known ||
-                                  c.changed
-                              ? null
-                              : c.save,
-                          child: const Text('Save SSH computer')),
-                      if (c.busy)
-                        TextButton(
-                            onPressed: c.cancel, child: const Text('Cancel')),
-                    ]),
-                    if (c.message.isNotEmpty)
-                      Padding(
-                          padding: const EdgeInsets.only(top: 12),
-                          child: Semantics(
-                              liveRegion: true,
-                              child: Text(c.message,
-                                  style: TextStyle(
-                                      color: c.error.isNotEmpty
-                                          ? Theme.of(context).colorScheme.error
-                                          : null)))),
-                  ]),
-            ),
-          ),
-          if (identity != null) _identityCard(context, c, identity),
-          if (test != null) _testCard(context, test),
-          if (c.hasTarget) _targetCard(context, c, status),
-          if (identity != null)
-            ExpansionTile(
-              title: const Text('Advanced diagnostics'),
+              child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          const Icon(Icons.terminal_outlined),
+                          const SizedBox(width: 10),
+                          Text('SSH connection',
+                              style: Theme.of(context).textTheme.titleMedium)
+                        ]),
+                        const SizedBox(height: 16),
+                        TextField(
+                            key: const Key('ssh-target'),
+                            controller: targetInput,
+                            enabled: !c.busy,
+                            autocorrect: false,
+                            enableSuggestions: false,
+                            decoration: const InputDecoration(
+                                labelText: 'Address',
+                                hintText: 'user@hostname',
+                                helperText: 'Example: jaimef@10.1.1.2'),
+                            onChanged: (_) => _edited(),
+                            onSubmitted: (_) => _connect()),
+                        const SizedBox(height: 12),
+                        ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 180),
+                            child: TextField(
+                                key: const Key('ssh-port'),
+                                controller: portInput,
+                                enabled: !c.busy,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                    labelText: 'Port (optional)',
+                                    hintText: '22 or your SSH config'),
+                                onChanged: (_) => _edited(),
+                                onSubmitted: (_) => _connect())),
+                        const SizedBox(height: 12),
+                        TextField(
+                            key: const Key('ssh-password'),
+                            controller: passwordInput,
+                            enabled: !c.busy,
+                            obscureText: obscurePassword,
+                            enableSuggestions: false,
+                            autocorrect: false,
+                            decoration: InputDecoration(
+                                labelText: 'Password (optional)',
+                                helperText:
+                                    'Leave blank to use your SSH key or agent.',
+                                suffixIcon: IconButton(
+                                    tooltip: obscurePassword
+                                        ? 'Show password'
+                                        : 'Hide password',
+                                    onPressed: () => setState(() =>
+                                        obscurePassword = !obscurePassword),
+                                    icon: Icon(obscurePassword
+                                        ? Icons.visibility_outlined
+                                        : Icons.visibility_off_outlined))),
+                            onSubmitted: (_) => _connect()),
+                        const SizedBox(height: 16),
+                        Wrap(
+                            spacing: 10,
+                            runSpacing: 8,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              FilledButton.icon(
+                                  key: const Key('ssh-connect'),
+                                  onPressed: c.busy ? null : _connect,
+                                  icon: const Icon(Icons.link),
+                                  label: Text(
+                                      c.hasTarget ? 'Reconnect' : 'Connect')),
+                              if (c.hasTarget)
+                                OutlinedButton(
+                                    onPressed: c.busy ? null : c.remove,
+                                    child: const Text('Disconnect')),
+                              if (c.busy)
+                                TextButton(
+                                    onPressed: c.cancel,
+                                    child: const Text('Stop waiting'))
+                            ]),
+                        const SizedBox(height: 12),
+                        const Text(
+                            'Temporary connection for this Odessy service session. Passwords are not saved. Reconnect after restarting.'),
+                        if (c.busy)
+                          const Padding(
+                              padding: EdgeInsets.only(top: 12),
+                              child: LinearProgressIndicator()),
+                        if (validation.isNotEmpty || c.message.isNotEmpty)
+                          Padding(
+                              padding: const EdgeInsets.only(top: 12),
+                              child: Semantics(
+                                  liveRegion: true,
+                                  child: Text(
+                                      validation.isNotEmpty
+                                          ? validation
+                                          : c.message,
+                                      style: TextStyle(
+                                          color: validation.isNotEmpty ||
+                                                  c.error.isNotEmpty
+                                              ? Theme.of(context)
+                                                  .colorScheme
+                                                  .error
+                                              : null)))),
+                      ]))),
+          if (c.test != null) _testCard(context, c.test!),
+          if (c.hasTarget) _targetCard(context, c, c.status),
+          if (c.hasTarget && c.api is SshExecutionApi)
+            Card(
+                child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                              c.execution == null
+                                  ? 'Remote agent commands'
+                                  : 'SSH command target: ${c.execution!['target']}',
+                              style: Theme.of(context).textTheme.titleMedium),
+                          const SizedBox(height: 8),
+                          const Text(
+                              'Custom engine preview · POSIX shell commands run as the SSH user WITHOUT a remote sandbox. Every exact command needs approval. Stop closes the SSH channel; detached remote processes may survive. No remote file inspector or interactive terminal.'),
+                          const SizedBox(height: 8),
+                          FilledButton.icon(
+                              key: const Key('ssh-execution'),
+                              onPressed: c.busy
+                                  ? null
+                                  : () => c.setExecution(c.execution == null),
+                              icon: const Icon(Icons.terminal),
+                              label: Text(c.execution == null
+                                  ? 'Use for agent commands'
+                                  : 'Disconnect agent commands')),
+                        ]))),
+          ExpansionTile(
+              title: const Text('Advanced: SSH aliases and host identity'),
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: SelectableText(
-                    'Alias: ${identity['alias']}\n'
-                    'Resolved: ${identity['user']}@${identity['endpoint']}\n'
-                    'Known fingerprint: ${(identity['known_fingerprints'] as List?)?.join(', ') ?? 'none'}\n'
-                    'Discovered: ${(identity['discovered_fingerprints'] as List?)?.join(', ') ?? 'none'}\n'
-                    'Discovery: ${identity['discovery'] ?? 'not run'}\n'
-                    'Host ID: ${c.target?['target']?['host_id'] ?? 'not saved'}',
-                    style:
-                        const TextStyle(fontSize: 12, fontFamily: 'monospace'),
-                  ),
-                ),
-              ],
-            ),
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                              'Use an existing OpenSSH shortcut instead of an address. Selecting one fills the same Address field.'),
+                          if (c.aliases.isNotEmpty)
+                            DropdownButtonFormField<String>(
+                                key: ValueKey('ssh-alias-${c.selected}'),
+                                initialValue: c.aliases.contains(c.selected)
+                                    ? c.selected
+                                    : null,
+                                decoration: const InputDecoration(
+                                    labelText: 'SSH alias'),
+                                items: [
+                                  for (final alias in c.aliases)
+                                    DropdownMenuItem(
+                                        value: alias, child: Text(alias))
+                                ],
+                                onChanged: c.busy
+                                    ? null
+                                    : (value) {
+                                        if (value != null) {
+                                          targetInput.text = value;
+                                          portInput.clear();
+                                          passwordInput.clear();
+                                          _edited();
+                                        }
+                                      }),
+                          const SizedBox(height: 10),
+                          OutlinedButton.icon(
+                              onPressed: c.busy ? null : c.refreshAliases,
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('Refresh aliases')),
+                          if (c.identity != null)
+                            _identityCard(context, c, c.identity!),
+                          if (c.identity != null)
+                            SelectableText(
+                                'Connection target: ${c.identity!['alias']}\n'
+                                'Resolved: ${c.identity!['user']}@${c.identity!['endpoint']}\n'
+                                'Trusted fingerprint: ${_fingerprints(c.identity!['known_fingerprints'])}',
+                                style: const TextStyle(
+                                    fontSize: 12, fontFamily: 'monospace')),
+                        ]))
+              ]),
         ]);
       });
+  String _fingerprints(Object? value) =>
+      value is List && value.isNotEmpty ? value.join(', ') : 'none';
 
   Widget _identityCard(
       BuildContext context, SshConnectionController c, Json identity) {
@@ -268,15 +410,8 @@ class _SshSection extends StatelessWidget {
             Text(changed
                 ? 'Odessy will not replace the trusted key. Verify the new fingerprint independently, then update your OpenSSH files deliberately.'
                 : 'Verify this fingerprint independently. ssh-keyscan only discovers a key; it does not authenticate it. Add the key to known_hosts yourself, then Recheck identity. Odessy never edits trust files automatically.'),
-            if (c.selected != null)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: () => c.inspect(c.selected!),
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Recheck identity'),
-                ),
-              ),
+            const Text(
+                'After resolving trust, choose Connect again using the address and port above.'),
           ],
         ]),
       ),
@@ -285,6 +420,8 @@ class _SshSection extends StatelessWidget {
 
   Widget _testCard(BuildContext context, Json test) {
     final ok = test['ok'] == true;
+    final gitOnly =
+        test['authenticated'] == true && test['code'] == 'SSH_NO_SHELL';
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -294,15 +431,13 @@ class _SshSection extends StatelessWidget {
           const SizedBox(height: 6),
           Text(ok
               ? 'SSH login verified · ${test['elapsed_ms']} ms'
-              : 'SSH login failed · ${test['code'] ?? 'error'}'),
-          if (!ok && '${test['message'] ?? ''}'.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text('${test['message']}'),
-          ],
+              : gitOnly
+                  ? 'Authenticated · Git-only endpoint'
+                  : 'SSH login failed · ${test['code'] ?? 'error'}'),
           const SizedBox(height: 8),
           Text(ok
-              ? 'Transport verified. Monitoring is read-only. Execution is not available in this build.'
-              : 'Check the alias, key/agent and known host key, then test again.'),
+              ? 'Login verified. Monitoring is separate from the optional agent command target below.'
+              : '${test['message'] ?? 'Check the username, password / SSH agent and trusted host key.'}'),
         ]),
       ),
     );
@@ -324,7 +459,10 @@ class _SshSection extends StatelessWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Expanded(
-                child: Text('Saved SSH computer',
+                child: Text(
+                    c.target?['target']?['temporary'] == true
+                        ? 'Session connection'
+                        : 'Saved SSH computer',
                     style: Theme.of(context).textTheme.titleMedium)),
             Text('$connectivity · $readiness'),
           ]),
@@ -334,6 +472,13 @@ class _SshSection extends StatelessWidget {
                 style: TextStyle(color: Theme.of(context).colorScheme.error)),
           ],
           const SizedBox(height: 8),
+          Text('Connected target: ${c.target?['target']?['alias'] ?? ''}'
+              '${c.target?['target']?['port'] == null ? '' : ':${c.target?['target']?['port']}'}'),
+          if (c.target?['target']?['password_required'] == true) ...[
+            const SizedBox(height: 8),
+            const Text(
+                'Enter the password above and choose Reconnect. Passwords are never saved.'),
+          ],
           Text(observed == null
               ? 'Waiting for the first read-only status.'
               : 'Last status: $observed'),
@@ -353,7 +498,11 @@ class _SshSection extends StatelessWidget {
                 capabilities?['monitoring'] == true && c.statusError.isEmpty
                     ? 'read-only'
                     : 'unavailable'),
-            _capability('Execution', 'not available in this build'),
+            _capability(
+                'Agent commands',
+                c.execution == null
+                    ? 'not selected'
+                    : 'exact approval required'),
             _capability('Workspace', 'not required for status'),
           ]),
           const SizedBox(height: 10),
@@ -362,31 +511,32 @@ class _SshSection extends StatelessWidget {
                 onPressed: c.busy ? null : c.refreshStatus,
                 icon: const Icon(Icons.refresh),
                 label: const Text('Refresh status')),
-            TextButton(
-                onPressed: c.busy
-                    ? null
-                    : () async {
-                        final confirmed = await showDialog<bool>(
-                          context: context,
-                          builder: (context) => AlertDialog(
-                            title: const Text('Remove SSH computer?'),
-                            content: const Text(
-                                'Odessy will forget this target. Your SSH key, authorized_keys and OS access remain; remove those separately if needed.'),
-                            actions: [
-                              TextButton(
-                                  onPressed: () =>
-                                      Navigator.of(context).pop(false),
-                                  child: const Text('Cancel')),
-                              FilledButton(
-                                  onPressed: () =>
-                                      Navigator.of(context).pop(true),
-                                  child: const Text('Remove')),
-                            ],
-                          ),
-                        );
-                        if (confirmed == true) c.remove();
-                      },
-                child: const Text('Remove SSH computer')),
+            if (c.target?['target']?['temporary'] != true)
+              TextButton(
+                  onPressed: c.busy
+                      ? null
+                      : () async {
+                          final confirmed = await showDialog<bool>(
+                            context: context,
+                            builder: (context) => AlertDialog(
+                              title: const Text('Remove SSH computer?'),
+                              content: const Text(
+                                  'Odessy will forget this target. Your SSH key, authorized_keys and OS access remain; remove those separately if needed.'),
+                              actions: [
+                                TextButton(
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(false),
+                                    child: const Text('Cancel')),
+                                FilledButton(
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(true),
+                                    child: const Text('Remove')),
+                              ],
+                            ),
+                          );
+                          if (confirmed == true) c.remove();
+                        },
+                  child: const Text('Remove SSH computer')),
           ]),
           const SizedBox(height: 6),
           const Text(

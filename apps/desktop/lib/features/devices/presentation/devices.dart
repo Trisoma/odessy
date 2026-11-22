@@ -191,7 +191,8 @@ class _DevicePageState extends State<DevicePage> {
                     Text(
                       host == null
                           ? 'Device details and available settings.'
-                          : connectionMethodLabel(host!.trust),
+                          : connectionMethodLabel(host!.trust,
+                              method: host!.connectionMethod),
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],
@@ -339,8 +340,11 @@ class _DevicePageState extends State<DevicePage> {
           ),
           if (host != null) ...[
             _detail(context, 'Device identity', host!.id),
-            _detail(context, 'Connection method',
-                connectionMethodLabel(host!.trust)),
+            _detail(
+                context,
+                'Connection method',
+                connectionMethodLabel(host!.trust,
+                    method: host!.connectionMethod)),
             _detail(context, 'Monitoring trust', _statusWord(host!.trust)),
           ],
           _detail(context, 'Execution target', 'Managed by backend policy'),

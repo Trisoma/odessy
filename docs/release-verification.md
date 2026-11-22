@@ -13,6 +13,13 @@ Prepare one coherent candidate; do not combine older binaries with newer source.
 4. Use an isolated install root/profile for install/update/maintenance checks.
    Preserve settings, history, user files and credential/grant references. Never
    substitute fixture credentials for real secure-vault qualification.
+   On Windows, keep system/profile variables such as `ProgramData` and
+   `ALLUSERSPROFILE` when isolating user paths; a reduced launcher environment
+   can break OpenSSH before authentication. Check the actual packaged launch.
+   For optional Piper, verify the installed interpreter loads the model and
+   produces audio; a cached-download marker is insufficient. Exercise managed
+   repair/upgrade with preserved device selections and the explicit
+   [missing-cache recovery](setup/voice-components.md#upgrading-after-removing-the-speech-cache).
 5. Verify authenticated production connection, required Custom continuation,
    read-only Harness restart history, stale/revoked approvals and helper shutdown.
 6. Verify that Windows restoration returns HTTP 501 without approval or file writes,

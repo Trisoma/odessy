@@ -58,10 +58,11 @@ class WorkspaceInspector extends StatelessWidget {
                         tooltip: 'Close workspace panel',
                         icon: const Icon(Icons.close))
                   ])),
-              Row(children: [
-                for (final panel in InspectorPanel.values)
-                  Expanded(
-                      child: TextButton(
+              SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: [
+                    for (final panel in InspectorPanel.values)
+                      TextButton(
                           onPressed: () => c.show(panel),
                           style: TextButton.styleFrom(
                               backgroundColor: c.panel == panel
@@ -74,11 +75,12 @@ class WorkspaceInspector extends StatelessWidget {
                             InspectorPanel.terminal => 'Output',
                             InspectorPanel.changes =>
                               'Changes (${c.changes.length})'
-                          }))),
-                if (onOpenTerminal != null)
-                  TextButton(
-                      onPressed: onOpenTerminal, child: const Text('Terminal')),
-              ]),
+                          })),
+                    if (onOpenTerminal != null)
+                      TextButton(
+                          onPressed: onOpenTerminal,
+                          child: const Text('Terminal')),
+                  ])),
               const Divider(height: 1),
               if (c.loading || c.reading || c.deciding)
                 const LinearProgressIndicator(),

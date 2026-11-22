@@ -110,6 +110,24 @@ class ManagePage extends StatelessWidget {
                     icon: const Icon(Icons.app_shortcut_outlined, size: 18),
                     label: Text(repairRegistrationLabel)),
               ]),
+              if (c.configuration['role'] != 'execution' &&
+                  c.configuration['voice_enabled'] is bool) ...[
+                const SizedBox(height: 18),
+                Text('Speech during updates',
+                    style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 6),
+                const Text(
+                    'If a Piper update fails because its cached packages are missing, you can explicitly pause speech and retry the update. Saved speech files, devices, models and workspaces are preserved. Enable saved speech to use its retained runtime again. Close Odessy before changing this setting; it applies on the next launch.'),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                    onPressed: c.busy || c.uninstalled
+                        ? null
+                        : () => c.reviewVoiceEnabled(
+                            c.configuration['voice_enabled'] != true),
+                    child: Text(c.configuration['voice_enabled'] == true
+                        ? 'Pause speech for update'
+                        : 'Enable saved speech')),
+              ],
               const SizedBox(height: 22),
               if (c.uninstalled)
                 Text('This installation has been removed. Close this window.',
@@ -204,6 +222,8 @@ class ManagePage extends StatelessWidget {
       if (review['workspace'] != null) 'Workspace: ${review['workspace']}',
       if (review['definition'] != null)
         'Service definition: ${review['scope']}',
+      if (action == 'package-voice-configure-review')
+        'Speech on next launch: ${((review['configuration'] as Map?)?['selection'] as Map?)?['voice']?['enabled'] == true ? 'enabled' : 'paused'}. Existing paths and device choices are preserved.',
       if (review['keep_models'] == true) 'Existing models are preserved',
       if (review['keep_config'] == true) 'Existing configuration is preserved',
     ];

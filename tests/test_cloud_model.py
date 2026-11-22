@@ -233,7 +233,7 @@ def test_cloud_models_are_offered_every_tool() -> None:
     openai_names = {tool["function"]["name"] for tool in cloud_tools_openai()}
     anthropic_tools = cloud_tools_anthropic()
 
-    assert openai_names == {encode_tool_name(name) for name in TOOL_REQUEST_SCHEMAS}
+    assert openai_names == {encode_tool_name(name) for name in TOOL_REQUEST_SCHEMAS if name != "ssh.run"}
     assert {tool["name"] for tool in anthropic_tools} == openai_names
     assert all(tool["input_schema"]["type"] == "object" for tool in anthropic_tools)
 
@@ -301,7 +301,9 @@ def test_openai_tool_call_becomes_tool_request() -> None:
     assert payload["model"] == "test-model"
     assert payload["messages"][0]["role"] == "system"
     assert payload["messages"][1] == {"role": "user", "content": "what time is it?"}
-    assert len(payload["tools"]) == len(TOOL_REQUEST_SCHEMAS)
+    assert {tool["function"]["name"] for tool in payload["tools"]} == {
+        encode_tool_name(name) for name in TOOL_REQUEST_SCHEMAS if name != "ssh.run"
+    }
     assert "test-key" not in json.dumps(payload)
 
 

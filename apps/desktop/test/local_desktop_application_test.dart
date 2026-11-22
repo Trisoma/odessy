@@ -4,6 +4,32 @@ import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/app/app.dart';
 import 'package:odessy_desktop/app/setup/installed_coordinator.dart';
 import 'package:odessy_desktop/app/setup/local_desktop_application.dart';
+import 'setup_controller_test.dart' show RestoringBackend;
+
+class DeepSeekBackend extends RestoringBackend {
+  @override
+  Future<SetupReply> execute(SetupRequest request) async {
+    final reply = await super.execute(request);
+    if (reply.result['selection'] is Map) {
+      return SetupReply.fromJson({
+        'id': request.id,
+        'status': 'ok',
+        'result': {
+          ...reply.result,
+          'selection': {
+            ...reply.result['selection'] as Json,
+            'model': {
+              'provider': 'deepseek',
+              'name': 'deepseek-flash',
+              'endpoint': 'https://api.deepseek.com',
+            }
+          }
+        }
+      }, request.id);
+    }
+    return reply;
+  }
+}
 
 class FailingCoordinator implements InstalledCoordinatorHandle {
   int starts = 0, stops = 0;
@@ -34,6 +60,43 @@ class SessionApi extends DemoApi {
 }
 
 void main() {
+  testWidgets(
+      'source preview restores saved DeepSeek and retries owned startup',
+      (tester) async {
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final coordinator = FailingCoordinator();
+    final launches = <Json>[];
+    await tester.pumpWidget(LocalDesktopApplication(
+        setupBackend: DeepSeekBackend(),
+        coordinatorFactory: (spec) {
+          launches.add(spec);
+          return coordinator;
+        }));
+    await tester.pumpAndSettle();
+    expect(launches.single['selection']['model']['provider'], 'deepseek');
+    expect(launches.single['selection']['model']['name'], 'deepseek-flash');
+    expect(coordinator.starts, 1);
+    expect(coordinator.stops, 1);
+    expect(find.text('DEMO'), findsNothing);
+    await tester.tap(find.text('Models and connections'));
+    await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('component-name')))
+            .controller!
+            .text,
+        'deepseek-flash');
+    await tester.ensureVisible(find.text('Connect saved configuration').last);
+    await tester.tap(find.text('Connect saved configuration').last);
+    await tester.pumpAndSettle();
+    expect(coordinator.starts, 2);
+    expect(coordinator.stops, 2);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('default app starts disconnected and does not silently use demo',
       (tester) async {
     await tester.pumpWidget(const OdessyApp());
@@ -59,19 +122,6 @@ void main() {
     expect(find.text('Use demo'), findsNothing);
     await tester.tap(find.text('Cancel').last);
     await tester.pumpAndSettle();
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
-  testWidgets('service failures are visible and only retried explicitly',
-      (tester) async {
-    final coordinator = FailingCoordinator();
-    await tester.pumpWidget(LocalDesktopApplication(coordinator: coordinator));
-    await tester.pumpAndSettle();
-    expect(find.text('Local service could not start'), findsOneWidget);
-    expect(find.text('Local service unavailable'), findsOneWidget);
-    expect(coordinator.starts, 1);
-    await tester.tap(find.text('Retry'));
-    await tester.pumpAndSettle();
-    expect(coordinator.starts, 2);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

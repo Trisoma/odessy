@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -57,7 +58,7 @@ def build_execution_providers(
         return [
             item
             for item in providers
-            if not isinstance(item, str) or item in available_set
+            if (item[0] if isinstance(item, tuple) else item) in available_set
         ]
 
     if mode == "cuda" or (
@@ -81,8 +82,15 @@ def build_execution_providers(
         return [
             item
             for item in providers
-            if not isinstance(item, str) or item in available_set
+            if (item[0] if isinstance(item, tuple) else item) in available_set
         ]
+
+    if mode == "auto":
+        accelerators = [name for name in (
+            "ROCMExecutionProvider", "DmlExecutionProvider", "CoreMLExecutionProvider"
+        ) if name in available_set]
+        if accelerators:
+            return accelerators + (["CPUExecutionProvider"] if "CPUExecutionProvider" in available_set else [])
 
     if "CPUExecutionProvider" not in available_set:
         raise RuntimeError(
@@ -107,5 +115,21 @@ def build_kokoro(
         cache_dir=cache_dir,
         available=list(ort.get_available_providers()),
     )
-    session = ort.InferenceSession(model_path, providers=providers)
+    options = {}
+    if "DmlExecutionProvider" in providers:
+        # DirectML requires sequential execution and disabled memory patterns.
+        session_options = ort.SessionOptions()
+        session_options.enable_mem_pattern = False
+        session_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        options["sess_options"] = session_options
+    try:
+        session = ort.InferenceSession(model_path, providers=providers, **options)
+    except Exception:
+        # A registered GPU provider can still have a missing driver/library or an
+        # unsupported model. Only automatic selection may fall back silently.
+        if (provider.lower() != "auto" or providers == ["CPUExecutionProvider"]
+                or "CPUExecutionProvider" not in ort.get_available_providers()):
+            raise
+        logging.getLogger(__name__).warning("Automatic ONNX accelerator initialization failed; using CPU")
+        session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
     return Kokoro.from_session(session, voices_path)

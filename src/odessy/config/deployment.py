@@ -62,6 +62,9 @@ def model_tool_scope(names: Iterable[str]) -> Iterator[None]:
 
 
 def tool_is_available(name: str) -> bool:
+    if name == 'ssh.run':
+        from odessy.tools.ssh_executor import current
+        if current() is None:return False
     if name == "user.ask":
         from odessy.interaction.context import current_interactions
         if current_interactions() is None:

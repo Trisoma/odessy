@@ -91,14 +91,16 @@ String statusLabel(String status) => switch (status) {
       _ => 'Unknown',
     };
 
-/// How the monitoring service reached this host. Only the trust projection is
-/// exposed to the desktop client; no additional transport is inferred from it.
-String connectionMethodLabel(String trust) => switch (trust) {
-      'local' => 'Local coordinator on this computer',
-      'paired' => 'Paired identity · separate permissions',
-      'revoked' => 'Pairing revoked · telemetry unavailable',
-      _ => 'Unknown · no verified connection method',
-    };
+/// Transport is explicit and never changes independent trust or permissions.
+String connectionMethodLabel(String trust, {String method = 'unknown'}) =>
+    method == 'ssh'
+        ? 'SSH · read-only monitoring'
+        : switch (trust) {
+            'local' => 'Local coordinator on this computer',
+            'paired' => 'Paired identity · separate permissions',
+            'revoked' => 'Pairing revoked · telemetry unavailable',
+            _ => 'Unknown · no verified connection method',
+          };
 
 /// Where the displayed readings came from, stated without claiming liveness.
 String sampleSourceLabel({

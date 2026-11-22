@@ -1,0 +1,203 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-11-16T18:18:14.670393+00:00",
+  "branch": "fix/ssh-history-inspector",
+  "base_commit": "3b7cea13922d773f95275c970f1d50c275cd5a04",
+  "dirty_working_tree": true,
+  "source_sha256": {
+    "apps/desktop/lib/app/app.dart": "824d1579b6127901b674fa50ddae7177572fbc0b01e19b295558700390a85ba6",
+    "apps/desktop/lib/app/ssh_connection_controller.dart": "3a3f59a1f920b294111a1636bfb038cf7cf9cf04eb00ae277ce3ba650d007fed",
+    "apps/desktop/lib/features/conversation/presentation/conversation.dart": "12a907f1fe25576680ff8cb8f0961d9b0ae5c760cfef5b31e40964a64a7b4f7c",
+    "apps/desktop/lib/features/devices/presentation/execution_hosts_page.dart": "3b4f4be165b387f85328ada9efe5f3161ffe96c66e081c5778585c0220fe3c77",
+    "apps/desktop/lib/features/history/controllers/basics_controller.dart": "1fd5d8502e29e61976d67a6753c343f75686c9c59e5593ca9550c1d8475414ad",
+    "apps/desktop/lib/features/history/presentation/basics_page.dart": "04a36686cd5ebdf3ef74bcc91b8badde5b2254617256090ae26fddb8b0a6fc98",
+    "apps/desktop/lib/features/history/presentation/saved_chat.dart": "bb8bb7401dc048cbcae2ad5b72786f0159a891dcda00b40a92241f3b251216c8",
+    "apps/desktop/pubspec.lock": "2b2b04975ccc98c02064bcfd964fc9dab93458e2b039c69cdcb0c2af6340bed6",
+    "apps/desktop/pubspec.yaml": "9aa7295d9a22e286668df7863b3c30913388ce1200561be802deebdf7a5335df",
+    "apps/desktop/test/agent_basics_layout_test.dart": "0119dc54980dd3bf73af4244f77b982469c15a9153bf4d44b90bf2023e4c475d",
+    "apps/desktop/test/saved_chat_navigation_test.dart": "62b97493aa7e7685237b78d7483f16e7d5af9105ebac37f20fe781b8b561d386",
+    "apps/desktop/test/ssh_connection_test.dart": "cf1fa5609c54a312526fed5da29b42205b4b8e8e2032138b8af1c2bb47a575e5",
+    "packages/odessy_client/lib/odessy_client.dart": "7c0c33b6667826a3460bb342e037a893c58dcfcac0eb613d6fdb324de16fdd95",
+    "packages/odessy_client/pubspec.lock": "eb3534adba43eb4c84ca548b55773beaa5eb52fbf772984ed40280a6e881abf7",
+    "packages/odessy_client/pubspec.yaml": "3276687146696c39e98cfd5d857b3587856ac48b4ae9191ba5a7d322c9f770c1",
+    "packages/odessy_client/test/ssh_api_test.dart": "2743b68428976167a55e109abed1394c741948d5f2b6c19c7b8572bf7be5da51",
+    "pyproject.toml": "1b281ba897fb6804313086ecbb971fb1167f158496f2595356bcd767839b912a",
+    "services/monitoring/cmd/odessy-monitor/main.go": "082d9e4417a89acf049fc1327ab485d314df8e6d5ad73a96c1cd72729ce07007",
+    "services/monitoring/go.mod": "c4874aaa02fe12b8c213ffe9e804933e6a951475b8f974d8783d5542eb758e96",
+    "services/monitoring/go.sum": "77a0296459cd1f758d626c5bb1e6b9f0833890ee54297176db0e8719fd7301a7",
+    "services/monitoring/internal/askpass/askpass.go": "f7a4c50abe026e37ca460690c89836294759785ec3c239cf329060a922216444",
+    "services/monitoring/internal/askpass/askpass_test.go": "e9adfde87ae9b8cdebf5ced40376eaf684c6c6faff6f280736faf2a19d44382c",
+    "services/monitoring/internal/link/ssh.go": "6cf4cb278a02001b1a123a287cd67719718b65fc57be6e4432e2addbc4c3688c",
+    "services/monitoring/internal/protocol/types.go": "c0e57fd75e508896a054a7e147c4632ee9153eb8dd34933781ecb87e1d60b79a",
+    "services/monitoring/internal/protocol/validate.go": "07e787b1f10be2dc0256139ab541cc81246bb5632679ab909bfd85bf81000c91",
+    "src/odessy/application/api.py": "b9b33f412357001c27a4c5ad2fd2ffea52dbf6b6e5f7e90f1584f00a837196d2",
+    "src/odessy/application/ssh_connections.py": "7cba3b982d80cc82869c287b3ce5176df593b626e976fdd47c9716635d0fa736",
+    "src/odessy/monitoring/settings.py": "db54683a2eea813e1594699ab1b227e54ff4baf5a767a238934b350cd1743abd",
+    "src/odessy/monitoring/supervisor.py": "458051488373d0f61cfd19960a2d37e2acabcd3696f1eab91456627306f98999",
+    "src/odessy/ssh/README.md": "38a197b4b7557f753413e1e36d517369efedc393285ba9bf844124fa8e587be0",
+    "src/odessy/ssh/identity.py": "39b7fd289dd065450a2e412dc91b2d64940e087e89a3b229cfdb3956d17d8e5b",
+    "src/odessy/ssh/password.py": "d625807c8b923329ee0699d731fa61b7e9162f5375fe93c5d26658278b52978b",
+    "tests/test_executor_package.py": "7b37678efad5ad529b39d288844390c08dc32fdd5b81f65528887f2ef8081f19",
+    "tests/test_ssh_connections_api.py": "3c0dacf488a997f1ef5f491b0f731252b39f17da9b02ff2b72686c8ffcf88aae",
+    "tests/test_ssh_onboarding.py": "d9316c927cd5a91eada061057de7ecd4fd01e4050fef9eb986630e227b9d191e",
+    "tests/test_ssh_password.py": "a66ad556327d40a9d1dac0c9fc428c0125e37c4317cf2d6c3c11d7ef08e533eb",
+    "tool/package_executor.py": "fc3a1d9452e81b7a6b4b94cf881327eab010c1c3eb02cc355191f9c647d5de45",
+    "tools/package-lock.json": "1b7b46e602016a93b95931fd3e2f2fe6b49ee547505147675ec3980754ac2996"
+  },
+  "artifacts": {
+    "desktop": {
+      "path": "apps/desktop/build/windows/x64/runner/Release/odessy_desktop.exe",
+      "sha256": "4a1a91a9bd67433cc5fb6fcdf4c6e62c992109f9489de88cdd5f090da05cf25c",
+      "bytes": 167936,
+      "architecture": "PE Windows x64"
+    },
+    "monitor": {
+      "path": ".qualification/ssh-history-inspector/odessy-monitor.exe",
+      "sha256": "0136d01b3cb3aebd6911a2d24769cf9dee92e8a638b2734f0e691dd3e5ade634",
+      "bytes": 16183808,
+      "architecture": "PE Windows x64"
+    },
+    "python_wheel": {
+      "path": ".qualification/ssh-history-inspector/wheel-final2/odessy-0.5.0.dev0-py3-none-any.whl",
+      "sha256": "7072f8edb1e94afb0d48e95d1db6239dc2a43a812dc548151496346981c37f5a",
+      "bytes": 803429
+    },
+    "executor_archive": {
+      "path": ".qualification/ssh-history-inspector/final-candidate-v2/OdessyExecutor-windows-x64-py311-preview.zip",
+      "sha256": "74b5b51a3c3e526762689e8645ed40017b53c80d1bae08c5ee189f371f01d0ed",
+      "bytes": 86031130
+    }
+  },
+  "screenshots": [
+    {
+      "path": "chat-context-menu.png",
+      "sha256": "a85ae6b2cde5c358d22858e8c789d55df87007cde44681ac6961c54dc7b21834",
+      "width": 1440,
+      "height": 1000,
+      "method": "Flutter widget RenderRepaintBoundary",
+      "data": "explicit demo fixture; not live hardware"
+    },
+    {
+      "path": "narrow-inspector-scale-1.0.png",
+      "sha256": "be5110de7989afd974f0c11698adae5016b54cccdf0906f5e07436994028fb1a",
+      "width": 720,
+      "height": 900,
+      "method": "Flutter widget RenderRepaintBoundary",
+      "data": "explicit demo fixture; not live hardware"
+    },
+    {
+      "path": "narrow-inspector-scale-1.3.png",
+      "sha256": "a6c20d7f5d35bd0820672217a86d596c79f5e133fc7f544cb2dcc76424d43857",
+      "width": 720,
+      "height": 900,
+      "method": "Flutter widget RenderRepaintBoundary",
+      "data": "explicit demo fixture; not live hardware"
+    },
+    {
+      "path": "narrow-inspector-scale-1.6.png",
+      "sha256": "2bcb3fd190248e11f4d96a0fd438e4b2b5809dfb073b3d7e2ecb5ae8875dfee0",
+      "width": 720,
+      "height": 900,
+      "method": "Flutter widget RenderRepaintBoundary",
+      "data": "explicit demo fixture; not live hardware"
+    },
+    {
+      "path": "native-source-demo.png",
+      "sha256": "547976605ffc56a59fcfe98d4c5bf61bc1fcc47b075cde0e045c972032732c6a",
+      "width": 1187,
+      "height": 843,
+      "method": "Windows computer use",
+      "data": "explicit demo fixture; not live hardware"
+    },
+    {
+      "path": "saved-chat.png",
+      "sha256": "cdd7f68de97ca02e49d67c57a6a2078c31fb52424213b0b22c31da3bcfcfb035",
+      "width": 1440,
+      "height": 1000,
+      "method": "Flutter widget RenderRepaintBoundary",
+      "data": "explicit demo fixture; not live hardware"
+    },
+    {
+      "path": "ssh-computer.png",
+      "sha256": "ba39df8124aca882b3b8d8e308a31d2ff3582514189ce46468f7dc8f52e7b45f",
+      "width": 1100,
+      "height": 1000,
+      "method": "Flutter widget RenderRepaintBoundary",
+      "data": "explicit demo fixture; not live hardware"
+    },
+    {
+      "path": "ssh-git-only.png",
+      "sha256": "379ac64a33f8663e6f6ccc0ac6e9163bf19e116e6cd0e97be807f3fc936713f0",
+      "width": 1100,
+      "height": 1000,
+      "method": "Flutter widget RenderRepaintBoundary",
+      "data": "explicit demo fixture; not live hardware"
+    },
+    {
+      "path": "ssh-password-dialog.png",
+      "sha256": "a43555f97674965d4fe1a845326c313c77c002bf9f50fed91e3c2b4d209c9d0e",
+      "width": 1100,
+      "height": 1000,
+      "method": "Flutter widget RenderRepaintBoundary",
+      "data": "explicit demo fixture; not live hardware"
+    }
+  ],
+  "checks": {
+    "python": "65 passed",
+    "desktop": "632 passed, 14 skipped",
+    "dart_client": "66 passed, 2 skipped",
+    "targeted_capture": "31 passed",
+    "go": "all package tests passed with GOPROXY=off and GOSUMDB=off",
+    "analysis": "Flutter and Dart client: no issues",
+    "contracts": "107 runtime settings validated",
+    "native": "production main.dart Windows release built and isolated --demo window observed",
+    "executor_plan": {
+      "role": "execution",
+      "components": [
+        "node",
+        "tools"
+      ],
+      "plan_id": "8a7773028719e539b5ca0ea2d5c82b6f00411d1c7ab2e6b72eae147aac2d417c",
+      "downloads": [],
+      "service_changes": [],
+      "installation_performed": false,
+      "note": "Plan-only check; Python 3.11 runtime matches archive ABI. No installation or sharing started."
+    },
+    "live_github": {
+      "authenticated": true,
+      "code": "SSH_NO_SHELL",
+      "git_monitor_save_rejected": true,
+      "saved_target": null,
+      "boundary": "Dart LocalApi -> real authenticated Python HTTP -> OS OpenSSH -> GitHub",
+      "config_not_written": true,
+      "trust_files_unchanged": true,
+      "unauthenticated_request_rejected": true
+    },
+    "jetson": {
+      "resolved": "jaimef@10.1.1.2:22",
+      "ok": false,
+      "code": "SSH_TIMEOUT",
+      "message": "no answer within 6 s",
+      "elapsed_ms": 6016.0
+    }
+  },
+  "log_sha256": {
+    "backend-final.log": "c96b6d22fd174de9330a4de3dca4bfbd14831054ce2e5d377c869e2f78aa9b4c",
+    "desktop-final.log": "30003d19a9b1525f280ad160e8607bd3b2ef24c869a2940be75385783c8b44e9",
+    "client-final.log": "2bbcfea683924a5178f46c7317aaa40d174799bf8a95a8d6ddeb8d7a4a3fc7c3",
+    "desktop-analyze.log": "ef069e5bfcf9fe17a2559ef84638b373b2fd82a60ed69f4ef2c127f4d7e27b5c",
+    "client-analyze.log": "b20afa8c246c02d44f367b154cccfc8f93d322805a01e6372f5fafb7049d4e9a",
+    "desktop-build.log": "8c26145d0b700f2aec791d20017fe3ce7238a447d326d71034dd07f3b51aee94",
+    "ui-capture-final.log": "a28b1208bb7e9c64c7aff1f6d2275a2ac7c36fd05f80506c581813396dc5602c",
+    "go-final.log": "3cf6b68e9db3d13e8fa4925c7c3709626e7bfa4b88c74524b0d50f876a5ddcaf"
+  },
+  "qualifications": {
+    "installed_update": false,
+    "live_jetson_password": false,
+    "live_lan_executor": false,
+    "hosted_ci": false,
+    "publication": false
+  },
+  "entry_point": "apps/desktop/lib/main.dart; isolated native --demo is fixture evidence",
+  "superseded_local_artifacts": "Preliminary wheel/, wheel-final/, executor archives at qualification root and final-candidate/; use wheel-final2/ and final-candidate-v2/ only."
+}

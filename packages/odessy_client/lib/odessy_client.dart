@@ -282,9 +282,27 @@ abstract interface class SshConnectionApi {
   Future<Json> sshComputer();
 }
 
+/// Optional password actions. Credentials are sent only to the authenticated local service.
+abstract interface class SshPasswordConnectionApi {
+  Future<Json> testSshPassword(String target, String password);
+  Future<Json> saveSshPassword(String target, String password);
+}
+
+/// Alpha session-only SSH connection; credentials never become preferences.
+abstract interface class TemporarySshConnectionApi {
+  Future<Json> connectSsh(String target, {int? port, String password = ''});
+}
+
+abstract interface class SshExecutionApi {
+  Future<Json> sshExecutionStatus();
+  Future<Json> enableSshExecution();
+  Future<Json> disableSshExecution();
+}
+
 class SshConnectionFailure implements Exception {
-  const SshConnectionFailure(this.status);
+  const SshConnectionFailure(this.status, [this.message = '']);
   final int status;
+  final String message;
   @override
   String toString() => 'SSH connection request failed ($status)';
 }
@@ -337,8 +355,12 @@ class LocalApi
         ModelProfileLimitsApi,
         RuntimeConfigurationApi,
         DesktopVoiceApi,
+        LiveVoiceConfigurationApi,
         ExecutionHostsApi,
-        SshConnectionApi {
+        SshConnectionApi,
+        SshPasswordConnectionApi,
+        TemporarySshConnectionApi,
+        SshExecutionApi {
   LocalApi(this.base, String token) : _token = token {
     if (!['http', 'https'].contains(base.scheme) ||
         !['localhost', '127.0.0.1', '::1'].contains(base.host) ||
@@ -442,6 +464,48 @@ class LocalApi
       rethrow;
     }
     if (response.statusCode >= 300) {
+      if (path.startsWith('/v1/ssh/')) {
+        final bytes = <int>[];
+        await for (final chunk
+            in response.timeout(const Duration(seconds: 12))) {
+          if (bytes.length + chunk.length > 8192) {
+            throw SshConnectionFailure(response.statusCode);
+          }
+          bytes.addAll(chunk);
+        }
+        String detail = '';
+        try {
+          final decoded = jsonDecode(utf8.decode(bytes));
+          if (decoded is Map &&
+              decoded['detail'] is String &&
+              (decoded['detail'] as String).length <= 1024)
+            detail = decoded['detail'] as String;
+        } catch (_) {}
+        throw SshConnectionFailure(response.statusCode, detail);
+      }
+      if (path.endsWith('/voice') || path == '/v1/voice/configuration') {
+        final bytes = <int>[];
+        await for (final chunk
+            in response.timeout(const Duration(seconds: 12))) {
+          if (bytes.length + chunk.length > 8192) {
+            throw VoiceActionFailure(response.statusCode,
+                'Audio request failed (HTTP ${response.statusCode}).');
+          }
+          bytes.addAll(chunk);
+        }
+        String? detail;
+        try {
+          final decoded = jsonDecode(utf8.decode(bytes));
+          if (decoded is Map && decoded['detail'] is String) {
+            detail = decoded['detail'] as String;
+          }
+        } catch (_) {}
+        throw VoiceActionFailure(
+            response.statusCode,
+            detail != null && detail.isNotEmpty && detail.length <= 512
+                ? detail
+                : 'Audio request failed (HTTP ${response.statusCode}).');
+      }
       await response.drain<void>().timeout(const Duration(seconds: 12));
       throw ApiFailure(response.statusCode);
     }
@@ -519,6 +583,13 @@ class LocalApi
   @override
   Future<Json> sshTarget() => _sshJson('/v1/ssh/target');
   @override
+  Future<Json> sshExecutionStatus() => _sshJson('/v1/ssh/execution');
+  @override
+  Future<Json> enableSshExecution() =>
+      _sshJson('/v1/ssh/execution', 'POST', {'confirmed': true});
+  @override
+  Future<Json> disableSshExecution() => _sshJson('/v1/ssh/execution', 'DELETE');
+  @override
   Future<Json> inspectSshAlias(String alias) => _sshJson(
       '/v1/ssh/inspect', 'POST', {'alias': alias}, const Duration(seconds: 25));
   @override
@@ -535,6 +606,29 @@ class LocalApi
   Future<Json> removeSshTarget() => _sshJson('/v1/ssh/target', 'DELETE');
   @override
   Future<Json> sshComputer() => _sshJson('/v1/ssh/computer');
+  @override
+  Future<Json> connectSsh(String target, {int? port, String password = ''}) =>
+      _sshJson(
+          '/v1/ssh/connect',
+          'POST',
+          {
+            'target': target,
+            if (port != null) 'port': port,
+            if (password.isNotEmpty) 'password': password,
+          },
+          const Duration(seconds: 60));
+  @override
+  Future<Json> testSshPassword(String target, String password) => _sshJson(
+      '/v1/ssh/test',
+      'POST',
+      {'alias': target, 'password': password},
+      const Duration(seconds: 25));
+  @override
+  Future<Json> saveSshPassword(String target, String password) => _sshJson(
+      '/v1/ssh/target',
+      'POST',
+      {'alias': target, 'password': password},
+      const Duration(seconds: 25));
   @override
   Future<void> disconnectExecutionHost() async {
     await _json('/v1/execution-hosts/disconnect', 'POST');
@@ -743,6 +837,9 @@ class LocalApi
   @override
   Future<VoiceSnapshot> voiceState(String sid) async =>
       VoiceSnapshot.fromJson(await _json('${_session(sid)}/voice'));
+  @override
+  Future<Json> applyVoiceConfiguration(String fingerprint) =>
+      _json('/v1/voice/configuration', 'POST', {'fingerprint': fingerprint});
   @override
   Future<VoiceSnapshot> voiceCommand(
     String sid,

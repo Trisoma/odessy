@@ -1,30 +1,37 @@
 # Contributing to Odessy
 
+**English** | [简体中文](docs/zh-CN/CONTRIBUTING.md) | [Español](docs/es/CONTRIBUTING.md)
+
 **Developer Preview · v0.5.0-alpha**
 
-Start with [Getting started](docs/getting-started.md), the [support matrix](docs/current-status.md) and [document index](docs/README.md).
+Welcome aboard! ⛵ Follow [Getting started](docs/getting-started.md) if you need a running desktop. For a first PR, pick an open issue from the [roadmap](docs/ROADMAP.md), reproduce it, and run the relevant check below. You only need the tools for the part you’re changing.
 
-> A short story of this project in [Story](Story.md)
-
-Welcome aboard! ⛵ Thank you for helping improve Odessy. Bug reports, focused fixes,
-and clearer documentation all help make this developer preview easier to use.
-This guide explains where to start, how to set up your environment, and what to
-include when submitting a change.
-
-For an overview of the project, start with the [README](README.md). Architecture
-and component documentation start at the [documentation index](docs/README.md).
+[Check Python without a model key](#check-python-without-a-model-key) before you build the full desktop.
 
 ## Choose where to start
 
-| Contribution | How to get started |
-|---|---|
-| Bug fixes and small documentation fixes | Open a focused pull request directly. Link an existing issue when relevant. |
-| New features, enhancements, or larger changes | Open an issue first to explain the problem and proposed approach before starting implementation. |
-| Refactor-only or CI changes | Please do not open standalone pull requests for these changes. |
-| Security vulnerabilities | Follow [SECURITY.md](SECURITY.md). Do not disclose vulnerabilities in public issues. |
+| Change | Start here | Folder | First check |
+| --- | --- | --- | --- |
+| Recorded Output [#72](https://github.com/Trisoma/odessy/issues/72) | [`workspace_inspector.dart`](apps/desktop/lib/features/workspaces/presentation/workspace_inspector.dart) | `apps/desktop` | `flutter test test/workspace_inspector_test.dart test/saved_chat_navigation_test.dart` |
+| SSH connection status [#70](https://github.com/Trisoma/odessy/issues/70) | [Devices views](apps/desktop/lib/features/devices/presentation/) | `apps/desktop` | `flutter test test/ssh_connection_test.dart test/device_page_test.dart` |
+| Piper detection [#69](https://github.com/Trisoma/odessy/issues/69) | [`setup/voice_assets.py`](src/odessy/setup/voice_assets.py) | Repo root | `python -m pytest tests/test_piper_provider.py tests/test_doctor.py -q` |
+| Python application API | [`application/api.py`](src/odessy/application/api.py) | Repo root | `python -m pytest tests/test_application_api.py -q` |
+| MCP tools | [`tools/src/`](tools/src/) | `tools` | `npm run typecheck` · `npm test` |
+| Dart client | [`packages/odessy_client/`](packages/odessy_client/) | `packages/odessy_client` | `dart analyze` · `dart test` |
+| Monitoring | [`services/monitoring/`](services/monitoring/) | `services/monitoring` | `go test ./... -count=1` |
+| Pairing | [`native/odessy-link/`](native/odessy-link/) | `native/odessy-link` | `cargo test --locked` |
 
-You are welcome to report a problem even if you cannot implement a fix. Let us
-know whether you plan to work on it so others can coordinate with you.
+For TTS benchmarks, use the [benchmark guide](benchmark/tts/README.md) and [#71](https://github.com/Trisoma/odessy/issues/71).
+
+Follow [development setup](#development-setup) before running the commands. For docs, check local links and images, verify edited commands, and preview Markdown in each affected language.
+
+Small docs, test, CI and behavior-preserving refactor PRs are welcome. Explain what they fix, which behavior or required checks they preserve, and how you verified it. For a larger change, discuss the scope in an issue before writing code. Report vulnerabilities privately. [Security policy](SECURITY.md)
+
+## Path to area ownership
+
+Comment on the issue with your reproduction and scope. Start with one change and its check. After a few reviewed contributions, you can propose looking after an area’s docs, tests and bug triage. Agree on the scope and your availability with the maintainer. Repository access and maintainer roles require a separate decision.
+
+Get maintainer review for policy and dispatch, credentials, host identity and pairing, installation ownership, and restore safety. The desktop and Dart client have local review rules for controllers and shared contracts. [Architecture](docs/ARCHITECTURE.md) · [Desktop instructions](apps/desktop/AGENTS.md) · [Dart client instructions](packages/odessy_client/AGENTS.md)
 
 ## Before opening an issue
 
@@ -83,51 +90,55 @@ If you discover a vulnerability, use the private reporting instructions in
 
 ## Development setup
 
-Commands below come from [CI](.github/workflows/ci.yml) and
-[desktop preview CI](.github/workflows/desktop-preview.yml). CI covers Python
-3.10/3.13 on Ubuntu and 3.12/3.13 on Windows, Node 22/24 on both,
-stable Rust, and Flutter 3.47.7 (stable) on Ubuntu. This coverage does not
-establish hardware, macOS or live-provider support.
+For the full Windows desktop, follow [Getting started](docs/getting-started.md). If you only need a component test, use the relevant setup in this table.
 
-Create and activate a virtual environment with Python 3.10-3.13:
+### What the quickstart expects
+
+| Component | Setup |
+| --- | --- |
+| Python | Python 3.10–3.13 in a virtual environment. From the repo root, run `python -m pip install -e ".[test,ui]"`. |
+| MCP tool server | Node 22 (also used by Python integration checks) or 24. From `tools/`, run `npm ci --no-audit --no-fund` and `npm run build`. |
+| Flutter and Dart | Flutter 3.47.7 stable and its Dart SDK. Run `flutter pub get` in `apps/desktop` or `dart pub get` in `packages/odessy_client`. |
+| Monitoring | Use the Go version in [go.mod](services/monitoring/go.mod). |
+| Pairing | Use stable Rust and Cargo. |
+
+From the repository root, create and activate the Python environment in PowerShell:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
-On Linux, activate with `source .venv/bin/activate`. Use Node 22 for the Python
-integration checks and stable Rust for pairing work. From the repository root:
+On Linux, create the environment with the same first command, then run `source .venv/bin/activate`. For the fake-model and CI-style checks below, point `ODESSY_CONFIG_FILE` at an empty file you create in a disposable checkout so they don’t load your real model settings.
 
 ```powershell
-cd tools
-npm ci --no-audit --no-fund
-npm run build
-cd ..
-python -m pip install -e ".[test,ui]" "pytest-xdist>=3.6,<4"
-$env:ODESSY_CONFIG_FILE="$PWD/.ci-no-config.env"
-$env:PYTHONUTF8="1"
+$env:ODESSY_CONFIG_FILE = "$PWD/.ci-no-config.env"
+$env:PYTHONUTF8 = "1"
 ```
 
-On Linux, use `export ODESSY_CONFIG_FILE="$PWD/.ci-no-config.env"` and
-`export PYTHONUTF8=1` instead of the PowerShell environment assignments.
+On Linux, set the same variables with `export ODESSY_CONFIG_FILE="$PWD/.ci-no-config.env"` and `export PYTHONUTF8=1`.
 
-### What the quickstart expects
+Install `pytest-xdist>=3.6,<4` if you use the parallel Python check below.
 
-These are the requirements the commands below are checked against; installing the
-packaged application does not ask for any of them.
+## Check Python without a model key
 
-| Component | Verified requirement |
-|---|---|
-| Python | 3.10–3.13; CI runs 3.10/3.13 on Ubuntu and 3.12/3.13 on Windows |
-| Node | 22 or 24 for the tool server (`tools/`), installed with `npm ci` |
-| Flutter | 3.47.7 stable for `apps/desktop`; its bundled Dart SDK for `packages/odessy_client` |
-| Rust | stable, only for `native/odessy-link` pairing work |
+After [setting up Python](#development-setup), run this from the repo root with the development environment active and the empty configuration selected. You should see a reply starting with `The current time is`. This checks the Python CLI with a fake model.
 
-## Start it
+```text
+python -m odessy --fake-model "what time is it?"
+```
 
-Everything below runs locally and needs no paid provider, microphone or remote
-host. A deterministic fake model makes the first text path checkable offline.
+## Run the desktop
+
+Follow [Getting started](docs/getting-started.md) for the managed launch and a real-model walkthrough.
+
+## Advanced component and API checks
+
+The module CLI remains implemented for diagnostics, headless use and integration
+tests. These manual-server commands are not required to use the managed desktop.
+Everything below needs no paid provider, microphone or remote host. A deterministic
+fake model checks component plumbing; it does not validate a real model, live
+approval experience, speech or remote execution.
 
 Start the backend (this prints the loopback address; the API needs a token):
 
@@ -163,9 +174,6 @@ Clear the quickstart override first (`unset ODESSY_CONFIG_FILE` on Linux or
 `Remove-Item Env:ODESSY_CONFIG_FILE` in PowerShell), or point it at your personal
 configuration. Otherwise the live run still uses `.ci-no-config.env`.
 
-`python -m odessy --fake-model "what time is it?"` runs the same text loop without
-the desktop, which is the smallest end-to-end check of the Python side.
-
 ## Diagnose this workstation
 
 ```sh
@@ -175,9 +183,13 @@ python -m odessy doctor --voice
 
 `doctor` names each failed or optional step with one fix next to it, for example a
 model endpoint that is not answering, an unbuilt `tools/` directory, or the
-optional Whisper/Kokoro assets voice needs. A `[FAIL]` for the model endpoint is
+optional speech/wake assets. Piper and custom provider checks are incomplete;
+use their controlled provider tests as well. A `[FAIL]` for the model endpoint is
 expected before Ollama (or another endpoint) runs and does not block the fake-model
-checks above. It reads local configuration; it downloads and sends nothing.
+checks above. It does not download assets or perform a cloud inference, but it can
+probe configured endpoints and list third-party tools. It is not a complete replica
+of desktop session-only credentials or a physical audio acceptance test. Keep the
+visible desktop error and selected configuration alongside its output.
 
 ## Run the relevant checks
 
@@ -231,8 +243,12 @@ python -m pytest -q tests/test_paired_transport.py tests/test_paired_integration
 Use the [SSH contributor path](src/odessy/ssh/README.md) for an existing alias →
 test connection → first timestamped status → disconnect/reconnect. It includes
 the one-laptop fixture commands, provider/lifecycle seam and troubleshooting.
-SSH is monitoring-only; optional tasks still require an independently supported
-execution path and its grants. Existing paired hosts remain supported consumers.
+Monitoring remains read-only. The separate Custom SSH execution selection exposes
+`ssh.run` only after an explicit **Use for agent commands** action; each exact remote
+command requires approval in every mode. It runs as the SSH account without a remote
+sandbox. Harness SSH execution, remote file editing and remote PTY are unsupported.
+See [the SSH command boundary](docs/setup/ssh-computers.md). Existing authenticated
+paired hosts remain a separate supported transport.
 
 ### Live Linux confinement
 

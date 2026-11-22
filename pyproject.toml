@@ -59,6 +59,16 @@ voice = [
   "onnxruntime>=1.17",
   "numpy>=1.26",
 ]
+# Build the Sphinx documentation site (GitHub Pages).
+# Pin Sphinx below 8.2: 8.2.x crashes in the LaTeX transform
+# ("TypeError: 'Text' object does not support item assignment") while
+# reading sources, which fails the docs CI build.
+docs = [
+  "sphinx>=8.1,<8.2",
+  "furo>=2024",
+  "myst-parser>=3.0,<5",
+  "sphinxcontrib-mermaid==2.0.0",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

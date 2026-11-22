@@ -186,10 +186,11 @@ class VoiceController extends ChangeNotifier {
         _invalidateRead();
         snapshot = value;
       }
-    } catch (_) {
+    } catch (failure) {
       if (!_disposed && epoch == _epoch && operation == _operation) {
-        error =
-            'Audio action failed. Check voice settings or answer in text; no model request was retried.';
+        error = failure is VoiceActionFailure
+            ? failure.message
+            : 'Audio action failed. Check voice settings or answer in text; no model request was retried.';
       }
     } finally {
       if (starting != null && identical(_starting, starting)) _starting = null;

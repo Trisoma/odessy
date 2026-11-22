@@ -51,7 +51,9 @@ class ReadinessController extends ChangeNotifier {
       if (next.owner != active.owner) return 'Different configuration owner';
       return next.fingerprints[section] == active.fingerprints[section]
           ? 'Matches running configuration'
-          : 'Saved · pending restart';
+          : const {'stt', 'tts', 'voice'}.contains(section)
+              ? 'Saved · audio application pending'
+              : 'Saved · pending restart';
     } catch (_) {
       return 'Saved configuration could not be compared';
     }

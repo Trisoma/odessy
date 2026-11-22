@@ -728,3 +728,24 @@ def _config_with(tmp_path: Path, **overrides: Any) -> VoiceConfig:
     )
     values.update(overrides)
     return VoiceConfig(**values)
+
+
+def test_explicit_microphone_retry_creates_a_fresh_leased_stream(tmp_path, monkeypatch):
+    from odessy.voice.device_lease import LeasedStream
+    monkeypatch.setattr('odessy.voice.device_lease.lease_path', lambda: tmp_path / 'microphone.lock')
+    monkeypatch.setattr('odessy.voice.native_audio.prepare_device', lambda *a: None)
+    created = []
+    def stream():
+        value = LeasedStream(FakeStream(start_error='first open failed' if not created else None))
+        created.append(value)
+        return value
+    async def run():
+        rig = build(tmp_path, stream_factory=stream)
+        try:
+            assert await rig.adapter._ensure_components()
+            assert not await rig.adapter._open_stream()
+            assert await rig.adapter._ensure_components()
+            assert await rig.adapter._open_stream()
+            assert len(created) == 2 and created[0].closed
+        finally: await rig.adapter.aclose()
+    asyncio.run(run())

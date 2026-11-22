@@ -42,6 +42,7 @@ GRANTED_TOOLS = frozenset({"agent.delegate", "agent.run", "agent.run_continue"})
 
 #: Every tool of Odessy's own the default policy knows.
 BUILTIN_TOOLS = frozenset({
+    "ssh.run",
     "time.now",
     "user.ask",
     "calculator.eval",
@@ -59,6 +60,8 @@ PATH_ARGUMENTS = frozenset({"path", "file", "cwd"})
 def target_of(tool: str) -> str:
     """The host a tool runs on: the paired laptop, or this machine."""
 
+    if tool == 'ssh.run':
+        return 'ssh'
     return "laptop" if tool.startswith("laptop.") else "local"
 
 

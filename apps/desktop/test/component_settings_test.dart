@@ -38,7 +38,8 @@ class SavedComponents implements SetupBackend {
         'selection': selection,
         'revision': '$revision',
         'plan_id': 'review-$revision',
-        'saved': p['action'] == 'save'
+        'saved': p['action'] == 'save',
+        'configuration': {'fingerprint': 'saved-fingerprint'}
       }
     }, request.id);
   }
@@ -50,6 +51,26 @@ class SavedComponents implements SetupBackend {
 }
 
 void main() {
+  test('voice save acknowledges live application and preserves a saved failure',
+      () async {
+    final seen = <String>[];
+    var fail = false;
+    final c = ComponentSettingsController(SavedComponents(),
+        applyVoice: (fingerprint) async {
+      seen.add(fingerprint);
+      if (fail) throw StateError('offline');
+      return 'Saved audio settings are active.';
+    });
+    await c.load();
+    expect(await c.save('tts', {'tts_provider': 'kokoro'}), isTrue);
+    expect(seen, ['saved-fingerprint']);
+    expect(c.status, 'Saved audio settings are active.');
+    fail = true;
+    expect(await c.save('tts', {'tts_provider': 'kokoro'}), isTrue);
+    expect(c.status, contains('Saved, but live audio application failed'));
+    expect(c.inspectionRequired, isFalse);
+    c.dispose();
+  });
   testWidgets('TTS saves and reopens without configuring LLM STT or host',
       (tester) async {
     tester.view.physicalSize = const Size(1100, 1000);

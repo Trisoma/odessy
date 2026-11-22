@@ -626,7 +626,7 @@ class _ComponentSettingsPaneState extends State<ComponentSettingsPane> {
                 'Pairing and workspace grants are separate explicit actions. Changing role does not enroll or authorize a host.'),
           ] else ...[
             const Text(
-                'Use whisper.cpp / kokoro defaults, or a trusted module:factory provider. Only this component’s paths are checked.'),
+                'Use whisper.cpp for speech input; piper for an installed Piper executable and its ONNX model (keep the .onnx.json beside it). Kokoro and trusted module:factory providers remain supported. Detect or browse files, then Save and explicitly Test.'),
             const SizedBox(height: 12),
             _detectionStrip(),
             for (final key in _visibleKeys)

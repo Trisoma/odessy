@@ -9,7 +9,7 @@ from .configuration import environment_text
 from .planning import build_plan
 
 
-def run(selection,*,workspace,host='127.0.0.1',port=8765,token=None,watch_stdin=False,configuration_owner=None):
+def run(selection,*,workspace,host='127.0.0.1',port=8765,token=None,watch_stdin=False,configuration_owner=None,voice_selection_loader=None):
     if selection.role=='execution' or selection.model is None:
         raise ValueError('coordinator service requires an explicitly configured model')
     # Installed startup bypasses the CLI, which normally loads saved settings.
@@ -28,16 +28,21 @@ def run(selection,*,workspace,host='127.0.0.1',port=8765,token=None,watch_stdin=
     from odessy.application.capabilities import configuration_descriptor
     descriptor = configuration_descriptor(selection, workspace, owner=configuration_owner) if configuration_owner else None
     desktop_voice=None
-    if selection.voice.enabled:
+    voice_configuration=None
+    if selection.voice.enabled or voice_selection_loader is not None:
         import socket
         from odessy.application.desktop_voice import DesktopVoice
         from odessy.voice.desktop_audio import DesktopAudio
         from odessy.voice.config import VoiceConfig
-        voice_config=VoiceConfig.from_env()
+        voice_config=VoiceConfig.from_selection(selection.voice)
         desktop_voice=DesktopVoice(lambda:DesktopAudio(voice_config),host=socket.gethostname())
+        desktop_voice.enabled=selection.voice.enabled
+        if voice_selection_loader is not None and configuration_owner:
+            from odessy.application.voice_configuration import LiveVoiceConfiguration
+            voice_configuration=LiveVoiceConfiguration(desktop_voice,selection,workspace,configuration_owner,voice_selection_loader)
     asyncio.run(run_server(host=host,port=port,workspace=Path(workspace),backend=selection.model.provider,
                            token=token,watch_stdin=watch_stdin,
-                           runtime_configuration=descriptor,desktop_voice=desktop_voice))
+                           runtime_configuration=descriptor,desktop_voice=desktop_voice,voice_configuration=voice_configuration))
 
 
 def main(argv=None):

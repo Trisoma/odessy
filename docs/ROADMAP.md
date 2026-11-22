@@ -1,24 +1,17 @@
-# Contributor roadmap
+# Odessy roadmap
 
-**Developer Preview · v0.5.0-alpha**
+Start with a small fix and its test. The [contribution guide](../CONTRIBUTING.md#choose-where-to-start) points to the files and commands. GitHub tracks the status of each issue.
 
-This roadmap identifies useful next work, not promised release dates. Check the
-[support matrix](current-status.md) for implemented behavior and evidence limits.
-
-| Area | Implemented foundation | Next useful contribution |
+| Milestone | Work | Done when |
 | --- | --- | --- |
-| Desktop | Production projects/recent sidebar, inspector, retained Activity & usage/Jobs/Handoffs, eight settings groups | Focused accessibility, narrow-layout and error-state improvements backed by tests |
-| History | SQLite projects/events/search/export and Custom restart continuation | Profile migration/restore and continuation regression coverage |
-| Permissions | Existing policy, explicit grants and revision-bound Custom access modes | Boundary tests; no broadening authority as a UI convenience |
-| Context | Explicit memory and opt-in lexical document retrieval | Source-validation, budget and citation regression coverage |
-| Terminal/checkpoints | Conditional local Windows PTY and Git text checkpoints | Resolve Windows restore path-race safety before widening use; qualify native closure |
-| Installation | Role-aware Windows setup and versioned maintenance | One coherent final-candidate acceptance run, clean-machine evidence and signing |
-| Monitoring | Optional Go history/aggregation, local/paired telemetry and read-only SSH | Direction-specific device evidence and honest freshness diagnostics |
-| Voice/providers | Existing adapters and scoped audio evidence | Reproducible provider/device compatibility and acoustic interruption tests |
-| Platforms | Windows primary; Linux source/CI | Native Linux package/GUI evidence; no unsupported parity claim |
+| 1. First run and first PR | Make Windows launch easy to find. Make [empty recorded Output (#72)](https://github.com/Trisoma/odessy/issues/72) understandable. | A new contributor can open the app, verify an approved local action, and find a file and test for a small change. |
+| 2. One dependable remote task | Clarify [SSH login and metrics (#70)](https://github.com/Trisoma/odessy/issues/70). Use an existing training log as the first everyday example. | Record a typed run with the target, approved read, matching log lines and a reconnect after restart. |
+| 3. Voice for the same task | Improve [Piper diagnostics (#69)](https://github.com/Trisoma/odessy/issues/69) and [TTS timing summaries (#71)](https://github.com/Trisoma/odessy/issues/71). | A contributor can identify the slow or failing stage and reproduce the timing comparison. Repeat the log task by voice and record the microphone, speaker and wake checks on the devices used. |
 
-Contributors can start with [setup and checks](../CONTRIBUTING.md), inspect
-[open issues](https://github.com/Trisoma/odessy/issues), and propose one bounded
-improvement with an acceptance test. Security-sensitive restoration, grants and
-runtime dispatch need maintainer review. MCU support, a custom wake word,
-automatic updating and full Harness coordination parity are not current guarantees.
+I want to ask Odessy, “Did my training job finish? Show me the lines that tell you.” Start with an existing log on a connected computer. Approve a read of the last few lines and compare the answer with the log. Get that working in typed chat, then try the same task by voice. This is the workflow we plan to verify.
+
+## Later
+
+[Role-based dispatch (#73)](https://github.com/Trisoma/odessy/issues/73) is a proposal. New runtimes, MCU/BLE control, wider desktop packaging and automatic update discovery are outside these milestones. Revisit them when someone can name a user need, an owner and a check.
+
+[Current support](current-status.md) · [Path to area ownership](../CONTRIBUTING.md#path-to-area-ownership)

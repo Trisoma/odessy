@@ -29,7 +29,8 @@ class DesktopAudio:
         self.errors.clear();self.buffer.clear();self.stopping=False
         # Stop playback and settle before a fresh recorder is admitted: no pre-cue buffer.
         await asyncio.sleep(self.config.settling_ms/1000)
-        from .native_audio import recorder
+        from .native_audio import recorder, prepare_device
+        await asyncio.to_thread(prepare_device, self.config.audio_input_device, 'input', self.config.audio_backend)
         stream=recorder(self.config,command_factory=CommandAudioStream)
         self.stream=stream
         await asyncio.to_thread(stream.start)

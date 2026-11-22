@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:odessy_client/odessy_client.dart' show SavedEvent;
 import '../controllers/basics_controller.dart';
+import 'saved_chat.dart';
 import '../../conversation/presentation/interaction_card.dart';
 
 /// Advanced tools stay outside the composer; no tab starts a process or model.
@@ -12,8 +13,10 @@ class BasicsPage extends StatefulWidget {
       required this.controller,
       required this.onResume,
       this.initialTab = 'History',
+      this.onOpenConversation,
       this.workspaceLabel});
   final BasicsController controller;
+  final Future<void> Function(String)? onOpenConversation;
   final Future<void> Function() onResume;
   final String initialTab;
   final String? workspaceLabel;
@@ -300,16 +303,23 @@ class _BasicsPageState extends State<BasicsPage> {
               padding: EdgeInsets.all(16),
               child: Text('No saved conversations in this view.')),
         for (final row in c.conversations)
-          ListTile(
-              selected: c.selected?.id == row.id,
-              leading:
-                  Icon(row.pinned ? Icons.push_pin : Icons.chat_bubble_outline),
-              title: Text(row.title),
-              subtitle: Text(
-                  '${row.engine} · ${row.profile} · ${row.continuable ? 'Resumable with fresh authority' : 'Read-only history'}'),
-              trailing:
-                  row.archived ? const Icon(Icons.archive_outlined) : null,
-              onTap: c.busy ? null : () => c.open(row.id)),
+          SavedChatMenu(
+              controller: c,
+              chat: row,
+              child: ListTile(
+                  selected: c.selected?.id == row.id,
+                  leading: Icon(
+                      row.pinned ? Icons.push_pin : Icons.chat_bubble_outline),
+                  title: Text(row.title),
+                  subtitle: Text(
+                      '${row.engine} · ${row.profile} · ${row.continuable ? 'Resumable with fresh authority' : 'Read-only history'}'),
+                  trailing:
+                      row.archived ? const Icon(Icons.archive_outlined) : null,
+                  onTap: c.busy
+                      ? null
+                      : () =>
+                          widget.onOpenConversation?.call(row.id) ??
+                          c.open(row.id))),
         if (c.cursor != null) _button('More conversations', c.more),
         if (c.selected != null) ..._selected(),
       ];

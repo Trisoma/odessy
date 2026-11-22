@@ -103,17 +103,16 @@ Changing the mode therefore invalidates decisions prepared under the previous re
 already running keeps the decisions it already validated; the next dispatch uses the new mode.
 Nothing about history, reconnect or opening a page can authorize work.
 
-## Integration (owned by 06)
+## Current composition
 
-- Construct one `AccessModeService(dependencies, resolve_scope=…)` and pass it both to
-  `access_mode_routes.register(app, dependencies, service=service)` and to the dispatcher, so a
-  set mode actually governs actions.
-- `resolve_scope(session_id, controller)` must return the live authorized
-  `{'workspace_id', 'target_id'}`, or `None`.
-- Call `service.review(...)` after screening and `service.validate(...)` at the last dispatch
-  barrier in both engine adapters; call `service.close(sid)` when a session closes or restarts.
-- Flip the `access_modes` capability only when both routes and the barrier above are mounted and
-  tested end to end.
+[`PersistentComposition`](../../src/odessy/application/basics_integration.py) mounts the
+access-mode routes and shares one service with the live Custom controller/dispatch
+boundary. Closing a session discards its authority. The desktop's **Service permissions**
+control waits for the service acknowledgment; a rendered selection is not a grant.
+
+Custom supports the declared mode behavior. Harness exposes unsupported mode mutation
+honestly rather than emulating it. SSH commands keep their separate exact approval in
+every mode. See [the architecture map](../ARCHITECTURE.md) and [SSH boundaries](../setup/ssh-computers.md).
 
 ## Limits
 
@@ -123,4 +122,3 @@ Nothing about history, reconnect or opening a page can authorize work.
   silently become an always-approve oracle; anything it does not recognise asks.
 - `auto` deliberately covers one class of ordinary workspace writes. Terminal commands,
   delegation, hooks and escalation always ask in `auto`.
-- This document describes the service contract only. No UI in this pack is wired by this change.

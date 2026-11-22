@@ -172,6 +172,10 @@ async def create_controller(*, workspace=None, model=None, backend=None, use_fak
         # the same engine explicitly; naming a different one is a refusal, never a switch.
         runtime_selection = restored_runtime_selection(runtime_selection, record)
     from odessy import cli
+    from odessy.tools.ssh_executor import current as current_ssh_execution
+    from odessy.runtime_backends.selection import resolve_selection
+    if current_ssh_execution() is not None and resolve_selection(runtime_selection).engine != 'legacy':
+        raise ValueError('SSH command execution preview requires the Custom runtime. Disconnect SSH execution to use Harness.')
     configured_workspace = workspace is not None
     workspace = Path(workspace or Path.cwd()).resolve()
     config = load_config()

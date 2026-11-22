@@ -1,4 +1,4 @@
-# Headless setup: block-1 configuration foundation
+# Headless configuration and export
 
 This v0.5.0 feature configures **existing** components. It does not yet install
 Python/Node/Rust, download models, enroll peers, grant workspaces or install a
@@ -92,7 +92,30 @@ or verified against this machine. Keep paths relative to their owning host.
 
 ## Optional voice
 
-Voice is off by default. Select existing compatible Whisper.cpp/Kokoro assets:
+This advanced CLI configures existing assets; it does not perform the desktop
+installer's automatic voice downloads. Piper is recommended for new Windows setup;
+use [the installer](../GOLDEN_PATH.md#1-install-and-open-odessy) for that flow.
+For a headless Piper selection, explicitly set `tts_provider`, `tts_executable`
+and `tts_model`, along with Whisper input paths. The executable may be the Python
+interpreter containing Piper; keep the matching `.onnx.json` beside the model:
+
+```json
+{
+  "role": "combined",
+  "model": {"provider": "ollama", "name": "YOUR_INSTALLED_MODEL"},
+  "voice": {
+    "enabled": true,
+    "tts_provider": "piper",
+    "tts_executable": "/path/to/python-with-piper",
+    "tts_model": "/path/to/voice.onnx",
+    "whisper_bin": "/path/to/whisper-cli",
+    "whisper_model": "/path/to/ggml-base.en.bin"
+  }
+}
+```
+
+The older CLI default remains Kokoro for compatibility. An explicit existing-asset
+Kokoro configuration is:
 
 ```json
 {
@@ -110,29 +133,32 @@ Voice is off by default. Select existing compatible Whisper.cpp/Kokoro assets:
 
 Pass this as `--config selection.json --verify`. Windows paths must use JSON
 escaping or forward slashes. Equivalent CLI flags are `--voice`, `--whisper-bin`,
-`--whisper-model`, `--kokoro-model` and `--kokoro-voices`. Missing optional assets
+`--whisper-model`, `--tts-provider piper`, `--tts-executable` and `--tts-model`;
+Kokoro uses `--kokoro-model` and `--kokoro-voices`. Missing optional assets
 are reported without downloading anything or mutating the working text setup.
 Voice path/package presence is not model compatibility or physical audio acceptance.
 Wake models and custom STT/TTS adapters remain separately configured/supported.
 
-## Reports, boundaries and block-2 handoff
+## Reports and boundaries
 
 JSON includes `schema_version`, destination-bound `plan_id`, `selection`,
 `components`, empty `downloads`, proposed `environment`, `readiness`, warnings,
 `writes`, and optional `discovery`. `--verify` wraps that plan with observational
 component/model/voice results. Exit 0 means a report/export succeeded, **not** that
-the installation is ready; `ready` stays false while installation and pairing are
-not implemented. Validation/export failures return 2. Argparse errors also exit 2.
+the installed application is ready; this configuration/export command does not
+perform installation or pairing. Validation/export failures return 2. Argparse errors also exit 2.
 
 Core modules are in `src/odessy/setup/`: contracts, pure planning, bounded
 discovery, create-only persistence, verification and the thin CLI. No imports
-from the root installer tree, Tk or Flutter are required. These block-1 Python
+from the root installer tree, Tk or Flutter are required. These configuration/export Python
 functions are synchronous. The Flutter wizard now runs them off the GUI event
 loop through an owned, one-request stdio helper with cancellation and read-only
 save recovery. See [the wizard guide](wizard.md). Resumable installation and
-native services are not implemented; recovery only inspects configuration exports.
+native service installation are outside this configuration/export interface;
+its recovery only inspects configuration exports. The packaged wizard has its
+own implemented installation and maintenance lifecycle.
 
 Reuse existing authorization and doctor checks for future integration, but avoid
 running the entire doctor suite on every screen: some existing checks start or
 contact configured servers. New setup verification is observational only.
-No existing UI plan was modified by this work.
+See the packaged wizard guide for installation progress, cancellation and recovery.

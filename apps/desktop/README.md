@@ -2,9 +2,6 @@
 
 **Developer Preview · v0.5.0-alpha**
 
+Use [Getting started](../../docs/getting-started.md) for the managed Windows launch. It starts the local service and connects the desktop. A plain `flutter run -d windows` opens the disconnected client for [manual API checks](../../CONTRIBUTING.md#advanced-component-and-api-checks).
 
-Run `flutter pub get`, then `flutter run -d windows` (`linux` or `macos` on those platforms). The application starts disconnected until a service is configured. The checkout-specific Windows build can start its owned local service; see the runbook.
-
-See [the runbook](../../docs/ui/README.md) for local service setup, test commands and feature boundaries. Windows native builds are verified; macOS and Linux runners require platform qualification.
-
-UI: `lib/features/*/presentation/`. Protected foundation: `lib/app/` and `../../packages/odessy_client/`. Presentation uses the controller rather than HTTP clients, provider SDKs or native execution.
+Views live under `lib/features/*/presentation/`. They use controllers for service access. See the [desktop guide](../../docs/ui/README.md), [first tests](../../CONTRIBUTING.md#choose-where-to-start) and [local review rules](AGENTS.md).

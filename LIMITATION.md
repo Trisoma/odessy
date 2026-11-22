@@ -1,13 +1,13 @@
 # Known limitations
 
+**English** | [简体中文](docs/zh-CN/LIMITATION.md) | [Español](docs/es/LIMITATION.md)
+
 **Developer Preview · v0.5.0-alpha**
 
 The [current support matrix](docs/current-status.md) is the maintained capability
 and release baseline. This page summarizes constraints that affect adoption.
 
-- **Release qualification:** CI and earlier installed receipts do not qualify a
-  new final merged installer. Signing, clean-machine behavior and broader hardware
-  acceptance remain separate gates.
+- **Installer:** the [public alpha](https://github.com/Trisoma/odessy/releases/tag/v0.5.0-alpha) was built before the security fixes in `08efca9`. Use [source](docs/getting-started.md) for those fixes. See [release status](docs/current-status.md) for the build and its checks.
 - **Checkpoint safety:** restoration is disabled on Windows at the service and
   write boundary until directory-handle race protection is implemented. Creation,
   listing and preview remain available. Direct restore requests return unsupported;
@@ -17,7 +17,7 @@ and release baseline. This page summarizes constraints that affect adoption.
   history remains readable but cannot resume after restart through this adapter.
   Custom access modes and context injection are not silently emulated on Harness.
 - **Authority:** full control never grants new workspace/remote rights or defeats
-  hard denials. SSH targets are monitoring-only. Pairing, monitoring and execution
+  hard denials. SSH login starts read-only monitoring. Custom can run individually approved commands after explicit SSH execution selection. Pairing, monitoring and execution
   authorization remain independent.
 - **Interactive shell:** an explicitly approved local shell has user-level OS
   authority; it is not intercepted or sandboxed command by command. Native helper

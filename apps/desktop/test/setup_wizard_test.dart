@@ -8,6 +8,60 @@ import 'setup_controller_test.dart' show Backend;
 
 void main() {
   testWidgets(
+      'custom speech discovery fills generic fields without overwriting paths',
+      (tester) async {
+    final controller = SetupController(CustomDiscoveryBackend());
+    controller.update({
+      'role': 'combined',
+      'voice': {
+        'enabled': true,
+        'tts_provider': 'custom_tts:factory',
+        'tts_executable': 'keep-existing-command'
+      }
+    }, '/tmp/config.json');
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: SetupWizardPage(controller: controller, initialStep: 3))));
+    await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<TextField>(find.byKey(const ValueKey('setup-tts_model')))
+            .controller!
+            .text,
+        '/tmp/custom-model.onnx');
+    expect(
+        tester
+            .widget<TextField>(
+                find.byKey(const ValueKey('setup-tts_executable')))
+            .controller!
+            .text,
+        'keep-existing-command');
+    await tester.pumpWidget(const SizedBox());
+    controller.dispose();
+  });
+
+  testWidgets('saved custom speech provider remains selected', (tester) async {
+    final controller = SetupController(Backend());
+    controller.update({
+      'role': 'combined',
+      'voice': {
+        'enabled': true,
+        'tts_provider': 'my_speech:make_tts',
+        'tts_executable': 'my-command'
+      }
+    }, '/tmp/config.json');
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: SetupWizardPage(controller: controller, initialStep: 3))));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('Custom: my_speech:make_tts'), findsOneWidget);
+    expect(controller.selection['voice']['tts_provider'], 'my_speech:make_tts');
+    await tester.pumpWidget(const SizedBox());
+    controller.dispose();
+  });
+
+  testWidgets(
       'successful navigation never cancels coordinator during activation',
       (tester) async {
     final backend = DelayedActivationBackend();
@@ -121,6 +175,25 @@ class DelayedActivationBackend extends Backend {
   @override
   Future<SetupReply> execute(SetupRequest request) async {
     if (request.operation == 'activate') await activation.future;
+    return super.execute(request);
+  }
+}
+
+class CustomDiscoveryBackend extends Backend {
+  @override
+  Future<SetupReply> execute(SetupRequest request) async {
+    if (request.operation == 'voice-discover') {
+      return SetupReply.fromJson({
+        'id': request.id,
+        'status': 'ok',
+        'result': {
+          'candidates': {
+            'tts_model': ['/tmp/custom-model.onnx'],
+            'tts_executable': ['do-not-overwrite']
+          }
+        }
+      }, request.id);
+    }
     return super.execute(request);
   }
 }

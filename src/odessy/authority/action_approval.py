@@ -146,7 +146,7 @@ def build_action_approval(request, decision, policy, *, call_id: str, execution_
     canonical = _json({'call_id': call_id, 'operation': request.name, 'arguments': args, 'resolved_paths': paths, 'workspace': str(policy.authority.workspace_root), 'host': host, 'target_identity': target, 'decision': _plain(decision), 'policy': policy_data, 'scopes': scopes, 'allowed_channels': channels, 'execution': execution})
     fingerprint = _hash(canonical)
     prompt = f'Approve {request.name} on {host} for this action only. Risk: {decision.risk}.'
-    if request.name in PROCESS_TOOLS and isinstance(args.get('command'), str):
+    if request.name in (*PROCESS_TOOLS, 'ssh.run') and isinstance(args.get('command'), str):
         prompt += f' Exact command: {_display(args["command"])}.'
     if request.name == 'agent.run_continue' and isinstance(target, dict):
         prompt += f' Hands {_display(target.get("artifact_kind"))} {_display(target.get("artifact_sha256"))} to {_display(target.get("to_participant"))}.'

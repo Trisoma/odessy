@@ -37,6 +37,7 @@ class MonitoringSupervisor:
         self.runtime_sink = None
         self.ssh_error = ''
         self.link_error = ''
+        self.ssh_password_lease = None
 
     async def start(self):
         if not self.settings.enabled or self.process is not None:
@@ -110,13 +111,17 @@ class MonitoringSupervisor:
         """Verify the selected alias/known_hosts once, then let Go own polling."""
         from odessy.ssh.identity import SshError, read_identity, resolve_host
 
+        if self.settings.ssh_authentication == 'password' and (
+                self.ssh_password_lease is None or not self.ssh_password_lease.active):
+            raise MonitorUnavailable('Enter the computer password again in SSH settings; passwords are never saved')
         binary = self.settings.ssh_binary or shutil.which('ssh')
         if not binary:
             raise MonitorUnavailable('OpenSSH client is not available')
         try:
             host = await asyncio.to_thread(
                 resolve_host, self.settings.ssh_alias, ssh=binary,
-                config_path=self.settings.ssh_config or None)
+                config_path=self.settings.ssh_config or None,
+                **({'port': self.settings.ssh_port} if self.settings.ssh_port else {}))
             identity = await asyncio.to_thread(
                 read_identity, host, ssh=binary)
         except SshError as error:
@@ -129,7 +134,7 @@ class MonitoringSupervisor:
                     == identity.primary_fingerprint), None)
         if key is None:
             raise MonitorUnavailable('SSH trusted public key cannot be pinned; review the target again')
-        return {
+        result = {
             'hostname': host.hostname, 'user': host.user, 'port': host.port,
             'host_key': ' '.join(key),
             'binary': str(Path(binary).resolve()),
@@ -141,6 +146,13 @@ class MonitoringSupervisor:
             'config_path': self.settings.ssh_config,
             'monitoring': bool(self.settings.ssh_monitoring),
         }
+
+        lease = self.ssh_password_lease
+        if lease is not None:
+            if host.proxy_jump:
+                raise MonitorUnavailable('Password login through a jump host is unsupported')
+            result.update(password_url=lease.url, password_token=lease.token)
+        return result
 
     async def _drain_stderr(self):
         # Discard rather than retain untrusted child diagnostics/credentials.

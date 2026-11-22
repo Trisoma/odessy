@@ -206,10 +206,9 @@ void main() {
   testWidgets('menu management uses the current installed payload',
       (tester) async {
     final backend = FlowBackend()..installed = true;
-    await pumpSetup(tester, backend,
-        mode: 'manage',
-        installRoot: r'C:\Odessy',
-        payloadRoot: r'C:\old-helper');
+    // With no explicit update candidate, resolve the installed maintenance
+    // payload. Explicit candidates are covered by manage_update_payload_test.
+    await pumpSetup(tester, backend, mode: 'manage', installRoot: r'C:\Odessy');
     await tester.ensureVisible(find.text('Repair or update files'));
     await tester.tap(find.text('Repair or update files'));
     await settle(tester);

@@ -1,1 +1,1 @@
-"""Kokoro-specific benchmark adapters and experiment assets."""
+"""Speech benchmarks: Piper CPU evaluation and retained Kokoro comparisons."""

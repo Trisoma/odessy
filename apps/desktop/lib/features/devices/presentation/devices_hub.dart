@@ -214,7 +214,12 @@ class _DevicesHubState extends State<DevicesHub> {
                               style: Theme.of(context).textTheme.titleMedium)),
                     ]),
                     const SizedBox(height: 8),
-                    Text(connectionMethodLabel(h.trust),
+                    if (h.connectionMethod == 'ssh' &&
+                        h.connectionAlias != null)
+                      Text(h.connectionAlias!, overflow: TextOverflow.ellipsis),
+                    Text(
+                        connectionMethodLabel(h.trust,
+                            method: h.connectionMethod),
                         style: Theme.of(context).textTheme.bodySmall),
                     const SizedBox(height: 10),
                     Wrap(spacing: 6, runSpacing: 6, children: [

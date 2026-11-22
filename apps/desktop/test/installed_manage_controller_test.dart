@@ -52,6 +52,15 @@ class Backend implements SetupBackend {
       'package-status' => status,
       'package-repair-review' => {'plan_id': 'repair-1', 'operation': 'repair'},
       'package-configure-review' => {'plan_id': 'configure-1'},
+      'package-voice-configure-review' => {
+          'plan_id': 'voice-1',
+          'configuration': {'selection': request.parameters['selection']},
+        },
+      'package-voice-configure' => (() {
+          (status['configuration'] as Json)['voice_enabled'] =
+              (request.parameters['selection'] as Json)['voice']['enabled'];
+          return {'configured': true};
+        })(),
       'package-rollback-review' => {
           'plan_id': 'rollback-1',
           'operation': 'rollback',

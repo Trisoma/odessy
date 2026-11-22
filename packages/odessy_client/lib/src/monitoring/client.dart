@@ -5,14 +5,27 @@ import '../models.dart';
 
 class MonitoringHost {
   MonitoringHost._(this.id, this.name, this.trust, this.connectivity,
-      this.access, this.sample);
+      this.access, this.sample, this.connectionMethod, this.connectionAlias);
   final String id, name, trust, connectivity, access;
+  final String connectionMethod;
+  final String? connectionAlias;
   final Json? sample;
   factory MonitoringHost.fromJson(Json value) {
     final id = value['host_id'];
     final trust = (value['trust'] as Map?)?['state'];
     final connectivity = (value['connectivity'] as Map?)?['state'];
     final access = value['monitoring_access'];
+    final connection = value['connection'];
+    if (connection != null && connection is! Map) {
+      throw const FormatException('Invalid monitoring connection');
+    }
+    final method = connection is Map ? connection['method'] : null;
+    final alias = connection is Map ? connection['alias'] : null;
+    if ((method != null &&
+            !['ssh', 'local', 'odessy-link', 'unknown'].contains(method)) ||
+        (alias != null && (alias is! String || alias.length > 320))) {
+      throw const FormatException('Invalid monitoring connection');
+    }
     if (id is! String ||
         !RegExp(r'^host_[A-Za-z0-9_]{1,128}$').hasMatch(id) ||
         !['local', 'paired', 'revoked', 'unknown'].contains(trust) ||
@@ -28,7 +41,9 @@ class MonitoringHost {
         access as String,
         value['sample'] == null
             ? null
-            : freezeJson(Map<String, dynamic>.from(value['sample'] as Map)));
+            : freezeJson(Map<String, dynamic>.from(value['sample'] as Map)),
+        method as String? ?? 'unknown',
+        alias as String?);
   }
 }
 

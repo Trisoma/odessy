@@ -63,6 +63,10 @@ COLLABORATION_SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 TOOL_REQUEST_SCHEMAS: dict[str, dict[str, Any]] = {
+    "ssh.run": {
+        "properties": {"command": {"type": "string"}, "timeout": {"type": "integer", "optional": True}},
+        "required": ["command"],
+    },
     "time.now": {
         "properties": {},
         "required": [],
@@ -298,6 +302,11 @@ _SINGLE_MACHINE_DESCRIPTIONS: dict[str, str] = {
 
 
 def tool_description(name: str) -> str:
+    if name == 'ssh.run':
+        from odessy.tools.ssh_executor import current
+        connection=current()
+        target=connection.host.alias if connection else 'the explicitly selected SSH computer'
+        return f'Run a POSIX shell command on REMOTE SSH target {target}. Use for remote operations, never terminal.run. Every command requires exact approval. Runs as the SSH user without a sandbox. No sudo prompts or interactive input. timeout is 1–60 seconds.'
     if name in {"model.consult", "agent.delegate", "agent.run"}:
         from odessy.collaboration.context import current_service
         service = current_service()

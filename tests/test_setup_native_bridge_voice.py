@@ -49,3 +49,11 @@ def test_an_unusable_feature_list_is_refused(monkeypatch,features):
     with pytest.raises(ValueError):
         native_bridge.manage({'action':'voice-plan','features':features})
     assert calls==[]
+
+
+@pytest.mark.parametrize('action', ['voice-plan', 'voice-status', 'voice-install', 'voice-python-install'])
+def test_bridge_forwards_selected_tts_provider(monkeypatch, action):
+    calls = []
+    _dispatch(monkeypatch, calls)
+    native_bridge.manage({'action': action, 'tts_provider': 'piper', 'features': ['voice'], 'confirm': 'plan-1'})
+    assert calls[0]['tts_provider'] == 'piper'

@@ -101,3 +101,16 @@ def test_disabled_voice_assets_are_staged_without_enabling_runtime():
     selection = SetupSelection.from_dict({'role': 'combined', 'voice': {'enabled': False, 'whisper_model': '/some/file'}})
     assert selection.voice.whisper_model == '/some/file'
     assert 'ODESSY_WHISPER_MODEL' not in build_plan(selection).environment
+
+
+@pytest.mark.parametrize('missing', ['tts_executable', 'tts_model'])
+def test_enabled_piper_requires_both_runtime_and_model_before_configuration(tmp_path, missing):
+    voice = {'enabled': True, 'tts_provider': 'piper', 'stt_provider': 'none',
+             'tts_executable': 'C:/voice/python.exe', 'tts_model': 'C:/voice/en.onnx'}
+    voice.pop(missing)
+    selection = SetupSelection.from_dict({'role': 'combined',
+        'model': {'provider': 'ollama', 'name': 'chosen'}, 'voice': voice})
+    output = tmp_path / 'incomplete-piper.env'
+    with pytest.raises(ValueError, match='voice paths'):
+        export_environment(build_plan(selection), output)
+    assert not output.exists()

@@ -4,9 +4,9 @@
   "python_version": "3.12",
   "platform": "windows-x64",
   "download_manifest": "python-wheels-windows-x64.json",
-  "download_manifest_sha256": "6375010d11357762ca502554479f8011878016407efe94af709a11f6b6163341",
+  "download_manifest_sha256": "e6a46c1f9984a5fc2a8a8084cfbfd87b8458ee760b220c767d502c5f71a05ec0",
   "lock_file": "requirements-windows-x64-py312.txt",
-  "lock_sha256": "d313dc8d47c96d3a79528e4231cff048be6213856b95327adc3f3f7c8b36e22d",
+  "lock_sha256": "da501bc4ee5614e2920b2b408e012006f96825bb4839b283d922679e16fc5ae5",
   "dependency_spec_sha256": "bce63ff38603f587e5fe47295e3aec95883f8d287e27b889a086e170b427b4d4",
   "layout": {
     "annotated-doc": {
@@ -75,7 +75,7 @@
     },
     "opentelemetry-api": {
       "destination": "app",
-      "unpacked_bytes": 196393
+      "unpacked_bytes": 196771
     },
     "pycparser": {
       "destination": "app",

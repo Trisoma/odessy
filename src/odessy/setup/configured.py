@@ -144,7 +144,8 @@ def main(argv=None):
     workspace.mkdir(parents=True, exist_ok=True)
     from .service_entry import run
     run(selection, workspace=workspace, port=args.port, token=token, watch_stdin=args.exit_on_stdin_close,
-        configuration_owner=configuration_owner())
+        configuration_owner=configuration_owner(),
+        voice_selection_loader=lambda: SetupSelection.from_dict(resume()['selection']))
 
 if __name__ == '__main__':
     main()

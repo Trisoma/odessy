@@ -397,8 +397,11 @@ async def test_a_failed_playback_reports_an_audio_error_not_a_spoken_answer():
     types = [event_type for event_type, _ in controller.events]
     assert "audio_error" in types
     # The answer was displayed already; nothing claims it was heard.
-    assert voice.state == "idle"
-    assert voice.snapshot(controller)["state"] == "idle"
+    assert voice.state == "error"
+    assert voice.snapshot(controller)["state"] == "error"
+    assert "not retried" in voice.snapshot(controller)["message"]
+    assert voice.owner is None
+    assert not voice.busy
 
 
 @pytest.mark.anyio

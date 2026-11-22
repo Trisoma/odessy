@@ -152,8 +152,12 @@ def serve(argv=None):
         os.environ['ODESSY_NODE_TOOLS_DIR'] = str(base / 'tools')
         os.environ['PATH'] = str(base / 'node') + os.pathsep + os.environ.get('PATH', '')
     os.environ['ODESSY_CONFIG_FILE'] = str(Path(args.root) / 'profile' / 'odessy.env')
+    def load_voice_selection():
+        configuration = active_configuration(Path(args.root))
+        return selection if configuration is None else SetupSelection.from_dict(configuration['selection'])
     return run(selection,workspace=workspace,host=args.host,port=args.port,token=token,
-               watch_stdin=args.exit_on_stdin_close,configuration_owner=configuration_owner(args.root,info['installation_id']))
+               watch_stdin=args.exit_on_stdin_close,configuration_owner=configuration_owner(args.root,info['installation_id']),
+               voice_selection_loader=load_voice_selection)
 
 
 def main(argv=None):

@@ -1,3 +1,5 @@
+import 'saved_chat_navigation_test.dart'
+    show capture, captureKey, loadCaptureFonts;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
@@ -214,19 +216,89 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  for (final width in [1600.0, 1182.0, 960.0, 720.0]) {
+    testWidgets('inspector stays to the right at window width $width',
+        (tester) async {
+      await loadCaptureFonts();
+      tester.view.physicalSize = Size(width, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(RepaintBoundary(
+          key: captureKey,
+          child: OdessyApp(
+              api: WiredCaptureApi(),
+              projectStore: CaptureProjects(),
+              setupBackend: SavedComponents())));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const Key('composer')), 'layout draft');
+      await capture(tester, 'conversation-${width.toInt()}');
+      await tester.tap(find.byTooltip('Open workspace inspector'));
+      await tester.pumpAndSettle();
+      final chat = tester.getRect(find.byType(ConversationPage));
+      final panel = tester.getRect(find.byType(WorkspaceInspector));
+      expect(panel.top, closeTo(chat.top, 1));
+      expect(panel.left, greaterThanOrEqualTo(chat.right));
+      expect(chat.width, greaterThanOrEqualTo(320));
+      await capture(tester, 'right-inspector-${width.toInt()}');
+      expect(find.byKey(const Key('composer')).hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.byTooltip('Close workspace panel'));
+      await tester.pumpAndSettle();
+      expect(find.text('layout draft'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
+  testWidgets('tiny inspector is a right sheet and Escape preserves draft',
+      (tester) async {
+    tester.view.physicalSize = const Size(480, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(OdessyApp(
+        api: WiredCaptureApi(),
+        projectStore: CaptureProjects(),
+        setupBackend: SavedComponents()));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('composer')), 'sheet draft');
+    await tester.tap(find.byTooltip('Open workspace inspector'));
+    await tester.pumpAndSettle();
+    final chat = tester.getRect(find.byType(ConversationPage));
+    final panel = tester.getRect(find.byType(WorkspaceInspector));
+    expect(panel.top, chat.top);
+    expect(panel.right, chat.right);
+    expect(panel.left, greaterThan(chat.left));
+    expect(tester.takeException(), isNull);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byType(WorkspaceInspector), findsNothing);
+    expect(find.text('sheet draft'), findsOneWidget);
+    expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('composer')))
+            .controller!
+            .text,
+        'sheet draft');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   for (final scale in [1.0, 1.3, 1.6]) {
     testWidgets(
         'narrow production inspector retains composer draft at scale $scale',
         (tester) async {
+      await loadCaptureFonts();
       tester.view.physicalSize = const Size(720, 900);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
-      await tester.pumpWidget(OdessyApp(
-          api: WiredCaptureApi(),
-          preferencesStore: ScaledPreferences(scale),
-          projectStore: CaptureProjects(),
-          setupBackend: SavedComponents()));
+      await tester.pumpWidget(RepaintBoundary(
+          key: captureKey,
+          child: OdessyApp(
+              api: WiredCaptureApi(),
+              preferencesStore: ScaledPreferences(scale),
+              projectStore: CaptureProjects(),
+              setupBackend: SavedComponents())));
       await tester.pumpAndSettle();
       final media =
           MediaQuery.of(tester.element(find.byKey(const Key('composer'))));
@@ -237,6 +309,9 @@ void main() {
       await tester.tap(find.byTooltip('Open workspace inspector'));
       await tester.pumpAndSettle();
       expect(find.byType(WorkspaceInspector), findsOneWidget);
+      expect(find.byKey(const Key('composer')).hitTestable(), findsOneWidget,
+          reason: 'Opening the inspector must not replace the conversation');
+      await capture(tester, 'narrow-inspector-scale-$scale');
       await tester.tap(find.byTooltip('Close workspace inspector'));
       await tester.pumpAndSettle();
       expect(find.text('retained narrow draft'), findsOneWidget);

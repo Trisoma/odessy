@@ -31,6 +31,7 @@ SSH_OPTIONS: tuple[str, ...] = (
 )
 
 _ALIAS = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+_TARGET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}@[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")
 
 
 class SshError(ValueError):
@@ -79,13 +80,17 @@ class SshIdentity:
 
 
 def resolve_host(alias: str, *, ssh: str = "ssh", config_path: str | None = None,
-                 timeout: float = 10) -> SshHost:
+                 timeout: float = 10, port: int | None = None) -> SshHost:
     """Resolve an alias with the installed OpenSSH client; no connection is made."""
 
     _validate_alias(alias)
     args = [ssh, "-G"]
     if config_path:
         args += ["-F", config_path]
+    if port is not None:
+        if type(port) is not int or not 1 <= port <= 65535:
+            raise SshError('SSH_CONFIG_INVALID', 'Port must be between 1 and 65535')
+        args += ['-p', str(port)]
     args.append(alias)
     try:
         completed = subprocess.run(args, stdin=subprocess.DEVNULL, capture_output=True,
@@ -126,9 +131,7 @@ def read_identity(host: SshHost, *, ssh_keygen: str = "ssh-keygen",
     """Read the trusted host keys for this endpoint. Unknown means refusal."""
 
     name = host.host_key_alias or host.hostname
-    candidates = [name]
-    if host.port != 22 and not host.host_key_alias:
-        candidates.append(f"[{name}]:{host.port}")
+    candidates = [f"[{name}]:{host.port}" if host.port != 22 and not host.host_key_alias else name]
     files = host.known_host_files or (str(Path.home() / ".ssh" / "known_hosts"),)
     public_keys: list[tuple[str, str]] = []
     found: list[tuple[str, str]] = []
@@ -168,6 +171,8 @@ def read_identity(host: SshHost, *, ssh_keygen: str = "ssh-keygen",
                 encoding='utf-8', errors='replace', timeout=timeout, check=False)
             for line in completed.stdout.splitlines():
                 parts = line.split()
+                if parts and parts[0] == '@revoked':
+                    raise SshError('SSH_HOST_KEY_REVOKED', 'The SSH host key is revoked; reconnect only after independent verification.')
                 if len(parts) < 3 or parts[0].startswith(('#', '@')):
                     continue
                 key_type, encoded = parts[1:3]
@@ -189,7 +194,7 @@ def ssh_argv(host: SshHost, remote_command: str, *, ssh: str = "ssh") -> tuple[s
         raise SshError("SSH_INVALID_COMMAND", "the remote command must be one non-empty line")
     _validate_alias(host.alias)
     config = ("-F", host.config_path) if host.config_path else ()
-    return (ssh, *config, *SSH_OPTIONS, host.alias, remote_command)
+    return (ssh, *config, *SSH_OPTIONS, '-p', str(host.port), host.alias, remote_command)
 
 
 def _ssh_version(ssh: str, timeout: float) -> str:
@@ -204,10 +209,10 @@ def _ssh_version(ssh: str, timeout: float) -> str:
 
 
 def _validate_alias(alias: str) -> None:
-    if not _ALIAS.fullmatch(alias):
+    if not (_ALIAS.fullmatch(alias) or _TARGET.fullmatch(alias)):
         raise SshError(
             "SSH_ALIAS_INVALID",
-            "host alias must be 1-64 letters, digits, '.', '_' or '-' and not start with '-'",
+            "Enter an SSH alias or user@hostname (IPv4/DNS); do not enter a command or options.",
         )
 
 
@@ -338,10 +343,10 @@ def discovered_keys(host: SshHost, *, ssh_keyscan: str = "ssh-keyscan",
 
 def inspect_alias(alias: str, *, ssh: str = "ssh", ssh_keygen: str = "ssh-keygen",
                   ssh_keyscan: str = "ssh-keyscan",
-                  config_path: str | None = None) -> dict[str, object]:
+                  config_path: str | None = None, port: int | None = None) -> dict[str, object]:
     """Resolve identity and compare trusted vs advertised keys; no trust write."""
 
-    host = resolve_host(alias, ssh=ssh, config_path=config_path)
+    host = resolve_host(alias, ssh=ssh, config_path=config_path, **({'port': port} if port is not None else {}))
     known: tuple[tuple[str, str], ...] = ()
     known_error = ""
     try:
@@ -373,29 +378,76 @@ def inspect_alias(alias: str, *, ssh: str = "ssh", ssh_keygen: str = "ssh-keygen
     }
 
 
-def probe_connection(host: SshHost, *, ssh: str = "ssh", timeout: float = 8) -> dict[str, object]:
+def probe_connection(host: SshHost, *, ssh: str = "ssh", timeout: float = 8,
+                     password_lease=None, askpass: str = "") -> dict[str, object]:
     """One bounded, read-only login. It does not read or write trust files."""
 
     import time
 
     started = time.monotonic()
+    args = list(ssh_argv(host, "printf 'odessy-connect-ok\\n'; hostname", ssh=ssh))
+    # GitHub's command endpoint rejects `printf` with "Invalid command", even
+    # after authentication. Its no-command SSH greeting is the authoritative
+    # Git-only response. Never attempt monitoring or report an auth failure from
+    # that rejected shell command.
+    if host.hostname.lower().rstrip('.') in ('github.com', 'ssh.github.com'):
+        args.pop()
+    options = {}
+    if password_lease is not None:
+        if not askpass:
+            raise SshError('SSH_PASSWORD_UNAVAILABLE', 'The packaged monitoring helper is required for password login')
+        if host.proxy_jump:
+            raise SshError('SSH_PASSWORD_UNAVAILABLE', 'Password login through a jump host is unsupported; use your SSH agent')
+        args = [a.replace('BatchMode=yes', 'BatchMode=no') for a in args]
+        args[1:1] = ['-o', 'PreferredAuthentications=password', '-o', 'PubkeyAuthentication=no',
+                     '-o', 'KbdInteractiveAuthentication=no', '-o', 'NumberOfPasswordPrompts=1',
+                     '-o', 'ProxyCommand=none', '-o', 'ProxyJump=none', '-o', 'PermitLocalCommand=no',
+                     '-o', 'HostName=' + host.hostname, '-o', 'User=' + host.user, '-p', str(host.port)]
+        options['env'] = password_lease.environment(askpass)
     try:
-        completed = subprocess.run(ssh_argv(host, "printf odessy-connect-ok", ssh=ssh),
+        completed = subprocess.run(args,
                                    stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                    encoding="utf-8", errors="replace", timeout=timeout,
-                                   check=False)
+                                   check=False, **options)
     except subprocess.TimeoutExpired:
         return {"ok": False, "code": "SSH_TIMEOUT", "message": f"no answer within {timeout:.0f} s",
                 "elapsed_ms": round((time.monotonic() - started) * 1000, 1)}
+    except OSError:
+        return {'ok': False, 'code': 'SSH_NOT_AVAILABLE',
+                'message': 'OpenSSH could not be started. Check that the client is installed and accessible.',
+                'elapsed_ms': round((time.monotonic() - started) * 1000, 1)}
     elapsed = round((time.monotonic() - started) * 1000, 1)
     if completed.returncode != 0:
         message = (completed.stderr or completed.stdout or "SSH authentication failed").strip()
+        if "successfully authenticated" in message.lower() and "does not provide shell access" in message.lower():
+            return {"ok": False, "authenticated": True, "code": "SSH_NO_SHELL",
+                    "message": "GitHub authentication succeeded. This endpoint supports Git only, not a shell or computer monitoring. Choose a computer such as user@hostname.",
+                    "elapsed_ms": elapsed}
+        lower = message.lower()
+        for markers, code, explanation in (
+            (('connection timed out', 'operation timed out'), 'SSH_TIMEOUT', 'Connection timed out. Check the computer address and network.'),
+            (('connection refused',), 'SSH_CONNECTION_REFUSED', 'The computer refused SSH. Check that SSH is enabled and the selected port is correct.'),
+            (('could not resolve hostname', 'name or service not known'), 'SSH_HOST_NOT_FOUND', 'Computer name could not be resolved. Check the address or SSH alias.'),
+            (('host key verification failed', 'remote host identification has changed'), 'SSH_HOST_KEY_REJECTED', 'SSH host identity was rejected. Review the trusted fingerprint independently; Odessy will not replace it.'),
+        ):
+            if any(marker in lower for marker in markers):
+                return {'ok': False, 'code': code, 'message': explanation, 'elapsed_ms': elapsed}
+        message = 'SSH login failed. Enter the computer password, or unlock your key in the SSH agent. Check the username and trusted host key.'
         return {"ok": False, "code": "SSH_AUTH_FAILED", "message": message[:400],
                 "elapsed_ms": elapsed}
     if "odessy-connect-ok" not in completed.stdout:
         return {"ok": False, "code": "SSH_UNEXPECTED_OUTPUT",
                 "message": "SSH returned unexpected output", "elapsed_ms": elapsed}
-    return {"ok": True, "code": "SSH_OK", "message": "", "elapsed_ms": elapsed}
+    # Display metadata only: never use remote output as an address, identity or
+    # authorization input. Refuse control sequences and bound the hostname.
+    lines = completed.stdout.splitlines()
+    hostname = ''
+    if 'odessy-connect-ok' in lines:
+        remaining = lines[lines.index('odessy-connect-ok') + 1:]
+        if remaining and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,252}', remaining[0]):
+            hostname = remaining[0]
+    return {"ok": True, "code": "SSH_OK", "message": "", "elapsed_ms": elapsed,
+            "hostname": hostname}
 
 
 

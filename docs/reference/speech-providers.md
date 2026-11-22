@@ -1,8 +1,26 @@
 # Speech providers
 
-Whisper.cpp STT and Kokoro TTS remain the defaults. Their executable/model settings,
-CPU/GPU selection and Kokoro session cache are unchanged. Audio capture, wake-word
-recognition, VAD, approvals and playback remain independent of speech providers.
+The Windows installer recommends **Piper** for CPU speech output and retains
+**Kokoro** as a selectable alternative; Whisper.cpp supplies optional speech input.
+Automatic setup installs the selected engine and model after consent. See
+[voice components](../setup/voice-components.md) and the [Piper connector](../ui/piper-connection.md).
+Older headless/runtime configuration defaults still name Kokoro; explicitly select
+`piper` when using those advanced interfaces. Existing Kokoro paths/session caching
+remain supported. Capture, wake detection, VAD, approvals and playback are independent
+of the selected speech provider.
+
+Kokoro `ODESSY_ONNX_PROVIDER=auto` prefers available TensorRT/CUDA, then supported
+ROCm/DirectML/CoreML providers, with CPU fallback. Selection uses providers reported
+by the installed ONNX runtime, not the GPU name. Automatic initialization failures
+retry CPU once and log a warning; explicit `cuda`/`tensorrt` selections retain
+their errors. `cpu` forces CPU. No accelerator packages are installed automatically.
+DirectML uses sequential execution with memory patterns disabled.
+
+The audio owner calls TTS serially for bounded phrases, with one phrase of
+lookahead while the current WAV plays. Providers must support repeated calls;
+they are not invoked concurrently for different phrases of the same answer.
+Temporary files remain owned until blocking calls finish, including after Stop.
+See [latency measurements](../ui/voice-performance.md).
 
 ## Configuration
 

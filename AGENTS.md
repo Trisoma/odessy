@@ -1,3 +1,11 @@
+# Writing and contributor experience
+
+Use the [odessy-docs skill](.agents/skills/odessy-docs/SKILL.md) when writing or
+reviewing docs, examples, user-facing text, or code comments anywhere in this
+repository. Check the path from first run to the file and test a contributor
+needs. Keep the roadmap focused on one dependable everyday workflow before
+adding more optional systems.
+
 # Installer and installed-application integration
 
 For feature changes, bug fixes, dependency changes and release builds, read

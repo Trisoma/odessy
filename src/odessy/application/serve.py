@@ -23,7 +23,7 @@ def validate_binding(host, port):
 
 async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
                      backend=None, token=None, workspace=None, watch_stdin=False,
-                     print_token=True, runtime_configuration=None, desktop_voice=None):
+                     print_token=True, runtime_configuration=None, desktop_voice=None, voice_configuration=None):
     host, port = validate_binding(host, port)
     token = token if token is not None else os.environ.get('ODESSY_API_TOKEN') or None
     if print_token and not token:
@@ -68,7 +68,7 @@ async def run_server(*, host='127.0.0.1', port=8765, use_fake_model=False,
 
     history = UsageHistory(default_history_path())
     app = create_app(factory, config=load_config(), profiles=profiles, runtime_configuration=runtime_configuration, desktop_voice=desktop_voice,
-                     token=token, usage_history=history, conversations_enabled=True)
+                     token=token, usage_history=history, conversations_enabled=True, voice_configuration=voice_configuration)
     set_usage_history(history)
     address = f'[{host}]' if ':' in host else host
     print(f'[odessy] HTTP API: http://{address}:{port}', file=sys.stderr, flush=True)

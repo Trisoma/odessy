@@ -4,10 +4,14 @@
 window (`--setup`). The same desktop binary opens installed management with
 `--manage`, and the Start-menu entry starts the installed copy with `--installed`.
 
-The setup window has six steps: welcome, this computer, model and voice, review,
-install and finish. Setup never downloads a model, starts inference or requests
-administrator rights; it installs the packaged components into a folder the user
-chooses and records what it owns.
+The setup window guides installation, optional components, review and completion.
+It installs packaged components into the selected folder and records ownership.
+It never downloads an LLM or starts an agent turn. Optional speech/wake downloads
+require an explicit choice and internet access; readiness checks load the selected
+voice models. Setup runs per user without requesting administrator rights.
+The [desktop manual](../GOLDEN_PATH.md#1-install-and-open-odessy) identifies the
+current Windows candidate and checksum; final human verification of the rebuilt
+EXE remains pending.
 
 ## Packaged flow
 
@@ -32,14 +36,16 @@ OdessySetup.exe
 - **Model.** An explicit, bounded Ollama inventory request lists installed models.
   Unreachable and empty answers are distinct and never trigger a download. A
   compatible remote endpoint needs an endpoint and model name; credentials are
-  referenced by environment-variable name only.
-- **Voice.** Optional and unavailable until all four existing asset paths
-  (Whisper.cpp executable, Whisper model, Kokoro model, Kokoro voices) are
-  supplied; otherwise the wizard continues text-only. A separate opt-in offers
-  verified downloads of those four components, showing the size and the internet
-  requirement before anything starts. Continue to review, then Install runs the
-  voice download and installs its dependencies with Odessy; see
-  `docs/setup/voice-components.md`.
+  supplied separately through the supported masked credential controls after
+  installation; an environment-variable reference remains an advanced option.
+- **Voice.** Select **Piper (recommended for CPU)** or **Kokoro**. Enable
+  **Install voice components** to download and verify the selected engine/model,
+  Whisper.cpp and shared audio dependencies during installation. Piper needs no
+  existing executable or model paths: setup installs the engine into the active
+  runtime, loads its model with the matching `.onnx.json`, and saves the verified
+  selection. A cached download plan can show zero bytes; installed-runtime checks
+  still run. **Use existing voice components** keeps manual path selection
+  available. Skip both options for typed chat. See [voice components](voice-components.md).
 - **Wake word.** Optional, on the same step as voice and deliberately separate
   from it: one pretrained model (Hey Jarvis / openWakeWord) under CC BY-NC-SA
   4.0, so its licence is stated when the option is chosen rather than afterwards.

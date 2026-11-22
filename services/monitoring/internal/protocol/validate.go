@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/odessy/odessy/services/monitoring/internal/askpass"
 	"math"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -572,14 +574,12 @@ func ValidateSSHConfig(s SSHConfig) error {
 	if err := validateExecutable("ssh.binary", s.Binary); err != nil {
 		return err
 	}
-	if len(s.Alias) < 1 || len(s.Alias) > 64 {
-		return invalid("ssh.alias must be 1-64 characters")
+	if !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}(@[A-Za-z0-9][A-Za-z0-9.-]{0,252})?$`).MatchString(s.Alias) {
+		return invalid("ssh.alias must be an alias or user@hostname")
 	}
-	for i, r := range s.Alias {
-		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.'
-		if !ok || (i == 0 && (r == '-' || r == '.')) {
-			return invalid("ssh.alias contains an unsafe character")
+	if s.PasswordURL != "" || s.PasswordToken != "" {
+		if err := askpass.Validate(s.PasswordURL, s.PasswordToken); err != nil {
+			return invalid("invalid SSH password broker")
 		}
 	}
 	if err := ValidateHostID(s.HostID); err != nil {

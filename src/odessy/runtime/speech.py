@@ -136,6 +136,25 @@ def same_text(spoken: str, answer: str) -> bool:
     return bool(spoken) and "".join(spoken.split()) == "".join(answer.split())
 
 
+def speech_phrases(text: str, *, max_chars: int = DEFAULT_MAX_SENTENCE_CHARS) -> Iterator[str]:
+    """Bounded sentence/phrase chunks for a completed answer, preserving order.
+
+    Individual words are not separate inference requests: prosody and provider
+    startup overhead matter. Inspect only the bounded prefix even if a later
+    sentence ending exists in the complete answer.
+    """
+    if max_chars < 2:
+        raise ValueError("max_chars must be at least 2")
+    remaining = text.strip()
+    while remaining:
+        cut = _sentence_end(remaining[:max_chars + 1], max_chars)
+        if cut is None:
+            cut = len(remaining)
+        phrase, remaining = remaining[:cut].strip(), remaining[cut:].lstrip()
+        if phrase:
+            yield phrase
+
+
 _current: ContextVar[SpeechStream | None] = ContextVar("odessy_speech_stream", default=None)
 
 

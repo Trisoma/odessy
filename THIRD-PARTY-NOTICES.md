@@ -1,5 +1,23 @@
 # Third-Party Notices And Licenses
 
+## Optional Piper setup downloads (November 18, 2026)
+
+The optional speech setup downloads unmodified Piper `piper-tts` 1.3.0 directly
+from PyPI after consent. Its metadata declares **GPL-3.0-or-later**; the wheel's
+license files remain installed with the package. Piper is executed as a separate
+CLI process. Neither this separation nor direct downloading establishes legal
+clearance for a combined distribution; publishers must review their obligations.
+The installer payload contains the download manifest, not the Piper wheel or
+voice weights.
+
+The pinned English `en_US-ljspeech-medium` voice comes from `rhasspy/piper-voices`
+at revision `0ca208afc2a2ee102b1e961e72e0a7e4907be3d0`. That repository's root
+README declares MIT; the individual model card identifies LJ Speech and
+public-domain source audio. Setup retains both metadata files alongside the
+ONNX model and JSON. Dataset terms alone do not establish model-weight rights.
+Exact upstream URLs, sizes and digests are in
+[`voice-artifacts.json`](src/odessy/setup/voice-artifacts.json).
+
 ## Secure model credentials (October 29, 2026)
 
 The desktop/UI extra uses Python `keyring>=25.0,<26`; qualification resolved

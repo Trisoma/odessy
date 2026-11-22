@@ -842,6 +842,12 @@ async def _builtin_tool_servers(workspace_root: Path) -> AsyncIterator[tuple[obj
     except DeploymentConfigError as error:
         raise SystemExit(str(error)) from error
     connection = current_lan_execution()
+    from odessy.tools.ssh_executor import current as current_ssh_execution
+    ssh_connection = current_ssh_execution()
+    if ssh_connection is not None:
+        async with _local_tool_servers(workspace_root,use_node=mode=='single') as local:
+            yield (*local,ExecutionTarget(ssh_connection.server()))
+        return
     # A LAN target is additive: retain the native local Node backend when present.
     async with _local_tool_servers(workspace_root, use_node=mode == "single" or connection is not None,
                                    terminal_only=connection is not None) as local:

@@ -21,13 +21,15 @@ class DraftMergeReview {
 
 /// App-owned drafts and admitted writes scoped to one backend/installation root.
 class ComponentSettingsController extends ChangeNotifier {
-  ComponentSettingsController(SetupBackend source, {this.root = ''})
+  ComponentSettingsController(SetupBackend source,
+      {this.root = '', this.applyVoice})
       : backend = source is SetupMetadataBackend
             ? (source as SetupMetadataBackend).createMetadataReader()
             : source,
         ownsBackend = source is SetupMetadataBackend;
   final SetupBackend backend;
   final String root;
+  final Future<String> Function(String fingerprint)? applyVoice;
   final bool ownsBackend;
   Json snapshot = {};
   final Map<String, SectionDraft> drafts = {};
@@ -219,6 +221,16 @@ class ComponentSettingsController extends ChangeNotifier {
       }
       status =
           'Saved. Restart Odessy to apply. Other components were preserved.';
+      if (const {'stt', 'tts', 'voice'}.contains(section) &&
+          applyVoice != null) {
+        try {
+          status = await applyVoice!(
+              (snapshot['configuration'] as Map)['fingerprint'] as String);
+        } catch (_) {
+          status =
+              'Saved, but live audio application failed. Active audio settings are unconfirmed. Reload Settings or restart Odessy.';
+        }
+      }
       return true;
     } catch (e) {
       inspectionRequired = dispatched;

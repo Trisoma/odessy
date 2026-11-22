@@ -79,6 +79,35 @@ class ConfigureBackend implements SetupBackend {
 }
 
 void main() {
+  testWidgets(
+      'saved custom speech provider stays visible in installed configuration',
+      (tester) async {
+    final backend = ConfigureBackend()
+      ..initialSelection = {
+        'role': 'combined',
+        'voice': {
+          'enabled': true,
+          'tts_provider': 'my_speech:make_tts',
+          'tts_executable': 'my-command'
+        }
+      };
+    final controller =
+        InstalledManageController(backend, spec: {'root': 'C:/App'});
+    await controller.load();
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: GetStartedPage(
+                controller: controller,
+                initialVoice: true,
+                onStart: () async {}))));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('Custom: my_speech:make_tts'), findsOneWidget);
+    expect(find.text('my-command'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    controller.dispose();
+  });
+
   for (final failing in [
     'package-configure-review',
     'package-configure',

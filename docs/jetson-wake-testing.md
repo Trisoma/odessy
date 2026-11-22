@@ -1,5 +1,10 @@
 # Test current Odessy on Jetson
 
+> **Historical Jetson procedure (October 2026).** The measurements and model
+> defaults below describe that earlier snapshot. Current Windows setup recommends
+> Piper; use the [desktop manual](GOLDEN_PATH.md) and [voice guide](ui/desktop-voice.md)
+> for today's installation. This procedure does not qualify a current ARM64 package.
+
 Updated October 20, 2026, against merged `develop` at `b86aea9`, with the
 user-reported Jetson smoke-test results below. This procedure does not establish
 full hardware qualification or an automatic-selection performance improvement.

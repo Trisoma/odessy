@@ -1,5 +1,9 @@
 # Update and test voice on Jetson
 
+**Historical October 30, 2026 preview.** Current Windows installer instructions
+and Piper/Kokoro selection are in the [desktop manual](../GOLDEN_PATH.md).
+The old Jetson workflow below retains its original assets and evidence.
+
 October 30, 2026 preview: selectable audio input/output, existing-asset detection
 and Browse. This is a source-backed Jetson preview, not an installer or standalone
 runtime distribution. Existing models, credentials and user configuration are not

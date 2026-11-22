@@ -4,6 +4,40 @@ import 'package:odessy_client/odessy_client.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('SSH connection metadata is explicit and independent of pairing trust',
+      () {
+    final value = <String, dynamic>{
+      'host_id': 'host_ssh',
+      'display_name': 'ubuntu-fixture',
+      'trust': {'state': 'unknown'},
+      'connectivity': {'state': 'online'},
+      'monitoring_access': 'allowed',
+      'connection': {'method': 'ssh', 'alias': 'user@192.0.2.10'}
+    };
+    final host = MonitoringHost.fromJson(value);
+    expect(host.name, 'ubuntu-fixture');
+    expect(host.connectionMethod, 'ssh');
+    expect(host.connectionAlias, 'user@192.0.2.10');
+    expect(host.trust, 'unknown');
+    expect(
+        MonitoringHost.fromJson({...value, 'connection': null})
+            .connectionMethod,
+        'unknown');
+    expect(() => MonitoringHost.fromJson({...value, 'connection': 'ssh'}),
+        throwsFormatException);
+    expect(
+        () => MonitoringHost.fromJson({
+              ...value,
+              'connection': {'method': 'shell'}
+            }),
+        throwsFormatException);
+    expect(
+        () => MonitoringHost.fromJson({
+              ...value,
+              'connection': {'method': 'ssh', 'alias': 1}
+            }),
+        throwsFormatException);
+  });
   test(
       'monitoring model distinguishes trust connectivity and unsupported metrics',
       () {

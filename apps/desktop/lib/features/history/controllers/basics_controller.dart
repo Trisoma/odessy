@@ -4,7 +4,7 @@ import 'package:odessy_client/odessy_client.dart';
 import '../../../app/session_controller.dart';
 
 /// One transport/lifecycle owner for durable browsing and advanced controls.
-/// Selection is data only. Only explicit Resume attaches a runtime.
+/// Loading is data only. The shell explicitly requests continuation on chat navigation.
 class BasicsController extends ChangeNotifier {
   BasicsController(this.session, {AgentBasicsClient? client})
       : _override = client {
@@ -367,8 +367,11 @@ class BasicsController extends ChangeNotifier {
             'Saved chat created. Bind an authorized workspace explicitly before first resume.';
       }, feature: 'conversations');
   Future<void> update({String? title, bool? pinned, bool? archive}) =>
+      updateConversation(selected,
+          title: title, pinned: pinned, archive: archive);
+  Future<void> updateConversation(SavedConversation? row,
+          {String? title, bool? pinned, bool? archive}) =>
       _run((c, e) async {
-        final row = selected;
         if (row == null) return;
         await _identity(c, e);
         final ack = await c.update(row,
@@ -377,15 +380,15 @@ class BasicsController extends ChangeNotifier {
         if (ack.id != row.id || ack.revision <= row.revision) {
           throw const FormatException('Invalid update receipt');
         }
-        selected = ack;
+        if (selected?.id == ack.id) selected = ack;
         conversations = List.unmodifiable([
           for (final x in conversations)
             if (x.id != ack.id) x,
           if (ack.archived == archived) ack
         ]);
       }, feature: 'conversations');
-  Future<void> deleteSelected() => _run((c, e) async {
-        final row = selected;
+  Future<void> deleteSelected() => deleteConversation(selected);
+  Future<void> deleteConversation(SavedConversation? row) => _run((c, e) async {
         if (row == null) return;
         if (session.session?.conversationId == row.id) {
           throw StateError(
@@ -396,19 +399,21 @@ class BasicsController extends ChangeNotifier {
         _check(e);
         conversations =
             List.unmodifiable(conversations.where((x) => x.id != row.id));
-        selected = null;
-        events = const [];
-        facts = const [];
-        documents = const [];
-        contextUsed = null;
-        retrieval = null;
+        if (selected?.id == row.id) {
+          selected = null;
+          events = const [];
+          facts = const [];
+          documents = const [];
+          contextUsed = null;
+          retrieval = null;
+        }
         notice =
             'Conversation deleted by the service. Workspace documents were not deleted.';
       }, feature: 'conversations');
-  Future<Json?> exportSelected() async {
+  Future<Json?> exportSelected() => exportConversation(selected?.id);
+  Future<Json?> exportConversation(String? id) async {
     Json? result;
     await _run((c, e) async {
-      final id = selected?.id;
       if (id == null) return;
       await _identity(c, e);
       final v = await c.export(id);

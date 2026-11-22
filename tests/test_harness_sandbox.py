@@ -155,7 +155,7 @@ def test_required_isolation_refuses_at_the_harness_boundary_even_with_a_capable_
 
 def test_the_session_plan_is_a_harness_boundary_plan(tmp_path):
     plan = plan_for_session(workspace=tmp_path, mode="workspace-write",
-                            settings=SandboxSettings(), environ={})
+                            settings=SandboxSettings(), environ={}, isolation="preferred")
     assert plan.boundary == "harness"
     # The default hidden list is requested and cannot be masked by this boundary.
     assert "hidden_paths" in plan.unenforced
@@ -309,7 +309,8 @@ def test_the_overlay_pins_the_two_fields_the_pin_accepts(tmp_path):
 
 def test_the_sandbox_overlay_is_written_into_the_harness_home(tmp_path):
     environ = {"ODESSY_HARNESS_EXE": sys.executable,
-               "ODESSY_HARNESS_HOME": str(tmp_path / "home")}
+               "ODESSY_HARNESS_HOME": str(tmp_path / "home"),
+               "ODESSY_ISOLATION": "preferred"}
     config = from_environment(environ, workspace=tmp_path)
     assert config.sandbox_patch is not None
     assert config.sandbox_patch.parent == config.home
@@ -369,6 +370,15 @@ def test_required_isolation_either_launches_or_refuses_never_downgrades(tmp_path
     else:
         assert config.sandbox_plan().launchable
         assert config.sandbox_plan().isolation == "required"
+
+
+def test_auto_on_a_capable_host_still_refuses_the_harness_hidden_path_gap(tmp_path, monkeypatch):
+    from odessy.runtime_backends.harness import sandbox
+    monkeypatch.setattr(sandbox, 'host_registry', _capable_registry)
+    with pytest.raises(SandboxRequirementRefused) as caught:
+        plan_for_session(workspace=tmp_path, settings=SandboxSettings(), environ={})
+    assert caught.value.plan.isolation == 'required'
+    assert 'hidden_paths' in caught.value.plan.unenforced
 
 
 # -- what this host resolves to ---------------------------------------------

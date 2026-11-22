@@ -276,19 +276,20 @@ class _ConversationPageState extends State<ConversationPage> {
             padding: EdgeInsets.fromLTRB(inset, 8, inset, 16),
             child: _content(_composer(context, narrow: box.maxWidth < 600)));
         if (compact) {
-          return SelectionArea(
-              child: SingleChildScrollView(
-            key: const Key('conversation-transcript'),
-            controller: scroll,
-            child: Column(children: [
-              header,
-              const Divider(height: 1),
-              Padding(
-                  padding: EdgeInsets.fromLTRB(inset, 20, inset, 24),
-                  child: Column(children: _entries(context))),
-              composer
-            ]),
-          ));
+          return Column(children: [
+            header,
+            const Divider(height: 1),
+            Expanded(
+                child: SelectionArea(
+                    child: ListView(
+                        key: const Key('conversation-transcript'),
+                        controller: scroll,
+                        padding: EdgeInsets.fromLTRB(inset, 12, inset, 12),
+                        children: _entries(context)))),
+            ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: box.maxHeight * 0.68),
+                child: SingleChildScrollView(child: composer)),
+          ]);
         }
         return Column(children: [
           header,

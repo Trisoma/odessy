@@ -1,106 +1,28 @@
 # Odessy
 
-**Developer Preview · v0.5.0-alpha**
+**English** | [简体中文](README.zh-CN.md) | [Español](README.es.md)
 
-> **Unstable developer preview.** Odessy is experimental software. Expect bugs,
-> breaking changes and rough edges. No stable release exists yet. See
-> [support and limits](docs/current-status.md) for platform coverage and known limitations.
+**Developer Preview · v0.5.0-alpha**
 
 Hi, this is Odessy, not Odyssey! ⛵
 
-> Curious how this started? [Read the story behind Odessy](Story.md).
+> Curious how this started? [Read the story behind Odessy](https://github.com/Trisoma/odessy/blob/develop/Story.md).
 
-Odessy is a single-user AI agent application with a Flutter desktop interface,
-local or cloud model connections, policy-controlled tools and optional voice.
-The model proposes actions; Odessy's service validates authority and obtains
-the required approval before dispatch.
+I’m building Odessy because I want to talk to my computer and ask it to do useful work, like JARVIS or FRIDAY. Today, Odessy is an experimental Windows desktop agent. It can use a local or cloud model, run approved actions on your laptop, and send a scoped command to a connected computer.
 
-The desktop brings projects, conversations, workspace inspection, activity and
-usage, device monitoring and settings into one application. This is experimental
-software: expect bugs and changing interfaces, and use a disposable workspace
-before granting access to important files.
+The model proposes actions. Odessy’s service checks permissions before it runs them. [How it works](docs/ARCHITECTURE.md)
 
-[Get started](docs/getting-started.md) · [Documentation](docs/README.md) ·
-[Screenshots](docs/view/README.md) · [Support and limits](docs/current-status.md) ·
-[Contribute](CONTRIBUTING.md)
+## Try Odessy
 
-## Try the developer preview
+If you want to try Odessy on Windows, start with the installer. If you want to change the code, start from source.
 
-For a reproducible source setup and first offline conversation, follow
-[Getting started](docs/getting-started.md). It uses the production application
-with an explicitly deterministic model; no paid provider, microphone, remote
-computer or model download is required for that first check.
+- **Install on Windows 11 x64:** [Download the alpha installer](https://github.com/Trisoma/odessy/releases/download/v0.5.0-alpha/Odessy-v0.5.0-alpha-windows-x64-setup.exe) and follow the [desktop manual](docs/GOLDEN_PATH.md). Setup includes the runtime. The [release status](docs/current-status.md) lists the security fixes that this installer predates.
+- **Run from source:** Follow [Getting started](docs/getting-started.md). The desktop starts its own local service.
 
-The repository also implements a Windows setup application with private runtime
-components, versioned installation and maintenance. See [installed setup](docs/setup/wizard.md)
-and [the installer build guide](installer/README.md). An implementation or an old
-qualification receipt does not mean a matching public installer is available.
-The previously published `v0.5.0-unstable` UI-client archives are historical and
-do not contain the complete current preview. Do not mix them with current source.
-
-## What you can explore
-
-| Area | Developer-preview behavior |
-| --- | --- |
-| Conversations | Projects, saved history, search, export, rename, pin and archive. Custom supports bounded restart continuation; Harness history is read-only after restart. |
-| Tools and permissions | Reviewed actions, explicit approvals, cancellation and supported Custom access modes. Full control never overrides hard denials or expands an existing grant. |
-| Workspace panels | Scoped file reads, proposed diffs and recorded command output. Output is distinct from an interactive terminal. |
-| Context | Explicit project memory and opt-in local document retrieval, with source citations and bounded Custom context preparation. |
-| Local terminal | Conditional Windows PTY support when the verified native helper closure is available; requires an explicit shell grant. No SSH terminal. |
-| Devices | Opt-in read-only monitoring through existing paired or SSH connections. SSH authentication does not grant execution or workspace access. |
-| Voice and settings | Existing voice and model configuration, eight settings groups and local appearance preferences. Physical audio and provider behavior need separate validation. |
-
-Checkpoint creation, listing and preview remain available on Windows, but
-**checkpoint restoration is disabled on Windows** until directory-handle safety
-is implemented. The backend refuses direct restore requests; the desktop explains
-the restriction. Supported non-Windows restoration still requires exact approval. See [terminal and checkpoint limits](docs/ui/terminal-checkpoints.md).
-
-## Platform scope
-
-Windows x64 is the primary development and recorded native-test platform. Linux
-has source/CI coverage and scoped historical device evidence; that is not full
-desktop/package parity. macOS is unqualified. Hardware requirements have not been
-established. Read the [support matrix](docs/current-status.md) before choosing a deployment.
-
-## Security and privacy
-
-Python owns policy and authorization; Node owns existing MCP tool execution;
-Rust owns paired identity/transport; Go aggregates optional telemetry; Flutter
-uses typed clients. Selecting a cloud model sends request data to that provider.
-Redaction is best-effort, not a guarantee against disclosure.
-
-An approved interactive shell runs with the user's OS permissions and is not a
-per-command workspace sandbox. Legacy plaintext LAN execution is unsuitable for
-untrusted networks. Prefer the documented authenticated transport paths.
-Report vulnerabilities privately through [SECURITY.md](SECURITY.md).
+Typed chat is enough for the first run. Add voice when you want to speak to the agent, or SSH when the work belongs on another machine. Expect rough edges in this alpha. [Support](docs/current-status.md) · [Limits](LIMITATION.md) · [Screenshots](docs/view/README.md)
 
 ## Build Odessy with us
 
-We're a small team of two regular contributors, with three others helping out
-on a short-term basis, and we'd love some company. Whether you'd like to fix a
-bug, improve a component or work with us on a larger part of Odessy, you're welcome.
+I’m looking for 3–5 volunteer collaborators who want to take a focused change from reproduction through review. Pick a problem in the [roadmap](docs/ROADMAP.md) or [GitHub issues](https://github.com/Trisoma/odessy/issues). The [contribution guide](CONTRIBUTING.md) points to the files and the first test to run. Focused CI fixes and refactors that preserve behavior are welcome.
 
-Some areas we'd love help with:
-
-- **AI agents:** orchestration, tool calling, model integration and memory.
-- **Hardware exploration:** Jetson, Raspberry Pi, BLE and MCU communication.
-  These are areas of interest, not claims of current device support.
-- **Systems:** Rust, networking, mTLS and secure execution.
-- **Desktop:** Flutter, Dart, accessibility and UI/UX.
-- **Infrastructure:** Go, monitoring, telemetry and multi-host management.
-- **Voice:** STT, TTS, wake-word detection and audio processing.
-
-Documentation, compatibility tests and reproducible bug reports are welcome too.
-Odessy is an independent, volunteer-driven project. Contributions are unpaid,
-and there's no fixed time commitment: help when you can.
-
-Start with [Contributing](CONTRIBUTING.md), explore the
-[architecture](docs/ARCHITECTURE.md), browse
-[open issues](https://github.com/Trisoma/odessy/issues), or suggest an idea.
-For larger changes, discuss the approach with us before starting.
-AI-assisted contributions are welcome; contributors remain responsible for review,
-testing and attribution.
-
-Odessy is licensed under [Apache-2.0](LICENSE). Bundled components and model assets
-have their own terms; see [third-party notices](THIRD-PARTY-NOTICES.md) and
-[the license inventory](docs/reference/third-party-licenses.md).
+[Apache-2.0](LICENSE) · [Third-party notices](THIRD-PARTY-NOTICES.md) · [Report a vulnerability](SECURITY.md)

@@ -21,6 +21,9 @@ class Connections:
         return {'hosts': list(self.hosts.values()), 'connection': current().public() if current() else None}
 
     async def connect(self, device_id):
+        from odessy.tools.ssh_executor import current as ssh_target
+        if ssh_target() is not None:
+            raise ValueError('Disconnect SSH execution before selecting experimental LAN execution')
         if self.busy:
             raise ValueError('Another connection request is already pending')
         if current() is not None:
@@ -45,6 +48,8 @@ class Connections:
             self.selection_path.write_text(json.dumps(host, indent=2), encoding='utf-8')
             from dataclasses import replace
             connection = replace(connection, tools=tuple(getattr(tools, 'tools', tools)))
+            if ssh_target() is not None:
+                raise ValueError('SSH execution was selected while LAN was connecting. Disconnect it first.')
             select(connection)
             self.stage = 'connected'
             return {'state': 'connected', 'host': connection.public(), 'tools': count}

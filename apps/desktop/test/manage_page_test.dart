@@ -6,6 +6,43 @@ import 'package:odessy_desktop/features/setup/presentation/manage_page.dart';
 import 'installed_manage_controller_test.dart' show Backend;
 
 void main() {
+  testWidgets('speech pause is reachable, reviewed, and explicitly reversible',
+      (tester) async {
+    final backend = Backend();
+    (backend.status['configuration'] as Map)['voice_enabled'] = true;
+    final c =
+        InstalledManageController(backend, spec: {'root': 'C:/Odessy/App'});
+    await c.load();
+    await tester.pumpWidget(
+        MaterialApp(home: Scaffold(body: ManagePage(controller: c))));
+    await tester.ensureVisible(find.text('Pause speech for update'));
+    await tester.tap(find.text('Pause speech for update'));
+    await tester.pumpAndSettle();
+    expect(backend.requests.last.parameters['action'],
+        'package-voice-configure-review');
+    expect(
+        find.textContaining('Speech on next launch: paused'), findsOneWidget);
+    expect((backend.status['configuration'] as Map)['voice_enabled'], isTrue);
+    await tester.ensureVisible(find.text('Confirm once'));
+    await tester.tap(find.text('Confirm once'));
+    await tester.pumpAndSettle();
+    final applied = backend.requests.singleWhere(
+        (r) => r.parameters['action'] == 'package-voice-configure');
+    expect(applied.parameters['confirm'], 'voice-1');
+    expect(applied.parameters['selection'], {
+      'voice': {'enabled': false}
+    });
+    expect(find.text('Enable saved speech'), findsOneWidget);
+    await tester.ensureVisible(find.text('Enable saved speech'));
+    await tester.tap(find.text('Enable saved speech'));
+    await tester.pumpAndSettle();
+    expect(backend.requests.last.parameters['selection'], {
+      'voice': {'enabled': true}
+    });
+    await tester.pumpWidget(const SizedBox());
+    c.dispose();
+  });
+
   testWidgets('manage shows recorded state and requires an exact review',
       (tester) async {
     final backend = Backend();

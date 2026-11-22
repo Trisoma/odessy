@@ -42,7 +42,7 @@ def register_tts(name, factory):
 
 def _register(kind, name, factory):
     validate_selector(name)
-    if ':' in name or name in ('whisper.cpp', 'kokoro') or name in _REGISTRY[kind] or (not callable(factory)):
+    if ':' in name or name in ('whisper.cpp', 'kokoro', 'piper') or name in _REGISTRY[kind] or (not callable(factory)):
         raise ValueError('provider name is reserved/registered, or factory is not callable')
     _REGISTRY[kind][name] = factory
 
@@ -129,6 +129,9 @@ def create_stt(config, *, builtin_factory=None):
 
 def create_tts(config, *, builtin_factory=None):
     selector = validate_selector(getattr(config, 'tts_provider', 'kokoro'))
+    if selector == 'piper':
+        from .piper import PiperTTS
+        return PiperTTS(config.tts_executable, config.tts_model)
     if selector == 'kokoro':
         if builtin_factory is None:
             from .tts import KokoroTTS

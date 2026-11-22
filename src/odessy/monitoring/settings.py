@@ -104,6 +104,9 @@ class MonitoringSettings:
     ssh_config: str = ''
     ssh_monitoring: bool = False
     ssh_binary: str = ''
+    ssh_authentication: str = 'agent'
+    ssh_port: int = 0
+    ssh_temporary: bool = False
 
     @classmethod
     def from_env(cls, env=None):
@@ -135,6 +138,9 @@ class MonitoringSettings:
                     hosts = (*hosts, host_id)
                 if len(hosts) > 32:
                     raise ValueError('SSH host would exceed the 32-host monitoring limit')
+        authentication = env.get('ODESSY_SSH_AUTHENTICATION', 'agent')
+        if authentication not in ('agent', 'password'):
+            raise ValueError('ODESSY_SSH_AUTHENTICATION must be agent or password')
         enabled = flag('ODESSY_MONITORING') or connection or ssh_monitoring
         return cls(
             enabled=enabled, host_ids=hosts,
@@ -147,6 +153,7 @@ class MonitoringSettings:
             ssh_config=env.get('ODESSY_SSH_CONFIG', '').strip(),
             ssh_monitoring=ssh_monitoring,
             ssh_binary=env.get('ODESSY_SSH_BIN', '').strip(),
+            ssh_authentication=authentication,
         )
 
     def wire(self):

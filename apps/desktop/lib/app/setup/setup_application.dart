@@ -71,6 +71,10 @@ class _SetupApplicationState extends State<SetupApplication> {
   final whisperModel = TextEditingController();
   final kokoroModel = TextEditingController();
   final kokoroVoices = TextEditingController();
+  final piperExecutable = TextEditingController();
+  final piperModel = TextEditingController();
+  String ttsProvider = 'piper';
+  bool _automaticVoiceVerified = false;
 
   int step = 0;
   String role = 'combined', provider = 'later';
@@ -213,10 +217,13 @@ class _SetupApplicationState extends State<SetupApplication> {
   bool get _voiceComplete =>
       whisperBin.text.trim().isNotEmpty &&
       whisperModel.text.trim().isNotEmpty &&
-      kokoroModel.text.trim().isNotEmpty &&
-      kokoroVoices.text.trim().isNotEmpty;
+      (ttsProvider == 'piper'
+          ? piperExecutable.text.trim().isNotEmpty &&
+              piperModel.text.trim().isNotEmpty
+          : kokoroModel.text.trim().isNotEmpty &&
+              kokoroVoices.text.trim().isNotEmpty);
 
-  bool get _voiceInvalid => voice && !_voiceComplete;
+  bool get _voiceInvalid => voice && !voiceDownloadRequested && !_voiceComplete;
 
   bool get _modelIncomplete =>
       role != 'execution' &&
@@ -236,12 +243,22 @@ class _SetupApplicationState extends State<SetupApplication> {
           },
         if (role != 'execution')
           'voice': {
-            'enabled': voice && _voiceComplete,
+            'tts_provider': ttsProvider,
+            'enabled': voice &&
+                _voiceComplete &&
+                (ttsProvider != 'piper' ||
+                    !voiceDownloadRequested ||
+                    _automaticVoiceVerified),
             if (voice && _voiceComplete) ...{
               'whisper_bin': whisperBin.text.trim(),
               'whisper_model': whisperModel.text.trim(),
-              'kokoro_model': kokoroModel.text.trim(),
-              'kokoro_voices': kokoroVoices.text.trim(),
+              if (ttsProvider == 'kokoro') ...{
+                'kokoro_model': kokoroModel.text.trim(),
+                'kokoro_voices': kokoroVoices.text.trim(),
+              } else ...{
+                'tts_executable': piperExecutable.text.trim(),
+                'tts_model': piperModel.text.trim(),
+              },
             },
             // Recorded only once the model exists, so the saved configuration
             // never points at a file that is not there.
@@ -281,6 +298,7 @@ class _SetupApplicationState extends State<SetupApplication> {
     setState(() => voicePlanLoading = true);
     try {
       final value = await c.call('voice-plan', parameters: {
+        'tts_provider': ttsProvider,
         'features': ['voice']
       });
       if (!mounted) return;
@@ -297,18 +315,24 @@ class _SetupApplicationState extends State<SetupApplication> {
     }
   }
 
-  Future<void> _refreshVoiceState() async {
+  Future<Json?> _refreshVoiceState() async {
+    final provider = ttsProvider;
     try {
       // The installation root lets the helper check the interpreter that will
       // actually import the voice modules, rather than guessing from files.
       final value = await c.call('voice-status', parameters: {
+        'tts_provider': ttsProvider,
         'features': ['voice'],
         if (c.root.trim().isNotEmpty) 'install_root': c.root,
       });
-      if (!mounted) return;
+      if (!mounted || _closing || provider != ttsProvider) return null;
       setState(() => voiceState = value);
+      return value;
     } catch (_) {
-      // Observational only; a missing record must not look like a failure.
+      if (mounted && provider == ttsProvider) {
+        setState(() => voiceState = const {});
+      }
+      return null;
     }
   }
 
@@ -319,7 +343,8 @@ class _SetupApplicationState extends State<SetupApplication> {
   Future<void> _installVoiceDependencies() async {
     if (voiceDependenciesRunning || c.root.trim().isEmpty) return;
     final features = <String>[
-      if (_speechSelected) 'voice',
+      if (_speechSelected || (voiceDownloadRequested && role != 'execution'))
+        'voice',
       if (_wakeSelected && wakeInstalled) 'wake',
     ];
     if (features.isEmpty) return;
@@ -337,6 +362,7 @@ class _SetupApplicationState extends State<SetupApplication> {
           final result = await c.call('voice-python-install', parameters: {
             'install_root': c.root,
             'features': [feature],
+            'tts_provider': ttsProvider,
           });
           if (!active()) return;
           results[feature] = result;
@@ -360,7 +386,52 @@ class _SetupApplicationState extends State<SetupApplication> {
         };
         voiceDependenciesError = errors.join('\n');
       });
-      if (features.contains('voice')) await _refreshVoiceState();
+      if (features.contains('voice')) {
+        final current = await _refreshVoiceState();
+        if (!active()) return;
+        if (ttsProvider == 'piper' && results['voice']?['verified'] == true) {
+          try {
+            if (current == null || current['ready'] != true) {
+              throw StateError(
+                  'Piper was downloaded but its installed engine and model did not load. Retry speech setup.');
+            }
+            final paths = current['paths'];
+            if (paths is! Map ||
+                paths['tts_executable'] is! String ||
+                paths['tts_model'] is! String) {
+              throw StateError(
+                  'Piper verification did not return its exact runtime and model.');
+            }
+            piperExecutable.text = paths['tts_executable'] as String;
+            piperModel.text = paths['tts_model'] as String;
+            _automaticVoiceVerified = true;
+            _edit();
+            if (!_voiceComplete) {
+              throw StateError('Speech paths are incomplete.');
+            }
+            final patch = {
+              'selection': {'voice': _selection()['voice']}
+            };
+            final plan = await c.call('package-voice-configure-review',
+                parameters: patch);
+            if (!active()) return;
+            await c.call('package-voice-configure',
+                confirm: plan['plan_id'] as String, parameters: patch);
+          } catch (failure) {
+            if (!active()) return;
+            setState(() {
+              voiceDependencies = {
+                ...voiceDependencies,
+                'voice': {...?results['voice'], 'verified': false},
+                'verified': false,
+              };
+              _automaticVoiceVerified = false;
+              voiceDependenciesError =
+                  'Speech configuration was not activated: $failure';
+            });
+          }
+        }
+      }
       if (!active()) return;
       if (features.contains('wake')) await _refreshWakeState();
     } finally {
@@ -380,6 +451,7 @@ class _SetupApplicationState extends State<SetupApplication> {
             selection: const {},
             parameters: {
               'action': 'voice-status',
+              'tts_provider': ttsProvider,
               'features': ['voice'],
               if (c.context['payload_root'] is String)
                 'payload': c.context['payload_root'],
@@ -420,6 +492,7 @@ class _SetupApplicationState extends State<SetupApplication> {
     try {
       final result =
           await c.call('voice-install', confirm: planId, parameters: {
+        'tts_provider': ttsProvider,
         'features': ['voice']
       });
       if (!mounted) return false;
@@ -433,14 +506,15 @@ class _SetupApplicationState extends State<SetupApplication> {
       }
       final paths = result['paths'];
       if (paths is Map &&
-          ['whisper_bin', 'whisper_model', 'kokoro_model', 'kokoro_voices']
-              .every((key) =>
-                  paths[key] is String && (paths[key] as String).isNotEmpty)) {
+          ['whisper_bin', 'whisper_model'].every((key) =>
+              paths[key] is String && (paths[key] as String).isNotEmpty)) {
         for (final entry in <String, TextEditingController>{
           'whisper_bin': whisperBin,
           'whisper_model': whisperModel,
           'kokoro_model': kokoroModel,
           'kokoro_voices': kokoroVoices,
+          'tts_executable': piperExecutable,
+          'tts_model': piperModel,
         }.entries) {
           final value = paths[entry.key];
           if (value is String && value.isNotEmpty) entry.value.text = value;
@@ -449,7 +523,7 @@ class _SetupApplicationState extends State<SetupApplication> {
         _edit();
       } else {
         setState(() => voiceError =
-            'Voice components are incomplete. Try installation again.');
+            'Whisper components are incomplete. Try installation again.');
         return false;
       }
       final wheels = result['wheel_count'];
@@ -470,7 +544,13 @@ class _SetupApplicationState extends State<SetupApplication> {
             : (ready ? 'Voice components are ready.' : '');
       });
       await _refreshVoiceState();
-      return _voiceComplete;
+      if (!mounted || _closing) return false;
+      if (!_voiceComplete && ttsProvider != 'piper') {
+        setState(() => voiceError =
+            'Select the chosen speech engine paths above, or turn off voice to continue.');
+      }
+      return _voiceComplete ||
+          (ttsProvider == 'piper' && piperModel.text.trim().isNotEmpty);
     } catch (failure) {
       if (!mounted) return false;
       // The remedy is part of the message: a bare failure leaves the user with a
@@ -557,7 +637,7 @@ class _SetupApplicationState extends State<SetupApplication> {
       });
       if (path.isNotEmpty && previous != path) _edit();
     } catch (_) {
-      // Observational only; a missing record must not look like a failure.
+      // Readiness is observational here; errors stay in the requested flow.
     }
   }
 
@@ -676,7 +756,7 @@ class _SetupApplicationState extends State<SetupApplication> {
     final controller = InstalledManageController(c.backend,
         progressBackend: _newBackend(),
         spec: {'root': c.root},
-        setupPayload: widget.mode == 'setup' ? widget.payloadRoot : null);
+        setupPayload: widget.payloadRoot);
     setState(() => management = controller);
     controller.load().then((_) {
       if (reviewUninstall && !controller.uninstalled) {
@@ -697,7 +777,9 @@ class _SetupApplicationState extends State<SetupApplication> {
   Future<void> _browseVoice(TextEditingController target,
       {List<String> extensions = const []}) async {
     final selected = await widget.picker.pickFile(extensions: extensions);
-    if (selected == null || selected.trim().isEmpty) return;
+    if (!mounted || _closing || selected == null || selected.trim().isEmpty) {
+      return;
+    }
     target.text = selected;
     _edit();
     setState(() {});
@@ -730,6 +812,8 @@ class _SetupApplicationState extends State<SetupApplication> {
       whisperModel,
       kokoroModel,
       kokoroVoices,
+      piperExecutable,
+      piperModel,
     ]) {
       editor.dispose();
     }
@@ -810,10 +894,10 @@ class _SetupApplicationState extends State<SetupApplication> {
                     label: const Text('Custom setup')),
               if (customSetup)
                 DropdownButtonFormField<String>(
+                    isExpanded: true,
                     initialValue: role,
                     // Unconstrained dropdowns size themselves to their widest
                     // item, which overflows at large text on a narrow window.
-                    isExpanded: true,
                     decoration: const InputDecoration(labelText: 'Role'),
                     items: const [
                       DropdownMenuItem(
@@ -870,9 +954,9 @@ class _SetupApplicationState extends State<SetupApplication> {
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             DropdownButtonFormField<String>(
+                isExpanded: true,
                 key: const Key('setup-model-provider'),
                 initialValue: provider,
-                isExpanded: true,
                 decoration: const InputDecoration(labelText: 'Model source'),
                 items: const [
                   DropdownMenuItem(
@@ -913,10 +997,10 @@ class _SetupApplicationState extends State<SetupApplication> {
               const SizedBox(height: OdessyTokens.spaceMedium),
               if (models.isNotEmpty)
                 DropdownButtonFormField<String>(
+                    isExpanded: true,
                     initialValue: models.contains(model.text.trim())
                         ? model.text.trim()
                         : null,
-                    isExpanded: true,
                     decoration:
                         const InputDecoration(labelText: 'Installed model'),
                     items: [
@@ -958,9 +1042,38 @@ class _SetupApplicationState extends State<SetupApplication> {
       SetupSection(
           title: 'Voice',
           description:
-              'Optional. Uses components you already have; nothing is downloaded. All four paths are required to enable it.',
+              'Choose speech output, then select its existing runtime and model files. Voice stays optional.',
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            DropdownButtonFormField<String>(
+              isExpanded: true,
+              key: const Key('setup-tts-provider'),
+              initialValue: ttsProvider,
+              decoration:
+                  const InputDecoration(labelText: 'Speech output engine'),
+              items: const [
+                DropdownMenuItem(
+                    value: 'piper', child: Text('Piper (recommended for CPU)')),
+                DropdownMenuItem(value: 'kokoro', child: Text('Kokoro')),
+              ],
+              onChanged: _working || voicePlanLoading
+                  ? null
+                  : (value) {
+                      if (value == null || value == ttsProvider) return;
+                      setState(() {
+                        ttsProvider = value;
+                        _automaticVoiceVerified = false;
+                        voicePlan = const {};
+                        voiceState = const {};
+                        voiceError = '';
+                        voiceNotice = '';
+                        voiceDownloaded = false;
+                      });
+                      _edit();
+                      if (voiceDownloadRequested) unawaited(_loadVoicePlan());
+                    },
+            ),
+            const SizedBox(height: OdessyTokens.spaceMedium),
             SwitchListTile(
                 key: const Key('setup-voice-toggle'),
                 contentPadding: EdgeInsets.zero,
@@ -972,7 +1085,8 @@ class _SetupApplicationState extends State<SetupApplication> {
                         setState(() => voice = value);
                         _edit();
                       }),
-            if (voice) ...[
+            if (voice ||
+                (voiceDownloadRequested && ttsProvider == 'piper')) ...[
               PathField(
                   fieldKey: const Key('setup-whisper-bin'),
                   controller: whisperBin,
@@ -989,33 +1103,57 @@ class _SetupApplicationState extends State<SetupApplication> {
                   onChanged: (_) => _edit(),
                   onBrowse: () =>
                       _browseVoice(whisperModel, extensions: const ['bin'])),
-              PathField(
-                  fieldKey: const Key('setup-kokoro-model'),
-                  controller: kokoroModel,
-                  label: 'Kokoro model file',
-                  enabled: !c.busy,
+              if (ttsProvider == 'piper') ...[
+                PathField(
+                  fieldKey: const Key('setup-piper-executable'),
+                  controller: piperExecutable,
+                  label: 'Piper executable or Python interpreter',
+                  enabled: !_working,
                   onChanged: (_) => _edit(),
                   onBrowse: () =>
-                      _browseVoice(kokoroModel, extensions: const ['onnx'])),
-              PathField(
-                  fieldKey: const Key('setup-kokoro-voices'),
-                  controller: kokoroVoices,
-                  label: 'Kokoro voices file',
-                  enabled: !c.busy,
+                      _browseVoice(piperExecutable, extensions: const ['exe']),
+                ),
+                PathField(
+                  fieldKey: const Key('setup-piper-model'),
+                  controller: piperModel,
+                  label: 'Piper ONNX voice model',
+                  enabled: !_working,
                   onChanged: (_) => _edit(),
                   onBrowse: () =>
-                      _browseVoice(kokoroVoices, extensions: const ['bin'])),
+                      _browseVoice(piperModel, extensions: const ['onnx']),
+                ),
+                const Text(
+                    'For existing files, keep the matching .onnx.json beside the model. Or enable downloads below to install Piper and its English voice automatically.'),
+              ] else ...[
+                PathField(
+                    fieldKey: const Key('setup-kokoro-model'),
+                    controller: kokoroModel,
+                    label: 'Kokoro model file',
+                    enabled: !c.busy,
+                    onChanged: (_) => _edit(),
+                    onBrowse: () =>
+                        _browseVoice(kokoroModel, extensions: const ['onnx'])),
+                PathField(
+                    fieldKey: const Key('setup-kokoro-voices'),
+                    controller: kokoroVoices,
+                    label: 'Kokoro voices file',
+                    enabled: !c.busy,
+                    onChanged: (_) => _edit(),
+                    onBrowse: () =>
+                        _browseVoice(kokoroVoices, extensions: const ['bin'])),
+              ],
               if (_voiceInvalid)
                 const SetupMessage(
                     error: true,
                     text:
-                        'Voice stays unavailable until all four asset paths are supplied, or turn it off to continue with text only.'),
+                        'Supply the Whisper and selected speech engine paths, or turn voice off to continue with text only.'),
             ],
           ])),
       SetupSection(
           title: 'Voice downloads (optional)',
-          description:
-              'Whisper.cpp and Kokoro can be downloaded and verified for you. This needs an internet connection, and each file is checked before it is used.',
+          description: ttsProvider == 'piper'
+              ? 'Install Piper, its English voice and Whisper.cpp with Odessy. Verified cached downloads are reused. No Kokoro files are downloaded. Piper is GPL-3.0-or-later; voice repository terms are MIT.'
+              : 'Download Whisper.cpp, Kokoro models and their dependencies. Files are verified before use.',
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             SwitchListTile(
@@ -1023,7 +1161,11 @@ class _SetupApplicationState extends State<SetupApplication> {
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Install voice components'),
                 subtitle: Text(voicePlan['total_bytes'] is int
-                    ? 'About ${_megabytes(voicePlan['total_bytes'] as int)} will be downloaded.'
+                    ? (voicePlan['nothing_to_do'] == true
+                        ? 'No downloads needed; cached files will be verified and installed.'
+                        : (voicePlan['installable'] == true
+                            ? 'About ${_megabytes(voicePlan['total_bytes'] as int)} will be downloaded.'
+                            : 'Automatic speech components are unavailable in this build.'))
                     : 'Choose this to see the download size first.'),
                 value: voiceDownloadRequested,
                 onChanged: c.busy || installingVoice
@@ -1083,7 +1225,7 @@ class _SetupApplicationState extends State<SetupApplication> {
                 // zero pending bytes is already installed.
                 if (voicePlan['nothing_to_do'] == true)
                   Text(
-                      'All voice components are already installed in ${voicePlan['root'] ?? 'the voice folder'}.',
+                      'Cached files are verified in ${voicePlan['root'] ?? 'the voice folder'}. Setup still installs and checks the selected speech engine in Odessy.',
                       style: _theme.textTheme.bodySmall)
               ],
               if (voicePlan['unavailable'] is List &&
@@ -1286,9 +1428,8 @@ class _SetupApplicationState extends State<SetupApplication> {
     return '$reason ${hint.isEmpty ? '' : '$hint '}The microphone is checked when the session starts.';
   }
 
-  static String _megabytes(int bytes) => bytes <= 0
-      ? 'unknown size'
-      : '${(bytes / (1024 * 1024)).toStringAsFixed(0)} MB';
+  static String _megabytes(int bytes) =>
+      bytes <= 0 ? '0 MB' : '${(bytes / (1024 * 1024)).toStringAsFixed(0)} MB';
 
   String _voiceProgressCopy(Object? progress) {
     if (progress is! Map) return 'Downloading voice components…';
@@ -1597,7 +1738,9 @@ class _SetupApplicationState extends State<SetupApplication> {
                   child: Text('${result['registration_error']}',
                       style: _theme.textTheme.bodySmall)),
           ])),
-      if (_speechSelected || (_wakeSelected && wakeInstalled))
+      if (_speechSelected ||
+          (voiceDownloadRequested && role != 'execution') ||
+          (_wakeSelected && wakeInstalled))
         _voiceDependenciesSection(),
       if (launchError.isNotEmpty)
         SetupMessage(
@@ -1619,7 +1762,8 @@ class _SetupApplicationState extends State<SetupApplication> {
   /// it is reported here, after the installation exists. Saying "ready" here
   /// without a passing import check would be a claim the machine cannot back up.
   Widget _voiceDependenciesSection() {
-    final speech = voice && _voiceComplete;
+    final speech = (voice && _voiceComplete) ||
+        (voiceDownloadRequested && role != 'execution');
     // A wake-only installation is reported against the wake-word checks; there
     // is no speech state to speak from in that case.
     final state = speech ? voiceState : wakeState;
@@ -1824,7 +1968,7 @@ class _SetupApplicationState extends State<SetupApplication> {
       if (c.installed) {
         await c.run('context');
         if (!active()) return;
-        if ((_speechSelected && voiceDownloadRequested) ||
+        if ((role != 'execution' && voiceDownloadRequested) ||
             (_wakeSelected && wakeInstalled)) {
           await _installVoiceDependencies();
           if (!active()) return;

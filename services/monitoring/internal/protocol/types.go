@@ -581,6 +581,8 @@ const (
 // fingerprint are already reviewed by the application; this service carries no
 // private key and never edits ssh_config or known_hosts.
 type SSHConfig struct {
+	PasswordURL       string `json:"password_url,omitempty"`
+	PasswordToken     string `json:"password_token,omitempty"`
 	Hostname          string `json:"hostname"`
 	User              string `json:"user"`
 	Port              int    `json:"port"`

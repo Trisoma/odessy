@@ -11,7 +11,7 @@ import time
 REQUIRED_KEYS = ('whisper_bin', 'whisper_model', 'kokoro_model', 'kokoro_voices')
 
 #: Everything reported under `candidates`, including the optional wake model.
-KEYS = REQUIRED_KEYS + ('wake_model',)
+KEYS = REQUIRED_KEYS + ('wake_model', 'tts_executable', 'tts_model')
 
 SEARCH_SECONDS = 2
 MAX_ENTRIES = 4000
@@ -128,8 +128,15 @@ def discover_voice_assets(selection):
         add(name, os.environ.get('ODESSY_' + name.upper()))
     add('whisper_bin', shutil.which('whisper-cli'))
     add('whisper_bin', home/'whisper.cpp/build/bin/whisper-cli')
+    from .voice_install import default_root
+    voice_root = default_root()
+    if voice.get('tts_provider') == 'piper':
+        add('tts_executable', shutil.which('piper'))
+        add('tts_executable', voice_root/'piper/runtime/python.exe')
+        add('tts_executable', voice_root/'piper/runtime/Scripts/python.exe')
+        add('tts_executable', voice_root/'piper/runtime/bin/python')
     roots = [home/'models', home/'odessy-voice-test', home/'whisper.cpp/models', home/'odessy/models', home/'odessy/voice', home/'.local/share/odessy',
-             wake_root, home/'openwakeword', home/'openWakeWord']
+             voice_root/'piper', wake_root, home/'openwakeword', home/'openWakeWord']
     seen = 0
     deadline = time.monotonic() + SEARCH_SECONDS
     truncated = False
@@ -147,6 +154,8 @@ def discover_voice_assets(selection):
                 if file.startswith('ggml-') and file.endswith('.bin'): add('whisper_model', path)
                 if file.startswith('kokoro') and file.endswith('.onnx'): add('kokoro_model', path)
                 if file.startswith('voices') and file.endswith('.bin'): add('kokoro_voices', path)
+                if file.endswith('.onnx') and Path(str(path)+'.json').is_file():
+                    add('tts_model', path)
                 # openWakeWord ships `hey_<phrase>_v<version>.onnx`. Anything already inside
                 # the wake asset directory is a wake model by construction.
                 if (file.endswith('.onnx') and not file.startswith('kokoro')
@@ -155,5 +164,8 @@ def discover_voice_assets(selection):
                     if file.startswith('hey_') or _inside(path, wake_root): add('wake_model', path)
             if truncated: break
         if truncated: break
-    return {'candidates': candidates, 'missing': [name for name in REQUIRED_KEYS if not candidates[name]],
+    required = list(REQUIRED_KEYS)
+    if voice.get('tts_provider') == 'piper':
+        required = [name for name in required if not name.startswith('kokoro_')] + ['tts_executable', 'tts_model']
+    return {'candidates': candidates, 'missing': [name for name in required if not candidates[name]],
             'partial': truncated, 'reason': 'Existing files only; no inference, downloads or audio capture performed.'}
