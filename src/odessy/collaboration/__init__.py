@@ -9,9 +9,10 @@ from odessy.collaboration.roles import (
 from odessy.collaboration.planner import (
     WorkPlan, PlanStep, infer_flow, plan_from_intent, to_run_arguments, validate_plan,
 )
+from odessy.collaboration.plan_runs import PlanRunManager, step_spec
 
 __all__ = ['CollaborationConfig', 'CollaborationSettings', 'ParticipantProfile',
            'CollaborationService', 'load_config', 'save_config',
            'declared_roles', 'bindings_for', 'tagged_for', 'resolve_role',
            'WorkPlan', 'PlanStep', 'infer_flow', 'plan_from_intent',
-           'to_run_arguments', 'validate_plan']
+           'to_run_arguments', 'validate_plan', 'PlanRunManager', 'step_spec']

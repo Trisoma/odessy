@@ -60,6 +60,22 @@ COLLABORATION_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "agent.run_status": {"properties": {"run_id": {"type": "string", "optional": True}}, "required": []},
     "agent.run_cancel": {"properties": {"run_id": {"type": "string", "optional": True}}, "required": []},
+    "agent.plan_run": {
+        "properties": {
+            "steps": {"type": "array", "items": {"type": "object"}},
+            "workspace": {"type": "string", "optional": True},
+        },
+        "required": ["steps"],
+    },
+    "agent.plan_continue": {
+        "properties": {
+            "run_id": {"type": "string", "optional": True},
+            "artifact_sha256": {"type": "string", "optional": True},
+        },
+        "required": [],
+    },
+    "agent.plan_status": {"properties": {"run_id": {"type": "string", "optional": True}}, "required": []},
+    "agent.plan_cancel": {"properties": {"run_id": {"type": "string", "optional": True}}, "required": []},
 }
 
 TOOL_REQUEST_SCHEMAS: dict[str, dict[str, Any]] = {

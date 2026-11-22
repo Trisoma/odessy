@@ -1323,6 +1323,12 @@ class OdessyAgent:
                 raise PermissionError('Handoff target preflight is unavailable')
             check = runs.preflight_start if name == 'agent.run' else runs.preflight_continue
             target.update(check(**action.arguments))
+        if name in {'agent.plan_run', 'agent.plan_continue'}:
+            plan_runs = getattr(self, '_delegation_plan_runs', None)
+            if plan_runs is None:
+                raise PermissionError('Plan target preflight is unavailable')
+            check = plan_runs.preflight_plan if name == 'agent.plan_run' else plan_runs.preflight_continue
+            target.update(check(**action.arguments))
         return target
 
     def _may_continue(

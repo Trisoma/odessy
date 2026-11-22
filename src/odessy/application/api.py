@@ -1505,14 +1505,14 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             raise HTTPException(503, 'Handoff runs are not configured for this session')
         return selected
 
-    async def confirmed_run(sid, name, values, action):
+    async def confirmed_run(sid, name, values, action, *, selector=None):
         """Each handoff decision is one approval, bound to what `confirm` shows."""
         nonlocal pending_admissions
         from odessy.runtime.types import ToolRequest
         admission_open()
         pending_admissions += 1
         try:
-            runs = runs_of(sid)
+            runs = (selector or runs_of)(sid)
             approved = await find(sid).confirm({'reason': 'Hand work between coding agents', 'risk': 'high'},
                                                ToolRequest(name, values))
             if not approved:
@@ -1568,5 +1568,65 @@ def create_app(controller_factory, *, config=None, settings=None, jobs=None, tok
             return public(await runs_of(sid).cancel(run_id))
         except KeyError:
             raise HTTPException(404, 'Run not found')
+
+    def plan_runs_of(sid):
+        selected = getattr(find(sid), 'plan_runs', None)
+        if selected is None:
+            raise HTTPException(503, 'Plan runs are not configured for this session')
+        return selected
+
+    @app.post('/v1/sessions/{sid}/plan-runs', status_code=202)
+    async def submit_plan_run(sid: str, request: Request):
+        data = await body(request)
+        if set(data) - {'steps', 'workspace'} or 'steps' not in data:
+            raise HTTPException(400, 'steps is required')
+        steps = data['steps']
+        if not isinstance(steps, list) or len(steps) < 2:
+            raise HTTPException(400, 'steps must be a list of at least two steps')
+        for step in steps:
+            if (not isinstance(step, dict) or
+                    set(step) != {'role', 'participant', 'task', 'mode'} or
+                    not all(isinstance(step[key], str) for key in step)):
+                raise HTTPException(400, 'each step needs string role, participant, task and mode')
+        workspace = data.get('workspace', '')
+        if not isinstance(workspace, str):
+            raise HTTPException(400, 'workspace must be a string')
+        values = {'steps': steps, 'workspace': workspace}
+        return await confirmed_run(sid, 'agent.plan_run', values,
+                                   lambda manager: manager.start_plan(steps, workspace=workspace or None, approved=True),
+                                   selector=plan_runs_of)
+
+    @app.get('/v1/sessions/{sid}/plan-runs/{run_id}')
+    async def get_plan_run(sid: str, run_id: str):
+        try:
+            return public(plan_runs_of(sid).get(run_id))
+        except KeyError:
+            raise HTTPException(404, 'Plan run not found')
+
+    @app.get('/v1/sessions/{sid}/plan-runs/{run_id}/artifact')
+    async def get_plan_run_artifact(sid: str, run_id: str):
+        try:
+            return public(plan_runs_of(sid).artifact(run_id))
+        except KeyError:
+            raise HTTPException(404, 'Plan run not found')
+        except ValueError as exc:
+            raise HTTPException(409, str(exc))
+
+    @app.post('/v1/sessions/{sid}/plan-runs/{run_id}/continue')
+    async def continue_plan_run(sid: str, run_id: str, request: Request):
+        data = await body(request)
+        if set(data) != {'artifact_sha256'} or not isinstance(data['artifact_sha256'], str):
+            raise HTTPException(400, 'artifact_sha256 is required')
+        values = {'run_id': run_id, 'artifact_sha256': data['artifact_sha256']}
+        return await confirmed_run(sid, 'agent.plan_continue', values,
+                                   lambda manager: manager.continue_plan(**values, approved=True),
+                                   selector=plan_runs_of)
+
+    @app.post('/v1/sessions/{sid}/plan-runs/{run_id}/cancel')
+    async def cancel_plan_run(sid: str, run_id: str):
+        try:
+            return public(await plan_runs_of(sid).cancel(run_id))
+        except KeyError:
+            raise HTTPException(404, 'Plan run not found')
 
     return app

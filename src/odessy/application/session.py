@@ -838,8 +838,9 @@ class SessionController:
         risk = decision_value.get('risk', 'high')
         if name == 'agent.delegate' and not hasattr(self.jobs, 'preflight_submission'):
             await self._screen_direct(name, arguments, risk)
+        plan_run = name in {'agent.plan_run', 'agent.plan_continue'} and getattr(self, 'plan_runs', None) is not None
         handoff = name in {'agent.run', 'agent.run_continue'} and self.runs is not None
-        if handoff or (name == 'agent.delegate' and hasattr(self.jobs, 'preflight_submission')):
+        if handoff or plan_run or (name == 'agent.delegate' and hasattr(self.jobs, 'preflight_submission')):
             from pathlib import Path
             from odessy.authority.action_approval import build_action_approval
             from odessy.authority.policy import OdessyPolicy
@@ -849,6 +850,10 @@ class SessionController:
                     return self.runs.preflight_start(**arguments)
                 if name == 'agent.run_continue':
                     return self.runs.preflight_continue(**arguments)
+                if name == 'agent.plan_run':
+                    return self.plan_runs.preflight_plan(arguments['steps'], arguments.get('workspace'))
+                if name == 'agent.plan_continue':
+                    return self.plan_runs.preflight_continue(**arguments)
                 return self.jobs.preflight_submission(arguments.get('participant'), arguments.get('task'),
                     mode=arguments.get('mode', 'advice'), workspace=arguments.get('workspace'))
             # The job manager's preflight first, for its specific messages; then the same
