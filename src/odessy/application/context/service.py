@@ -229,6 +229,12 @@ class ContextService:
             facts=tuple(facts),
             citations=tuple(citations))
         self._record_usage(conversation_id, prepared, summary_row, max_chars)
+        # Opt-in observability: report this context's size to the coordination
+        # ledger. Records counts only; no-op unless the guard flag is on. The
+        # authoritative window check still happens on the final messages in the
+        # cloud adapter, so this is not double-counted there.
+        from odessy.context_budget import process_context_budget
+        process_context_budget().record_chars('prepared_context', self._used_chars(prepared))
         return prepared
 
     def _used_chars(self, prepared):

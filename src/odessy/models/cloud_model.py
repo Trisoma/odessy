@@ -497,6 +497,10 @@ class CloudModel:
         final_call, self._final_call = self._final_call, False
         if final_call:
             self._append_final_note()
+        # Opt-in context-window guard. Reads the final messages only; never edits
+        # them, so the compression result and provider cache prefix are untouched.
+        from odessy.context_budget import process_context_budget
+        process_context_budget().check_messages(self._messages)
         speech = current_speech()
         sent = self._sent_summary()
         self._last_usage = {}

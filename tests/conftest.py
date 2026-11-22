@@ -51,13 +51,20 @@ def _isolate_config_environment(
 
     saved = dict(os.environ)
     from odessy.models.usage import reset_process_ledger
+    from odessy.context_budget import reset_process_context_budget
 
     # The cloud usage ledger is per process; each test starts with an empty one, and
     # without the developer's budget or price settings.
     for name in list(os.environ):
         if name.startswith(("ODESSY_CLOUD_BUDGET_", "ODESSY_CLOUD_PRICE_", "ODESSY_INTERACTION_")):
             monkeypatch.delenv(name, raising=False)
+    # The context-budget ledger is opt-in and per process; reset it so one test's
+    # flag or contributors never leak into the next (test env has the guard off).
+    for name in list(os.environ):
+        if name.startswith("ODESSY_CONTEXT_"):
+            monkeypatch.delenv(name, raising=False)
     reset_process_ledger()
+    reset_process_context_budget()
     monkeypatch.setenv(
         "ODESSY_CONFIG_FILE",
         str(tmp_path_factory.mktemp("config") / "missing.env"),
@@ -91,6 +98,7 @@ def _isolate_config_environment(
         monkeypatch.delenv(name, raising=False)
     yield
     reset_process_ledger()
+    reset_process_context_budget()
     os.environ.clear()
     os.environ.update(saved)
 
