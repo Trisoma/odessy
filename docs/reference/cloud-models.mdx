@@ -78,8 +78,9 @@ Or select the backend persistently with `ODESSY_MODEL_BACKEND=claude`.
 
 ### Optional cloud input limit
 
-Set these in `config/odessy.env` and restart the service to reject an oversized
-cloud request before sending it:
+For the **Custom** backend or the CLI, add these settings to `config/odessy.env`
+and restart the Odessy service. Harness sends its own requests and does not use
+this guard.
 
 ```text
 ODESSY_CONTEXT_BUDGET_GUARD=on
