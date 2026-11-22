@@ -229,6 +229,10 @@ class ContextService:
             facts=tuple(facts),
             citations=tuple(citations))
         self._record_usage(conversation_id, prepared, summary_row, max_chars)
+        from odessy.context_budget import current_context_budget
+        budget = current_context_budget()
+        if budget is not None and budget.enabled:
+            budget.record_chars('prepared_context', self._used_chars(prepared))
         return prepared
 
     def _used_chars(self, prepared):

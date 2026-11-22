@@ -959,6 +959,11 @@ class SessionController:
 
     async def run_turn(self, text, participant=None, **kwargs):
         attachments = kwargs.pop('attachments', ())
+        from odessy.context_budget import context_budget_turn
+        with context_budget_turn():
+            return await self._run_turn_with_context(text, participant, attachments, **kwargs)
+
+    async def _run_turn_with_context(self, text, participant, attachments, **kwargs):
         recorder = getattr(self, '_conversation_recorder', None)
         if recorder is None:
             return await self._run_turn_impl(text, participant=participant, **kwargs)
