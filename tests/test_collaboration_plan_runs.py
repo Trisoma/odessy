@@ -1,13 +1,15 @@
 """Layer 3: N-step plan runs — multi-step handoff with per-step approval."""
 import asyncio
+import os
 from pathlib import Path
 import subprocess
 from types import SimpleNamespace
 
 import pytest
 
+from odessy.collaboration._handoff_notes import HANDOFF_DIR, write_note
 from odessy.collaboration.jobs import JobManager
-from odessy.collaboration.plan_runs import HANDOFF_DIR, PlanRunManager, step_spec
+from odessy.collaboration.plan_runs import PlanRunManager, step_spec
 
 
 def profile(path, name):
@@ -92,6 +94,33 @@ def test_three_step_plan_carries_each_output_forward(repo):
         assert done['steps'][2]['result'] == 'Looks fine'
         assert (repo / 'app.py').read_text() == 'value = 1\n'  # source untouched
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('has_existing_note', [False, True])
+def test_handoff_writer_refuses_directory_links(tmp_path, has_existing_note):
+    worktree = tmp_path / 'worktree'
+    worktree.mkdir()
+    notes = worktree / HANDOFF_DIR
+    elsewhere = tmp_path / 'other-directory'
+    elsewhere.mkdir()
+    if has_existing_note:
+        write_note(worktree, 't1.md', 'First handoff')
+        notes.rename(tmp_path / 'previous-notes')
+    if os.name == 'nt':
+        # A junction needs no symlink privilege on Windows.
+        subprocess.run(['cmd.exe', '/d', '/c', 'mklink', '/J', str(notes), str(elsewhere)],
+                       check=True, capture_output=True)
+    else:
+        notes.symlink_to(elsewhere, target_is_directory=True)
+    try:
+        with pytest.raises(OSError):
+            write_note(worktree, 't2.md' if has_existing_note else 't1.md', 'Fixture note')
+        assert list(elsewhere.iterdir()) == []
+    finally:
+        if os.name == 'nt':
+            notes.rmdir()
+        else:
+            notes.unlink()
 
 
 def test_each_handoff_bound_to_its_own_hash(repo):

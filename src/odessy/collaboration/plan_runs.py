@@ -21,10 +21,10 @@ import asyncio
 import copy
 import hashlib
 import inspect
-from pathlib import Path
 import time
 import uuid
 
+from odessy.collaboration._handoff_notes import HANDOFF_DIR, write_note
 from odessy.collaboration.jobs import _result_text
 
 
@@ -164,13 +164,12 @@ class PlanRunManager:
                 return self.get(run_id)
             if tree != private['tree']:
                 raise ValueError('the worktree changed after the output was offered')
-            relative = f'{HANDOFF_DIR}/{transfer["transfer_id"]}.md'
-            path = Path(run['worktree']) / relative
-            # The reserved directory may already exist from an earlier transfer;
-            # the note file itself must be new, so 'x' still rejects a planted file.
-            path.parent.mkdir(exist_ok=True)
-            with path.open('x', encoding='utf-8') as stream:
-                stream.write(f'{_HANDOFF_NOTICE}\n\n{private["texts"][index]}\n')
+            name = f'{transfer["transfer_id"]}.md'
+            relative = f'{HANDOFF_DIR}/{name}'
+            try:
+                write_note(run['worktree'], name, f'{_HANDOFF_NOTICE}\n\n{private["texts"][index]}\n')
+            except OSError as exc:
+                raise ValueError('could not safely create the handoff note') from exc
             transfer['path'] = relative
             transfer['state'] = 'delivered'
             next_task = (f'{private["tasks"][index + 1]}\n\nBefore you start, read {relative}. '
