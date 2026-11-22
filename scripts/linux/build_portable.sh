@@ -53,7 +53,7 @@ python="$build_dir/runtime/bin/python3"
 mkdir -p "$build_dir/apps"; mv "$build_dir/app" "$build_dir/apps/desktop"
 cp -a "$repo/packages/odessy_client" "$build_dir/packages/odessy_client"
 (cd "$build_dir/apps/desktop"; "$flutter" pub get; "$flutter" build linux --release --target-platform "linux-$flutter_arch")
-cp -a "$repo/tools" "$build_dir/tools"
+cp -a "$repo/services/tool-server" "$build_dir/tools"
 "$python" -c 'import pathlib,shutil,sys; p=pathlib.Path(sys.argv[1]); [shutil.rmtree(p/n,ignore_errors=True) for n in ("node_modules","dist")]' "$build_dir/tools"
 (cd "$build_dir/tools"; npm ci --ignore-scripts; npm run build; npm prune --omit=dev --ignore-scripts)
 # Existing runtime detection needs tsc only for source builds. Portable bundles use
@@ -62,7 +62,7 @@ CARGO_TARGET_DIR="$build_dir/cargo-target" cargo build --release --locked --mani
 cp "$build_dir/cargo-target/release/odessy-link" "$build_dir/link/"
 (cd "$repo/services/monitoring"; go build -trimpath -o "$build_dir/monitor/odessy-monitor" ./cmd/odessy-monitor)
 "$python" -I -c 'import odessy.setup.portable,odessy.application.serve; print("Bundled Python imports OK")'
-"$python" "$repo/tool/build_linux_portable.py" --runtime "$build_dir/runtime" \
+"$python" "$repo/scripts/build_linux_portable.py" --runtime "$build_dir/runtime" \
   --desktop "$build_dir/apps/desktop/build/linux/$flutter_arch/release/bundle" \
   --node "$node_root" --tools "$build_dir/tools" --link "$build_dir/link" \
   --monitor "$build_dir/monitor" --notices "$notices" --architecture "$arch" --output "$output"

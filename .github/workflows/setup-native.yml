@@ -7,7 +7,7 @@ on:
       - 'src/odessy/monitoring/**'
       - 'services/monitoring/**'
       - 'native/odessy-link/**'
-      - 'tool/*setup*'
+      - 'scripts/*setup*'
       - 'tests/test_setup*'
       - 'pyproject.toml'
       - '.github/workflows/setup-native.yml'
@@ -58,7 +58,7 @@ jobs:
         shell: bash
         run: 'python -m pip download --only-binary=:all: --dest wheelhouse wheelhouse/odessy-*.whl'
       - run: python -m pytest tests/test_setup_services.py tests/test_setup_maintenance.py tests/test_setup_bundle.py tests/test_setup_native_acceptance.py -q
-      - run: python tool/check_setup_installation.py --wheelhouse wheelhouse
+      - run: python scripts/check_setup_installation.py --wheelhouse wheelhouse
       - name: Build offline Python-required bootstrap archive
         shell: python
         run: |
@@ -68,7 +68,7 @@ jobs:
           from pathlib import Path
           manifest=json.loads(Path('wheelhouse/manifest.json').read_text())
           Path('licenses.json').write_text(json.dumps({a['file']:a['license'] for a in manifest['artifacts']}))
-          subprocess.run([sys.executable,'tool/build_setup_bundle.py','--wheelhouse','wheelhouse','--licenses','licenses.json','--monitor','setup-helpers/monitor','--rust','setup-helpers/link','--output','odessy-setup-${{ runner.os }}-${{ runner.arch }}.zip'],check=True)
+          subprocess.run([sys.executable,'scripts/build_setup_bundle.py','--wheelhouse','wheelhouse','--licenses','licenses.json','--monitor','setup-helpers/monitor','--rust','setup-helpers/link','--output','odessy-setup-${{ runner.os }}-${{ runner.arch }}.zip'],check=True)
       - name: Verify helper inventory in the acceptance archive
         shell: python
         run: |

@@ -170,7 +170,7 @@ def compile_installer(source,output,*,compiler_path=None,log_path=None,timeout=C
 
 def build(payload,output,stage):
     try:
-        from tool.audit_setup_artifact import audit
+        from scripts.audit_setup_artifact import audit
     except ModuleNotFoundError:
         from audit_setup_artifact import audit
     with zipfile.ZipFile(payload) as archive:validate_members(archive.infolist())

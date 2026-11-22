@@ -22,7 +22,7 @@ def test_real_pty_input_resize_interrupt_close_revocation_and_session_isolation(
         inspector=Inspector(binding), request_grant=grant,
         node=Path('C:/Program Files/nodejs/node.exe'),
         module_root=Path(os.environ['ODESSY_PTY_MODULE_ROOT']),
-        helper=Path(__file__).parents[1] / 'tools/src/agent_basics_terminal/helper.cjs')
+        helper=Path(__file__).parents[1] / 'services/tool-server/src/agent_basics_terminal/helper.cjs')
     async def run():
         allowed[0] = False
         with pytest.raises(TerminalError) as denied:
@@ -68,7 +68,7 @@ def test_real_terminal_authenticated_http_and_bounded_output(tmp_path):
     api = LocalTerminalService(inspector=Inspector(Binding(root)),
         request_grant=lambda sid, plan: True, node=Path('C:/Program Files/nodejs/node.exe'),
         module_root=Path(os.environ['ODESSY_PTY_MODULE_ROOT']),
-        helper=Path(__file__).parents[1] / 'tools/src/agent_basics_terminal/helper.cjs')
+        helper=Path(__file__).parents[1] / 'services/tool-server/src/agent_basics_terminal/helper.cjs')
     def registrar(app, deps):
         register_local(app, deps, service=api)
     from odessy.application.agent_basics import AgentBasics

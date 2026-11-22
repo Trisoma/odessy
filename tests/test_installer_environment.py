@@ -95,17 +95,17 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(cache['payload_bytes'],self.manifest.download_bytes*2)
 
     def fixture_repo(self):
-        repo=self.root/'repo'; (repo/'tools'/'src').mkdir(parents=True)
-        (repo/'tools'/'src'/'server.ts').write_text('export const value=1;')
-        (repo/'tools'/'package.json').write_text(json.dumps({'version':'0.1.0'}))
-        (repo/'tools'/'package-lock.json').write_text(json.dumps({'packages':{'':{'version':'0.1.0'}}}))
-        (repo/'tools'/'tsconfig.json').write_text('{}')
-        (repo/'tools'/'copy-resources.cjs').write_text('// fixture resource copier')
-        helper=repo/'tools'/'src'/'agent_basics_terminal'; helper.mkdir()
+        repo=self.root/'repo'; (repo/'services'/'tool-server'/'src').mkdir(parents=True)
+        (repo/'services'/'tool-server'/'src'/'server.ts').write_text('export const value=1;')
+        (repo/'services'/'tool-server'/'package.json').write_text(json.dumps({'version':'0.1.0'}))
+        (repo/'services'/'tool-server'/'package-lock.json').write_text(json.dumps({'packages':{'':{'version':'0.1.0'}}}))
+        (repo/'services'/'tool-server'/'tsconfig.json').write_text('{}')
+        (repo/'services'/'tool-server'/'copy-resources.cjs').write_text('// fixture resource copier')
+        helper=repo/'services'/'tool-server'/'src'/'agent_basics_terminal'; helper.mkdir()
         (helper/'helper.cjs').write_text('// owned terminal helper')
         (helper/'dependency-receipt.json').write_text('{}')
         (repo/'LICENSE').write_text('license'); (repo/'THIRD-PARTY-NOTICES.md').write_text('notices')
-        (repo/'tools'/'.npmrc').write_text('private-token')
+        (repo/'services'/'tool-server'/'.npmrc').write_text('private-token')
         (repo/'THIRD-PARTY-LICENSES').mkdir()
         (repo/'THIRD-PARTY-LICENSES'/'vendor.txt').write_text('vendor notice')
         return repo
@@ -138,26 +138,26 @@ class EnvironmentTests(unittest.TestCase):
             self.assertNotIn('tools/.npmrc',archive.namelist())
         ci=next(c for c,_ in self.commands if 'ci' in c)
         self.assertIn('--ignore-scripts',ci); self.assertIn('--include=dev',ci)
-        self.assertFalse((repo/'tools'/'node_modules').exists())
+        self.assertFalse((repo/'services'/'tool-server'/'node_modules').exists())
 
     def test_tool_build_failure_cleans_bundle_and_preserves_source(self):
         repo=self.fixture_repo()
         with self.assertRaises(ValueError):
             build_bundle(self.root/'runtime',self.root/'bundle',repo=repo,run=lambda *a,**k:(_ for _ in ()).throw(ValueError('npm failed')),validate=lambda p:{})
         self.assertFalse((self.root/'bundle').exists())
-        self.assertTrue((repo/'tools'/'src'/'server.ts').exists())
+        self.assertTrue((repo/'services'/'tool-server'/'src'/'server.ts').exists())
 
     def test_tool_source_change_during_build_aborts_owned_output(self):
         repo=self.fixture_repo()
         def changed(command,**kwargs):
             self.tool_runner(command,**kwargs)
             if 'ci' in command:
-                (repo/'tools'/'src'/'server.ts').write_text('edited during build')
+                (repo/'services'/'tool-server'/'src'/'server.ts').write_text('edited during build')
             return 'ok'
         with self.assertRaises(ValueError):
             build_bundle(self.root/'runtime',self.root/'bundle',repo=repo,run=changed,validate=lambda p:{})
         self.assertFalse((self.root/'bundle').exists())
-        self.assertEqual((repo/'tools'/'src'/'server.ts').read_text(),'edited during build')
+        self.assertEqual((repo/'services'/'tool-server'/'src'/'server.ts').read_text(),'edited during build')
 
 if __name__=='__main__':
     unittest.main()

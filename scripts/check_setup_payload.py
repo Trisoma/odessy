@@ -15,7 +15,7 @@ It proves, in order:
 Nothing is downloaded, signed or published, and no existing installation is touched.
 
 Usage:
-    python tool/check_setup_payload.py --payload <payload.zip> --work <dir> [--keep]
+    python scripts/check_setup_payload.py --payload <payload.zip> --work <dir> [--keep]
 """
 from __future__ import annotations
 

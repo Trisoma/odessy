@@ -42,7 +42,7 @@ def package(payload,output,platform,*,script_signing_thumbprint=""):
             if script_signing_thumbprint:
                 raise ValueError('NSIS has no PowerShell launcher; sign the final EXE using sign_setup_artifact.py')
             try:
-                from tool.windows_nsis import build
+                from scripts.windows_nsis import build
             except ModuleNotFoundError:
                 from windows_nsis import build
             build(payload,output,stage)

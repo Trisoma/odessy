@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / 'tool/linux/build_setup_payload.sh'
+SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/linux/build_setup_payload.sh'
 
 
 def check_code(marker):

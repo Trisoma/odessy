@@ -18,7 +18,7 @@ class ApplicationTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name); self.repo=self.root/'repo'
-        for name in ('tools/src','src/odessy','config'):
+        for name in ('services/tool-server/src','src/odessy','config'):
             (self.repo/name).mkdir(parents=True,exist_ok=True)
         (self.repo/'src/odessy/__main__.py').write_text('print("fixture")')
         (self.repo/'src/odessy/__init__.py').write_text('')
@@ -26,12 +26,12 @@ class ApplicationTests(unittest.TestCase):
         (self.repo/'config/odessy.env').write_text('ODESSY_DEPLOYMENT=single\n')
         for name in ('pyproject.toml','README.md','LICENSE','THIRD-PARTY-NOTICES.md'):
             (self.repo/name).write_text('fixture')
-        (self.repo/'tools/package.json').write_text(json.dumps({'version':'0.1.0'}))
-        (self.repo/'tools/package-lock.json').write_text(json.dumps({'packages':{'':{'version':'0.1.0'}}}))
-        (self.repo/'tools/tsconfig.json').write_text('{}')
-        (self.repo/'tools/src/server.ts').write_text('export {};')
-        (self.repo/'tools/copy-resources.cjs').write_text('// fixture')
-        helper=self.repo/'tools/src/agent_basics_terminal'
+        (self.repo/'services/tool-server/package.json').write_text(json.dumps({'version':'0.1.0'}))
+        (self.repo/'services/tool-server/package-lock.json').write_text(json.dumps({'packages':{'':{'version':'0.1.0'}}}))
+        (self.repo/'services/tool-server/tsconfig.json').write_text('{}')
+        (self.repo/'services/tool-server/src/server.ts').write_text('export {};')
+        (self.repo/'services/tool-server/copy-resources.cjs').write_text('// fixture')
+        helper=self.repo/'services/tool-server/src/agent_basics_terminal'
         helper.mkdir()
         (helper/'helper.cjs').write_text('// fixture')
         (helper/'dependency-receipt.json').write_text('{}')
@@ -95,7 +95,7 @@ class ApplicationTests(unittest.TestCase):
         self.assertFalse((self.root/'app').exists())
 
     def test_changed_tool_source_requires_rebuild(self):
-        (self.repo/'tools/src/server.ts').write_text('changed')
+        (self.repo/'services/tool-server/src/server.ts').write_text('changed')
         with self.assertRaises(ValueError): self.assemble()
         self.assertFalse((self.root/'app').exists())
 

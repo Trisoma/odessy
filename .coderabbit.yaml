@@ -41,7 +41,7 @@ reviews:
       instructions: |
         Review device identity, pairing, trust, transport and credential handling.
         Flag changes that widen access or weaken verification or fail-open behavior.
-    - path: 'tools/**'
+    - path: 'services/tool-server/**'
       instructions: |
         Review command execution and tool-server changes for authorization bypass,
         unsafe arguments or paths, secret exposure, and changes to confinement.

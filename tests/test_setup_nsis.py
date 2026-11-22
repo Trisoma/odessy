@@ -12,7 +12,7 @@ import pytest
 
 def module():
     spec = importlib.util.spec_from_file_location(
-        'windows_nsis', Path(__file__).parents[1] / 'tool/windows_nsis.py')
+        'windows_nsis', Path(__file__).parents[1] / 'scripts/windows_nsis.py')
     value = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(value)
     return value

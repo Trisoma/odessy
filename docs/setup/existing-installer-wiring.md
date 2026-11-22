@@ -77,7 +77,7 @@ model download or service registration was performed. The qualification run exit
 
 The shipping setup is the Flutter desktop application: the bootstrap payload ships
 `desktop/` and the NSIS bootstrap runs `desktop/odessy_desktop.exe --setup`, which calls this
-bridge. There is no Tkinter window and no PyInstaller build; `tool/audit_setup_artifact.py`
+bridge. There is no Tkinter window and no PyInstaller build; `scripts/audit_setup_artifact.py`
 refuses a payload that still carries the removed wizard.
 
 The payload's portable runtime and the wheelhouse must share one CPython ABI. The pinned
@@ -88,13 +88,13 @@ cp312 wheels; produce cp312 wheels, or the installed `pip install` fails.
 ```text
 python -m pip wheel . --no-build-isolation --no-deps -w <wheelhouse>
 python -m installer.components.harness --prepare          # once per machine, downloads and pins
-python tool/build_setup_bundle.py --wheelhouse <wheelhouse> --licenses <licenses.json> ^
+python scripts/build_setup_bundle.py --wheelhouse <wheelhouse> --licenses <licenses.json> ^
     --python-runtime <python-3.12-prefix> --desktop-bundle <flutter-release-dir> ^
     --node-runtime <node-dir> --toolserver <tool-server-dir> ^
     --harness-runtime <staged-harness-dir> --monitor <staged-monitor-dir> ^
     --rust <staged-link-dir> --output <payload.zip>
-python tool/audit_setup_artifact.py <payload.zip>
-python tool/package_native_setup.py --payload <payload.zip> --platform windows --output <OdessySetup.exe>
+python scripts/audit_setup_artifact.py <payload.zip>
+python scripts/package_native_setup.py --payload <payload.zip> --platform windows --output <OdessySetup.exe>
 ```
 
 `--harness-runtime` must be the directory `installer.components.harness --prepare` produced:
@@ -110,7 +110,7 @@ The license map may be empty; the wheel's own METADATA is the authority. A map e
 contradicts the wheel (for example a non-MIT value for an MIT wheel) refuses the build, and
 an `UNREVIEWED` placeholder is replaced by the metadata-derived license. The reviewed set for
 a release is recorded in `installer/releases/windows-x64-py312/wheel-licenses.json`, which
-`tool/audit_setup_artifact.py` reports wheel by wheel together with the metadata field each
+`scripts/audit_setup_artifact.py` reports wheel by wheel together with the metadata field each
 license came from. Roles that also want the Node tool server or odessy-link report those as
 absent components rather than failing.
 

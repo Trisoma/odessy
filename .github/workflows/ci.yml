@@ -67,10 +67,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: tools/package-lock.json
+          cache-dependency-path: services/tool-server/package-lock.json
 
       - name: Build Node tool server
-        working-directory: tools
+        working-directory: services/tool-server
         run: |
           npm ci --no-audit --no-fund
           npm run build
@@ -130,10 +130,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: tools/package-lock.json
+          cache-dependency-path: services/tool-server/package-lock.json
 
       - name: Build Node tool server
-        working-directory: tools
+        working-directory: services/tool-server
         run: |
           npm ci --no-audit --no-fund
           npm run build
@@ -145,7 +145,7 @@ jobs:
         run: python -m pytest -q tests/test_sandbox_live.py
 
       - name: Live sandbox (Node executor)
-        working-directory: tools
+        working-directory: services/tool-server
         run: node --test dist/tests/sandbox-live.test.js
 
       - name: Doctor reports the sandbox
@@ -215,10 +215,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: tools/package-lock.json
+          cache-dependency-path: services/tool-server/package-lock.json
 
       - name: Build Node tool server
-        working-directory: tools
+        working-directory: services/tool-server
         run: |
           npm ci --no-audit --no-fund
           npm run build
@@ -247,7 +247,7 @@ jobs:
         node: [22, 24]
     defaults:
       run:
-        working-directory: tools
+        working-directory: services/tool-server
     steps:
       - uses: actions/checkout@v5
 
@@ -268,7 +268,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-          cache-dependency-path: tools/package-lock.json
+          cache-dependency-path: services/tool-server/package-lock.json
 
       # Give the Linux runner a real confinement backend, so the host test asserts
       # confinement instead of finding none. Ubuntu 24.04 blocks the unprivileged

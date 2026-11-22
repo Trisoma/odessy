@@ -3,7 +3,7 @@ import json
 import tarfile
 from pathlib import Path
 import pytest
-from tool.build_linux_portable import build
+from scripts.build_linux_portable import build
 
 
 def inputs(tmp_path):

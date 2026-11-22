@@ -23,7 +23,7 @@ def screen(name):
 
 def validate_inventory(actual, expected):
     if actual != expected:
-        raise ValueError('Settings inventory drift; run python tool/check_desktop_contracts.py --write')
+        raise ValueError('Settings inventory drift; run python scripts/check_desktop_contracts.py --write')
     names = [x['name'] for x in actual['settings']]
     if len(set(names)) != len(names):
         raise ValueError('Duplicate settings inventory entries')

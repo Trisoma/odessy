@@ -127,7 +127,7 @@ def build_report(
         {"id": "node", "purpose": "Application-private Node.js and npm",
          "source": "README.md: Quick Start; .github/workflows/ci.yml"},
         {"id": "tool_server", "purpose": "Prebuilt Windows Node tool server with dependencies",
-         "source": "tools/package.json; tools/package-lock.json"},
+         "source": "services/tool-server/package.json; services/tool-server/package-lock.json"},
         {"id": "ollama", "purpose": "Reuse a compatible service or prepare a managed copy",
          "source": "README.md: Quick Start"},
         {"id": "model", "purpose": "Download the selected local model after confirmation",

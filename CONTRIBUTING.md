@@ -16,7 +16,7 @@ Welcome aboard! ⛵ Follow [Getting started](docs/getting-started.md) if you nee
 | SSH connection status [#70](https://github.com/Trisoma/odessy/issues/70) | [Devices views](apps/desktop/lib/features/devices/presentation/) | `apps/desktop` | `flutter test test/ssh_connection_test.dart test/device_page_test.dart` |
 | Piper detection [#69](https://github.com/Trisoma/odessy/issues/69) | [`setup/voice_assets.py`](src/odessy/setup/voice_assets.py) | Repo root | `python -m pytest tests/test_piper_provider.py tests/test_doctor.py -q` |
 | Python application API | [`application/api.py`](src/odessy/application/api.py) | Repo root | `python -m pytest tests/test_application_api.py -q` |
-| MCP tools | [`tools/src/`](tools/src/) | `tools` | `npm run typecheck` · `npm test` |
+| MCP tools | [`services/tool-server/src/`](services/tool-server/src/) | `services/tool-server` | `npm run typecheck` · `npm test` |
 | Dart client | [`packages/odessy_client/`](packages/odessy_client/) | `packages/odessy_client` | `dart analyze` · `dart test` |
 | Monitoring | [`services/monitoring/`](services/monitoring/) | `services/monitoring` | `go test ./... -count=1` |
 | Pairing | [`native/odessy-link/`](native/odessy-link/) | `native/odessy-link` | `cargo test --locked` |
@@ -97,7 +97,7 @@ For the full Windows desktop, follow [Getting started](docs/getting-started.md).
 | Component | Setup |
 | --- | --- |
 | Python | Python 3.10–3.13 in a virtual environment. From the repo root, run `python -m pip install -e ".[test,ui]"`. |
-| MCP tool server | Node 22 (also used by Python integration checks) or 24. From `tools/`, run `npm ci --no-audit --no-fund` and `npm run build`. |
+| MCP tool server | Node 22 (also used by Python integration checks) or 24. From `services/tool-server/`, run `npm ci --no-audit --no-fund` and `npm run build`. |
 | Flutter and Dart | Flutter 3.47.7 stable and its Dart SDK. Run `flutter pub get` in `apps/desktop` or `dart pub get` in `packages/odessy_client`. |
 | Monitoring | Use the Go version in [go.mod](services/monitoring/go.mod). |
 | Pairing | Use stable Rust and Cargo. |
@@ -182,7 +182,7 @@ python -m odessy doctor --voice
 ```
 
 `doctor` names each failed or optional step with one fix next to it, for example a
-model endpoint that is not answering, an unbuilt `tools/` directory, or the
+model endpoint that is not answering, an unbuilt `services/tool-server/` directory, or the
 optional speech/wake assets. Piper and custom provider checks are incomplete;
 use their controlled provider tests as well. A `[FAIL]` for the model endpoint is
 expected before Ollama (or another endpoint) runs and does not block the fake-model
@@ -213,7 +213,7 @@ CI checks that the fake-model replies start with `The current time is ` and
 
 ### Node tool server
 
-From `tools/`:
+From `services/tool-server/`:
 
 ```sh
 npm ci --no-audit --no-fund
@@ -260,7 +260,7 @@ unprivileged user namespaces. See CI for runner-specific AppArmor setup. Set
 python -m pytest -q tests/test_sandbox_live.py
 ```
 
-From `tools/`, run `node --test dist/tests/sandbox-live.test.js`. The CI doctor
+From `services/tool-server/`, run `node --test dist/tests/sandbox-live.test.js`. The CI doctor
 check is `python -m odessy doctor | tee doctor.txt; grep -q "read-only: bwrap (full; network cut, credentials hidden)" doctor.txt`
 under Bash at root. These checks need a real Linux kernel; Windows is insufficient.
 
@@ -269,7 +269,7 @@ under Bash at root. These checks need a real Linux kernel; Windows is insufficie
 From the repository root:
 
 ```sh
-python tool/check_desktop_contracts.py
+python scripts/check_desktop_contracts.py
 python -m unittest discover -s tests -p test_desktop_settings_inventory.py -v
 ```
 

@@ -48,9 +48,7 @@ interface RawContract {
 /**
  * Locate `contract.json` by walking up from this module.
  *
- * The module runs from `tools/src/execution/` during tests and from
- * `tools/dist/src/execution/` after a build, so the depth to the repository root
- * differs. Searching upward avoids depending on which of the two it is.
+ * The source and bundled layouts put the shared contract at different depths.
  */
 function findContractPath(): string {
   let directory = path.dirname(fileURLToPath(import.meta.url));

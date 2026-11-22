@@ -56,7 +56,7 @@ echo '== 2/4 download manylinux dependencies =='
 # keyring backs the OS credential store for model credentials. It belongs to the
 # desktop extra rather than to the mandatory requirements, so the wheelhouse has to
 # name it explicitly, together with the Linux Secret Service closure it resolves to.
-# tool/build_setup_bundle.py rejects a desktop payload without a keyring 25.x wheel.
+# scripts/build_setup_bundle.py rejects a desktop payload without a keyring 25.x wheel.
 python3 -m pip download --dest "$work/wheelhouse" --only-binary=:all: --timeout 60 --retries 5 \
   --platform manylinux2014_x86_64 --python-version 3.10 --implementation cp --abi cp310 \
   'mcp>=2,<3' 'jsonschema>=4' 'httpx>=0.27,<1' 'fastapi>=0.115,<1' 'uvicorn>=0.30,<1' 'anthropic>=1.15' \
@@ -120,7 +120,7 @@ if not any(wheel.name.startswith('keyring-25.') for wheel in wheels.glob('*.whl'
 PY
 
 echo '== 4/4 assemble the payload =='
-python3 "$repo/tool/build_setup_bundle.py" --wheelhouse "$work/wheelhouse" \
+python3 "$repo/scripts/build_setup_bundle.py" --wheelhouse "$work/wheelhouse" \
   --licenses "$work/licenses.json" --python-runtime "$python_root" \
   --desktop-bundle "$desktop" --output "$output"
 

@@ -21,12 +21,12 @@
     {
       "path": "docs/reference/permissions.mdx",
       "description": "Permissions and approval semantics.",
-      "scope": ["src/**", "tools/**", "apps/desktop/**"]
+      "scope": ["src/**", "services/tool-server/**", "apps/desktop/**"]
     },
     {
       "path": "docs/reference/sandbox.mdx",
       "description": "Supported sandbox boundaries and limitations.",
-      "scope": ["src/**", "tools/**", "native/**"]
+      "scope": ["src/**", "services/tool-server/**", "native/**"]
     }
   ]
 }
