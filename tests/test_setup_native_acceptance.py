@@ -7,7 +7,7 @@ import pytest
 
 from odessy.setup.maintenance import guard
 
-_script = Path(__file__).resolve().parents[1] / 'tool' / 'check_setup_installation.py'
+_script = Path(__file__).resolve().parents[1] / 'scripts' / 'check_setup_installation.py'
 _spec = importlib.util.spec_from_file_location('check_setup_installation', _script)
 check_setup_installation = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(check_setup_installation)

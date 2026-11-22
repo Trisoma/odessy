@@ -129,7 +129,7 @@ running coordinator API or token; its setup helper is local even in demo mode.
 
 ## Run from a distributed folder
 
-`tool/linux/package_setup_app.sh` assembles a folder a normal user can install from:
+`scripts/linux/package_setup_app.sh` assembles a folder a normal user can install from:
 
 ```
 OdessySetup-linux-x86_64/
@@ -154,8 +154,8 @@ and uninstall never depend on the folder that was used to install. That copy hol
 the desktop binary too, which means the steps must run in order:
 
 1. `flutter build linux --release` for the bundle,
-2. `tool/linux/build_setup_payload.sh` to embed that bundle in the payload,
-3. `tool/linux/package_setup_app.sh` to assemble the distribution folder,
+2. `scripts/linux/build_setup_payload.sh` to embed that bundle in the payload,
+3. `scripts/linux/package_setup_app.sh` to assemble the distribution folder,
 4. install again from that folder.
 
 Rebuilding the desktop without reinstalling leaves the cached copy one build

@@ -17,6 +17,7 @@ from installer.core.process import child_env,owned_directory,run_step,validate_r
 from installer.components.runtime import destination
 from installer.components import harness
 from installer.core.space import load_resources,volume_for,RESERVE_BYTES
+from installer.components.toolbundle import TOOL_SERVER_SOURCE, bundle_source_path
 from installer.components.toolbundle import source_files as tool_source_files
 from installer.core.unpack import unpack
 
@@ -91,8 +92,8 @@ def validate_bundle(folder: Path,repo: Path=REPO_ROOT):
     for name in ('size_bytes','unpacked_bytes','files'):
         if type(data[name]) is not int or data[name]<=0:
             raise ValueError('Tool resource sizes/counts must be positive integers.')
-    expected_version=json.loads((repo/'tools'/'package.json').read_text(encoding='utf-8'))['version']
-    expected_hashes={p.relative_to(repo).as_posix():text_hash(p.read_bytes()) for p in tool_source_files(repo)}
+    expected_version=json.loads((repo/TOOL_SERVER_SOURCE/'package.json').read_text(encoding='utf-8'))['version']
+    expected_hashes={bundle_source_path(repo,p).as_posix():text_hash(p.read_bytes()) for p in tool_source_files(repo)}
     if data['version']!=expected_version or data['source_sha256']!=expected_hashes:
         raise ValueError('Tool bundle was built from different source/lock inputs; rebuild it.')
     path=folder/data['archive']

@@ -8,7 +8,7 @@ import unittest
 import zipfile
 
 spec = importlib.util.spec_from_file_location(
-    'desktop_package', Path(__file__).parents[1] / 'tool/check_desktop_package.py')
+    'desktop_package', Path(__file__).parents[1] / 'scripts/check_desktop_package.py')
 package = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(package)
 

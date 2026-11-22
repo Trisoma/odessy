@@ -62,7 +62,7 @@ docker exec build bash -lc 'ARCH=arm64 RUN_TESTS=0 bash /build-in-container.sh'
   Linux at this commit: `setup_usability_test.dart` asserts per-handle lock semantics
   that only hold on Windows. See `docs/releases/v0.5.0-unstable-notes.md`.
 - The archives contain the Flutter desktop bundle and the native `odessy-link` helper
-  only. They are **not** the portable bundle from `tool/linux/build_portable.sh`: no
+  only. They are **not** the portable bundle from `scripts/linux/build_portable.sh`: no
   Python or Node runtime and no notices inventory are included.
 - Built under qemu emulation for arm64. That proves the build, not that it runs on a
   device. No archive has been executed end to end.

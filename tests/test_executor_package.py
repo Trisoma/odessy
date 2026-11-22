@@ -7,7 +7,7 @@ import pytest
 
 
 def builder():
-    path = Path(__file__).parents[1] / 'tool'
+    path = Path(__file__).parents[1] / 'scripts'
     sys.path.insert(0, str(path))
     try:
         spec = importlib.util.spec_from_file_location('executor_package', path/'package_executor.py')

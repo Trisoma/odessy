@@ -4,7 +4,7 @@ import pytest
 
 
 def module():
-    path=Path(__file__).parents[1]/'tool/sign_setup_artifact.py'
+    path=Path(__file__).parents[1]/'scripts/sign_setup_artifact.py'
     spec=importlib.util.spec_from_file_location('setup_signing',path)
     result=importlib.util.module_from_spec(spec);spec.loader.exec_module(result);return result
 

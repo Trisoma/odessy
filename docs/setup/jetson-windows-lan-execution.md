@@ -26,7 +26,7 @@ If Node/npm are missing, install Node.js before continuing. Prepare the tool ser
 once, or after changing its sources/dependencies:
 
 ```powershell
-Push-Location tools
+Push-Location services/tool-server
 npm ci
 npm run build
 Pop-Location

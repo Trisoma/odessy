@@ -50,7 +50,7 @@ existing Jetson-specific ONNX Runtime installation.
 For single-machine mode, build the local Node tools with Node 22 available:
 
 ```bash
-cd tools
+cd services/tool-server
 npm ci --no-audit --no-fund
 npm run build
 cd ..
