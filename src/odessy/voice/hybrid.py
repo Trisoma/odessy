@@ -42,7 +42,7 @@ from odessy.voice.capture import (
 from odessy.voice.config import VoiceConfig
 from odessy.voice.frames import WAKE_FRAME_BYTES
 from odessy.voice.interaction import schedule_stop
-from odessy.voice.memory import ConversationMemory
+from odessy.runtime.memory import ConversationMemory
 from odessy.voice.segmentation import SegmenterConfig, UtteranceSegmenter
 from odessy.voice.session import (
     SessionOptions,
@@ -53,6 +53,7 @@ from odessy.voice.session import (
 from odessy.voice.stt import WhisperCppSTT, blank_transcript_reason
 from odessy.voice.tts import KokoroTTS
 from odessy.voice.providers import create_stt, create_tts, close_providers, cancel_provider
+from odessy.voice.timing import VoiceTiming
 from odessy.voice.vad import SileroSpeechDetector
 from odessy.voice.wake import OpenWakeWordDetector, WakeGate
 
@@ -87,6 +88,10 @@ def _no_status(message: str) -> None:
     return None
 
 
+def _no_timing(snapshot: dict) -> None:
+    return None
+
+
 @dataclass
 class HybridAudioAdapter:
     """Own the microphone, the transcriber and the speaker of a hybrid session."""
@@ -98,6 +103,12 @@ class HybridAudioAdapter:
     stop_turn: Callable[[], Any] | None = None
     report_audio_error: Callable[[str, str], None] = _no_audio_error
     report_status: Callable[[str], None] = _no_status
+    #: Receives one bounded snapshot per completed phase (prompt 13). Numbers only:
+    #: no transcript, path or audio leaves this module.
+    report_timing: Callable[[dict], None] = _no_timing
+    #: Phase marks for the current voice turn. Shared with the application session so a
+    #: turn's first engine text is timed by whoever observes it first.
+    timing: VoiceTiming = field(default_factory=VoiceTiming)
     #: The session's shared history. Read only: the adapter passes
     #: ``remember_turns=False`` so nothing is appended here.
     memory: ConversationMemory = field(default_factory=ConversationMemory)
@@ -285,6 +296,11 @@ class HybridAudioAdapter:
     async def speak_once(self,text):
         """Explicit playback using the same owned providers and cancellation guard."""
         if self._closing:return
+        from .native_audio import prepare_device
+        preparing_epoch = self._speech_epoch
+        await self._run_blocking(prepare_device, self.config.audio_output_device, 'output', self.config.audio_backend)
+        if self._closing or preparing_epoch != self._speech_epoch:
+            return
         self._speech_epoch += 1
         epoch=self._speech_epoch
         self._started=True
@@ -293,39 +309,88 @@ class HybridAudioAdapter:
             await self.speak(text)
 
     async def speak(self, text: str) -> None:
-        """Synthesise and play one answer, or degrade speech output.
+        """Play bounded phrases with one synthesized phrase of lookahead.
 
-        A failure here is reported once and disables speech; it never raises, so a
-        turn that already produced an answer still completes and is displayed.
+        The pipeline retains temporary files until their blocking owners finish.
+        Stop/cancellation invalidates its epoch before any later playback.
         """
+        from odessy.runtime.speech import speech_phrases
 
         if not text.strip() or not self.output_available:
             return
         tts, player = self._tts, self._player
         if tts is None or player is None:
             return
+        epoch = self._speech_epoch
         generation = getattr(player, "generation", 0)
-        path = self._audio_path("reply")
+
+        def current():
+            return epoch == self._speech_epoch and self.output_available
+
+        async def pipeline():
+            phrases = iter(speech_phrases(text))
+            paths = set()
+            pending = None
+
+            def prepare(phrase):
+                path = self._audio_path("reply")
+                paths.add(path)
+                async def synthesize():
+                    return path, await self._run_blocking(tts.synthesize, phrase, path)
+                return asyncio.create_task(synthesize())
+
+            try:
+                pending = prepare(next(phrases))
+                while pending is not None:
+                    try:
+                        path, result = await pending
+                    except Exception as error:
+                        if current():
+                            self._fail_output(SYNTHESIS, f"speech synthesis failed: {error}")
+                        return
+                    pending = None
+                    if not current():
+                        return
+                    if result.status != "ok":
+                        self._fail_output(SYNTHESIS, result.error or f"speech synthesis returned {result.status}")
+                        return
+                    following = next(phrases, None)
+                    if following is not None:
+                        pending = prepare(following)
+                    marked = self.timing.mark_first_audio()
+                    if marked:
+                        self._report_timing()
+                    try:
+                        await self._run_blocking(player.play, path, generation=generation)
+                    except Exception as error:
+                        if marked and self.timing.clear_first_audio():
+                            self._report_timing()
+                        if current():
+                            self._fail_output(PLAYBACK, f"speech playback failed: {error}")
+                        return
+                    _unlink(path)
+                    paths.discard(path)
+                    if not current():
+                        return
+            finally:
+                # Never unlink a file while synthesis or playback still owns it.
+                if pending is not None:
+                    await asyncio.gather(pending, return_exceptions=True)
+                for path in paths:
+                    _unlink(path)
+
+        task = asyncio.create_task(pipeline())
+        self._blocking.add(task)
+        def finished(done):
+            self._blocking.discard(done)
+            if not done.cancelled():
+                done.exception()
+        task.add_done_callback(finished)
         try:
-            try:
-                result = await self._run_blocking(tts.synthesize, text, path)
-            except Exception as error:  # noqa: BLE001 - reported, never propagated
-                self._fail_output(SYNTHESIS, f"speech synthesis failed: {error}")
-                return
-            if result.status != "ok":
-                self._fail_output(
-                    SYNTHESIS, result.error or f"speech synthesis returned {result.status}"
-                )
-                return
-            if not self.output_available:
-                # A later turn, /text or close made this audio obsolete.
-                return
-            try:
-                await self._run_blocking(player.play, path, generation=generation)
-            except Exception as error:  # noqa: BLE001 - reported, never propagated
-                self._fail_output(PLAYBACK, f"speech playback failed: {error}")
-        finally:
-            _unlink(path)
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            self.stop_speaking()
+            raise
 
     async def _cue(self) -> None:
         """Play the ready tone. Its failure is a playback failure, not a lost turn."""
@@ -381,12 +446,12 @@ class HybridAudioAdapter:
         self._input_failure = None
         if self._closing or not self._input_enabled:
             return False
+        if self._session is not None and not self._session_alive():
+            await self._stop_session()
         if not await self._ensure_components():
             return False
         if self._closing or not self._input_enabled:
             return False
-        if self._session is not None and not self._session_alive():
-            await self._stop_session()
         if self._session is None:
             if not await self._open_stream():
                 return False
@@ -446,7 +511,8 @@ class HybridAudioAdapter:
                 self._vad = (
                     await self._run_blocking(self.vad_factory)
                     if self.vad_factory is not None
-                    else await self._run_blocking(SileroSpeechDetector)
+                    else await self._run_blocking(SileroSpeechDetector,
+                        model_path=Path(self.config.wake_model).parent / 'silero_vad.onnx')
                 )
             except Exception as error:  # noqa: BLE001 - optional dependency
                 self._fail_input(CAPTURE, f"speech detection could not start: {error}")
@@ -468,13 +534,17 @@ class HybridAudioAdapter:
             return False
         if self._stream_started:
             return True
+        stream = self._stream
         try:
             def open_stream():
-                self._stream.start()
+                from .native_audio import prepare_device
+                prepare_device(self.config.audio_input_device, 'input', self.config.audio_backend)
+                stream.start()
                 if self._closing:
-                    self._stream.close()
+                    stream.close()
             await self._run_blocking(open_stream)
         except Exception as error:  # noqa: BLE001 - reported, never propagated
+            self._close_stream()
             self._fail_input(CAPTURE, f"microphone capture could not start: {error}")
             return False
         self._stream_started = True
@@ -521,12 +591,17 @@ class HybridAudioAdapter:
             on_audio_error=self._on_audio_error,
             start_recording=not self.listen and not self._typed_turn,
             on_reply_complete=self.on_reply_complete,
+            # One timing object for the whole adapter: the session marks capture and
+            # recognition, the application marks the first engine text on the same
+            # object, and this adapter marks the first audible playback.
+            timing=self.timing,
+            on_timing=self._report_timing,
         )
         self._session = session
         self._task = asyncio.create_task(session.run(), name="odessy-hybrid-voice")
 
     def _close_stream(self) -> None:
-        stream, self._stream_started = self._stream, False
+        stream, self._stream, self._stream_started = self._stream, None, False
         if stream is None:
             return
         with contextlib.suppress(Exception):
@@ -558,12 +633,18 @@ class HybridAudioAdapter:
         stt = self._stt
         if stt is None:
             raise RuntimeError("speech recognition is not available")
+        # Capture already ended (the session or the push-to-talk path marked it); the
+        # interval to the transcript is recognition, measured on its own.
+        generation = self.timing.generation
         path = self._audio_path("utterance")
         path.write_bytes(pcm_to_wav(pcm))
         try:
             result = await self._run_blocking(stt.transcribe, path)
         finally:
             _unlink(path)
+        if generation == self.timing.generation:
+            self.timing.mark_stt_done()
+            self._report_timing()
         if result.status == "empty":
             return ""
         if result.status != "ok":
@@ -571,6 +652,22 @@ class HybridAudioAdapter:
                 result.error or f"speech recognition returned {result.status}"
             )
         return result.text
+
+    def begin_capture(self, turn: str = "") -> None:
+        """A recording window opened: the capture phase starts here."""
+
+        self.timing.begin(turn)
+        self._report_timing()
+
+    def note_capture_end(self) -> None:
+        """Recording ended; the utterance is being handed to recognition."""
+
+        if self.timing.mark_capture_end():
+            self._report_timing()
+
+    def _report_timing(self) -> None:
+        with contextlib.suppress(Exception):
+            self.report_timing(self.timing.public())
 
     def _status(self, message: str) -> None:
         with contextlib.suppress(Exception):
