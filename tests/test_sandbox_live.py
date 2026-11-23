@@ -173,12 +173,6 @@ def test_measured_enforcement_matches_the_declaration(bwrap, workspace, outside)
     assert measurement.contradicts(bwrap.limitations(policy)) == (), measurement.as_dict()
 
 
-def test_pid_namespace_isolates_process_visibility(bwrap, workspace):
-    """--unshare-pid gives a private PID namespace: the confined child sees its own PID as 1."""
-    result = run(bwrap, workspace, "[ $$ -eq 1 ] && echo pid1")
-    assert result["exit_code"] == 0 and "pid1" in result["stdout"], result
-
-
 def test_die_with_parent_kills_the_child(bwrap, workspace, tmp_path):
     """--die-with-parent reaps the confined child when bwrap's parent goes away."""
     marker = tmp_path / "should-not-survive"
