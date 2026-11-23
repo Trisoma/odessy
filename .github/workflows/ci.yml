@@ -295,3 +295,46 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+  # Branch protection can require one check per PR, not a matrix. This job waits
+  # for every mandatory job above and reports that single, stable name: "CI gate".
+  # It runs even when an upstream job fails or is skipped, then fails unless every
+  # result is success, so a broken matrix leg cannot merge behind a green gate.
+  ci-gate:
+    name: CI gate
+    if: always()
+    needs: [python, sandbox-live, rust, pairing, tool-server]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check every mandatory job result
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          REQUIRED_JOBS: python sandbox-live rust pairing tool-server
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          needs = json.loads(os.environ["NEEDS"])
+          required = os.environ["REQUIRED_JOBS"].split()
+          errors = []
+
+          for job in required:
+              if job not in needs:
+                  errors.append(f"{job}: not in needs; the gate no longer covers this job")
+                  continue
+              result = needs[job].get("result")
+              print(f"{job}: {result}")
+              if result != "success":
+                  errors.append(f"{job}: {result}; expected success")
+
+          unverified = sorted(set(needs) - set(required))
+          if unverified:
+              errors.append("not verified: " + ", ".join(unverified))
+
+          for error in errors:
+              print(f"::error::{error}")
+          sys.exit(1 if errors else 0)
+          PY
