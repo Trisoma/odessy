@@ -78,10 +78,11 @@ jobs:
       - name: Install Odessy
         run: python -m pip install -e ".[test,ui]" "pytest-xdist>=3.6,<4"
 
-      - name: Run tests
-        # Two workers overlap subprocess/network waits without multiplying jobs.
-        # Keep each file together for module-scoped fixtures and ordered tests.
-        run: python -m pytest -q -n 2 --dist loadfile --tb=short --durations=10
+      - name: Import Python entry points
+        run: python -c "from odessy.entrypoint import main; from odessy.application.executor import main"
+
+      - name: Executor packaging regression tests
+        run: python -m pytest -q tests/test_executor_package.py
 
       - name: CLI smoke test
         shell: bash
@@ -95,6 +96,11 @@ jobs:
           output="$(python -m odessy --fake-model "list .")"
           echo "$output"
           [[ "$output" == "Directory entries: "*"pyproject.toml"* ]]
+
+      - name: Run tests
+        # Two workers overlap subprocess/network waits without multiplying jobs.
+        # Keep each file together for module-scoped fixtures and ordered tests.
+        run: python -m pytest -q -n 2 --dist loadfile --tb=short --durations=10
 
   sandbox-live:
     # The unit tests check the bwrap argv; this job checks that the boundary holds on a

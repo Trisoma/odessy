@@ -35,6 +35,12 @@ Existing entry points: `scripts/build_setup_bundle.py`,
 `scripts/windows_nsis.py`. Read their `--help` and [installer guide](../installer/README.md)
 for exact build inputs; do not run a historical maintainer-specific command blindly.
 
+The Native setup acceptance workflow uploads a `.provenance.json` beside each
+ZIP. It records the checkout revision, dependency input hashes, ZIP hash and
+payload file hashes. The workflow verifies the ZIP contents before uploading.
+For the public Windows installer, record the inputs and hashes for the exact
+installer candidate separately.
+
 The [gallery manifest](view/verification/manifest.json) describes its recorded
 snapshot, not every later commit. Earlier installed receipts remain useful
 evidence but cannot certify a candidate rebuilt after merge/review fixes.
