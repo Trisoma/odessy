@@ -783,8 +783,21 @@ def collaboration_decision(request: ToolRequest, participants: Mapping[str, Any]
 
     name = request.name
     arguments = request.arguments
-    if name == "agent.run_continue":
+    if name in {"agent.run_continue", "agent.plan_continue"}:
         return PolicyDecision("confirm", "Hand one agent's output to another agent", "high", rule="collaboration_handoff")
+    if name == "agent.plan_run":
+        steps = arguments.get("steps")
+        if not isinstance(steps, (list, tuple)) or len(steps) < 2:
+            return PolicyDecision("deny", "A plan needs at least two steps", "medium", rule="collaboration_participant")
+        for step in steps:
+            if not isinstance(step, dict):
+                return PolicyDecision("deny", "Invalid plan step", "medium", rule="collaboration_participant")
+            profile = participants.get(step.get("participant"))
+            if profile is None or "delegate" not in profile.capabilities:
+                return PolicyDecision("deny", "Participant or capability is not configured", "medium", rule="collaboration_participant")
+            if step.get("mode") not in profile.allowed_modes:
+                return PolicyDecision("deny", "Delegation mode is not allowed for this participant", "high", rule="collaboration_mode")
+        return PolicyDecision("confirm", "Run a multi-agent handoff plan using the configured child-agent permissions", "high", rule="collaboration_handoff")
     if name == "agent.run":
         from odessy.collaboration.runs import FLOWS
         modes = FLOWS.get(arguments.get("flow"))

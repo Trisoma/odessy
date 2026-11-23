@@ -36,7 +36,7 @@ flowchart LR
 | 提议与调度 | [`runtime/agent_loop.py`](../../src/odessy/runtime/agent_loop.py) | 筛选提议，快照其计划，并在调度前立即重新校验。 |
 | 策略与精确批准 | [`authority/policy.py`](../../src/odessy/authority/policy.py)、[`action_approval.py`](../../src/odessy/authority/action_approval.py) | 硬性拒绝、精确的参数/目标/内容，以及独立的授权范围。 |
 | 交互与模式 | [`interaction/broker.py`](../../src/odessy/interaction/broker.py)、[`application/access_modes.py`](../../src/odessy/application/access_modes.py) | UI/语音的回答会解决绑定的请求。模式不能创造工作区或远程权限。 |
-| 执行适配器 | [`tools/`](../../src/odessy/tools)、[`tools/src/`](../../tools/src)、[`execution/`](../../src/odessy/execution) | 适配器特定的校验和可用的隔离限制。MCP 协议本身不是权限授予。 |
+| 执行适配器 | [`src/odessy/tools/`](../../src/odessy/tools)、[`services/tool-server/src/`](../../services/tool-server/src)、[`execution/`](../../src/odessy/execution) | 适配器特定的校验和可用的隔离限制。MCP 协议本身不是权限授予。 |
 | SSH 命令 | [`tools/ssh_executor.py`](../../src/odessy/tools/ssh_executor.py) | 精确批准、固定的主机身份、有界输出和吊销；没有远程沙箱或 PTY。 |
 
 并非每个工具都经由 Node 运行：Python 内置工具和 SSH 适配器同样存在。Go 监控不授予命令访问权限，Rust 配对身份与执行授权不同。实验性的可信 LAN 执行器边界不同；不要把它等同于已认证配对。MCU 自动化尚未实现。
@@ -49,8 +49,8 @@ flowchart LR
 
 Go 监控是可选的打包组件，并且保持主动选择（opt-in）。共享计算机模型、能力边界和夹具检查见 [SSH 贡献者路径](../../src/odessy/ssh/README.md)（English only）。打包一个辅助程序或通过本地夹具，并不能验证每个已安装平台或远程方向。
 
-- [`tool/`](../../tool/) 放构建和验证脚本。
-- [`tools/`](../../tools/) 是 Node MCP 服务。
+- [`scripts/`](../../scripts/) 放构建和验证脚本。
+- [`services/tool-server/`](../../services/tool-server/) 是 Node MCP 服务。
 - [`src/odessy/tools/`](../../src/odessy/tools/) 放 Python 工具适配器，包括 SSH 执行器。
 
 | 组件 / 目录 | 语言与职责 | 贡献与评审 |
@@ -58,7 +58,7 @@ Go 监控是可选的打包组件，并且保持主动选择（opt-in）。共�
 | [`src/odessy/runtime/`](../../src/odessy/runtime) 和 [`models/`](../../src/odessy/models) | Python 循环、会话、模型适配器 | 运行时/模型贡献者；调度安全需要维护者审阅 |
 | [`src/odessy/authority/`](../../src/odessy/authority)、[`execution/`](../../src/odessy/execution) | Python 策略、工作区权威、沙箱 | **需要维护者审阅**；不是入门工作 |
 | [`src/odessy/voice/`](../../src/odessy/voice) | Python 采集、STT/TTS 适配器和语音会话 | 提供商示例/测试；批准相关变更需要维护者审阅 |
-| [`tools/`](../../tools) | TypeScript/Node MCP 工具和宿主检查 | 工具贡献者；防护与沙箱：**需要维护者审阅** |
+| [`services/tool-server/`](../../services/tool-server) | TypeScript/Node MCP 工具和宿主检查 | 工具贡献者；防护与沙箱：**需要维护者审阅** |
 | [`native/odessy-link/`](../../native/odessy-link) | Rust 身份、注册、mTLS 中继、遥测 | Rust 贡献者；注册、授权与密钥：**需要维护者审阅** |
 | [`apps/desktop/`](../../apps/desktop) | Dart/Flutter 会话、设置、交互 | UI/无障碍贡献者；UI 不是执行权威 |
 | [`packages/odessy_client/`](../../packages/odessy_client) | Dart 后端客户端和数据模型 | 客户端/API 贡献者；认证需要维护者审阅 |

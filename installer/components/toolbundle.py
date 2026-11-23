@@ -13,8 +13,15 @@ from installer.core.process import child_env,owned_directory,run_step,validate_r
 from installer.components.runtime import destination
 
 
+TOOL_SERVER_SOURCE = Path("services") / "tool-server"
+
+
+def bundle_source_path(repo: Path, source: Path) -> Path:
+    return Path("tools") / source.relative_to(repo / TOOL_SERVER_SOURCE)
+
+
 def source_files(repo: Path) -> list[Path]:
-    tools=repo/'tools'
+    tools=repo/TOOL_SERVER_SOURCE
     paths=[tools/name for name in ('package.json','package-lock.json','tsconfig.json','copy-resources.cjs')]
     paths.extend(tools/'src'/'agent_basics_terminal'/name
                  for name in ('helper.cjs','dependency-receipt.json'))
@@ -28,9 +35,9 @@ def source_files(repo: Path) -> list[Path]:
 def build_bundle(runtime: Path,output_dir: Path,*,repo: Path=REPO_ROOT,run=run_step,validate=validate_runtimes) -> dict:
     versions=validate(runtime)
     files=source_files(repo)
-    source_hashes={p.relative_to(repo).as_posix():hashlib.sha256(p.read_bytes().replace(b'\r\n',b'\n')).hexdigest() for p in files}
-    package=json.loads((repo/'tools'/'package.json').read_text(encoding='utf-8'))
-    lock=json.loads((repo/'tools'/'package-lock.json').read_text(encoding='utf-8'))
+    source_hashes={bundle_source_path(repo,p).as_posix():hashlib.sha256(p.read_bytes().replace(b'\r\n',b'\n')).hexdigest() for p in files}
+    package=json.loads((repo/TOOL_SERVER_SOURCE/'package.json').read_text(encoding='utf-8'))
+    lock=json.loads((repo/TOOL_SERVER_SOURCE/'package-lock.json').read_text(encoding='utf-8'))
     if package['version']!=lock['packages']['']['version']:
         raise ValueError('Tool package and lock versions differ.')
     env=child_env(runtime)
@@ -39,10 +46,11 @@ def build_bundle(runtime: Path,output_dir: Path,*,repo: Path=REPO_ROOT,run=run_s
     with owned_directory(output_dir) as output, tempfile.TemporaryDirectory(prefix='odessy-tools-build-') as scratch:
         stage=Path(scratch); tools=stage/'tools'; tools.mkdir()
         for source in files:
-            target=stage/source.relative_to(repo)
+            relative=bundle_source_path(repo,source)
+            target=stage/relative
             target.parent.mkdir(parents=True,exist_ok=True)
             data=source.read_bytes()
-            if hashlib.sha256(data.replace(b'\r\n',b'\n')).hexdigest()!=source_hashes[source.relative_to(repo).as_posix()]:
+            if hashlib.sha256(data.replace(b'\r\n',b'\n')).hexdigest()!=source_hashes[relative.as_posix()]:
                 raise ValueError('Tool source changed while copying: '+str(source))
             target.write_bytes(data)
         # Avoid copying user npmrc credentials and running dependency lifecycle scripts.
@@ -53,8 +61,9 @@ def build_bundle(runtime: Path,output_dir: Path,*,repo: Path=REPO_ROOT,run=run_s
              '--userconfig',str(user_config),'--globalconfig',str(global_config),'--cache',str(stage/'npm-cache')],
             cwd=tools,env=env,label='Locked Node dependency installation',timeout=600)
         # Confirm source/lock inputs were not changed by the build or another editor.
-        for path,digest in source_hashes.items():
-            if hashlib.sha256((repo/path).read_bytes().replace(b'\r\n',b'\n')).hexdigest()!=digest:
+        for source in files:
+            path=bundle_source_path(repo,source).as_posix()
+            if hashlib.sha256(source.read_bytes().replace(b'\r\n',b'\n')).hexdigest()!=source_hashes[path]:
                 raise ValueError('Tool source changed during preparation: '+path)
         print('Compiling existing tool-server sources...',flush=True)
         run([str(node),str(tools/'node_modules'/'typescript'/'bin'/'tsc'),'-p',str(tools/'tsconfig.json')],

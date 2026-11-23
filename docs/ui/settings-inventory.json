@@ -283,6 +283,21 @@
       }
     },
     {
+      "name": "ODESSY_CLOUD_CONTEXT_CHARS",
+      "kind": "int",
+      "summary": "tool-result characters re-sent in one turn before compaction",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 0,
+        "maximum": null
+      }
+    },
+    {
       "name": "ODESSY_CLOUD_CUSTOM_MODEL",
       "kind": "model",
       "summary": "the model used when failing over to custom",
@@ -375,6 +390,21 @@
       "validation": {
         "choices": [],
         "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CLOUD_KEEP_RECENT_RESULTS",
+      "kind": "int",
+      "summary": "how many of the latest tool results are never compacted",
+      "source": "runtime environment",
+      "screen": "Models and providers",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 0,
         "maximum": null
       }
     },
@@ -630,6 +660,51 @@
       "validation": {
         "choices": [],
         "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CONTEXT_BUDGET_GUARD",
+      "kind": "flag",
+      "summary": "on or off: guard requests against a context-window estimate",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": null,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CONTEXT_CHARS_PER_TOKEN",
+      "kind": "int",
+      "summary": "conservative characters-per-token ratio used by the estimate",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 1,
+        "maximum": null
+      }
+    },
+    {
+      "name": "ODESSY_CONTEXT_WINDOW_TOKENS",
+      "kind": "int",
+      "summary": "estimated cloud input token limit (0 disables rejection)",
+      "source": "runtime environment",
+      "screen": "Advanced runtime settings",
+      "status": "unavailable",
+      "reason": "No desktop configuration management API exists.",
+      "apply_timing": "runtime startup",
+      "validation": {
+        "choices": [],
+        "minimum": 0,
         "maximum": null
       }
     },

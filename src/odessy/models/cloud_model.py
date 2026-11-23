@@ -689,6 +689,8 @@ class CloudModel:
         if self.refusal_fallbacks and self.model in _CLAUDE_FALLBACK_MODELS and not self._diagnostic_only:
             params["betas"] = [_CLAUDE_FALLBACK_BETA]
             params["fallbacks"] = "default"
+        from odessy.context_budget import check_cloud_input
+        check_cloud_input(params)
         response = self._create_message(params) if speech is None else self._stream_message(params, speech)
         # Append the full content (thinking and fallback blocks included), unchanged.
         self._messages.append({"role": "assistant", "content": response.content})
@@ -802,6 +804,8 @@ class CloudModel:
             payload["reasoning_effort"] = self.effort
         if self._diagnostic_only:
             payload.pop('tools',None);payload.pop('tool_choice',None)
+        from odessy.context_budget import check_cloud_input
+        check_cloud_input(payload)
         # The plain call shape when not streaming, which tests and wrappers replace.
         data = self._post_chat(payload) if speech is None else self._post_chat(payload, speech)
         choices = data.get("choices") or []

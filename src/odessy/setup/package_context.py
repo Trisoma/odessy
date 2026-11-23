@@ -4,7 +4,7 @@ import hashlib,json,os,re,sys
 from pathlib import Path
 from .maintenance import guard,read_json,digest
 
-#: Payload top-level directories produced by tool/build_setup_bundle.py.
+#: Payload top-level directories produced by scripts/build_setup_bundle.py.
 COMPONENT_DIRECTORIES=('runtime','desktop','node','tools','link','monitor','harness')
 KNOWN_DIRECTORIES=frozenset((*COMPONENT_DIRECTORIES,'bootstrap','wheelhouse'))
 KNOWN_FILES=frozenset(('install.py','install.cmd','install.sh','runtime-manifest.json',

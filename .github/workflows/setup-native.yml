@@ -7,7 +7,7 @@ on:
       - 'src/odessy/monitoring/**'
       - 'services/monitoring/**'
       - 'native/odessy-link/**'
-      - 'tool/*setup*'
+      - 'scripts/*setup*'
       - 'tests/test_setup*'
       - 'pyproject.toml'
       - '.github/workflows/setup-native.yml'
@@ -58,7 +58,7 @@ jobs:
         shell: bash
         run: 'python -m pip download --only-binary=:all: --dest wheelhouse wheelhouse/odessy-*.whl'
       - run: python -m pytest tests/test_setup_services.py tests/test_setup_maintenance.py tests/test_setup_bundle.py tests/test_setup_native_acceptance.py -q
-      - run: python tool/check_setup_installation.py --wheelhouse wheelhouse
+      - run: python scripts/check_setup_installation.py --wheelhouse wheelhouse
       - name: Build offline Python-required bootstrap archive
         shell: python
         run: |
@@ -68,23 +68,49 @@ jobs:
           from pathlib import Path
           manifest=json.loads(Path('wheelhouse/manifest.json').read_text())
           Path('licenses.json').write_text(json.dumps({a['file']:a['license'] for a in manifest['artifacts']}))
-          subprocess.run([sys.executable,'tool/build_setup_bundle.py','--wheelhouse','wheelhouse','--licenses','licenses.json','--monitor','setup-helpers/monitor','--rust','setup-helpers/link','--output','odessy-setup-${{ runner.os }}-${{ runner.arch }}.zip'],check=True)
-      - name: Verify helper inventory in the acceptance archive
+          subprocess.run([sys.executable,'scripts/build_setup_bundle.py','--wheelhouse','wheelhouse','--licenses','licenses.json','--monitor','setup-helpers/monitor','--rust','setup-helpers/link','--output','odessy-setup-${{ runner.os }}-${{ runner.arch }}.zip'],check=True)
+      - name: Verify acceptance archive and record build provenance
         shell: python
         run: |
           import hashlib
           import json
           import os
+          import subprocess
           import zipfile
           from pathlib import Path
           suffix = '.exe' if os.name == 'nt' else ''
-          with zipfile.ZipFile(next(Path('.').glob('odessy-setup-*.zip'))) as archive:
+          payload, = Path('.').glob('odessy-setup-*.zip')
+          with zipfile.ZipFile(payload) as archive:
               manifest = json.loads(archive.read('setup-context.json'))
               assert {'monitor','link'} <= set(manifest['components'])
               for component, executable in [('monitor','odessy-monitor'),('link','odessy-link')]:
                   name = component+'/'+executable+suffix
-                  assert hashlib.sha256(archive.read(name)).hexdigest() == manifest['files'][name]
+                  assert name in manifest['files']
+              names = [item.filename for item in archive.infolist() if not item.is_dir()]
+              assert sorted(names) == sorted([*manifest['files'], 'setup-context.json'])
+              for name, expected in manifest['files'].items():
+                  with archive.open(name) as member:
+                      if hashlib.file_digest(member, 'sha256').hexdigest() != expected:
+                          raise SystemExit(f'Payload hash mismatch: {name}')
+          revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          if revision != os.environ['GITHUB_SHA']:
+              raise SystemExit('Setup build checkout does not match the workflow revision')
+          locks = [Path(name) for name in (
+              'pyproject.toml', 'services/monitoring/go.mod', 'services/monitoring/go.sum',
+              'native/odessy-link/Cargo.lock',
+          )]
+          with payload.open('rb') as artifact:
+              payload_digest = hashlib.file_digest(artifact, 'sha256').hexdigest()
+          receipt = {
+              'source_revision': revision,
+              'artifact': {'name': payload.name, 'sha256': payload_digest},
+              'dependency_inputs': {p.as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in locks},
+              'payload_files': manifest['files'],
+          }
+          payload.with_suffix('.provenance.json').write_text(json.dumps(receipt, indent=2) + '\n', encoding='utf-8')
       - uses: actions/upload-artifact@v4
         with:
           name: setup-${{ runner.os }}-${{ runner.arch }}
-          path: odessy-setup-*.zip
+          path: |
+            odessy-setup-*.zip
+            odessy-setup-*.provenance.json

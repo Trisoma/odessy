@@ -105,12 +105,12 @@ def test_missing_node_is_a_warning_because_odessy_still_runs() -> None:
 
 def test_uninstalled_or_stale_tools_say_how_to_build() -> None:
     uninstalled = run_checks("lfm", {"ODESSY_DEPLOYMENT": "single"}, _probes(node_state=(False, False)))
-    assert _by_section(uninstalled, "Tool server")[-1].fix == "cd tools && npm install && npm run build"
+    assert _by_section(uninstalled, "Tool server")[-1].fix == "cd services/tool-server && npm install && npm run build"
 
     stale = run_checks("lfm", {"ODESSY_DEPLOYMENT": "single"}, _probes(node_state=(True, False)))
     last = _by_section(stale, "Tool server")[-1]
     assert last.status == "warn"
-    assert last.fix == "cd tools && npm run build"
+    assert last.fix == "cd services/tool-server && npm run build"
 
 
 def test_old_node_is_flagged() -> None:

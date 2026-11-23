@@ -582,7 +582,7 @@ def _node_tools(environ: Mapping[str, str]) -> NodeTools | None:
 
     The executable is required to be explicit: this module never searches ``PATH``, for the
     same reason ``ODESSY_HARNESS_EXE`` is explicit. The built entry comes from the same
-    resolution the legacy path uses (``ODESSY_NODE_TOOLS_DIR`` or the repository ``tools/``),
+    resolution the legacy path uses (``ODESSY_NODE_TOOLS_DIR`` or the repository ``services/tool-server/``),
     so there is one answer to "where is the tool server".
     """
 

@@ -74,7 +74,7 @@ def build_plan(root: Path, cache: Path, bundle: Path, endpoint: str, timeout: in
     for path in (root, cache, bundle):
         model.guard_path(path)
     root = root.resolve(); cache = cache.resolve(); bundle = bundle.resolve()
-    protected = [REPO_ROOT / name for name in ('installer', 'src', 'tools', 'config', 'policy', 'THIRD-PARTY-LICENSES')]
+    protected = [REPO_ROOT / name for name in ('installer', 'src', 'services/tool-server', 'config', 'policy', 'THIRD-PARTY-LICENSES')]
     if any(root == path or path in root.parents for path in protected):
         raise ValueError('Do not install generated components inside project source/configuration directories.')
     if root == REPO_ROOT or root in REPO_ROOT.parents or root == cache or root in cache.parents or cache in root.parents:

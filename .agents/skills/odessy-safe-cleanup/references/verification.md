@@ -23,8 +23,8 @@ templates: verify installed SDKs and caches first; do not download merely to pre
 | Rust pairing | In native/odessy-link: `cargo test --locked --offline`; existing CI also runs `cargo clippy --all-targets -- -D warnings`. Preserve identity, grants, transport and telemetry consumers. |
 | Go monitoring | In services/monitoring: `go test ./...`, `go vet ./...`; set `GOPROXY=off` and `GOTOOLCHAIN=local` for cache-only checks. go.mod/go.sum verify dependency closure; live target/freshness checks are separate. |
 | Dart client | In packages/odessy_client: `dart analyze`, `dart test`; use existing pubspec.lock and cached SDK. |
-| Flutter desktop | In apps/desktop: `flutter analyze --no-pub`, `flutter test --no-pub`; root `python tool/check_desktop_contracts.py`. CI also checks `dart format --output=none --set-exit-if-changed lib test`. |
-| Packaging | `python -m pytest -q tests/test_setup_bundle.py`; inspect pyproject.toml package-data/scripts, installer release manifests, tool/build_setup_bundle.py and tool/audit_setup_artifact.py. Build/audit coherent artifacts only when the actual slice warrants it; do not rebuild for a skill-only edit. |
+| Flutter desktop | In apps/desktop: `flutter analyze --no-pub`, `flutter test --no-pub`; root `python scripts/check_desktop_contracts.py`. CI also checks `dart format --output=none --set-exit-if-changed lib test`. |
+| Packaging | `python -m pytest -q tests/test_setup_bundle.py`; inspect pyproject.toml package-data/scripts, installer release manifests, scripts/build_setup_bundle.py and scripts/audit_setup_artifact.py. Build/audit coherent artifacts only when the actual slice warrants it; do not rebuild for a skill-only edit. |
 | Contributor smoke | `python -m odessy --help`; documented fake-model time/list fixtures only with isolated config. Do not launch live providers or read actual credentials as a fixture. |
 
 ## Tool selection and limitations

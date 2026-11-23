@@ -57,6 +57,9 @@ def _isolate_config_environment(
     for name in list(os.environ):
         if name.startswith(("ODESSY_CLOUD_BUDGET_", "ODESSY_CLOUD_PRICE_", "ODESSY_INTERACTION_")):
             monkeypatch.delenv(name, raising=False)
+    for name in ('ODESSY_CONTEXT_BUDGET_GUARD', 'ODESSY_CONTEXT_WINDOW_TOKENS',
+                 'ODESSY_CONTEXT_CHARS_PER_TOKEN'):
+        monkeypatch.delenv(name, raising=False)
     reset_process_ledger()
     monkeypatch.setenv(
         "ODESSY_CONFIG_FILE",

@@ -1,7 +1,7 @@
 """The Windows backend for the Python side: the Node tool server's windows-acl runner.
 
 The confinement itself (a ``WRITE_RESTRICTED`` token whose write capability is an
-ACL ACE on the workspace) lives in the Node runner, ``tools/src/execution/win32``.
+ACL ACE on the workspace) lives in the Node runner, ``services/tool-server/src/execution/win32``.
 Rather than port that FFI to Python, this provider builds the same argv the Node
 ``WindowsAclProvider`` builds and lets the runner do the work, so single-machine
 mode on Windows gets the same partial boundary whether or not the Node tool server
@@ -98,7 +98,7 @@ class WindowsAclProvider(ConfiningProvider):
         if node is None:
             return False, "node is not on PATH; install Node.js to use the windows-acl runner"
         if runner is None:
-            return False, "the Node tool server is not installed and built (tools/dist/src/execution/win32/runner.js)"
+            return False, "the Node tool server is not installed and built (dist/src/execution/win32/runner.js)"
         return True, f"windows-acl runner {runner}"
 
     def limitations(self, policy: ExecutionPolicy) -> frozenset[Limitation]:

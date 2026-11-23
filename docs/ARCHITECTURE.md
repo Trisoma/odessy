@@ -34,7 +34,7 @@ flowchart LR
 | Proposal and dispatch | [`runtime/agent_loop.py`](../src/odessy/runtime/agent_loop.py) | Screen the proposal, snapshot its plan and revalidate immediately before dispatch. |
 | Policy and exact approval | [`authority/policy.py`](../src/odessy/authority/policy.py), [`action_approval.py`](../src/odessy/authority/action_approval.py) | Hard denials, exact arguments/target/content and independent authorization scopes. |
 | Interaction and mode | [`interaction/broker.py`](../src/odessy/interaction/broker.py), [`application/access_modes.py`](../src/odessy/application/access_modes.py) | A UI/voice answer resolves the bound request. Modes cannot create workspace or remote rights. |
-| Execution adapters | [`tools/`](../src/odessy/tools), [`tools/src/`](../tools/src), [`execution/`](../src/odessy/execution) | Adapter-specific validation and available confinement. MCP protocol itself is not a permission grant. |
+| Execution adapters | [`src/odessy/tools/`](../src/odessy/tools), [`services/tool-server/src/`](../services/tool-server/src), [`execution/`](../src/odessy/execution) | Adapter-specific validation and available confinement. MCP protocol itself is not a permission grant. |
 | SSH commands | [`tools/ssh_executor.py`](../src/odessy/tools/ssh_executor.py) | Exact approval, pinned host identity, bounded output and revocation; no remote sandbox or PTY. |
 
 Not every tool runs through Node: Python built-ins and the SSH adapter also exist.
@@ -61,8 +61,8 @@ Go monitoring is an optional packaged component and remains opt-in. Use the
 capability boundaries and fixture checks. Packaging a helper or passing a local
 fixture does not qualify every installed platform or remote direction.
 
-- [`tool/`](../tool/) contains scripts to build and verify the project.
-- [`tools/`](../tools/) is the Node MCP server.
+- [`scripts/`](../scripts/) contains scripts to build and verify the project.
+- [`services/tool-server/`](../services/tool-server/) is the Node MCP server.
 - [`src/odessy/tools/`](../src/odessy/tools/) contains Python tool adapters, including the SSH executor.
 
 | Component / directory | Language and responsibility | Contribution and review |
@@ -70,7 +70,7 @@ fixture does not qualify every installed platform or remote direction.
 | [`src/odessy/runtime/`](../src/odessy/runtime) and [`models/`](../src/odessy/models) | Python loop, sessions, model adapters | Runtime/model contributors; dispatch security needs maintainer review |
 | [`src/odessy/authority/`](../src/odessy/authority), [`execution/`](../src/odessy/execution) | Python policy, workspace authority, sandbox | **maintainer review required**; not starter work |
 | [`src/odessy/voice/`](../src/odessy/voice) | Python capture, STT/TTS adapters and voice sessions | Provider examples/tests; approval changes need maintainer review |
-| [`tools/`](../tools) | TypeScript/Node MCP tools and host checks | Tool contributors; guards and sandbox: **maintainer review required** |
+| [`services/tool-server/`](../services/tool-server) | TypeScript/Node MCP tools and host checks | Tool contributors; guards and sandbox: **maintainer review required** |
 | [`native/odessy-link/`](../native/odessy-link) | Rust identity, enrollment, mTLS relay, telemetry | Rust contributors; enrollment, grants and keys: **maintainer review required** |
 | [`apps/desktop/`](../apps/desktop) | Dart/Flutter conversation, settings, interactions | UI/accessibility contributors; UI is not execution authority |
 | [`packages/odessy_client/`](../packages/odessy_client) | Dart backend client and models | Client/API contributors; authentication needs maintainer review |

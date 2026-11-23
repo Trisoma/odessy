@@ -26,7 +26,7 @@ import pytest
 pytest.importorskip("mcp")
 
 REPO = Path(__file__).resolve().parents[1]
-NODE_SERVER = REPO / "tools" / "dist" / "src" / "server.js"
+NODE_SERVER = REPO / "services" / "tool-server" / "dist" / "src" / "server.js"
 BINARIES = (
     REPO / "native" / "odessy-link" / "target" / "release" / ("odessy-link.exe" if os.name == "nt" else "odessy-link"),
     REPO / "native" / "odessy-link" / "target" / "debug" / ("odessy-link.exe" if os.name == "nt" else "odessy-link"),

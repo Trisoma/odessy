@@ -3,7 +3,7 @@ import asyncio
 from mcp.server import MCPServer
 
 
-def build_collaboration_server(service, jobs=None, runs=None, *, grants=None):
+def build_collaboration_server(service, jobs=None, runs=None, *, grants=None, plan_runs=None):
     """The collaboration tools.
 
     With ``grants`` (the in-process server a session mounts), a tool that starts or
@@ -76,6 +76,30 @@ def build_collaboration_server(service, jobs=None, runs=None, *, grants=None):
         @server.tool(name="agent.run_cancel")
         async def run_cancel(run_id: str = "") -> dict[str, object]:
             return await runs.cancel(run_id or None)
+
+    if plan_runs is not None:
+        @server.tool(name="agent.plan_run")
+        async def plan_run(steps: list, workspace: str = "", approval: str = "") -> dict[str, object]:
+            """Start an N-step handoff plan; each step needs role, participant, task and mode.
+
+            Confirmed by OdessyAgent like agent.run. The model cannot supply the
+            approval argument. Every transition still needs a separate approval.
+            """
+            return await plan_runs.start_plan(steps, workspace=workspace or None,
+                                              approved=approved("agent.plan_run", approval))
+
+        @server.tool(name="agent.plan_continue")
+        async def plan_continue(run_id: str = "", artifact_sha256: str = "", approval: str = "") -> dict[str, object]:
+            return await plan_runs.continue_plan(run_id or None, artifact_sha256 or None,
+                                                 approved=approved("agent.plan_continue", approval))
+
+        @server.tool(name="agent.plan_status")
+        async def plan_status(run_id: str = "") -> dict[str, object]:
+            return plan_runs.get(run_id or None)
+
+        @server.tool(name="agent.plan_cancel")
+        async def plan_cancel(run_id: str = "") -> dict[str, object]:
+            return await plan_runs.cancel(run_id or None)
 
     return server
 
