@@ -509,6 +509,22 @@ class CheckpointService:
         self._authorize(sid, 'checkpoint.create', {'label': label, 'kind': kind})
         return self._snapshot(binding, label, kind=kind).public()
 
+    def snapshot_for_breakpoint(self, sid: str, label: str) -> dict[str, Any] | None:
+        """Capture an observation-only snapshot for an execution breakpoint.
+
+        A snapshot never mutates the workspace or the user's Git state (it only
+        writes owned refs and metadata), so it does not require approval — unlike
+        restore. It is best-effort: an unavailable Git workspace simply yields
+        ``None`` and the breakpoint records hashes only. Any caller may attach the
+        returned ``ref`` to a breakpoint; only an approved undo can *use* it.
+        """
+        try:
+            binding = self._binding(sid)
+            safe_label = _validate_label(label[:MAX_LABEL])
+            return self._snapshot(binding, safe_label, kind='breakpoint').public()
+        except CheckpointError:
+            return None
+
     def _authorize(self, sid: str, action: str, details: Mapping[str, Any]) -> None:
         if self._grant is None:
             raise CheckpointError(

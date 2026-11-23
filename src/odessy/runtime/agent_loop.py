@@ -388,6 +388,19 @@ class OdessyAgent:
         self._after_turn(user_text, "answered", result.final_text, result.tool_observations, result.log, stop_event)
         return result
 
+    def _breakpoint_step(self) -> None:
+        """Emit a step breakpoint after one tool iteration, if a hook is attached."""
+        basics = getattr(self, '_basics_session', None)
+        hook = getattr(basics, '_breakpoint_hook', None) if basics is not None else None
+        if hook is not None:
+            try:
+                hook.step()
+                tick = getattr(hook, 'tick', None)
+                if callable(tick):
+                    tick()
+            except Exception:
+                pass  # observation must not fail the turn
+
     async def wait_for_hooks(self) -> None:
         """Wait for turn-end hooks still running (tests, and an orderly shutdown)."""
 
@@ -817,6 +830,7 @@ class OdessyAgent:
                         _add_ms(metrics, "mcp_execution_ms", (timing["completed"]-timing["started"])*1000)
                     log.append(LogEntry("tool_observation", {"name": observation.request.name, "call_id": observation.call_id, "batch_id": batch_id, "index": index, "result": observation.result}))
                 observations.extend(batch_observations)
+                self._breakpoint_step()
                 if self._hook_stop_text() is not None and not stopped:
                     stopped = self._hook_stop_text()
                 if stopped:
@@ -1063,6 +1077,7 @@ class OdessyAgent:
             await self._post_tool_hooks(action, structured_result, log)
             observation = ToolObservation(request=action, result=structured_result)
             observations.append(observation)
+            self._breakpoint_step()
             log.append(
                 LogEntry(
                     "tool_observation",
@@ -1260,11 +1275,23 @@ class OdessyAgent:
                 recorder = getattr(basics, '_conversation_recorder', None)
                 if recorder is not None:
                     recorder.tool_call(plan.call_id, action.name)
+                # Execution breakpoints are a no-op unless the composition attached
+                # a hook. The hook is best-effort observation and never gates the
+                # dispatch: a breakpoint failure cannot refuse an authorized call.
+                hook = getattr(basics, '_breakpoint_hook', None)
+                if hook is not None:
+                    try:
+                        hook.before_tool(name=action.name, arguments=arguments,
+                                         decision=decision, call_id=plan.call_id)
+                    except Exception:
+                        pass  # observation must not fail the turn
                 recorded = True
         bound = _BoundArguments(arguments, dispatch_checks)
         if basics is not None:
             bound._basics_recorder = getattr(basics, '_conversation_recorder', None)
             bound._basics_call_id = plan.call_id
+            bound._basics_breakpoint_hook = getattr(basics, '_breakpoint_hook', None)
+            bound._basics_breakpoint_decision = decision
         return bound
 
     async def _authorize(self, action, decision, plan, answer: bool | None, log) -> None:
@@ -1607,6 +1634,16 @@ class OdessyAgent:
             if recorder is not None:
                 recorder.tool_result(arguments._basics_call_id, name,
                                      'error' if _is_error_result(result) else 'ok')
+            hook = getattr(arguments, '_basics_breakpoint_hook', None)
+            if hook is not None:
+                try:
+                    hook.after_tool(
+                        name=name, arguments=dict(arguments),
+                        decision=getattr(arguments, '_basics_breakpoint_decision', None),
+                        call_id=getattr(arguments, '_basics_call_id', None),
+                        status='error' if _is_error_result(result) else 'ok')
+                except Exception:
+                    pass  # observation must not fail the turn
             self._audit_call(name, result, started)
             return result
         except Exception as exc:

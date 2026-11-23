@@ -36,7 +36,13 @@ MAX_EXPORT = 2 * 1024 * 1024
 MAX_QUERY = 512
 MAX_SNIPPET = 400
 KINDS = ('user', 'assistant_delta', 'assistant', 'tool_call', 'tool_result',
-         'activity', 'attachment', 'interrupted')
+         'activity', 'attachment', 'interrupted', 'breakpoint', 'undo')
+#: Kinds that are execution metadata, not transcript messages. They are stored in
+#: the same append-only stream but never surface as messages, search hits or exports.
+NON_MESSAGE_KINDS = frozenset({'assistant_delta', 'breakpoint', 'undo'})
+# SQL fragments for message-facing reads; kinds are fixed literals, never user input.
+_MESSAGE_ONLY = "kind NOT IN ('assistant_delta','breakpoint','undo')"
+_MESSAGE_ONLY_E = "e.kind NOT IN ('assistant_delta','breakpoint','undo')"
 ENGINES = ('legacy', 'harness')
 _TIMESTAMP = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$')
 _ID = re.compile(r'^[0-9a-f]{32}$')
@@ -487,7 +493,7 @@ class ConversationStore:
                 args.append(before)
             rows = [dict(row) for row in db.execute(
                 'SELECT * FROM conversation_events WHERE conversation_id = ?' + extra +
-                " AND kind != 'assistant_delta' ORDER BY sequence DESC LIMIT ?",
+                ' AND ' + _MESSAGE_ONLY + ' ORDER BY sequence DESC LIMIT ?',
                 (*args, limit + 1))]
             return rows
 
@@ -603,7 +609,7 @@ class ConversationStore:
                     "SELECT e.conversation_id, e.sequence, e.event_id, e.kind, e.payload_json "
                     "FROM conversation_events e JOIN conversations c ON c.id = e.conversation_id "
                     "WHERE e.payload_json LIKE ? ESCAPE '\\'" + project_clause +
-                    " AND e.kind != 'assistant_delta' ORDER BY e.conversation_id, e.sequence LIMIT ?",
+                    ' AND ' + _MESSAGE_ONLY_E + ' ORDER BY e.conversation_id, e.sequence LIMIT ?',
                     (f'%{escaped}%', *project_args, limit + 1)).fetchall()
             return [dict(row) for row in rows]
 
@@ -670,7 +676,7 @@ class ConversationStore:
             conversation = self._conversation(db, conversation_id)
             events = [dict(row) for row in db.execute(
                 'SELECT * FROM conversation_events WHERE conversation_id = ? '
-                "AND kind != 'assistant_delta' ORDER BY sequence", (conversation_id,))]
+                'AND ' + _MESSAGE_ONLY + ' ORDER BY sequence', (conversation_id,))]
             return conversation, events
 
         conversation, events = self._read(work)
@@ -729,7 +735,7 @@ class ConversationStore:
             conversation = self._conversation(db, conversation_id)
             events = [dict(row) for row in db.execute(
                 'SELECT sequence,event_id,kind,payload_json,created_at '
-                "FROM conversation_events WHERE conversation_id = ? AND kind != 'assistant_delta' "
+                'FROM conversation_events WHERE conversation_id = ? AND ' + _MESSAGE_ONLY + ' '
                 'ORDER BY sequence', (conversation_id,))]
             return conversation, events
 
@@ -779,6 +785,51 @@ class ConversationStore:
         rows = self._read(lambda db: [row[0] for row in db.execute(
             'SELECT id FROM conversations ORDER BY created_at, id')])
         return tuple(rows)
+
+    # -- breakpoints -----------------------------------------------------
+
+    def breakpoints(self, conversation_id: str, *, limit: int = 200) -> tuple[Mapping[str, Any], ...]:
+        """Execution/undo events in recorded order, for the breakpoint timeline.
+
+        Unlike :meth:`messages`, this path intentionally includes ``breakpoint``
+        and ``undo`` kinds. ``assistant_delta`` stays excluded: it is transient
+        stream text, never a durable breakpoint.
+        """
+        _check_id(conversation_id)
+        limit = _check_int(limit, 'limit', 1)
+        if limit > 500:
+            raise Invalid('limit must be 1-500')
+        rows = self._read(lambda db: [dict(row) for row in db.execute(
+            "SELECT * FROM conversation_events WHERE conversation_id = ? "
+            "AND kind IN ('breakpoint','undo') ORDER BY sequence DESC LIMIT ?",
+            (conversation_id, limit))])
+        return tuple(_event(row) for row in reversed(rows))
+
+    def sequence_bounds(self, conversation_id: str) -> tuple[int, int]:
+        """(first, last) event sequence for a conversation, in one indexed read.
+
+        Breakpoint context needs only the cursor bounds, not the whole event body;
+        reading every payload on each breakpoint would be quadratic in a long turn.
+        Returns (0, 0) for a conversation with no recorded events.
+        """
+        _check_id(conversation_id)
+        def work(db):
+            self._conversation(db, conversation_id)
+            row = db.execute(
+                'SELECT MIN(sequence) AS first_seq, MAX(sequence) AS last_seq '
+                'FROM conversation_events WHERE conversation_id = ?',
+                (conversation_id,)).fetchone()
+            return (int(row['first_seq'] or 0), int(row['last_seq'] or 0))
+        return self._read(work)
+
+    def event_by_id(self, conversation_id: str, event_id: str) -> Mapping[str, Any] | None:
+        """One event by its stable id, or None. Used to resolve an undo anchor."""
+        _check_id(conversation_id)
+        event_id = _check_text(event_id, 'event_id', 200)
+        row = self._read(lambda db: db.execute(
+            'SELECT * FROM conversation_events WHERE conversation_id = ? AND event_id = ?',
+            (conversation_id, event_id)).fetchone())
+        return _event(dict(row)) if row is not None else None
 
 
 def _event(row: Mapping[str, Any]) -> dict[str, Any]:

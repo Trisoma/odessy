@@ -4,6 +4,8 @@ User-visible changes are recorded here, starting with the next release.
 
 ## Unreleased — v0.5.0-alpha (Developer Preview)
 
+- Add backend execution breakpoints and task-level undo: sanitized breakpoints are recorded before/after critical tools, at each tool step and on idle timers; undoing a task marks the invalidated range and can restore workspace files through an approved checkpoint. Desktop UI is not wired yet.
+
 - Update the pinned OpenTelemetry API to 1.45.2 and Node HTTP adapter to 2.1.6 for denial-of-service and request-path security fixes.
 - Keep backend exception text out of desktop audio errors while preserving device-selection guidance.
 - Make fake Harness protocol tests independent of runner sandbox capabilities; required production isolation still refuses unsupported boundaries.
