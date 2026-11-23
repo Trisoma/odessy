@@ -423,6 +423,18 @@ def _sandbox_report(result: ConfineResult, policy: ExecutionPolicy | None = None
         "limitations": sorted(result.limitations),
         "denial_signatures": result.denial_signatures,
     }
+    if result.enforcement == "none":
+        # A fail-open run (auto->preferred with no backend, or an explicit
+        # not-required call) is honest in `enforcement` already, but a reader
+        # looking only at the result can miss it. State the downgrade and the
+        # remedy in plain words. `required` never reaches here: it refuses before
+        # execution instead of falling back. This does not change the default —
+        # it only makes the existing fail-open visible where the user sees results.
+        report["warning"] = (
+            "This command ran with NO SANDBOX: nothing limited what it could read, "
+            "change or send. To require a sandbox, set ODESSY_ISOLATION=required "
+            "and install a backend (see `odessy doctor`)."
+        )
     if policy is not None:
         confined = result.enforcement != "none"
         report["network"] = (

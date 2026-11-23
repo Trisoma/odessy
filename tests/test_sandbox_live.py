@@ -120,3 +120,73 @@ def test_a_file_size_limit_stops_a_large_write(bwrap, workspace):
     assert result["exit_code"] != 0
     assert (workspace / "big").stat().st_size <= 1024 * 1024
     assert result["sandbox"]["limits"]["applied"] == {"file_size_mb": 1}
+
+
+def test_measured_enforcement_matches_the_declaration(bwrap, workspace, outside):
+    """Cross-check bwrap's declared boundary against what the kernel really does.
+
+    The unit tests prove argv translation; this proves the same ``confine()`` the
+    executor uses actually denies writes outside, hides paths and cuts the network.
+    A backend that overstates its boundary (declares enforced, measures open) fails.
+    """
+    import socket
+    import threading
+    from odessy.execution.contract import ExecutionPolicy
+    from odessy.execution.enforcement_probe import probe_enforcement
+
+    hidden = outside / "hidden"
+    hidden.mkdir()
+    (hidden / "secret.txt").write_text("top secret\n")
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(8)
+    port = listener.getsockname()[1]
+
+    def accept():
+        while True:
+            try:
+                conn, _ = listener.accept()
+            except OSError:
+                return
+            conn.close()
+
+    thread = threading.Thread(target=accept, daemon=True)
+    thread.start()
+    try:
+        policy = ExecutionPolicy(mode="workspace-write", workspace_root=str(workspace),
+                                 network="deny", hidden_paths=(str(hidden),))
+        measurement = probe_enforcement(
+            bwrap, policy, workspace=workspace, outside=outside,
+            hidden=hidden, hidden_file=hidden / "secret.txt", port=port,
+        )
+    finally:
+        listener.close()
+        thread.join(timeout=2)
+
+    assert measurement.usable, f"control write failed: {measurement.control_failure}"
+    assert measurement.verdict("write_outside") is True
+    assert measurement.verdict("read_hidden") is True
+    assert measurement.verdict("network") is True
+    assert measurement.verdict("symlink_escape") is True
+    # The whole point: nothing the plan declares enforced is measured open.
+    assert measurement.contradicts(bwrap.limitations(policy)) == (), measurement.as_dict()
+
+
+def test_pid_namespace_isolates_process_visibility(bwrap, workspace):
+    """--unshare-pid gives a private PID namespace: the confined child sees its own PID as 1."""
+    result = run(bwrap, workspace, "[ $$ -eq 1 ] && echo pid1")
+    assert result["exit_code"] == 0 and "pid1" in result["stdout"], result
+
+
+def test_die_with_parent_kills_the_child(bwrap, workspace, tmp_path):
+    """--die-with-parent reaps the confined child when bwrap's parent goes away."""
+    marker = tmp_path / "should-not-survive"
+    # The shell backgrounds a sleeper, then exits; with die-with-parent the sleeper
+    # must not live on to write the marker after the wrapper's parent is gone.
+    command = f"( sleep 2; touch {marker} ) & exit 0"
+    result = run(bwrap, workspace, command)
+    assert result["exit_code"] == 0
+    import time
+    time.sleep(3)
+    assert not marker.exists(), "a detached child survived the confined parent"

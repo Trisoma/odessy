@@ -144,6 +144,16 @@ jobs:
       - name: Live sandbox (Python executor)
         run: python -m pytest -q tests/test_sandbox_live.py
 
+      - name: Measured enforcement (backend-agnostic)
+        run: python -m pytest -q tests/test_enforcement_live.py
+
+      # The live suite cross-checks bwrap's declaration against a real-kernel probe
+      # (write outside, hidden read, network, symlink escape, PID namespace and
+      # die-with-parent). Print the measured boundary so a declared-but-open limit
+      # is visible in the job log, not just as a test verdict.
+      - name: Measured enforcement boundary
+        run: python -m odessy doctor | grep -E "read-only:|workspace-write:|sandbox"
+
       - name: Live sandbox (Node executor)
         working-directory: tools
         run: node --test dist/tests/sandbox-live.test.js
@@ -152,6 +162,35 @@ jobs:
         run: |
           python -m odessy doctor | tee doctor.txt
           grep -q "read-only: bwrap (full; network cut, credentials hidden)" doctor.txt
+
+  sandbox-macos:
+    # macOS ships sandbox-exec, so the seatbelt backend should be usable here.
+    # This is the first live check of that backend: it measures the real boundary
+    # through confine() and fails if the declaration overstates what was enforced.
+    name: Sandbox, live seatbelt (macos)
+    runs-on: macos-14
+    timeout-minutes: 15
+    env:
+      ODESSY_CONFIG_FILE: ${{ github.workspace }}/.ci-no-config.env
+      PYTHONUTF8: "1"
+      ODESSY_SANDBOX_LIVE: "1"
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install Odessy
+        run: python -m pip install -e ".[test]"
+
+      - name: Confirm seatbelt is available
+        run: python -m odessy doctor | tee doctor.txt
+
+      - name: Measured enforcement (seatbelt)
+        run: python -m pytest -q tests/test_enforcement_live.py
 
   rust:
     name: odessy-link (${{ matrix.os }})

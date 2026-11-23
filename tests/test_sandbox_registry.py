@@ -85,7 +85,12 @@ def test_required_isolation_without_a_backend_is_refused(tmp_path: Path) -> None
 def test_preferred_isolation_without_a_backend_still_runs_and_says_so(tmp_path: Path) -> None:
     result = CommandBridge(tmp_path).run(command="echo hi", timeout=30, mode="read-only", isolation="preferred")
     assert result["status"] == "ok"
-    assert result["sandbox"] == {"provider_id": "unconfined", "enforcement": "none", "limitations": []}
+    sandbox = result["sandbox"]
+    assert sandbox["provider_id"] == "unconfined" and sandbox["enforcement"] == "none"
+    assert sandbox["limitations"] == []
+    # The fail-open downgrade is now stated where the result is read, not only in
+    # doctor/approval. The default behaviour (still run) is deliberately unchanged.
+    assert "NO SANDBOX" in sandbox["warning"]
 
 
 def test_the_tool_server_reports_the_refusal(tmp_path: Path) -> None:
