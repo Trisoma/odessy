@@ -15,7 +15,7 @@ apps/desktop/                    Flutter app and native platform runners
   test/                         controller, widget, visual and architecture checks
 packages/odessy_client/          pure Dart HTTP/SSE contracts and credentials seam
 docs/ui/                        contracts, settings inventory, design and handoff
-tool/                           contract checks and opt-in real API fixtures
+scripts/                           contract checks and opt-in real API fixtures
 src/odessy/application/          existing Python authority and session API
 native/odessy-link/              existing Rust host security subsystem
 tools/                          existing Node MCP execution host

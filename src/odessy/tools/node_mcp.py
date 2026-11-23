@@ -70,7 +70,7 @@ class NodeToolServerHttp(AbstractAsyncContextManager):
     async def __aenter__(self) -> str:
         if not node_tool_server_dependencies_installed():
             raise RuntimeError(
-                "Node tool server dependencies are not installed. Run npm install in tools/."
+                "Node tool server dependencies are not installed. Run npm install in services/tool-server/."
             )
 
         npm = shutil.which("npm")
@@ -171,7 +171,7 @@ def node_tool_server_launch(node: str, *, environ: Mapping[str, str] | None = No
     """The reviewed tool server's ``(executable, built entry)``, or ``ValueError``.
 
     One answer to "where is the tool server": the built entry under ``ODESSY_NODE_TOOLS_DIR``
-    or the repository's ``tools/dist/src/server.js``, and the Node executable the caller named.
+    or the repository's ``services/tool-server/dist/src/server.js``, and the Node executable the caller named.
     The executable is never discovered on ``PATH`` — the Harness path names it explicitly,
     the same way it names ``ODESSY_HARNESS_EXE``.
     """
@@ -202,7 +202,7 @@ def _node_tools_dir(public_repo_root: Path, environ: Mapping[str, str] | None = 
         if not path.is_absolute():
             raise ValueError("ODESSY_NODE_TOOLS_DIR must be absolute")
         return path
-    return public_repo_root / "tools"
+    return public_repo_root / "services" / "tool-server"
 
 def _built_server_entry(tools_dir: Path) -> Path:
     return tools_dir / "dist" / "src" / "server.js"

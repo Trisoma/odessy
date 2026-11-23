@@ -18,7 +18,7 @@
 | Estado de la conexión SSH [#70](https://github.com/Trisoma/odessy/issues/70) | [Vistas de dispositivos](../../apps/desktop/lib/features/devices/presentation/) | `apps/desktop` | `flutter test test/ssh_connection_test.dart test/device_page_test.dart` |
 | Detección de Piper [#69](https://github.com/Trisoma/odessy/issues/69) | [`setup/voice_assets.py`](../../src/odessy/setup/voice_assets.py) | Raíz del repositorio | `python -m pytest tests/test_piper_provider.py tests/test_doctor.py -q` |
 | API de la aplicación Python | [`application/api.py`](../../src/odessy/application/api.py) | Raíz del repositorio | `python -m pytest tests/test_application_api.py -q` |
-| Herramientas MCP | [`tools/src/`](../../tools/src/) | `tools` | `npm run typecheck` · `npm test` |
+| Herramientas MCP | [`services/tool-server/src/`](../../services/tool-server/src/) | `services/tool-server` | `npm run typecheck` · `npm test` |
 | Cliente Dart | [`packages/odessy_client/`](../../packages/odessy_client/) | `packages/odessy_client` | `dart analyze` · `dart test` |
 | Monitoreo | [`services/monitoring/`](../../services/monitoring/) | `services/monitoring` | `go test ./... -count=1` |
 | Emparejamiento | [`native/odessy-link/`](../../native/odessy-link/) | `native/odessy-link` | `cargo test --locked` |
@@ -80,7 +80,7 @@ Para arrancar el escritorio completo en Windows, sigue [Primeros pasos](getting-
 | Componente | Preparación |
 | --- | --- |
 | Python | Usa Python 3.10–3.13 en un entorno virtual. Desde la raíz, ejecuta `python -m pip install -e ".[test,ui]"`. |
-| Servidor MCP | Usa Node 22 (también para las pruebas de integración de Python) o 24. Desde `tools/`, ejecuta `npm ci --no-audit --no-fund` y `npm run build`. |
+| Servidor MCP | Usa Node 22 (también para las pruebas de integración de Python) o 24. Desde `services/tool-server/`, ejecuta `npm ci --no-audit --no-fund` y `npm run build`. |
 | Flutter y Dart | Usa Flutter 3.47.7 estable con su SDK de Dart. Ejecuta `flutter pub get` en `apps/desktop` o `dart pub get` en `packages/odessy_client`. |
 | Monitoreo | Usa la versión de Go indicada en [go.mod](../../services/monitoring/go.mod). |
 | Emparejamiento | Usa Rust estable y Cargo. |
@@ -151,7 +151,7 @@ python -m odessy doctor
 python -m odessy doctor --voice
 ```
 
-`doctor` nombra cada paso fallido u opcional junto con una solución, por ejemplo un endpoint de modelo que no responde, un directorio `tools/` sin compilar o los recursos opcionales de habla y de palabra de activación. Las comprobaciones de Piper y de proveedores personalizados están incompletas; usar también sus pruebas controladas de proveedores. Un `[FAIL]` para el endpoint del modelo es esperable antes de que se ejecute Ollama (u otro endpoint) y no bloquea las comprobaciones de modelo falso anteriores. No descarga recursos ni realiza inferencia en la nube, pero puede sondear endpoints configurados y listar herramientas de terceros. No es una réplica completa de las credenciales de sesión del escritorio ni una prueba de aceptación de audio físico. Mantener el error visible del escritorio y la configuración seleccionada junto a su salida.
+`doctor` nombra cada paso fallido u opcional junto con una solución, por ejemplo un endpoint de modelo que no responde, un directorio `services/tool-server/` sin compilar o los recursos opcionales de habla y de palabra de activación. Las comprobaciones de Piper y de proveedores personalizados están incompletas; usar también sus pruebas controladas de proveedores. Un `[FAIL]` para el endpoint del modelo es esperable antes de que se ejecute Ollama (u otro endpoint) y no bloquea las comprobaciones de modelo falso anteriores. No descarga recursos ni realiza inferencia en la nube, pero puede sondear endpoints configurados y listar herramientas de terceros. No es una réplica completa de las credenciales de sesión del escritorio ni una prueba de aceptación de audio físico. Mantener el error visible del escritorio y la configuración seleccionada junto a su salida.
 
 ## Ejecutar las comprobaciones pertinentes
 
@@ -172,7 +172,7 @@ La CI comprueba que las respuestas del modelo falso comiencen con `The current t
 
 ### Servidor de herramientas Node
 
-Desde `tools/`:
+Desde `services/tool-server/`:
 
 ```sh
 npm ci --no-audit --no-fund
@@ -208,14 +208,14 @@ Estas comprobaciones requieren bubblewrap, util-linux y espacios de nombres de u
 python -m pytest -q tests/test_sandbox_live.py
 ```
 
-Desde `tools/`, ejecutar `node --test dist/tests/sandbox-live.test.js`. La comprobación de `doctor` en la CI es `python -m odessy doctor | tee doctor.txt; grep -q "read-only: bwrap (full; network cut, credentials hidden)" doctor.txt` bajo Bash en la raíz. Estas comprobaciones necesitan un kernel Linux real; Windows no es suficiente.
+Desde `services/tool-server/`, ejecutar `node --test dist/tests/sandbox-live.test.js`. La comprobación de `doctor` en la CI es `python -m odessy doctor | tee doctor.txt; grep -q "read-only: bwrap (full; network cut, credentials hidden)" doctor.txt` bajo Bash en la raíz. Estas comprobaciones necesitan un kernel Linux real; Windows no es suficiente.
 
 ### Aplicación de escritorio y cliente Dart
 
 Desde la raíz del repositorio:
 
 ```sh
-python tool/check_desktop_contracts.py
+python scripts/check_desktop_contracts.py
 python -m unittest discover -s tests -p test_desktop_settings_inventory.py -v
 ```
 

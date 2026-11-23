@@ -32,13 +32,16 @@ READ_ONLY_TOOLS = frozenset({
 COLLABORATION_TOOLS = frozenset({
     "model.consult", "agent.delegate", "agent.job_status", "agent.cancel",
     "agent.run", "agent.run_continue", "agent.run_status", "agent.run_cancel",
+    "agent.plan_run", "agent.plan_continue", "agent.plan_status", "agent.plan_cancel",
 })
 
 #: Collaboration tools that look at or stop work already authorized.
-COLLABORATION_INSPECT_TOOLS = frozenset({"agent.job_status", "agent.cancel", "agent.run_status", "agent.run_cancel"})
+COLLABORATION_INSPECT_TOOLS = frozenset({"agent.job_status", "agent.cancel", "agent.run_status", "agent.run_cancel",
+    "agent.plan_status", "agent.plan_cancel"})
 
 #: Collaboration tools that start or hand over work, and so need a person's yes.
-GRANTED_TOOLS = frozenset({"agent.delegate", "agent.run", "agent.run_continue"})
+GRANTED_TOOLS = frozenset({"agent.delegate", "agent.run", "agent.run_continue",
+    "agent.plan_run", "agent.plan_continue"})
 
 #: Every tool of Odessy's own the default policy knows.
 BUILTIN_TOOLS = frozenset({

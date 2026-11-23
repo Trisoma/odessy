@@ -13,7 +13,7 @@ the archive. Traffic in this prototype is unencrypted: do not expose it publicly
 From the repository root, use an already prepared development environment:
 
 ```powershell
-python tool/package_executor.py --wheelhouse <matched-wheelhouse> --licenses <licenses.json> --output <new-output-directory> --node <matched-node-runtime> --toolserver <packaged-tool-server>
+python scripts/package_executor.py --wheelhouse <matched-wheelhouse> --licenses <licenses.json> --output <new-output-directory> --node <matched-node-runtime> --toolserver <packaged-tool-server>
 ```
 
 The wheelhouse must contain exactly one current Odessy wheel with the executor

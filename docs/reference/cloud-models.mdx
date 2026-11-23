@@ -76,6 +76,25 @@ Or select the backend persistently with `ODESSY_MODEL_BACKEND=claude`.
 | `ODESSY_CLOUD_CONTEXT_CHARS` | all | Characters of tool results one turn re-sends before the oldest are compacted, default 24000; `0` turns compaction off |
 | `ODESSY_CLOUD_KEEP_RECENT_RESULTS` | all | How many of the latest tool results are never compacted, default 2 |
 
+### Optional cloud input limit
+
+For the **Custom** backend or the CLI, add these settings to `config/odessy.env`
+and restart the Odessy service. Harness sends its own requests and does not use
+this guard.
+
+```text
+ODESSY_CONTEXT_BUDGET_GUARD=on
+ODESSY_CONTEXT_WINDOW_TOKENS=32000
+```
+
+The estimate includes the system prompt, messages, tool calls, and tool
+schemas sent to Claude and OpenAI-compatible providers, including DeepSeek.
+Choose a limit below your model’s context window to leave room for its reply.
+
+The guard is off by default. A limit of `0` disables rejection. Lower
+`ODESSY_CONTEXT_CHARS_PER_TOKEN` from its default of `3` to reject requests
+earlier. The guard leaves the request intact and does not use a provider tokenizer.
+
 ### DeepSeek with low reasoning effort
 
 For the official DeepSeek API's documented `deepseek-flash` model:

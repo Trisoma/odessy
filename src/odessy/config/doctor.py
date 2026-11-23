@@ -78,7 +78,7 @@ def _command_output(argv: list[str], timeout: float) -> str | None:
 
 
 def _node_tools_state() -> tuple[bool, bool]:
-    """(dependencies installed, build current) for the repository's tools/ directory."""
+    """(dependencies installed, build current) for the repository's services/tool-server/ directory."""
 
     from odessy.tools.node_mcp import _build_is_current, _node_tools_dir, _public_repo_root
 
@@ -193,7 +193,7 @@ def _hooks_checks(env: Mapping[str, str]) -> list[Check]:
 _SANDBOX_FIX = {
     "linux": "Install bubblewrap (apt install bubblewrap) and allow unprivileged user namespaces "
              "(on Ubuntu 24.04: sysctl kernel.apparmor_restrict_unprivileged_userns=0).",
-    "win32": "Install the Node tool server (cd tools && npm ci && npm run build): it adds the windows-acl "
+    "win32": "Install the Node tool server (cd services/tool-server && npm ci && npm run build): it adds the windows-acl "
              "sandbox (partial; it confines writes only).",
     "darwin": "sandbox-exec should be at /usr/bin/sandbox-exec; check that it runs.",
 }
@@ -481,19 +481,19 @@ def _node_checks(probes: Probes) -> list[Check]:
         return checks
     installed, built = probes.node_tools_state()
     if not installed:
-        checks.append(Check("Tool server", "warn", f"tools/ dependencies are not installed; {degraded}", "cd tools && npm install && npm run build"))
+        checks.append(Check("Tool server", "warn", f"services/tool-server/ dependencies are not installed; {degraded}", "cd services/tool-server && npm install && npm run build"))
         return checks
     if not built:
         checks.append(
             Check(
                 "Tool server",
                 "warn",
-                "tools/ build is missing or out of date; every start will compile first (about 10 s)",
-                "cd tools && npm run build",
+                "services/tool-server/ build is missing or out of date; every start will compile first (about 10 s)",
+                "cd services/tool-server && npm run build",
             )
         )
     else:
-        checks.append(Check("Tool server", "ok", "tools/ is installed and built; started automatically on loopback"))
+        checks.append(Check("Tool server", "ok", "services/tool-server/ is installed and built; started automatically on loopback"))
     return checks
 
 
@@ -590,7 +590,7 @@ def _remote_checks(env: Mapping[str, str], probes: Probes) -> list[Check]:
                     "Tool server",
                     "fail",
                     f"{url} is not reachable",
-                    "On the laptop: set ODESSY_MCP_HOST=0.0.0.0 and run `npm run start:http` in tools/ "
+                    "On the laptop: set ODESSY_MCP_HOST=0.0.0.0 and run `npm run start:http` in services/tool-server/ "
                     "(see README, 'Laptop MCP Server').",
                 )
             )

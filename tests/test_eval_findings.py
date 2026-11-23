@@ -339,7 +339,7 @@ def test_regrade_turns_an_old_escalation_infra_error_into_a_block() -> None:
     ],
 )
 def test_recorder_find_matches_like_the_node_server(name: str, pattern: str, expected: bool) -> None:
-    # Same table as tools/tests/read-only-tools.test.ts: the recorder must not be more
+    # Same table as services/tool-server/tests/read-only-tools.test.ts: the recorder must not be more
     # forgiving than the real server, or the eval hides a real failure.
     from evals.recording_mcp import file_name_matches
 

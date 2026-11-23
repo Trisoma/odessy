@@ -15,11 +15,11 @@ The Windows setup application is the Flutter desktop setup application, packaged
 setup executable:
 
 ```text
-tool/build_setup_bundle.py      # offline payload: private Python, Flutter release,
+scripts/build_setup_bundle.py      # offline payload: private Python, Flutter release,
                                 #   application wheelhouse, Node/tools, Harness runtime
-tool/audit_setup_artifact.py    # read-only inventory, digest and license audit
-tool/package_native_setup.py    # native wrapper (delegates to the NSIS builder)
-tool/windows_nsis.py            # one-layer NSIS bootstrap
+scripts/audit_setup_artifact.py    # read-only inventory, digest and license audit
+scripts/package_native_setup.py    # native wrapper (delegates to the NSIS builder)
+scripts/windows_nsis.py            # one-layer NSIS bootstrap
         -> desktop/odessy_desktop.exe --setup
 ```
 
@@ -42,7 +42,7 @@ window in this package, and no PyInstaller build path. The former
 `installer/uninstall_ui.py`, `installer/ui/`, `installer/start.py`,
 `installer/exe_entry.py`, `installer/entrypoints.py`, `installer/build/build_exe.py`,
 `installer/build/bootstrap.py` and `installer/windows.manifest` were removed once the
-Flutter path replaced them. `tool/audit_setup_artifact.py` refuses a payload that still
+Flutter path replaced them. `scripts/audit_setup_artifact.py` refuses a payload that still
 carries them, so release packaging cannot silently select the removed wizard.
 
 A public artifact must be matched to its release manifest; implementation and prior

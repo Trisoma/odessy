@@ -74,7 +74,7 @@ Inputs must be independently fetched/verified before invoking the builder:
 - Reviewed notices directory containing license texts plus `inventory.json`.
 
 ```bash
-bash tool/linux/build_portable.sh \
+bash scripts/linux/build_portable.sh \
   --python-runtime /absolute/verified-python \
   --node-runtime /absolute/verified-node \
   --wheelhouse /absolute/linux-wheelhouse \
@@ -107,7 +107,7 @@ cannot decide legal completeness. Do not use placeholder entries in a release.
 
 ## Acceptance before publication
 
-1. Native build succeeds and `bash tool/linux/check_portable.sh <archive>` passes.
+1. Native build succeeds and `bash scripts/linux/check_portable.sh <archive>` passes.
 2. Extract outside the checkout with no development tools on PATH; verify, launch
    and configure an existing LLM through the actual Flutter UI.
 3. Deliberately send text; complete one policy-controlled tool call; verify both

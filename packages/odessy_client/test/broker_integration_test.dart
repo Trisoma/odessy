@@ -53,6 +53,6 @@ void main() {
     }
   },
       skip: !enabled
-          ? 'Run tool/desktop_fixture_server.py and set ODESSY_BROKER_FIXTURE=1.'
+          ? 'Run scripts/desktop_fixture_server.py and set ODESSY_BROKER_FIXTURE=1.'
           : false);
 }

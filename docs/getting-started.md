@@ -26,7 +26,7 @@ $previewRepo = (Get-Location).Path.Replace('\', '/')
 $previewPython = "$previewRepo/.venv/Scripts/python.exe"
 py -3.13 -m venv .venv
 & $previewPython -m pip install -e ".[test,ui]"
-Push-Location tools
+Push-Location services/tool-server
 npm.cmd ci --no-audit --no-fund
 npm.cmd run build
 Pop-Location

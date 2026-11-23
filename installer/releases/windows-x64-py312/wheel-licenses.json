@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "scope": "Windows x64 shipping payload wheels: the pinned CPython 3.12 runtime set, the Odessy wheel, and the keyring desktop closure.",
-  "note": "Derived from each wheel METADATA by tool/audit_setup_artifact.derive_license. Every wheel ships its own LICENSE/LICENSE-File inside the wheel; the payload also carries the CPython runtime LICENSE, the Harness runtime licenses and THIRD_PARTY_NOTICES.md, and the repository notices.",
+  "note": "Derived from each wheel METADATA by scripts/audit_setup_artifact.derive_license. Every wheel ships its own LICENSE/LICENSE-File inside the wheel; the payload also carries the CPython runtime LICENSE, the Harness runtime licenses and THIRD_PARTY_NOTICES.md, and the repository notices.",
   "wheels": [
     {
       "wheel": "annotated_doc-0.0.4-py3-none-any.whl",

@@ -36,7 +36,7 @@ flowchart LR
 | Propuesta y despacho | [`runtime/agent_loop.py`](../../src/odessy/runtime/agent_loop.py) | Filtrar la propuesta, tomar una instantánea de su plan y revalidar justo antes del despacho. |
 | Política y aprobación exacta | [`authority/policy.py`](../../src/odessy/authority/policy.py), [`action_approval.py`](../../src/odessy/authority/action_approval.py) | Denegaciones duras, argumentos/destino/contenido exactos y ámbitos de autorización independientes. |
 | Interacción y modo | [`interaction/broker.py`](../../src/odessy/interaction/broker.py), [`application/access_modes.py`](../../src/odessy/application/access_modes.py) | Una respuesta de la UI/voz resuelve la solicitud vinculada. Los modos no pueden crear derechos de espacio de trabajo ni remotos. |
-| Adaptadores de ejecución | [`tools/`](../../src/odessy/tools), [`tools/src/`](../../tools/src), [`execution/`](../../src/odessy/execution) | Validación específica de cada adaptador y confinamiento disponible. El protocolo MCP en sí no es una concesión de permisos. |
+| Adaptadores de ejecución | [`src/odessy/tools/`](../../src/odessy/tools), [`services/tool-server/src/`](../../services/tool-server/src), [`execution/`](../../src/odessy/execution) | Validación específica de cada adaptador y confinamiento disponible. El protocolo MCP en sí no es una concesión de permisos. |
 | Comandos SSH | [`tools/ssh_executor.py`](../../src/odessy/tools/ssh_executor.py) | Aprobación exacta, identidad de host fijada, salida acotada y revocación; sin sandbox remoto ni PTY. |
 
 No todas las herramientas se ejecutan a través de Node: también existen las integradas de Python y el adaptador SSH.
@@ -51,8 +51,8 @@ Consulta los [comandos de lanzamiento gestionado](./getting-started.md).
 
 La monitorización en Go es un componente empaquetado opcional y sigue siendo opt-in. Usa la [vía de colaboración de SSH](../../src/odessy/ssh/README.md) (solo en inglés) para el modelo de computadora compartida, los límites de capacidad y las comprobaciones con fixtures. Empaquetar un helper o pasar un fixture local no califica todas las plataformas instaladas ni todas las direcciones remotas.
 
-- [`tool/`](../../tool/) reúne los scripts de compilación y verificación.
-- [`tools/`](../../tools/) es el servidor MCP en Node.
+- [`scripts/`](../../scripts/) reúne los scripts de compilación y verificación.
+- [`services/tool-server/`](../../services/tool-server/) es el servidor MCP en Node.
 - [`src/odessy/tools/`](../../src/odessy/tools/) contiene los adaptadores de herramientas de Python, incluido el ejecutor SSH.
 
 | Componente / directorio | Lenguaje y responsabilidad | Contribución y revisión |
@@ -60,7 +60,7 @@ La monitorización en Go es un componente empaquetado opcional y sigue siendo op
 | [`src/odessy/runtime/`](../../src/odessy/runtime) y [`models/`](../../src/odessy/models) | Bucle de Python, sesiones, adaptadores de modelo | Colaboradores de runtime/modelos; la seguridad del despacho requiere revisión de mantenedores |
 | [`src/odessy/authority/`](../../src/odessy/authority), [`execution/`](../../src/odessy/execution) | Política de Python, autoridad de espacio de trabajo, sandbox | **se requiere revisión de mantenedores**; no es trabajo para principiantes |
 | [`src/odessy/voice/`](../../src/odessy/voice) | Captura en Python, adaptadores STT/TTS y sesiones de voz | Ejemplos/pruebas de proveedores; los cambios de aprobación requieren revisión de mantenedores |
-| [`tools/`](../../tools) | Herramientas MCP en TypeScript/Node y comprobaciones de host | Colaboradores de herramientas; guardas y sandbox: **se requiere revisión de mantenedores** |
+| [`services/tool-server/`](../../services/tool-server) | Herramientas MCP en TypeScript/Node y comprobaciones de host | Colaboradores de herramientas; guardas y sandbox: **se requiere revisión de mantenedores** |
 | [`native/odessy-link/`](../../native/odessy-link) | Identidad Rust, enrolamiento, relay mTLS, telemetría | Colaboradores de Rust; enrolamiento, concesiones y claves: **se requiere revisión de mantenedores** |
 | [`apps/desktop/`](../../apps/desktop) | Conversación, ajustes e interacciones en Dart/Flutter | Colaboradores de UI/accesibilidad; la UI no es autoridad de ejecución |
 | [`packages/odessy_client/`](../../packages/odessy_client) | Cliente backend y modelos en Dart | Colaboradores de cliente/API; la autenticación requiere revisión de mantenedores |

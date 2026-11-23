@@ -77,7 +77,7 @@ void main() {
             python!,
             [
               '-c',
-              "import site,runpy; site.addsitedir(r'${Platform.environment['ODESSY_PREFLIGHT_SITE']}'); runpy.run_path('tool/agent_basics_preflight_fixture.py',run_name='__main__')"
+              "import site,runpy; site.addsitedir(r'${Platform.environment['ODESSY_PREFLIGHT_SITE']}'); runpy.run_path('scripts/agent_basics_preflight_fixture.py',run_name='__main__')"
             ],
             workingDirectory: root.path,
             environment: {

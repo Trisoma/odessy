@@ -838,8 +838,9 @@ class SessionController:
         risk = decision_value.get('risk', 'high')
         if name == 'agent.delegate' and not hasattr(self.jobs, 'preflight_submission'):
             await self._screen_direct(name, arguments, risk)
+        plan_run = name in {'agent.plan_run', 'agent.plan_continue'} and getattr(self, 'plan_runs', None) is not None
         handoff = name in {'agent.run', 'agent.run_continue'} and self.runs is not None
-        if handoff or (name == 'agent.delegate' and hasattr(self.jobs, 'preflight_submission')):
+        if handoff or plan_run or (name == 'agent.delegate' and hasattr(self.jobs, 'preflight_submission')):
             from pathlib import Path
             from odessy.authority.action_approval import build_action_approval
             from odessy.authority.policy import OdessyPolicy
@@ -849,6 +850,10 @@ class SessionController:
                     return self.runs.preflight_start(**arguments)
                 if name == 'agent.run_continue':
                     return self.runs.preflight_continue(**arguments)
+                if name == 'agent.plan_run':
+                    return self.plan_runs.preflight_plan(arguments['steps'], arguments.get('workspace'))
+                if name == 'agent.plan_continue':
+                    return self.plan_runs.preflight_continue(**arguments)
                 return self.jobs.preflight_submission(arguments.get('participant'), arguments.get('task'),
                     mode=arguments.get('mode', 'advice'), workspace=arguments.get('workspace'))
             # The job manager's preflight first, for its specific messages; then the same
@@ -891,6 +896,38 @@ class SessionController:
     def answer_question(self, question_id, answer, *, channel='authenticated_ui'):
         return self.interactions.resolve_question(question_id, answer, channel=channel)
 
+    async def submit_plan(self, intent, workspace=''):
+        """Turn ``intent`` into a role-based plan and submit it for approval.
+
+        The plan is an untrusted proposal built from configured roles; it is
+        mapped to an ``agent.run`` request so the ordinary high-risk approval
+        path (preflight, SHA-256 binding, typed confirmation) is reused. This
+        method does not start any work — approval only authorizes the request;
+        execution belongs to the caller via the existing run tools.
+        """
+        from odessy.collaboration.planner import (
+            plan_from_intent, to_run_arguments, validate_plan,
+        )
+        from odessy.runtime.types import PolicyDecision
+
+        collaboration = self.collaboration
+        config = getattr(collaboration, 'config', None)
+        if config is None or not isinstance(intent, str) or not intent.strip():
+            return {'status': 'error', 'reason': 'planning unavailable'}
+        plan = plan_from_intent(config, intent, workspace=workspace or '')
+        if plan is None:
+            return {'status': 'error', 'reason': 'intent does not describe a supported two-step handoff'}
+        okay, reason = validate_plan(plan, config)
+        if not okay:
+            return {'status': 'error', 'reason': reason}
+        if self.runs is None:
+            return {'status': 'error', 'reason': 'handoff runs are unavailable'}
+        arguments = to_run_arguments(plan, config)
+        decision = PolicyDecision('confirm', 'Submit a planned agent handoff', 'high')
+        request = ToolRequest('agent.run', arguments)
+        approved = await self.confirm(decision, request)
+        return {'status': 'approved' if approved else 'declined', 'plan': plan.public_dict()}
+
     async def _consult_participant(self, participant, text):
         """One explicit consultation, on the engine-independent product path.
 
@@ -922,6 +959,11 @@ class SessionController:
 
     async def run_turn(self, text, participant=None, **kwargs):
         attachments = kwargs.pop('attachments', ())
+        from odessy.context_budget import context_budget_turn
+        with context_budget_turn():
+            return await self._run_turn_with_context(text, participant, attachments, **kwargs)
+
+    async def _run_turn_with_context(self, text, participant, attachments, **kwargs):
         recorder = getattr(self, '_conversation_recorder', None)
         if recorder is None:
             return await self._run_turn_impl(text, participant=participant, **kwargs)

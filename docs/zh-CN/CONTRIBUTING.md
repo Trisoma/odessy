@@ -18,7 +18,7 @@
 | SSH 连接状态 [#70](https://github.com/Trisoma/odessy/issues/70) | [设备界面](../../apps/desktop/lib/features/devices/presentation/) | `apps/desktop` | `flutter test test/ssh_connection_test.dart test/device_page_test.dart` |
 | Piper 检测 [#69](https://github.com/Trisoma/odessy/issues/69) | [`setup/voice_assets.py`](../../src/odessy/setup/voice_assets.py) | 仓库根目录 | `python -m pytest tests/test_piper_provider.py tests/test_doctor.py -q` |
 | Python 应用 API | [`application/api.py`](../../src/odessy/application/api.py) | 仓库根目录 | `python -m pytest tests/test_application_api.py -q` |
-| MCP 工具 | [`tools/src/`](../../tools/src/) | `tools` | `npm run typecheck` · `npm test` |
+| MCP 工具 | [`services/tool-server/src/`](../../services/tool-server/src/) | `services/tool-server` | `npm run typecheck` · `npm test` |
 | Dart 客户端 | [`packages/odessy_client/`](../../packages/odessy_client/) | `packages/odessy_client` | `dart analyze` · `dart test` |
 | 监控 | [`services/monitoring/`](../../services/monitoring/) | `services/monitoring` | `go test ./... -count=1` |
 | 配对 | [`native/odessy-link/`](../../native/odessy-link/) | `native/odessy-link` | `cargo test --locked` |
@@ -80,7 +80,7 @@ TTS 基准测试见[基准指南](../../benchmark/tts/README.md)和 [#71](https:
 | 组件 | 准备 |
 | --- | --- |
 | Python | 用 Python 3.10–3.13 创建虚拟环境。在仓库根目录运行 `python -m pip install -e ".[test,ui]"`。 |
-| MCP 工具服务 | 使用 Node 22（Python 集成检查也用这个版本）或 24。在 `tools/` 运行 `npm ci --no-audit --no-fund` 和 `npm run build`。 |
+| MCP 工具服务 | 使用 Node 22（Python 集成检查也用这个版本）或 24。在 `services/tool-server/` 运行 `npm ci --no-audit --no-fund` 和 `npm run build`。 |
 | Flutter 和 Dart | 使用 Flutter 3.47.7 stable 及其自带的 Dart SDK。在 `apps/desktop` 运行 `flutter pub get`，或在 `packages/odessy_client` 运行 `dart pub get`。 |
 | 监控 | 使用 [go.mod](../../services/monitoring/go.mod) 指定的 Go 版本。 |
 | 配对 | 使用稳定版 Rust 和 Cargo。 |
@@ -151,7 +151,7 @@ python -m odessy doctor
 python -m odessy doctor --voice
 ```
 
-`doctor` 会列出每个失败或可选的步骤，并在旁边给出一条修复建议，例如模型端点没有响应、`tools/` 目录尚未构建，或可选的语音/唤醒资产缺失。Piper 与自定义服务提供方的检查尚不完整；请同时使用它们受控的服务提供方测试。在 Ollama（或其他端点）运行之前，模型端点出现 `[FAIL]` 是预期现象，不会阻断上文中的 fake-model 检查。它不会下载资产，也不会执行云端推理，但可以探测已配置的端点并列出第三方工具。它并不能完整复刻桌面端仅存于会话中的凭据，也不能替代物理音频验收测试。请把桌面端可见的错误与所选配置连同其输出一并保留。
+`doctor` 会列出每个失败或可选的步骤，并在旁边给出一条修复建议，例如模型端点没有响应、`services/tool-server/` 目录尚未构建，或可选的语音/唤醒资产缺失。Piper 与自定义服务提供方的检查尚不完整；请同时使用它们受控的服务提供方测试。在 Ollama（或其他端点）运行之前，模型端点出现 `[FAIL]` 是预期现象，不会阻断上文中的 fake-model 检查。它不会下载资产，也不会执行云端推理，但可以探测已配置的端点并列出第三方工具。它并不能完整复刻桌面端仅存于会话中的凭据，也不能替代物理音频验收测试。请把桌面端可见的错误与所选配置连同其输出一并保留。
 
 ## 运行相关检查
 
@@ -172,7 +172,7 @@ CI 会检查 fake-model 的回复分别以 `The current time is ` 与 `Directory
 
 ### Node 工具服务器
 
-在 `tools/` 中执行：
+在 `services/tool-server/` 中执行：
 
 ```sh
 npm ci --no-audit --no-fund
@@ -210,14 +210,14 @@ python -m pytest -q tests/test_paired_transport.py tests/test_paired_integration
 python -m pytest -q tests/test_sandbox_live.py
 ```
 
-在 `tools/` 中运行 `node --test dist/tests/sandbox-live.test.js`。CI 中的 doctor 检查是在仓库根目录的 Bash 下执行 `python -m odessy doctor | tee doctor.txt; grep -q "read-only: bwrap (full; network cut, credentials hidden)" doctor.txt`。这些检查需要真实的 Linux 内核；Windows 无法满足。
+在 `services/tool-server/` 中运行 `node --test dist/tests/sandbox-live.test.js`。CI 中的 doctor 检查是在仓库根目录的 Bash 下执行 `python -m odessy doctor | tee doctor.txt; grep -q "read-only: bwrap (full; network cut, credentials hidden)" doctor.txt`。这些检查需要真实的 Linux 内核；Windows 无法满足。
 
 ### 桌面端与 Dart 客户端
 
 在仓库根目录执行：
 
 ```sh
-python tool/check_desktop_contracts.py
+python scripts/check_desktop_contracts.py
 python -m unittest discover -s tests -p test_desktop_settings_inventory.py -v
 ```
 

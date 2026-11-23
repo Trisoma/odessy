@@ -71,7 +71,7 @@ DLLs/data beside it. Do not infer source identity from an old executable.
 
 From `apps/desktop`, run `dart format --output=none --set-exit-if-changed lib test`,
 `flutter analyze` and `flutter test`. From the repository root run
-`python tool/check_desktop_contracts.py`. Use `--no-pub` only with a valid resolved
+`python scripts/check_desktop_contracts.py`. Use `--no-pub` only with a valid resolved
 cache; tests/analysis are not installed or hardware acceptance.
 
 The maintained screenshot set is exclusively under `docs/view/`; old UI screenshot sets are removed.

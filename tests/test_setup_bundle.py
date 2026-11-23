@@ -10,14 +10,14 @@ import pytest
 
 
 def builder():
-    file=Path(__file__).parents[1]/'tool/build_setup_bundle.py'
+    file=Path(__file__).parents[1]/'scripts/build_setup_bundle.py'
     spec=importlib.util.spec_from_file_location('setup_bundle_builder',file)
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     return module
 
 
 def auditor():
-    file=Path(__file__).parents[1]/'tool/audit_setup_artifact.py'
+    file=Path(__file__).parents[1]/'scripts/audit_setup_artifact.py'
     spec=importlib.util.spec_from_file_location('setup_artifact_audit',file)
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     return module

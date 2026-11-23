@@ -2,7 +2,7 @@ import copy
 import importlib.util
 from pathlib import Path
 import unittest
-spec = importlib.util.spec_from_file_location('desktop_contracts', Path(__file__).parents[1] / 'tool/check_desktop_contracts.py')
+spec = importlib.util.spec_from_file_location('desktop_contracts', Path(__file__).parents[1] / 'scripts/check_desktop_contracts.py')
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 class InventoryTests(unittest.TestCase):
