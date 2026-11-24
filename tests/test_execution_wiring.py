@@ -128,11 +128,11 @@ def test_no_backend_is_reported_rather_than_implied(tmp_path: Path) -> None:
     # The command still runs, and the result states exactly what confined it. The
     # absence is loud: a caller never has to infer enforcement from silence.
     assert result["exit_code"] == 0, result
-    assert result["sandbox"] == {
-        "provider_id": "unconfined",
-        "enforcement": "none",
-        "limitations": [],
-    }
+    sandbox = result["sandbox"]
+    assert sandbox["provider_id"] == "unconfined" and sandbox["enforcement"] == "none"
+    assert sandbox["limitations"] == []
+    # The fail-open downgrade is now also stated where the result is read.
+    assert "NO SANDBOX" in sandbox["warning"]
 
 
 def test_a_timeout_still_reports_the_confinement(tmp_path: Path) -> None:
