@@ -32,6 +32,12 @@ LIVE = os.environ.get("ODESSY_SANDBOX_LIVE") == "1"
 
 @pytest.fixture
 def layout(tmp_path: Path):
+    # Skip inside the fixture so the listener and its thread are never created when
+    # this file runs in the ordinary Python job (where ODESSY_SANDBOX_LIVE is unset).
+    # Building them only to skip in the test body left daemon threads to be reaped at
+    # interpreter teardown, which surfaced as "Event loop is closed" on Python 3.10.
+    if not LIVE:
+        pytest.skip("set ODESSY_SANDBOX_LIVE=1 to measure a real backend")
     workspace = tmp_path / "ws"
     outside = tmp_path / "outside"
     hidden = tmp_path / "hidden"
@@ -63,9 +69,6 @@ def layout(tmp_path: Path):
 
 def test_measured_boundary_does_not_overstate(layout):
     workspace, outside, hidden, port = layout
-    if not LIVE:
-        pytest.skip("set ODESSY_SANDBOX_LIVE=1 to measure a real backend")
-
     policy = ExecutionPolicy(mode="workspace-write", workspace_root=str(workspace),
                              network="deny", hidden_paths=(str(hidden),))
     registry = ProviderRegistry(default_execution_providers())
