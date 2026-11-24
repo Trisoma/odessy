@@ -26,6 +26,7 @@ from odessy.execution.contract import ExecutionPolicy, Requirement
 from odessy.execution.enforcement_probe import probe_enforcement
 from odessy.execution.providers import default_execution_providers
 from odessy.execution.registry import ProviderRegistry
+from odessy.execution.roots import writable_roots
 
 LIVE = os.environ.get("ODESSY_SANDBOX_LIVE") == "1"
 
@@ -71,6 +72,12 @@ def test_measured_boundary_does_not_overstate(layout):
     workspace, outside, hidden, port = layout
     policy = ExecutionPolicy(mode="workspace-write", workspace_root=str(workspace),
                              network="deny", hidden_paths=(str(hidden),))
+    if sys.platform == "darwin":
+        # Seatbelt allows writes in system temp directories in workspace-write mode.
+        target = outside.resolve()
+        assert not any(target.is_relative_to(root) for root in writable_roots(policy)), (
+            "Run this test with --basetemp in a directory outside system temp roots"
+        )
     registry = ProviderRegistry(default_execution_providers())
     try:
         # select() returns the strongest backend that satisfies the request and
@@ -101,6 +108,8 @@ def test_measured_boundary_does_not_overstate(layout):
     # measurement into a red CI without telling us what the host actually did —
     # the printed report above is the evidence we need before tightening this.
     assert measurement.verdict("write_outside") is True, measurement.as_dict()
+    if sys.platform == "darwin":
+        assert measurement.verdict("symlink_escape") is True, measurement.as_dict()
     if measurement.verdict("network") is False:
         print("diagnostic: network was reachable despite network=deny")
     if measurement.verdict("read_hidden") is False:

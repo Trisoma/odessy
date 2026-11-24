@@ -199,7 +199,7 @@ jobs:
         run: python -m odessy doctor | tee doctor.txt
 
       - name: Measured enforcement (seatbelt)
-        run: python -m pytest -q tests/test_enforcement_live.py
+        run: python -m pytest -q --basetemp=.seatbelt-pytest tests/test_enforcement_live.py
 
   rust:
     name: odessy-link (${{ matrix.os }})
@@ -351,14 +351,14 @@ jobs:
   ci-gate:
     name: CI gate
     if: always()
-    needs: [python, sandbox-live, rust, pairing, tool-server]
+    needs: [python, sandbox-live, sandbox-macos, rust, pairing, tool-server]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Check every mandatory job result
         env:
           NEEDS: ${{ toJSON(needs) }}
-          REQUIRED_JOBS: python sandbox-live rust pairing tool-server
+          REQUIRED_JOBS: python sandbox-live sandbox-macos rust pairing tool-server
         run: |
           python3 - <<'PY'
           import json
