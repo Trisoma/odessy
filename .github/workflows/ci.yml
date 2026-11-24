@@ -174,7 +174,10 @@ jobs:
     # This is the first live check of that backend: it measures the real boundary
     # through confine() and fails if the declaration overstates what was enforced.
     name: Sandbox, live seatbelt (macos)
-    runs-on: macos-14
+    # macos-14 maps to an arm64 runner label this account's plan does not support;
+    # macos-latest is already used by setup-native.yml and resolves to a supported
+    # label, so seatbelt gets a real (x64) host to run sandbox-exec on.
+    runs-on: macos-latest
     timeout-minutes: 15
     env:
       ODESSY_CONFIG_FILE: ${{ github.workspace }}/.ci-no-config.env
