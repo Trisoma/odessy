@@ -13,7 +13,9 @@ absence rather than from permission.
 Limitations are derived from the profile this provider actually emits:
 
 - ``--ro-bind / /`` grants read across the host, so reads are not restricted.
-- No network namespace is unshared, so network is not restricted.
+- Network is confined only when the policy asks for it: ``network="deny"`` adds
+  ``--unshare-net``. The default ``network="allow"`` leaves it unrestricted, which
+  is why ``limitations()`` reports ``cannot_restrict_network`` for that case.
 - ``--unshare-pid`` *does* restrict host process visibility, so that is genuinely
   not a limitation here.
 - The host kernel is still shared, which is what makes this same-world
