@@ -358,10 +358,13 @@ class BreakpointService:
             checkpoint_id = str(snapshot_ref).rsplit('/', 1)[-1]
             if checkpoint_id.startswith('ckpt_'):
                 preview = await asyncio.to_thread(self.checkpoints.preview, session_id, checkpoint_id)
+                # restore validates the CHECKPOINT revision (entry['checkpoint']['revision']),
+                # not the conversation revision used above for the optimistic lock. They
+                # are independent counters; preview already carries the checkpoint one.
                 result = await self.checkpoints.run_async(
                     self.checkpoints.restore, session_id, checkpoint_id,
                     preview_hash=preview['preview_hash'],
-                    expected_revision=expected_revision)
+                    expected_revision=preview['expected_revision'])
                 rollback = {'status': 'restored', 'checkpoint_id': checkpoint_id,
                             'files': [c['path'] for c in preview.get('changes', [])],
                             'safety_checkpoint_id': result.get('safety_checkpoint_id')}

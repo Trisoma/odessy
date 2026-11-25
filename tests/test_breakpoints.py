@@ -1,4 +1,5 @@
 """Execution breakpoints: sanitized payloads, idempotence, listing, is_critical."""
+import asyncio
 import uuid
 
 import pytest
@@ -186,3 +187,49 @@ def test_undo_rejects_conflict_and_unknown_anchor(tmp_path):
     anchor = service.record(conversation['id'], kind='step', session_id='f' * 32)
     with pytest.raises(Conflict):  # revision mismatch
         service.undo(conversation['id'], anchor['id'], expected_revision=0)
+
+
+class _FakeCheckpoints:
+    """Records what revision undo_async passes to restore; review is a no-op."""
+    def __init__(self, checkpoint_revision):
+        self.checkpoint_revision = checkpoint_revision
+        self.restore_revisions = []
+
+    def preview(self, sid, cid):
+        return {'preview_hash': 'a' * 64,
+                'expected_revision': self.checkpoint_revision,
+                'changes': []}
+
+    async def run_async(self, function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    def restore(self, sid, cid, *, preview_hash, expected_revision):
+        self.restore_revisions.append(expected_revision)
+        return {'safety_checkpoint_id': 'ckpt_safety'}
+
+
+def test_undo_async_passes_checkpoint_revision_not_conversation_revision(tmp_path):
+    """Regression: restore validates the checkpoint revision, never the conversation one.
+
+    The two are independent counters. Passing the conversation revision makes
+    CheckpointService.restore raise 409 and file rollback never happens.
+    """
+    store = make_store(tmp_path)
+    conversation = seed(store)
+    service = BreakpointService(store, clock=FixedClock())
+    checkpoints = _FakeCheckpoints(checkpoint_revision=3)
+    service.checkpoints = checkpoints
+
+    anchor = service.record(
+        conversation['id'], kind='critical-before', session_id='e' * 32,
+        workspace={'snapshot_ref': 'refs/odessy/checkpoints/ckpt_' + '0' * 32},
+        cursor={'first_event_sequence': 1, 'last_event_sequence': 1})
+    revision = store.get(conversation['id'])['revision']
+    # Make the two counters clearly different so a mix-up cannot pass by accident.
+    assert revision != checkpoints.checkpoint_revision
+
+    result = asyncio.run(service.undo_async(
+        conversation['id'], anchor['id'], expected_revision=revision, session_id='e' * 32))
+
+    assert checkpoints.restore_revisions == [checkpoints.checkpoint_revision]
+    assert result['file_rollback']['status'] == 'restored'
