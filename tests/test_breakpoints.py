@@ -91,20 +91,24 @@ def test_hook_before_after_and_task_anchor(tmp_path):
            'files_sha256': {'src/a.py': 'deadbeef'}}
     hook = BreakpointHook(service, conversation_id=conversation['id'],
                           session_id='c' * 32, get_context=lambda: ctx)
-    hook.begin_turn('t1', 'do the thing')
+    start = hook.begin_turn('t1', 'do the thing')
+    assert start['kind'] == 'task-start'
+    assert start['task']['turn_id'] == 't1'
+    assert hook._task_start_breakpoint == start['id']
     decision = type('Decision', (), {'risk': 'high', 'action': 'confirm'})()
     before = hook.before_tool(name='filesystem.write', arguments={'path': 'src/a.py'},
                               decision=decision, call_id='call-1')
     assert before['kind'] == 'critical-before'
-    assert before['resume']['undo_boundaries'] == []
+    assert before['resume']['undo_boundaries'] == [start['id']]
     after = hook.after_tool(name='filesystem.write', arguments={'path': 'src/a.py'},
                             decision=decision, call_id='call-1', status='ok')
     assert after['kind'] == 'critical-after'
     assert after['completed']['ok_tool_calls'] == ['call-1']
-    # A later step references the first critical-before as the task anchor.
     step = hook.step()
-    assert hook._task_start_breakpoint == before['id']
-    assert len(store.breakpoints(conversation['id'])) == 3
+    assert step['kind'] == 'step'
+    assert hook._task_start_breakpoint == start['id']
+    # task-start + critical-before + critical-after + step.
+    assert len(store.breakpoints(conversation['id'])) == 4
 
 
 def test_hook_non_critical_tool_writes_nothing(tmp_path):

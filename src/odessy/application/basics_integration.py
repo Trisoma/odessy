@@ -254,7 +254,7 @@ class PersistentComposition:
         controller._breakpoint_hook = BreakpointHook(
             self.breakpoints, conversation_id=cid, session_id=controller.id,
             get_context=_bp_context,
-            snapshot_fn=lambda label, sid=controller.id: self.checkpoints.snapshot_for_breakpoint(sid, label))
+            snapshot_fn=lambda reason, sid=controller.id: self.checkpoints.auto_snapshot(sid, reason))
         controller._access_modes = self.modes
         controller._basics_service_instance = self.dependencies.service_instance_id
         controller._basics_composition = self

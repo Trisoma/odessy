@@ -512,16 +512,64 @@ class CheckpointService:
     def snapshot_for_breakpoint(self, sid: str, label: str) -> dict[str, Any] | None:
         """Capture an observation-only snapshot for an execution breakpoint.
 
-        A snapshot never mutates the workspace or the user's Git state (it only
-        writes owned refs and metadata), so it does not require approval — unlike
-        restore. It is best-effort: an unavailable Git workspace simply yields
-        ``None`` and the breakpoint records hashes only. Any caller may attach the
-        returned ``ref`` to a breakpoint; only an approved undo can *use* it.
+        Kept as an alias of :meth:`auto_snapshot` for callers that expect a
+        fresh capture. Automatic triggers should call ``auto_snapshot`` so an
+        unchanged workspace reuses the previous snapshot instead of exhausting
+        the retention window with identical copies.
+        """
+        return self.auto_snapshot(sid, label, kind='breakpoint')
+
+    def auto_snapshot(self, sid: str, reason: str, *, kind: str = 'auto') -> dict[str, Any] | None:
+        """Capture a snapshot automatically at a key execution moment.
+
+        Fully automatic with no approval: a snapshot only writes owned refs and
+        metadata, never mutating the workspace or the user's Git state, so it
+        carries no authorization risk (unlike ``restore``). Best-effort: any
+        unavailable/invalid Git workspace yields ``None`` rather than failing the
+        caller's turn.
+
+        Content-addressed deduplication is the point of this method. Automatic
+        triggers fire often (task start, before/after critical tools, every step,
+        idle timer), and capturing an identical full-tree snapshot each time
+        would blow through ``RETENTION`` in a single task. So the current file
+        hashes are compared with the most recent snapshot; when they match, that
+        snapshot is returned with ``deduplicated=True`` and no new ref is written.
+        An undo binds to whichever ref the breakpoint records, so reuse is safe.
+
+        Returns a dict with ``id``, ``ref`` and ``deduplicated``, or ``None``.
         """
         try:
             binding = self._binding(sid)
-            safe_label = _validate_label(label[:MAX_LABEL])
-            return self._snapshot(binding, safe_label, kind='breakpoint').public()
+            root = self._repository_root(binding)
+            _captured, _unsupported, hashes, _total = self._collect(binding, root)
+            if not hashes:
+                # Nothing snapshottable (empty or screened workspace): nothing
+                # to roll back to, and no ref to bind.
+                return None
+            with self._lock(binding):
+                data = self._read_metadata(binding)
+                entries = data.get('checkpoints') or []
+                if entries:
+                    latest = entries[-1]
+                    if (latest.get('kind') in ('auto', 'breakpoint', 'manual')
+                            and latest.get('files_sha256') == hashes):
+                        checkpoint_id = latest['checkpoint']['id']
+                        return {
+                            'id': checkpoint_id,
+                            'ref': f'{REF_PREFIX}{checkpoint_id}',
+                            'deduplicated': True,
+                            'files': latest['checkpoint'].get('files', 0),
+                            'files_sha256': dict(hashes),
+                        }
+            safe_reason = _validate_label(f'{reason}'[:MAX_LABEL])
+            checkpoint = self._snapshot(binding, safe_reason, kind=kind)
+            return {
+                'id': checkpoint.id,
+                'ref': f'{REF_PREFIX}{checkpoint.id}',
+                'deduplicated': False,
+                'files': checkpoint.files,
+                'files_sha256': dict(hashes),
+            }
         except CheckpointError:
             return None
 

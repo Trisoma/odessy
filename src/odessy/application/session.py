@@ -970,7 +970,16 @@ class SessionController:
         if self._closed or self.running:
             raise RuntimeError('Session is closed or a turn is already running')
         try:
-            recorder.begin_turn(self._public(text))
+            prompt = self._public(text)
+            recorder.begin_turn(prompt)
+            # Automatic baseline snapshot + task undo anchor at turn start.
+            # Best-effort observation: the hook swallows its own storage errors.
+            bp_hook = getattr(self, '_breakpoint_hook', None)
+            if bp_hook is not None:
+                try:
+                    bp_hook.begin_turn(getattr(self, '_active_turn_id', '') or '', prompt)
+                except Exception:
+                    pass
             for attachment in attachments:
                 recorder.attachment(**attachment)
             recorder.activity('Turn admitted', name='turn_started')

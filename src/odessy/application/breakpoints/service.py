@@ -30,7 +30,7 @@ from .policy import is_critical
 
 #: Current breakpoint payload schema. Mismatches are refused, never migrated.
 BREAKPOINT_SCHEMA = 1
-KINDS = ('critical-before', 'critical-after', 'step', 'timer', 'interrupted')
+KINDS = ('task-start', 'critical-before', 'critical-after', 'step', 'timer', 'interrupted')
 
 MAX_EXCERPT = 200
 MAX_ARG_VALUE = 256
@@ -455,13 +455,56 @@ class BreakpointHook:
         self._file_hashes: dict[str, str] = {}
         self._step = 0
         self._task_start_breakpoint: str = ''
+        # The hook owns turn identity: the composition's context callback has no
+        # reliable active-turn field, so begin_turn supplies these directly.
+        self._turn_id: str = ''
+        self._user_prompt: str = ''
+        self._auto_snapshot_ref: str = ''
+        self._auto_snapshot_files: dict[str, str] = {}
 
     def _ctx(self) -> dict[str, Any]:
         try:
             value = self._get_context()
-            return dict(value) if isinstance(value, Mapping) else {}
+            ctx = dict(value) if isinstance(value, Mapping) else {}
         except Exception:
-            return {}
+            ctx = {}
+        # Prefer facts the hook owns over the context callback's best effort.
+        if self._turn_id:
+            ctx['turn_id'] = self._turn_id
+        if self._user_prompt:
+            ctx['user_prompt'] = self._user_prompt
+        if self._auto_snapshot_ref:
+            ctx['snapshot_ref'] = self._auto_snapshot_ref
+        if self._auto_snapshot_files:
+            merged = dict(self._auto_snapshot_files)
+            incoming = ctx.get('files_sha256')
+            if isinstance(incoming, Mapping):
+                merged.update({str(k): str(v) for k, v in incoming.items()})
+            ctx['files_sha256'] = merged
+        return ctx
+
+    def _capture(self, reason: str) -> None:
+        """Take an automatic, deduplicated snapshot and remember its ref.
+
+        Best-effort observation: a capture failure never fails the turn, it just
+        means subsequent breakpoints record no file-restoration pointer.
+        """
+        if self._snapshot_fn is None:
+            return
+        try:
+            snapshot = self._snapshot_fn(reason)
+        except Exception:
+            return
+        if not isinstance(snapshot, Mapping):
+            return
+        ref = snapshot.get('ref') or snapshot.get('id')
+        if isinstance(ref, str) and ref.startswith(('ckpt_', 'refs/odessy/checkpoints/')):
+            self._auto_snapshot_ref = (ref if ref.startswith('refs/')
+                                       else f'refs/odessy/checkpoints/{ref}')
+        hashes = snapshot.get('files_sha256')
+        if isinstance(hashes, Mapping):
+            self._auto_snapshot_files = {str(k): str(v) for k, v in hashes.items()}
+            self._file_hashes.update(self._auto_snapshot_files)
 
     def _write(self, *, kind: str, **kwargs: Any) -> dict[str, Any] | None:
         if self._error:
@@ -497,15 +540,41 @@ class BreakpointHook:
             return None
         return self.timer()
 
-    def begin_turn(self, turn_id: str = '', user_prompt: str = '') -> None:
+    def begin_turn(self, turn_id: str = '', user_prompt: str = '') -> dict[str, Any] | None:
+        """Start a task: capture a baseline snapshot and record the undo anchor.
+
+        Called by the session at the start of every turn. The baseline snapshot
+        is the state the user can undo back to, so a ``task-start`` breakpoint is
+        written to carry its ref. The first critical-before is still accepted as
+        an anchor for sessions that never call begin_turn (tests, direct loops).
+        """
         self._step = 0
         self._file_hashes = {}
         self._task_start_breakpoint = ''
+        self._turn_id = str(turn_id or '')
+        self._user_prompt = str(user_prompt or '')
+        self._auto_snapshot_ref = ''
+        self._auto_snapshot_files = {}
+        if self._error:
+            return None
+        # Baseline capture before any tool can mutate the workspace.
+        self._capture('task start')
+        ctx = self._ctx()
+        payload = self._write(
+            kind='task-start', step_index=0,
+            completed=self._completed(ctx), pending=self._pending(ctx, []),
+            workspace=self._workspace(ctx), cursor=self._cursor(ctx),
+            resume=ctx.get('resume'))
+        if payload is not None:
+            self._task_start_breakpoint = payload['id']
+        return payload
 
     def before_tool(self, *, name: str, arguments: Any, decision: Any = None,
                     call_id: str | None = None, **context: Any) -> dict[str, Any] | None:
         if not is_critical(name, arguments, decision):
             return None
+        # Snapshot the state immediately before a side-effecting tool runs.
+        self._capture(f'before {name or "tool"}')
         ctx = self._ctx()
         tool = {
             'name': name, 'arguments': arguments,
@@ -513,25 +582,15 @@ class BreakpointHook:
             'policy_outcome': getattr(decision, 'action', None) if decision is not None else None,
             'status': 'pending',
         }
-        workspace = self._workspace(ctx)
-        if self._snapshot_fn is not None:
-            try:
-                snapshot = self._snapshot_fn(f'before {name or "tool"}')
-                if isinstance(snapshot, Mapping):
-                    ref = snapshot.get('id')
-                    if isinstance(ref, str) and ref.startswith('ckpt_'):
-                        workspace['snapshot_ref'] = f'refs/odessy/checkpoints/{ref}'
-            except Exception:
-                pass  # snapshot capture is observation-only and best-effort
         payload = self._write(
             kind='critical-before', call_id=call_id, tool=tool,
             completed=self._completed(ctx), pending=self._pending(ctx, [call_id] if call_id else []),
-            workspace=workspace, cursor=self._cursor(ctx),
+            workspace=self._workspace(ctx), cursor=self._cursor(ctx),
             resume=ctx.get('resume'),
             undo_boundaries=[self._task_start_breakpoint] if self._task_start_breakpoint else [],
             **context)
         if payload is not None and not self._task_start_breakpoint:
-            # The first critical-before of a turn is the task-start anchor.
+            # Fallback anchor for loops that never called begin_turn.
             self._task_start_breakpoint = payload['id']
         return payload
 
@@ -539,6 +598,9 @@ class BreakpointHook:
                    call_id: str | None = None, status: str = 'ok', **context: Any) -> dict[str, Any] | None:
         if not is_critical(name, arguments, decision):
             return None
+        # Capture the resulting state after a side-effecting tool ran. Deduplicated:
+        # a read-only decision or a no-op write reuses the previous snapshot.
+        self._capture(f'after {name or "tool"}')
         ctx = self._ctx()
         tool = {
             'name': name, 'arguments': arguments,
@@ -562,6 +624,9 @@ class BreakpointHook:
             self._step = _check_int(step_index, 'step_index', 0)
         else:
             self._step += 1
+        # Per-step capture for long multi-step tasks; deduped so an unchanged
+        # step does not consume a retention slot.
+        self._capture(f'step {self._step}')
         ctx = self._ctx()
         return self._write(
             kind='step', step_index=self._step,
@@ -570,6 +635,8 @@ class BreakpointHook:
             resume=ctx.get('resume'), **context)
 
     def timer(self, **context: Any) -> dict[str, Any] | None:
+        # Idle timer capture for general tasks with no critical/step activity.
+        self._capture('idle timer')
         ctx = self._ctx()
         return self._write(
             kind='timer', completed=self._completed(ctx),
