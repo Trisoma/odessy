@@ -57,6 +57,40 @@ def test_auto_snapshot_dedups_unchanged_workspace(tmp_path):
     assert len(api.list(binding.session_id)['checkpoints']) == 2
 
 
+def test_auto_snapshot_reuses_earlier_snapshot_when_state_returns(tmp_path):
+    """A -> B -> A: returning to an earlier state reuses that snapshot, not a new one."""
+    root, binding = make_ws(tmp_path)
+    api = make_checkpoints(tmp_path, binding)
+    a = api.auto_snapshot(binding.session_id, 'state A')
+    assert a and not a['deduplicated']
+    (root / 'readme.txt').write_text('B\n', encoding='utf-8')
+    b = api.auto_snapshot(binding.session_id, 'state B')
+    assert b and not b['deduplicated'] and b['id'] != a['id']
+    (root / 'readme.txt').write_text('Before\n', encoding='utf-8')
+    a_again = api.auto_snapshot(binding.session_id, 'state A again')
+    assert a_again and a_again['deduplicated'] is True
+    assert a_again['id'] == a['id']
+    assert len(api.list(binding.session_id)['checkpoints']) == 2
+
+
+def test_auto_snapshot_reuse_skips_safety_snapshot(tmp_path):
+    """A safety snapshot between two identical captures is not reused as an anchor."""
+    root, binding = make_ws(tmp_path)
+    api = make_checkpoints(tmp_path, binding)
+    first = api.auto_snapshot(binding.session_id, 'first')
+    # Inject a safety entry with identical content directly into metadata.
+    data = api._read_metadata(binding)
+    safety = dict(data['checkpoints'][0])
+    safety['kind'] = 'safety'
+    safety['checkpoint'] = dict(safety['checkpoint'])
+    safety['checkpoint']['id'] = 'ckpt_' + 'f' * 32
+    data['checkpoints'].append(safety)
+    api._write_metadata(binding, data)
+    again = api.auto_snapshot(binding.session_id, 'again')
+    # Most recent match is the safety entry (skipped), so it reuses the first.
+    assert again and again['deduplicated'] is True and again['id'] == first['id']
+
+
 def test_auto_snapshot_is_approval_free_and_best_effort(tmp_path):
     root, binding = make_ws(tmp_path)
     grants = Grants(approve=False)
@@ -72,6 +106,23 @@ def test_auto_snapshot_is_approval_free_and_best_effort(tmp_path):
     plain_api = CheckpointService(inspector=Inspector(plain_binding), request_grant=Grants(),
                                   state_dir=tmp_path / 'plain-state')
     assert plain_api.auto_snapshot(plain_binding.session_id, 'task start') is None
+
+
+def test_auto_snapshot_collects_workspace_only_once(tmp_path):
+    """A fresh auto snapshot reads the workspace once, not two or three times."""
+    root, binding = make_ws(tmp_path)
+    api = make_checkpoints(tmp_path, binding)
+    real_collect = api._collect
+    calls = {'n': 0}
+
+    def counting_collect(*args, **kwargs):
+        calls['n'] += 1
+        return real_collect(*args, **kwargs)
+
+    api._collect = counting_collect
+    snap = api.auto_snapshot(binding.session_id, 'first capture')
+    assert snap and not snap['deduplicated']
+    assert calls['n'] == 1, f'expected one collection, got {calls["n"]}'
 
 
 def test_hook_captures_snapshot_at_every_key_moment(tmp_path):
@@ -125,3 +176,4 @@ def test_breakpoints_track_file_changes_after_edit(tmp_path):
                      decision=type('Decision', (), {'risk': 'high'})(), call_id='c1')
     assert hook._auto_snapshot_files['readme.txt'] != before_hash
     assert len(api.list(binding.session_id)['checkpoints']) == 2
+

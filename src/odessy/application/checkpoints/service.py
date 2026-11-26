@@ -278,12 +278,19 @@ class CheckpointService:
             paths.append(path)
         return sorted(set(paths))
 
-    def _collect(self, binding, root: Path) -> tuple[list[str], list[str], dict[str, str], int]:
-        """Returns (captured, unsupported, sha256 per path, total bytes)."""
+    def _collect(self, binding, root: Path, *, with_data: bool = False):
+        """Collect snapshottable files.
+
+        Returns ``(captured, unsupported, sha256 per path, total bytes)``, or a
+        5-tuple with ``data per path`` appended when ``with_data`` is set. The
+        single read is reused by automatic snapshots so a capture does not read
+        the whole workspace two or three times.
+        """
         policy = binding.policy
         captured: list[str] = []
         unsupported: list[str] = []
         hashes: dict[str, str] = {}
+        data_by_path: dict[str, bytes] = {}
         total = 0
         for path in self._candidate_paths(root):
             if len(captured) >= MAX_FILES:
@@ -320,12 +327,28 @@ class CheckpointService:
                 continue
             captured.append(path)
             hashes[path] = _hash_bytes(data)
+            if with_data:
+                data_by_path[path] = data
             total += len(data)
+        if with_data:
+            return captured, unsupported, hashes, total, data_by_path
         return captured, unsupported, hashes, total
 
-    def _snapshot(self, binding, label: str, *, kind: str, pinned: str | None = None) -> Checkpoint:
+    def _snapshot(self, binding, label: str, *, kind: str, pinned: str | None = None,
+                  collected=None) -> Checkpoint:
+        """Persist a snapshot.
+
+        ``collected`` is an optional 5-tuple from :meth:`_collect` with data.
+        Automatic snapshots pass it to reuse the single workspace read; manual
+        creation leaves it unset and keeps the stricter re-read/verify path.
+        """
         root = self._repository_root(binding)
-        captured, unsupported, hashes, total = self._collect(binding, root)
+        reused = collected is not None
+        if reused:
+            captured, unsupported, hashes, total, data_by_path = collected
+        else:
+            captured, unsupported, hashes, total = self._collect(binding, root)
+            data_by_path = {}
         if not captured and unsupported:
             raise CheckpointError(413, 'No checkpointable files fit the size limits')
         checkpoint_id = 'ckpt_' + uuid.uuid4().hex
@@ -338,10 +361,15 @@ class CheckpointService:
             self._git(root, 'read-tree', '--empty', env=env)
             for path in captured:
                 # Store raw reviewed bytes: git add may execute repository filters.
-                candidate = self._safe_path(binding, path, must_exist=True)
-                data = candidate.read_bytes()
-                if len(data) > MAX_FILE_BYTES or _hash_bytes(data) != hashes[path]:
-                    raise CheckpointError(409, 'Workspace changed during checkpoint capture')
+                if reused:
+                    # Data comes from the single _collect read; its hash was
+                    # computed from these exact bytes, no second read needed.
+                    data = data_by_path[path]
+                else:
+                    candidate = self._safe_path(binding, path, must_exist=True)
+                    data = candidate.read_bytes()
+                    if len(data) > MAX_FILE_BYTES or _hash_bytes(data) != hashes[path]:
+                        raise CheckpointError(409, 'Workspace changed during checkpoint capture')
                 blob = self._git(root, 'hash-object', '-w', '--stdin',
                                  input_bytes=data).decode().strip()
                 self._git(root, 'update-index', '--add', '--cacheinfo',
@@ -557,7 +585,8 @@ class CheckpointService:
         try:
             binding = self._binding(sid)
             root = self._repository_root(binding)
-            _captured, _unsupported, hashes, _total = self._collect(binding, root)
+            collected = self._collect(binding, root, with_data=True)
+            hashes = collected[2]
             if not hashes:
                 # Nothing snapshottable (empty or screened workspace): nothing
                 # to roll back to, and no ref to bind.
@@ -565,20 +594,24 @@ class CheckpointService:
             with self._lock(binding):
                 data = self._read_metadata(binding)
                 entries = data.get('checkpoints') or []
-                if entries:
-                    latest = entries[-1]
-                    if (latest.get('kind') in ('auto', 'breakpoint', 'manual')
-                            and latest.get('files_sha256') == hashes):
-                        checkpoint_id = latest['checkpoint']['id']
+                # Search the whole retention window, not just entries[-1]: a
+                # task can return to an earlier state (A -> B -> A), and a
+                # safety snapshot may sit between two identical captures. Reuse
+                # the most recent match so undo binds to the latest identical
+                # content. Safety snapshots are never reused as anchors.
+                for entry in reversed(entries):
+                    if (entry.get('kind') in ('auto', 'breakpoint', 'manual')
+                            and entry.get('files_sha256') == hashes):
+                        checkpoint_id = entry['checkpoint']['id']
                         return {
                             'id': checkpoint_id,
                             'ref': f'{REF_PREFIX}{checkpoint_id}',
                             'deduplicated': True,
-                            'files': latest['checkpoint'].get('files', 0),
+                            'files': entry['checkpoint'].get('files', 0),
                             'files_sha256': dict(hashes),
                         }
             safe_reason = _validate_label(f'{reason}'[:MAX_LABEL])
-            checkpoint = self._snapshot(binding, safe_reason, kind=kind)
+            checkpoint = self._snapshot(binding, safe_reason, kind=kind, collected=collected)
             return {
                 'id': checkpoint.id,
                 'ref': f'{REF_PREFIX}{checkpoint.id}',

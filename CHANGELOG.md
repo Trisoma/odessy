@@ -8,6 +8,7 @@ User-visible changes are recorded here, starting with the next release.
 - Capture workspace checkpoints automatically at task start, before/after critical tools, on each step and on idle timers; content-addressed dedup reuses an unchanged snapshot instead of consuming retention, and the task-start breakpoint anchors task-level undo.
 - Fix task undo so file rollback passes the checkpoint revision (not the conversation revision) to restore; the two independent counters previously made an approved undo fail with a 409.
 - Enable checkpoint restoration on Windows through handle-anchored replacement: each path component is opened relative to a verified parent handle with reparse points refused, and the final replace is an NT rename relative to that handle. Restore stays disabled when these primitives are unavailable; no unsafe path-based fallback is used.
+- Reduce automatic checkpoint cost: deduplication now searches the whole retention window (so returning to an earlier state reuses its snapshot), and a fresh snapshot reads each workspace file once instead of two or three times.
 
 - Update the pinned OpenTelemetry API to 1.45.2 and Node HTTP adapter to 2.1.6 for denial-of-service and request-path security fixes.
 - Keep backend exception text out of desktop audio errors while preserving device-selection guidance.
