@@ -1289,21 +1289,29 @@ class _OdessyAppState extends State<OdessyApp> {
                                           : _openInspector,
                                       onOpenModels: () => _openSettings(
                                           SettingsSections.models));
-                                  final panel =
-                                      inspectorOpen && inspector != null
-                                          ? WorkspaceInspector(
-                                              controller: inspector!,
-                                              activity: controller.session
-                                                          ?.events.isNotEmpty ==
-                                                      true
-                                                  ? SessionActivity(
-                                                      events: controller
-                                                          .session!.events)
-                                                  : null,
-                                              onOpenTerminal: () => unawaited(
-                                                  _openBasics('Terminal')),
-                                              onClose: _closeInspector)
-                                          : null;
+                                  final panel = inspectorOpen &&
+                                          inspector != null
+                                      ? WorkspaceInspector(
+                                          controller: inspector!,
+                                          activity: controller.session?.events
+                                                      .isNotEmpty ==
+                                                  true
+                                              ? SessionActivity(
+                                                  events: controller
+                                                      .session!.events)
+                                              : null,
+                                          // A resumed live session holds no
+                                          // output of its own; the earlier
+                                          // turns stay in saved history.
+                                          resumedFromHistory: controller
+                                                  .session?.conversationId !=
+                                              null,
+                                          onOpenHistory: () =>
+                                              unawaited(_openBasics('History')),
+                                          onOpenTerminal: () => unawaited(
+                                              _openBasics('Terminal')),
+                                          onClose: _closeInspector)
+                                      : null;
                                   return CallbackShortcuts(
                                       bindings: {
                                         if (panel != null)

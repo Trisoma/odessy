@@ -7,11 +7,22 @@ class WorkspaceInspector extends StatelessWidget {
       required this.controller,
       required this.onClose,
       this.activity,
-      this.onOpenTerminal});
+      this.onOpenTerminal,
+      this.resumedFromHistory = false,
+      this.onOpenHistory});
 
   /// Integrator supplies a typed terminal-controller command when supported.
   /// Recorded Output remains separate and never launches a shell on tab open.
   final VoidCallback? onOpenTerminal;
+
+  /// True when the live session was resumed from a saved conversation. The
+  /// transcript then holds earlier turns while this session holds no recorded
+  /// output, which is not the same as a command that failed or ran again.
+  final bool resumedFromHistory;
+
+  /// Integrator-supplied read-only route to existing history. It must not resume,
+  /// replay or run anything, and must leave the composer draft untouched.
+  final VoidCallback? onOpenHistory;
   final Widget? activity;
   final WorkspaceInspectorController controller;
   final VoidCallback onClose;
@@ -30,6 +41,38 @@ class WorkspaceInspector extends StatelessWidget {
           content: Text(
               'This file exceeds the attachment budget or is no longer current.')));
     }
+  }
+
+  /// Says why the panel is empty without claiming an outcome. A session that was
+  /// resumed from history keeps its earlier replies elsewhere, which is why the
+  /// copy separates "not recorded here" from "no command has run".
+  Widget _emptyOutput(BuildContext context) {
+    final theme = Theme.of(context);
+    if (!resumedFromHistory) {
+      return Text(
+          'No command has run in this session, so there is no output to show. '
+          'Progress titles are not command output.',
+          key: const Key('recorded-output-empty'),
+          style: theme.textTheme.bodyMedium);
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('This live session has no recorded command output yet.',
+          key: const Key('recorded-output-empty'),
+          style: theme.textTheme.bodyMedium),
+      const SizedBox(height: 8),
+      Text(
+          'Earlier turns belong to the saved history, not to this session. Output '
+          'from before it was reopened is not replayed here, and nothing is run again.',
+          style: theme.textTheme.bodySmall),
+      if (onOpenHistory != null) ...[
+        const SizedBox(height: 12),
+        TextButton.icon(
+            key: const Key('open-recorded-history'),
+            onPressed: onOpenHistory,
+            icon: const Icon(Icons.history, size: 18, semanticLabel: ''),
+            label: const Text('Open recorded history')),
+      ],
+    ]);
   }
 
   @override
@@ -158,9 +201,7 @@ class WorkspaceInspector extends StatelessWidget {
                     const Text(
                         'Recorded command output · read only. Opening this panel runs nothing.'),
                     const SizedBox(height: 16),
-                    if (c.outputs.isEmpty)
-                      const Text(
-                          'No recorded command output is available from this session. Progress titles are not command output.'),
+                    if (c.outputs.isEmpty) _emptyOutput(context),
                     for (final output in c.outputs)
                       Padding(
                           padding: const EdgeInsets.only(bottom: 20),
