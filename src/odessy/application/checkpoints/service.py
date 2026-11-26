@@ -192,7 +192,8 @@ class CheckpointService:
     def _read_metadata(self, binding) -> dict[str, Any]:
         path = self._metadata_path(binding)
         if not path.exists():
-            return {'schema_version': SCHEMA_VERSION, 'revision': 0, 'checkpoints': []}
+            return {'schema_version': SCHEMA_VERSION, 'revision': 0,
+                    'checkpoints': [], 'hash_pool': []}
         try:
             data = json.loads(path.read_text('utf-8'))
         except (OSError, ValueError):
@@ -205,6 +206,26 @@ class CheckpointService:
 
     def _write_metadata(self, binding, data: dict[str, Any]) -> None:
         path = self._metadata_path(binding)
+        # Garbage-collect unreferenced hash-pool entries and remap indices.
+        # Centralized here so every mutating path (create/auto/prune/delete)
+        # releases pool space consistently and no reference is left dangling.
+        pool = data.get('hash_pool')
+        if isinstance(pool, list) and pool:
+            referenced: set[int] = set()
+            for entry in data['checkpoints']:
+                refs = entry.get('hash_refs')
+                if isinstance(refs, dict):
+                    for index in refs.values():
+                        if isinstance(index, int) and not isinstance(index, bool):
+                            referenced.add(index)
+            if len(referenced) < len(pool):
+                remap = {old: new for new, old in enumerate(sorted(referenced))}
+                data['hash_pool'] = [pool[i] for i in sorted(referenced)]
+                for entry in data['checkpoints']:
+                    refs = entry.get('hash_refs')
+                    if isinstance(refs, dict):
+                        entry['hash_refs'] = {p: remap[i] for p, i in refs.items()
+                                              if i in remap}
         payload = _canonical(data).encode('utf-8')
         if len(payload) > 2 * 1024 * 1024:
             raise CheckpointError(413, 'Checkpoint metadata exceeds its bound')
@@ -405,9 +426,24 @@ class CheckpointService:
             data['revision'] = int(data['revision']) + 1
             checkpoint = Checkpoint(**{**checkpoint.__dict__,
                                        'revision': data['revision']})
+            # File-level content addressing: store each distinct (path, hash)
+            # once in a shared pool and reference it from the entry. Incremental
+            # edits then add only the changed files instead of re-storing the
+            # whole hash map in every snapshot. Old entries keep inline hashes.
+            pool = data.setdefault('hash_pool', [])
+            index = {item: i for i, item in enumerate(pool)}
+            refs: dict[str, int] = {}
+            for path, digest in hashes.items():
+                key = f'{path}\x00{digest}'
+                slot = index.get(key)
+                if slot is None:
+                    slot = len(pool)
+                    pool.append(key)
+                    index[key] = slot
+                refs[path] = slot
             data['checkpoints'].append({'checkpoint': checkpoint.public(),
                                         'kind': kind,
-                                        'files_sha256': hashes,
+                                        'hash_refs': refs,
                                         'unsupported': unsupported[:200]})
             self._prune(binding, data, pinned=pinned)
             self._write_metadata(binding, data)
@@ -431,9 +467,45 @@ class CheckpointService:
         data['checkpoints'] = keep
 
     # ------------------------------------------------------------------ read
+    @staticmethod
+    def _resolve_entry_hashes(entry: Mapping[str, Any], data: Mapping[str, Any]) -> dict[str, str]:
+        """Resolve an entry's file hashes regardless of storage format.
+
+        New entries carry ``hash_refs`` (path -> index into the shared
+        ``hash_pool``); older entries carry an inline ``files_sha256``. Both are
+        presented to callers as a plain ``files_sha256`` dict so no downstream
+        reader needs to know which format an entry uses.
+        """
+        if 'hash_refs' in entry:
+            refs = entry['hash_refs']
+            pool = data.get('hash_pool') or []
+            if not isinstance(refs, dict) or not isinstance(pool, list):
+                raise CheckpointError(503, 'Checkpoint hash pool is invalid')
+            resolved: dict[str, str] = {}
+            for path, index in refs.items():
+                if (isinstance(index, bool) or not isinstance(index, int)
+                        or index < 0 or index >= len(pool)):
+                    raise CheckpointError(503, 'Checkpoint hash reference is out of range')
+                item = pool[index]
+                if not isinstance(item, str) or '\x00' not in item:
+                    raise CheckpointError(503, 'Checkpoint hash pool entry is invalid')
+                stored_path, digest = item.split('\x00', 1)
+                if stored_path != path:
+                    raise CheckpointError(503, 'Checkpoint hash reference is inconsistent')
+                resolved[str(path)] = digest
+            return resolved
+        inline = entry.get('files_sha256')
+        if isinstance(inline, dict):
+            return dict(inline)
+        raise CheckpointError(503, 'Checkpoint has no file hashes')
+
     def _entries(self, binding) -> dict[str, dict[str, Any]]:
         data = self._read_metadata(binding)
-        return {entry['checkpoint']['id']: entry for entry in data['checkpoints']}
+        result: dict[str, dict[str, Any]] = {}
+        for entry in data['checkpoints']:
+            inlined = {**entry, 'files_sha256': self._resolve_entry_hashes(entry, data)}
+            result[inlined['checkpoint']['id']] = inlined
+        return result
 
     def list(self, sid: str) -> dict[str, Any]:
         binding = self._binding(sid)
@@ -600,8 +672,9 @@ class CheckpointService:
                 # the most recent match so undo binds to the latest identical
                 # content. Safety snapshots are never reused as anchors.
                 for entry in reversed(entries):
+                    entry_hashes = self._resolve_entry_hashes(entry, data)
                     if (entry.get('kind') in ('auto', 'breakpoint', 'manual')
-                            and entry.get('files_sha256') == hashes):
+                            and entry_hashes == hashes):
                         checkpoint_id = entry['checkpoint']['id']
                         return {
                             'id': checkpoint_id,

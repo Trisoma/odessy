@@ -9,6 +9,7 @@ User-visible changes are recorded here, starting with the next release.
 - Fix task undo so file rollback passes the checkpoint revision (not the conversation revision) to restore; the two independent counters previously made an approved undo fail with a 409.
 - Enable checkpoint restoration on Windows through handle-anchored replacement: each path component is opened relative to a verified parent handle with reparse points refused, and the final replace is an NT rename relative to that handle. Restore stays disabled when these primitives are unavailable; no unsafe path-based fallback is used.
 - Reduce automatic checkpoint cost: deduplication now searches the whole retention window (so returning to an earlier state reuses its snapshot), and a fresh snapshot reads each workspace file once instead of two or three times.
+- Store checkpoint file hashes with file-level content addressing: unchanged files across snapshots share one pool entry instead of being re-stored in every checkpoint, with legacy inline-hash metadata remaining readable. Unreferenced pool entries are reclaimed on write.
 
 - Update the pinned OpenTelemetry API to 1.45.2 and Node HTTP adapter to 2.1.6 for denial-of-service and request-path security fixes.
 - Keep backend exception text out of desktop audio errors while preserving device-selection guidance.
