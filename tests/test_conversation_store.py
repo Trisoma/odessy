@@ -279,3 +279,63 @@ def test_prepare_resume_returns_turns_and_visible_unknown_tool(tmp_path):
     store.append(conversation['id'], event_id='result', kind='tool_result',
                  payload={'call_id': 'c1', 'name': 'read_file', 'status': 'ok'})
     assert store.prepare_resume(conversation['id'])['unfinished'] == []
+
+
+def test_prepare_resume_excludes_undone_turns(tmp_path):
+    """An undo marks a [from, through] range; those turns must not rebuild into context."""
+    store = make_store(tmp_path)
+    _, conversation = seed(store)
+    cid = conversation['id']
+    store.append(cid, event_id='u0', kind='user', payload={'text': 'earlier question'})
+    store.append(cid, event_id='a0', kind='assistant', payload={'text': 'earlier answer'})
+    store.append(cid, event_id='u1', kind='user', payload={'text': 'do the bad task'})
+    store.append(cid, event_id='a1', kind='assistant', payload={'text': 'I did the bad task'})
+    store.append(cid, event_id='u2', kind='user', payload={'text': 'later question'})
+    store.append(cid, event_id='a2', kind='assistant', payload={'text': 'later answer'})
+
+    # Undo covers only the bad task turn (sequences 3 and 4).
+    store.append(cid, event_id='undo1', kind='undo', payload={
+        'invalidates_from_sequence': 3, 'invalidates_through_sequence': 4, 'undo_of': 'bp_1'})
+
+    prepared = store.prepare_resume(cid)
+    assert prepared['turns'] == [
+        {'user': 'earlier question', 'assistant': 'earlier answer'},
+        {'user': 'later question', 'assistant': 'later answer'},
+    ]
+
+
+def test_prepare_resume_multiple_undos_and_legacy_shape(tmp_path):
+    """Multiple undo ranges compose; legacy undo without a start degrades to 0."""
+    store = make_store(tmp_path)
+    _, conversation = seed(store)
+    cid = conversation['id']
+    store.append(cid, event_id='u1', kind='user', payload={'text': 'first'})
+    store.append(cid, event_id='a1', kind='assistant', payload={'text': 'first answer'})
+    store.append(cid, event_id='u2', kind='user', payload={'text': 'second'})
+    store.append(cid, event_id='a2', kind='assistant', payload={'text': 'second answer'})
+    # Legacy undo: no invalidates_from_sequence -> hides everything through seq 2.
+    store.append(cid, event_id='undo1', kind='undo', payload={
+        'invalidates_through_sequence': 2, 'undo_of': 'bp_legacy'})
+    # New undo: explicit range for the second turn (sequences 3 and 4).
+    store.append(cid, event_id='undo2', kind='undo', payload={
+        'invalidates_from_sequence': 3, 'invalidates_through_sequence': 4, 'undo_of': 'bp_2'})
+
+    assert store.prepare_resume(cid)['turns'] == []
+
+
+def test_undo_range_excludes_tool_calls_and_open_user(tmp_path):
+    """Invalidated tool calls and a trailing user turn must not leak into resume."""
+    store = make_store(tmp_path)
+    _, conversation = seed(store)
+    cid = conversation['id']
+    store.append(cid, event_id='u0', kind='user', payload={'text': 'keep'})
+    store.append(cid, event_id='a0', kind='assistant', payload={'text': 'kept'})
+    store.append(cid, event_id='call', kind='tool_call', payload={'call_id': 'c1', 'name': 'write'})
+    store.append(cid, event_id='u1', kind='user', payload={'text': 'undone question'})
+    store.append(cid, event_id='undo1', kind='undo', payload={
+        'invalidates_from_sequence': 3, 'invalidates_through_sequence': 4, 'undo_of': 'bp_1'})
+
+    prepared = store.prepare_resume(cid)
+    assert prepared['turns'] == [{'user': 'keep', 'assistant': 'kept'}]
+    assert prepared['unfinished'] == []
+    assert prepared['open_user'] is None

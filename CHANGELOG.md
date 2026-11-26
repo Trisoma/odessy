@@ -11,6 +11,7 @@ User-visible changes are recorded here, starting with the next release.
 - Reduce automatic checkpoint cost: deduplication now searches the whole retention window (so returning to an earlier state reuses its snapshot), and a fresh snapshot reads each workspace file once instead of two or three times.
 - Store checkpoint file hashes with file-level content addressing: unchanged files across snapshots share one pool entry instead of being re-stored in every checkpoint, with legacy inline-hash metadata remaining readable. Unreferenced pool entries are reclaimed on write.
 - Allow checkpoints in repositories with no commits yet, and make task undo report an expired/pruned snapshot explicitly instead of failing while still preserving the history invalidation.
+- Exclude undone task turns from legacy conversation resume: undo now records the invalidated event range, and resume rebuilds context without those turns while keeping the append-only audit trail intact.
 
 - Update the pinned OpenTelemetry API to 1.45.2 and Node HTTP adapter to 2.1.6 for denial-of-service and request-path security fixes.
 - Keep backend exception text out of desktop audio errors while preserving device-selection guidance.

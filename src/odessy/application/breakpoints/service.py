@@ -248,6 +248,30 @@ class BreakpointService:
 
     # -- undo ------------------------------------------------------------
 
+    def _invalidation_range(self, conversation_id: str, payload: Mapping[str, Any],
+                            anchor_sequence: int, last_sequence: int) -> tuple[int, int]:
+        """Compute the [from, through] event range an undo invalidates.
+
+        The start is the task-start anchor named by ``undo_boundaries`` when
+        present; otherwise the anchor breakpoint being undone is itself the
+        start (undoing a task-start anchor invalidates from that anchor on).
+        Earlier conversation turns therefore survive. The end is the anchor's
+        last observed event sequence.
+        """
+        boundaries = [str(x) for x in (payload.get('resume') or {}).get('undo_boundaries') or []]
+        from_sequence = anchor_sequence
+        if boundaries:
+            boundary = self.store.event_by_id(conversation_id, boundaries[0])
+            if boundary is not None and boundary.get('kind') == 'breakpoint':
+                from_sequence = _check_int(boundary.get('sequence', 0), 'sequence', 0)
+        # "Undo this task" must invalidate everything from the task start up to
+        # now, not just up to the anchor's cursor: turns generated after the
+        # anchor are part of the same undone task. Take the live high-water mark.
+        _first, current_last = self.store.sequence_bounds(conversation_id)
+        through_sequence = max(last_sequence, anchor_sequence, current_last)
+        from_sequence = min(from_sequence, through_sequence)
+        return from_sequence, through_sequence
+
     def undo(
         self,
         conversation_id: str,
@@ -302,13 +326,16 @@ class BreakpointService:
                 conversation_id, session_id, str(snapshot_ref),
                 expected_revision=expected_revision)
 
+        from_sequence, through_sequence = self._invalidation_range(
+            conversation_id, payload, anchor['sequence'], last_sequence)
         undo_id = 'undo_' + uuid.uuid4().hex
         undo_payload = {
             'version': BREAKPOINT_SCHEMA,
             'id': undo_id,
             'undo_of': breakpoint_id,
             'created_at': self._clock(),
-            'invalidates_through_sequence': last_sequence,
+            'invalidates_from_sequence': from_sequence,
+            'invalidates_through_sequence': through_sequence,
             'undo_boundaries': boundaries[:64],
             'undone_call_ids': undone_call_ids[:200],
             'undone_files': undone_files[:MAX_FILES],
@@ -318,7 +345,7 @@ class BreakpointService:
         return {'version': 1, 'conversation_id': conversation_id,
                 'undo_id': undo_id, 'undo_of': breakpoint_id,
                 'breakpoint_id': breakpoint_id,
-                'invalidates_through_sequence': last_sequence,
+                'invalidates_through_sequence': through_sequence,
                 'file_rollback': rollback, 'history_preserved': True}
 
     async def undo_async(
@@ -397,17 +424,20 @@ class BreakpointService:
         call_id = tool_payload.get('call_id')
         undone_call_ids = [str(call_id)] if call_id else []
         undone_files = [str(x) for x in (payload.get('completed') or {}).get('files_changed') or []]
+        from_sequence, through_sequence = self._invalidation_range(
+            conversation_id, payload, anchor['sequence'], last_sequence)
         undo_id = 'undo_' + uuid.uuid4().hex
         undo_payload = {
             'version': BREAKPOINT_SCHEMA, 'id': undo_id, 'undo_of': breakpoint_id,
-            'created_at': self._clock(), 'invalidates_through_sequence': last_sequence,
+            'created_at': self._clock(), 'invalidates_from_sequence': from_sequence,
+            'invalidates_through_sequence': through_sequence,
             'undo_boundaries': boundaries[:64], 'undone_call_ids': undone_call_ids[:200],
             'undone_files': undone_files[:MAX_FILES], 'file_rollback': rollback,
         }
         self.store.append(conversation_id, event_id=undo_id, kind='undo', payload=undo_payload)
         return {'version': 1, 'conversation_id': conversation_id, 'undo_id': undo_id,
                 'undo_of': breakpoint_id, 'breakpoint_id': breakpoint_id,
-                'invalidates_through_sequence': last_sequence,
+                'invalidates_through_sequence': through_sequence,
                 'file_rollback': rollback, 'history_preserved': True}
 
     def _rollback_files(

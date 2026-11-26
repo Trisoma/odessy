@@ -737,13 +737,44 @@ class ConversationStore:
                 'SELECT sequence,event_id,kind,payload_json,created_at '
                 'FROM conversation_events WHERE conversation_id = ? AND ' + _MESSAGE_ONLY + ' '
                 'ORDER BY sequence', (conversation_id,))]
-            return conversation, events
+            # Undo events are execution metadata, excluded from the message
+            # stream above, but they define which historical turns must NOT be
+            # rebuilt into the resume context. Read them separately; the audit
+            # trail itself is append-only and never modified.
+            undos = [dict(row) for row in db.execute(
+                'SELECT payload_json FROM conversation_events '
+                'WHERE conversation_id = ? AND kind = ? ORDER BY sequence',
+                (conversation_id, 'undo'))]
+            return conversation, events, undos
 
-        conversation, events = self._read(work)
+        conversation, events, undo_rows = self._read(work)
+        invalidated: list[tuple[int, int]] = []
+        for row in undo_rows:
+            try:
+                payload = json.loads(row['payload_json'])
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            through = payload.get('invalidates_through_sequence')
+            if isinstance(through, bool) or not isinstance(through, int):
+                continue
+            # Older undo events lack the explicit start; degrade to 0 so an
+            # undone task is never rebuilt into the resume context.
+            start = payload.get('invalidates_from_sequence', 0)
+            if isinstance(start, bool) or not isinstance(start, int):
+                start = 0
+            invalidated.append((min(start, through), through))
+
+        def is_invalidated(sequence: int) -> bool:
+            return any(lo <= sequence <= hi for lo, hi in invalidated)
+
         turns: list[dict[str, str]] = []
         pending_user: str | None = None
         unfinished: dict[str, dict[str, Any]] = {}
         for row in events:
+            if invalidated and is_invalidated(row['sequence']):
+                continue  # undone task: never rebuild it into the resume context
             try:
                 payload = json.loads(row['payload_json'])
             except ValueError:

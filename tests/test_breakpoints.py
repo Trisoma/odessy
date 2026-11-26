@@ -286,3 +286,32 @@ def test_undo_async_propagates_non_notfound_preview_errors(tmp_path):
     with pytest.raises(Exception, match='preview exploded'):
         asyncio.run(service.undo_async(
             conversation['id'], anchor['id'], expected_revision=revision, session_id='e' * 32))
+
+
+def test_undo_then_resume_excludes_undone_task(tmp_path):
+    """End-to-end: a real breakpoint undo marks the range that resume must skip."""
+    store = make_store(tmp_path)
+    conversation = seed(store)
+    cid = conversation['id']
+    service = BreakpointService(store, clock=FixedClock())
+    hook = BreakpointHook(service, conversation_id=cid, session_id='e' * 32)
+
+    # A good turn before the task.
+    store.append(cid, event_id='u0', kind='user', payload={'text': 'good question'})
+    store.append(cid, event_id='a0', kind='assistant', payload={'text': 'good answer'})
+    # Task starts: baseline breakpoint becomes the undo boundary.
+    start = hook.begin_turn('t1', 'bad task')
+    # Bad task turns.
+    store.append(cid, event_id='u1', kind='user', payload={'text': 'do the bad task'})
+    store.append(cid, event_id='a1', kind='assistant', payload={'text': 'did the bad task'})
+
+    revision = store.get(cid)['revision']
+    result = service.undo(cid, start['id'], expected_revision=revision, session_id='e' * 32)
+    assert result['undo_of'] == start['id']
+
+    undo_event = store.event_by_id(cid, result['undo_id'])
+    payload = undo_event['payload']
+    assert payload['invalidates_from_sequence'] == start['sequence']
+
+    prepared = store.prepare_resume(cid)
+    assert prepared['turns'] == [{'user': 'good question', 'assistant': 'good answer'}]
