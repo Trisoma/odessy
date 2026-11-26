@@ -357,17 +357,35 @@ class BreakpointService:
         if snapshot_ref and self.checkpoints is not None and session_id:
             checkpoint_id = str(snapshot_ref).rsplit('/', 1)[-1]
             if checkpoint_id.startswith('ckpt_'):
-                preview = await asyncio.to_thread(self.checkpoints.preview, session_id, checkpoint_id)
-                # restore validates the CHECKPOINT revision (entry['checkpoint']['revision']),
-                # not the conversation revision used above for the optimistic lock. They
-                # are independent counters; preview already carries the checkpoint one.
-                result = await self.checkpoints.run_async(
-                    self.checkpoints.restore, session_id, checkpoint_id,
-                    preview_hash=preview['preview_hash'],
-                    expected_revision=preview['expected_revision'])
-                rollback = {'status': 'restored', 'checkpoint_id': checkpoint_id,
-                            'files': [c['path'] for c in preview.get('changes', [])],
-                            'safety_checkpoint_id': result.get('safety_checkpoint_id')}
+                try:
+                    preview = await asyncio.to_thread(self.checkpoints.preview, session_id, checkpoint_id)
+                except Exception as exc:
+                    # CheckpointError is transport-local, not a StorageError.
+                    # Accept any exception here but only swallow a genuine
+                    # not-found; everything else still propagates.
+                    # The breakpoint can outlive its snapshot: checkpoints are
+                    # pruned by retention, and the two stores have no shared
+                    # transaction. Report an expired anchor explicitly instead
+                    # of failing the whole undo — history invalidation still
+                    # applies, only the file rollback is unavailable.
+                    if getattr(exc, 'status', None) == 404:
+                        rollback = {'status': 'snapshot_expired', 'checkpoint_id': checkpoint_id,
+                                    'files': [],
+                                    'reason': 'the bound snapshot was pruned; files were not restored'}
+                        preview = None
+                    else:
+                        raise
+                else:
+                    # restore validates the CHECKPOINT revision (entry['checkpoint']['revision']),
+                    # not the conversation revision used above for the optimistic lock. They
+                    # are independent counters; preview already carries the checkpoint one.
+                    result = await self.checkpoints.run_async(
+                        self.checkpoints.restore, session_id, checkpoint_id,
+                        preview_hash=preview['preview_hash'],
+                        expected_revision=preview['expected_revision'])
+                    rollback = {'status': 'restored', 'checkpoint_id': checkpoint_id,
+                                'files': [c['path'] for c in preview.get('changes', [])],
+                                'safety_checkpoint_id': result.get('safety_checkpoint_id')}
         # A successful file restore bumps the conversation revision (it appends a
         # safety snapshot marker only in the checkpoint metadata, not the store),
         # so re-read the anchor-derived fields from the unchanged event payload.

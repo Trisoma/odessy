@@ -536,3 +536,24 @@ def test_windows_restore_is_blocked_before_grant_snapshot_or_write(tmp_path, mon
     # The final write owner also refuses if invoked directly.
     with pytest.raises(CheckpointError, match='disabled on Windows'):
         CheckpointService._apply(api, binding, {})
+
+
+@needs_git
+def test_create_works_in_empty_repository_without_touching_user_head(tmp_path):
+    """A repo with no commits has no HEAD; snapshots must still work."""
+    root = tmp_path / 'empty'
+    root.mkdir()
+    (root / 'a.txt').write_text('hello\n', encoding='utf-8')
+    subprocess.run(['git', 'init', '-q', str(root)], check=True, timeout=60)
+    binding = Binding(root)
+    api = service(tmp_path, binding, state=tmp_path / 'empty-state')
+
+    created = api.create('s1', 'first snapshot')
+    assert created['id'].startswith('ckpt_')
+    # The user's repository still has no commits/branch of its own.
+    head = subprocess.run(['git', '-C', str(root), 'rev-parse', '--verify', 'HEAD'],
+                          capture_output=True, text=True)
+    assert head.returncode != 0
+    # The snapshot itself is a valid owned ref and can be previewed.
+    preview = api.preview('s1', created['id'])
+    assert preview['checkpoint_id'] == created['id']

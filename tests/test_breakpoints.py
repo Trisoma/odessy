@@ -233,3 +233,56 @@ def test_undo_async_passes_checkpoint_revision_not_conversation_revision(tmp_pat
 
     assert checkpoints.restore_revisions == [checkpoints.checkpoint_revision]
     assert result['file_rollback']['status'] == 'restored'
+
+
+def test_undo_async_reports_expired_snapshot_without_losing_history(tmp_path):
+    """A pruned snapshot no longer fails the undo; it reports snapshot_expired."""
+    class Expired:
+        def preview(self, sid, cid):
+            err = Exception('checkpoint not found')
+            err.status = 404
+            raise err
+
+        async def run_async(self, function, *args, **kwargs):
+            pytest.fail('restore must not be attempted for an expired snapshot')
+
+    store = make_store(tmp_path)
+    conversation = seed(store)
+    service = BreakpointService(store, clock=FixedClock())
+    service.checkpoints = Expired()
+    anchor = service.record(
+        conversation['id'], kind='critical-before', session_id='e' * 32,
+        workspace={'snapshot_ref': 'refs/odessy/checkpoints/ckpt_' + '0' * 32},
+        cursor={'first_event_sequence': 1, 'last_event_sequence': 1})
+    revision = store.get(conversation['id'])['revision']
+
+    result = asyncio.run(service.undo_async(
+        conversation['id'], anchor['id'], expected_revision=revision, session_id='e' * 32))
+
+    assert result['file_rollback']['status'] == 'snapshot_expired'
+    assert result['undo_of'] == anchor['id']
+    assert result['history_preserved'] is True
+    # The undo event was still appended.
+    kinds = [e['kind'] for e in store.raw_events(conversation['id'])]
+    assert 'undo' in kinds
+
+
+def test_undo_async_propagates_non_notfound_preview_errors(tmp_path):
+    """Only a genuine 404 is tolerated; other preview failures still surface."""
+    class Broken:
+        def preview(self, sid, cid):
+            err = Exception('preview exploded')
+            err.status = 503
+            raise err
+
+    store = make_store(tmp_path)
+    conversation = seed(store)
+    service = BreakpointService(store, clock=FixedClock())
+    service.checkpoints = Broken()
+    anchor = service.record(
+        conversation['id'], kind='critical-before', session_id='e' * 32,
+        workspace={'snapshot_ref': 'refs/odessy/checkpoints/ckpt_' + '0' * 32})
+    revision = store.get(conversation['id'])['revision']
+    with pytest.raises(Exception, match='preview exploded'):
+        asyncio.run(service.undo_async(
+            conversation['id'], anchor['id'], expected_revision=revision, session_id='e' * 32))

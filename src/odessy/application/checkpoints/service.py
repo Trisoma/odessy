@@ -398,8 +398,21 @@ class CheckpointService:
             tree = self._git(root, 'write-tree', env=env).decode().strip()
             if not tree:
                 raise CheckpointError(503, 'Checkpoint snapshot failed')
+            # A brand-new repository has no HEAD commit, so `commit-tree -p
+            # HEAD` fails and snapshots would be unavailable exactly when a
+            # workspace is freshest. Detect HEAD first: create a root commit
+            # when absent, otherwise keep parenting the user's HEAD as before.
+            # Nothing here mutates the user's branch, index or working tree.
+            args = ['commit-tree', tree]
+            try:
+                self._git(root, 'rev-parse', '--verify', 'HEAD')
+            except CheckpointError:
+                pass  # no HEAD yet -> root commit, no parent
+            else:
+                args.extend(['-p', 'HEAD'])
+            args.append('-m')
             commit = self._git(
-                root, 'commit-tree', tree, '-p', 'HEAD', '-m',
+                root, *args,
                 f'odessy checkpoint {kind}: {label}'.encode('utf-8')[:512],
                 # These are service-owned snapshots, not user-authored commits.
                 # Do not depend on or mutate the user's Git identity/configuration.
