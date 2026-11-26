@@ -89,7 +89,23 @@ def _now() -> str:
 
 
 def _restore_unavailable_reason() -> str | None:
-    return WINDOWS_RESTORE_REASON if os.name == 'nt' else None
+    """Why restoration cannot run here, or None when it can.
+
+    Windows restores are enabled only when the handle-anchored replacement
+    module is available: it opens every path component relative to a verified
+    parent handle and refuses reparse points, giving the same TOCTOU safety as
+    POSIX ``dir_fd``/``O_NOFOLLOW``. If those NT bindings are unavailable the
+    restore stays disabled rather than falling back to an unsafe path write.
+    """
+    if os.name == 'nt':
+        try:
+            from . import win32_replace
+            if win32_replace.available():
+                return None
+        except Exception:
+            pass
+        return WINDOWS_RESTORE_REASON
+    return None
 
 
 def _validate_label(label: Any) -> str:
@@ -706,18 +722,14 @@ class CheckpointService:
                     raise CheckpointError(409, 'Restore target changed after approval')
             if os.name != 'nt':
                 self._replace_at_root(binding, path, data, current)
-                continue
-            handle, tmp = tempfile.mkstemp(dir=str(parent), prefix='.ckpt-', suffix='.tmp')
-            try:
-                with os.fdopen(handle, 'wb') as stream:
-                    stream.write(data)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                os.replace(tmp, target)
-                restored += 1
-            finally:
-                if os.path.exists(tmp):
-                    os.unlink(tmp)
+            else:
+                from .win32_replace import ReplaceUnavailable, WindowsReplaceError, replace_anchored
+                try:
+                    replace_anchored(str(root.resolve()), path, data,
+                                     expected_sha256=(current or {}).get(path))
+                except (ReplaceUnavailable, WindowsReplaceError) as exc:
+                    raise CheckpointError(503, f'Windows anchored restore failed: {exc}') from None
+            restored += 1
 
     def _replace_at_root(self, binding, path, data, current):
         flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW

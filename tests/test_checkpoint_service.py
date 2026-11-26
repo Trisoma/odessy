@@ -23,8 +23,20 @@ def shutil_git() -> bool:
 
 
 needs_git = pytest.mark.skipif(not shutil_git(), reason='git is not installed')
+
+
+def _restore_supported() -> bool:
+    if os.name != 'nt':
+        return True
+    try:
+        from odessy.application.checkpoints import win32_replace
+        return win32_replace.available()
+    except Exception:
+        return False
+
+
 needs_restore = pytest.mark.skipif(
-    os.name == 'nt', reason='Checkpoint restoration is intentionally disabled on Windows')
+    not _restore_supported(), reason='No safe restore primitive on this host')
 
 
 @pytest.mark.parametrize('payload', [None, b'', b'exact reviewed blob\r\n'])
@@ -418,7 +430,7 @@ def test_binary_and_runtime_database_are_excluded_and_preserved(tmp_path):
     (root / 'binary.dat').write_bytes(b'\x00\xffkeep newer')
     (root / 'readme.txt').write_text('edited', encoding='utf-8')
     preview = api.preview('s1', created['id'])
-    if os.name == 'nt':
+    if os.name == 'nt' and not _restore_supported():
         with pytest.raises(CheckpointError, match='disabled on Windows') as disabled:
             api.restore('s1', created['id'], preview_hash=preview['preview_hash'],
                         expected_revision=preview['expected_revision'])
@@ -468,7 +480,28 @@ def test_restore_refuses_binary_destination_without_losing_bytes(tmp_path):
 
 def test_restore_availability_matches_host_platform():
     reason = checkpoint_module._restore_unavailable_reason()
-    assert reason == (checkpoint_module.WINDOWS_RESTORE_REASON if os.name == 'nt' else None)
+    if os.name == 'nt':
+        assert (reason is None) == _restore_supported()
+    else:
+        assert reason is None
+
+
+@needs_git
+def test_restore_works_on_windows_when_anchor_available(tmp_path):
+    if os.name != 'nt' or not _restore_supported():
+        pytest.skip('Windows anchored restore unavailable')
+    root, binding = workspace(tmp_path)
+    api = service(tmp_path, binding)
+    saved = api.create('s1', 'baseline')
+    (root / 'readme.txt').write_text('After\n', encoding='utf-8')
+    (root / 'notes.md').unlink()
+    preview = api.preview('s1', saved['id'])
+    assert preview['restore_available'] is True
+    result = api.restore('s1', saved['id'], preview_hash=preview['preview_hash'],
+                         expected_revision=preview['expected_revision'])
+    assert result['status'] == 'restored'
+    assert (root / 'readme.txt').read_text(encoding='utf-8') == 'Before\n'
+    assert (root / 'notes.md').read_text(encoding='utf-8') == '# Notes\n'
 
 
 @needs_git
