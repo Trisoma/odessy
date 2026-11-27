@@ -27,11 +27,24 @@ from pathlib import Path
 from odessy.execution.contract import ExecutionPolicy, Limitation, RunnerFailureRule
 from odessy.execution.providers.base import ConfiningProvider
 
-__all__ = ["WindowsAclProvider", "windows_acl_runner"]
+__all__ = ["WindowsAclProvider", "windows_acl_runner", "PINNED_KOFFI_VERSION"]
+
+#: The FFI dependency version pinned in ``tools/package-lock.json``. The built
+#: runner is a local ``tsc`` artifact (its bytes are not stable across builds), so
+#: instead of hashing that artifact we anchor its supply chain: the runner is only
+#: trusted when the installed koffi matches this lockfile version. A mismatch means
+#: the dependency was replaced after install and the confinement chain is untrusted.
+PINNED_KOFFI_VERSION = "3.3.2"
 
 
-def windows_acl_runner() -> Path | None:
-    """The built Node runner, or None when the tool server is not installed and built."""
+def windows_acl_runner(*, verify_dependencies: bool = True) -> Path | None:
+    """The built Node runner, or None when it is missing or untrusted.
+
+    ``verify_dependencies`` checks that the installed koffi matches
+    :data:`PINNED_KOFFI_VERSION`. Callers that inject their own runner (tests,
+    alternate layouts) pass ``verify_dependencies=False`` and own that trust
+    decision themselves.
+    """
 
     from odessy.tools.node_mcp import _node_tools_dir, _public_repo_root
 
@@ -40,8 +53,16 @@ def windows_acl_runner() -> Path | None:
     except ValueError:
         return None
     runner = tools / "dist" / "src" / "execution" / "win32" / "runner.js"
-    koffi = tools / "node_modules" / "koffi"
-    return runner if runner.is_file() and koffi.is_dir() else None
+    node_modules = tools / "node_modules"
+    koffi = node_modules / "koffi"
+    if not runner.is_file() or not koffi.is_dir():
+        return None
+    if verify_dependencies:
+        from odessy.execution.native_integrity import verify_package_version
+        ok, _ = verify_package_version(node_modules, "koffi", PINNED_KOFFI_VERSION)
+        if not ok:
+            return None
+    return runner
 
 
 class WindowsAclProvider(ConfiningProvider):

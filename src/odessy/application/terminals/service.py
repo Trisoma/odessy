@@ -6,7 +6,6 @@ The callback must screen the exact shell grant with existing policy/hooks/broker
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import inspect
 import json
 import os
@@ -39,10 +38,10 @@ class LocalTerminalService:
                 raise ValueError('Unqualified PTY inputs')
             receipt = json.loads(self.helper.with_name('dependency-receipt.json').read_text('utf-8'))
             if os.name == 'nt':
-                for entry in receipt['native_sha256']:
-                    native = self.module_root / 'node-pty' / entry['path']
-                    if hashlib.sha256(native.read_bytes()).hexdigest() != entry['sha256']:
-                        raise ValueError('PTY native hash mismatch')
+                from odessy.execution.native_integrity import verify_receipt_hashes
+                ok, _ = verify_receipt_hashes(receipt['native_sha256'], self.module_root / 'node-pty')
+                if not ok:
+                    raise ValueError('PTY native hash mismatch')
         except (OSError, ValueError, KeyError, TypeError):
             raise TerminalError(501, 'Pinned node-pty 1.1.0 and the owned helper must be packaged first') from None
         self.mode_revision = mode_revision

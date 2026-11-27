@@ -34,12 +34,18 @@ Json textFile(String sid) => {
 
 class InspectorApi extends DemoApi implements WorkspaceInspectorApi {
   bool grant = true, changes = false;
-  int reads = 0, mutations = 0;
+
+  /// When false the session reports no settled command output, as a session where
+  /// nothing ran or one reopened from history both do.
+  bool hasOutput = true;
+  String? conversationId;
+  int reads = 0, mutations = 0, descriptors = 0;
   Completer<WorkspaceTextFile>? delayed;
   @override
   String get identity => 'http://127.0.0.1:9000';
   @override
   Future<WorkspaceDescriptor> workspace(String sid) async {
+    descriptors++;
     if (!grant) throw StateError('revoked');
     return WorkspaceDescriptor.fromJson(descriptor(sid, changes: changes));
   }
@@ -61,29 +67,37 @@ class InspectorApi extends DemoApi implements WorkspaceInspectorApi {
   }
 
   @override
-  Future<Session> snapshot(String sid) async => Session(sid, pending: [
+  Future<Session> snapshot(String sid) async => Session(sid,
+      conversationId: conversationId,
+      pending: [
         {
           'id': 'approval',
           'expires_at': 4102444800,
           'allowed_channels': ['authenticated_ui'],
           'kind': 'approval'
         }
-      ], events: [
-        SessionEvent(1, 'result', {
-          'tool_observations': [
-            {
-              'call_id': 'call-1',
-              'request': {'name': 'terminal.run'},
-              'result': {
-                'stdout': 'Recorded fixture output\n',
-                'stderr': '',
-                'status': 'ok',
-                'exit_code': 0
-              }
-            }
-          ]
-        })
-      ]);
+      ],
+      events: hasOutput
+          ? [
+              SessionEvent(1, 'result', {
+                'tool_observations': [
+                  {
+                    'call_id': 'call-1',
+                    'request': {'name': 'terminal.run'},
+                    'result': {
+                      'stdout': 'Recorded fixture output\n',
+                      'stderr': '',
+                      'status': 'ok',
+                      'exit_code': 0
+                    }
+                  }
+                ]
+              })
+            ]
+          : [
+              SessionEvent(1, 'assistant', {'text': 'earlier reply'}),
+              SessionEvent(2, 'progress', {'title': 'Reading package'})
+            ]);
   @override
   Future<void> send(String sid, String text) async {
     mutations++;
@@ -289,6 +303,72 @@ void main() {
     expect(closed, 1);
     expect(tester.takeException(), isNull);
     expect(api.mutations, 0);
+  });
+
+  testWidgets('empty output makes no claim about whether a command ran',
+      (tester) async {
+    api.hasOutput = false;
+    await controller.bind(sessionId: 'sid', serviceInstanceId: 'instance');
+    controller.show(InspectorPanel.terminal);
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: WorkspaceInspector(controller: controller, onClose: () {}))));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('recorded-output-empty')), findsOneWidget);
+    expect(find.text('No command output was recorded for this session.'),
+        findsOneWidget);
+    expect(find.textContaining('No command has run'), findsNothing);
+    expect(find.textContaining('failed'), findsNothing);
+    expect(find.byKey(const Key('open-recorded-history')), findsNothing);
+    expect(api.mutations, 0);
+  });
+
+  testWidgets(
+      'empty output can open existing history without running a command',
+      (tester) async {
+    api.hasOutput = false;
+    await controller.bind(sessionId: 'sid', serviceInstanceId: 'instance');
+    final grants = api.descriptors;
+    var opened = 0;
+    controller.show(InspectorPanel.terminal);
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: WorkspaceInspector(
+                controller: controller,
+                onClose: () {},
+                onOpenHistory: () => opened++))));
+    await tester.pumpAndSettle();
+    expect(find.text('No command output was recorded for this session.'),
+        findsOneWidget);
+    expect(find.textContaining('does not rerun commands'), findsOneWidget);
+    expect(find.textContaining('reopened'), findsNothing);
+    final route = find.byKey(const Key('open-recorded-history'));
+    expect(route, findsOneWidget);
+    expect(find.text('Open recorded history'), findsOneWidget);
+    await tester.tap(route);
+    await tester.pumpAndSettle();
+    expect(opened, 1);
+    // Opening the panel and routing to history performs no command call, sends
+    // nothing and asks for no new grant.
+    expect(api.reads, 0);
+    expect(api.mutations, 0);
+    expect(api.descriptors, grants);
+  });
+
+  testWidgets('a session with recorded output keeps showing it',
+      (tester) async {
+    await controller.bind(sessionId: 'sid', serviceInstanceId: 'instance');
+    controller.show(InspectorPanel.terminal);
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: WorkspaceInspector(
+                controller: controller,
+                onClose: () {},
+                onOpenHistory: () {}))));
+    await tester.pumpAndSettle();
+    expect(find.text('Recorded fixture output\n'), findsOneWidget);
+    expect(find.byKey(const Key('recorded-output-empty')), findsNothing);
+    expect(find.byKey(const Key('open-recorded-history')), findsNothing);
   });
 
   testWidgets('optional actual inspector captures', (tester) async {

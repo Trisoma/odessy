@@ -53,6 +53,7 @@ Future<void> mountDevice(
   WidgetTester tester,
   DesktopSession controller, {
   String device = 'Jetson',
+  MonitoringHost? host,
   Size size = const Size(1200, 1000),
   double scale = 1,
   Brightness brightness = Brightness.dark,
@@ -70,6 +71,7 @@ Future<void> mountDevice(
         child: Scaffold(
           body: DevicePage(
               device: device,
+              host: host,
               controller: controller,
               onManagePairing: onManagePairing),
         ),
@@ -299,4 +301,48 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Device configuration'), findsOneWidget);
   });
+
+  for (final size in const [Size(1200, 1000), Size(480, 1000)]) {
+    testWidgets(
+        'verified SSH login explains unavailable metrics at ${size.width.toInt()}px',
+        (tester) async {
+      final api = InspectApi(demo: false);
+      final controller = DesktopSession(api);
+      addTearDown(controller.dispose);
+      await controller.start();
+      final reads = api.reads;
+      final host = MonitoringHost.fromJson({
+        'host_id': 'host_ssh_fixture',
+        'display_name': 'ubuntu-jetson',
+        'trust': {'state': 'unknown'},
+        'connectivity': {'state': 'online'},
+        'monitoring_access': 'allowed',
+        'connection': {'method': 'ssh', 'alias': 'jaimef@10.1.1.2'},
+      });
+      await mountDevice(
+        tester,
+        controller,
+        device: 'ubuntu-jetson',
+        host: host,
+        size: size,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('SSH sign-in succeeded · metrics unavailable'),
+          findsOneWidget);
+      expect(find.textContaining('The SSH login to this device was accepted'),
+          findsOneWidget);
+      expect(find.textContaining('Signing in again is not required'),
+          findsOneWidget);
+      expect(find.text('Connection: online'), findsOneWidget);
+      expect(find.text('SSH · read-only monitoring'), findsWidgets);
+      // The read-only retry that already existed stays reachable.
+      await tester.ensureVisible(find.text('Refresh session'));
+      await tester.pumpAndSettle();
+      // No automatic reconnect, no trust write and no command submission.
+      expect(api.reads, reads);
+      expect(api.creates, 1);
+      expect(api.submissions + api.selections + api.saves, 0);
+      expect(tester.takeException(), isNull);
+    });
+  }
 }

@@ -7,11 +7,16 @@ class WorkspaceInspector extends StatelessWidget {
       required this.controller,
       required this.onClose,
       this.activity,
-      this.onOpenTerminal});
+      this.onOpenTerminal,
+      this.onOpenHistory});
 
   /// Integrator supplies a typed terminal-controller command when supported.
   /// Recorded Output remains separate and never launches a shell on tab open.
   final VoidCallback? onOpenTerminal;
+
+  /// Integrator-supplied read-only route to existing history. It must not resume,
+  /// replay or run anything, and must leave the composer draft untouched.
+  final VoidCallback? onOpenHistory;
   final Widget? activity;
   final WorkspaceInspectorController controller;
   final VoidCallback onClose;
@@ -30,6 +35,26 @@ class WorkspaceInspector extends StatelessWidget {
           content: Text(
               'This file exceeds the attachment budget or is no longer current.')));
     }
+  }
+
+  Widget _emptyOutput(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('No command output was recorded for this session.',
+          key: const Key('recorded-output-empty'),
+          style: theme.textTheme.bodyMedium),
+      const SizedBox(height: 8),
+      Text('Opening this panel does not rerun commands or replay past output.',
+          style: theme.textTheme.bodySmall),
+      if (onOpenHistory != null) ...[
+        const SizedBox(height: 12),
+        TextButton.icon(
+            key: const Key('open-recorded-history'),
+            onPressed: onOpenHistory,
+            icon: const Icon(Icons.history, size: 18, semanticLabel: ''),
+            label: const Text('Open recorded history')),
+      ],
+    ]);
   }
 
   @override
@@ -158,9 +183,7 @@ class WorkspaceInspector extends StatelessWidget {
                     const Text(
                         'Recorded command output · read only. Opening this panel runs nothing.'),
                     const SizedBox(height: 16),
-                    if (c.outputs.isEmpty)
-                      const Text(
-                          'No recorded command output is available from this session. Progress titles are not command output.'),
+                    if (c.outputs.isEmpty) _emptyOutput(context),
                     for (final output in c.outputs)
                       Padding(
                           padding: const EdgeInsets.only(bottom: 20),

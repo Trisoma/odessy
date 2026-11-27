@@ -111,7 +111,7 @@ gets defined when the first device is actually driven, against something real.
 |---|---|
 | **Host pairing** | The Rust `odessy-link` mTLS path exists (`ODESSY_PAIRED_HOST`), but Jetson, real-network and Linux/ARM64 qualification remain pending. Single mode starts a local subprocess; split mode also supports a configured remote MCP URL, which is **not** authenticated. The `ExecutionTarget` marker provides the explicit authorization gate a paired host must retain. |
 | **Voice escalation approval** | The seam is wired end to end, async, and returns a closed outcome. The prompt is still a console prompt; spoken approval waits on a composition decision. |
-| **Python Windows backend** | Python ships no Windows provider, so on Windows the Python bridge reports `unconfined` while the TypeScript host can genuinely confine. The Jetson runs Linux, so this is not on the production path — but it is an asymmetry, not a non-issue. |
+| **Python Windows backend** | Python registers `WindowsAclProvider` and can confine on Windows through the built Node `windows-acl` runner, so the Python bridge is no longer always `unconfined` there. The enforcement is still `partial` (see §1.2), and it requires the Node tool server to be built; without it the provider reports unavailable and the host falls back per its isolation setting. The Jetson runs Linux, so this is not on the production path. |
 
 ---
 

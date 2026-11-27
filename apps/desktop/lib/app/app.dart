@@ -1289,21 +1289,27 @@ class _OdessyAppState extends State<OdessyApp> {
                                           : _openInspector,
                                       onOpenModels: () => _openSettings(
                                           SettingsSections.models));
-                                  final panel =
-                                      inspectorOpen && inspector != null
-                                          ? WorkspaceInspector(
-                                              controller: inspector!,
-                                              activity: controller.session
-                                                          ?.events.isNotEmpty ==
-                                                      true
-                                                  ? SessionActivity(
-                                                      events: controller
-                                                          .session!.events)
-                                                  : null,
-                                              onOpenTerminal: () => unawaited(
-                                                  _openBasics('Terminal')),
-                                              onClose: _closeInspector)
-                                          : null;
+                                  final panel = inspectorOpen &&
+                                          inspector != null
+                                      ? WorkspaceInspector(
+                                          controller: inspector!,
+                                          activity: controller.session?.events
+                                                      .isNotEmpty ==
+                                                  true
+                                              ? SessionActivity(
+                                                  events: controller
+                                                      .session!.events)
+                                              : null,
+                                          onOpenHistory: controller.session
+                                                      ?.conversationId !=
+                                                  null
+                                              ? () => unawaited(
+                                                  _openBasics('History'))
+                                              : null,
+                                          onOpenTerminal: () => unawaited(
+                                              _openBasics('Terminal')),
+                                          onClose: _closeInspector)
+                                      : null;
                                   return CallbackShortcuts(
                                       bindings: {
                                         if (panel != null)
