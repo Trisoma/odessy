@@ -856,14 +856,7 @@ class CheckpointService:
             if current is not None and current[path] == entry['files_sha256'][path]:
                 continue
             try:
-                target = self._safe_path(binding, path)
-                parent = target.parent
-                if parent.is_symlink():
-                    raise CheckpointError(403, 'Workspace path denied during restore')
-                parent.mkdir(parents=True, exist_ok=True)
-                resolved_parent = parent.resolve()
-                if root.resolve() not in (resolved_parent, *resolved_parent.parents):
-                    raise CheckpointError(403, 'Workspace path escaped during restore')
+                self._safe_path(binding, path)
                 data = self._git(root, 'cat-file', 'blob', f'{ref}:{path}')
                 if _hash_bytes(data) != entry['files_sha256'][path]:
                     raise CheckpointError(409, 'Checkpoint content changed; restore refused')

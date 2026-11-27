@@ -54,6 +54,7 @@ FILE_SHARE_ALL = 0x00000007
 FILE_SHARE_READ_WRITE = 0x00000003
 FILE_OPEN = 1
 FILE_CREATE = 2
+FILE_OPEN_IF = 3
 FILE_DIRECTORY_FILE = 0x00000001
 FILE_NON_DIRECTORY_FILE = 0x00000040
 FILE_OPEN_REPARSE_POINT = 0x00200000
@@ -269,7 +270,7 @@ def _open_ancestors(root_path: str, parts: Sequence[str],
             _status, child = _nt_open(
                 parent, component,
                 desired=FILE_READ_ATTRIBUTES | SYNCHRONIZE,
-                disposition=FILE_OPEN,
+                disposition=FILE_OPEN_IF,
                 options=FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
                 share=FILE_SHARE_READ_WRITE)
             handles.append(child)

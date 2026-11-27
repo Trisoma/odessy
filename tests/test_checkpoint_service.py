@@ -660,3 +660,23 @@ def test_task_undo_restores_baseline_only_at_approved_revision(tmp_path, new_tur
         assert store.event_by_id(cid, 'task:user') is not None
         assert store.prepare_resume(cid)['turns'] == []
         assert store.prepare_resume(cid)['open_user'] is None
+
+
+@needs_git
+@needs_restore
+def test_restore_recreates_missing_parent_through_the_workspace_handle(tmp_path):
+    root, binding = workspace(tmp_path)
+    nested = root / 'docs' / 'guide.txt'
+    nested.parent.mkdir()
+    nested.write_text('Saved text\n', encoding='utf-8')
+    git(root, 'add', '--', 'docs/guide.txt')
+    api = service(tmp_path, binding)
+    saved = api.create('s1', 'baseline')
+    nested.unlink()
+    nested.parent.rmdir()
+    preview = api.preview('s1', saved['id'])
+
+    api.restore('s1', saved['id'], preview_hash=preview['preview_hash'],
+                expected_revision=preview['expected_revision'])
+
+    assert nested.read_text(encoding='utf-8') == 'Saved text\n'
