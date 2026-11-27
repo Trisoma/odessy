@@ -390,7 +390,7 @@ class PersistentComposition:
                 if live.running:
                     raise Conflict('Conversation already has a running session')
                 self.check_workspace(live, row['id'])
-                return {'session_id': live.id}
+                return {'session_id': live.id, 'unfinished': [], 'open_user': None}
         controller = self.factory()
         if inspect.isawaitable(controller):
             controller = await controller
@@ -407,7 +407,12 @@ class PersistentComposition:
             controller._workspace_inspector = self.app.state.workspace_inspector
             self.attach(controller, row['id'])
             self.app.state.sessions[controller.id] = controller
-            return {'session_id': controller.id}
+            # Report the resume projection's honest loose ends to the API
+            # caller. These are NOT injected into model memory (that would
+            # fabricate history); they tell the UI what was left unfinished.
+            return {'session_id': controller.id,
+                    'unfinished': prepared.get('unfinished') or [],
+                    'open_user': prepared.get('open_user')}
         except BaseException:
             await controller.close()
             raise

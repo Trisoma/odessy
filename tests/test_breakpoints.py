@@ -315,3 +315,19 @@ def test_undo_then_resume_excludes_undone_task(tmp_path):
 
     prepared = store.prepare_resume(cid)
     assert prepared['turns'] == [{'user': 'good question', 'assistant': 'good answer'}]
+
+
+def test_undo_same_anchor_twice_is_refused(tmp_path):
+    """A second undo of the same breakpoint is a conflict, not a duplicate event."""
+    store = make_store(tmp_path)
+    conversation = seed(store)
+    service = BreakpointService(store, clock=FixedClock())
+    anchor = service.record(conversation['id'], kind='task-start', session_id='e' * 32)
+    first = service.undo(conversation['id'], anchor['id'],
+                         expected_revision=store.get(conversation['id'])['revision'])
+    assert first['undo_id'].startswith('undo_')
+    with pytest.raises(Conflict, match='already been undone'):
+        service.undo(conversation['id'], anchor['id'],
+                     expected_revision=store.get(conversation['id'])['revision'])
+    undos = [e for e in store.raw_events(conversation['id']) if e['kind'] == 'undo']
+    assert len(undos) == 1

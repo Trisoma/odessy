@@ -248,6 +248,17 @@ class BreakpointService:
 
     # -- undo ------------------------------------------------------------
 
+    def _already_undone(self, conversation_id: str, breakpoint_id: str) -> bool:
+        """Whether this exact anchor already has an undo event.
+
+        Undo is intentionally append-only, but the same task must not be undone
+        twice: a second undo would re-append an invalidation and could trigger a
+        second file rollback against already-restored content.
+        """
+        return any(event.get('kind') == 'undo'
+                   and (event.get('payload') or {}).get('undo_of') == breakpoint_id
+                   for event in self.store.raw_events(conversation_id))
+
     def _invalidation_range(self, conversation_id: str, payload: Mapping[str, Any],
                             anchor_sequence: int, last_sequence: int) -> tuple[int, int]:
         """Compute the [from, through] event range an undo invalidates.
@@ -306,6 +317,8 @@ class BreakpointService:
         payload = anchor.get('payload') or {}
         if payload.get('version') != BREAKPOINT_SCHEMA:
             raise Unsupported('This breakpoint schema cannot be undone')
+        if self._already_undone(conversation_id, breakpoint_id):
+            raise Conflict('This breakpoint has already been undone')
         boundaries = [str(x) for x in (payload.get('resume') or {}).get('undo_boundaries') or []]
         last_sequence = _check_int((payload.get('cursor') or {}).get('last_event_sequence', 0),
                                    'last_event_sequence', 0)
@@ -378,6 +391,8 @@ class BreakpointService:
         payload = anchor.get('payload') or {}
         if payload.get('version') != BREAKPOINT_SCHEMA:
             raise Unsupported('This breakpoint schema cannot be undone')
+        if self._already_undone(conversation_id, breakpoint_id):
+            raise Conflict('This breakpoint has already been undone')
 
         snapshot_ref = (payload.get('workspace') or {}).get('snapshot_ref')
         rollback: dict[str, Any] = {'status': 'not_requested', 'files': []}

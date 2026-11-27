@@ -557,3 +557,48 @@ def test_create_works_in_empty_repository_without_touching_user_head(tmp_path):
     # The snapshot itself is a valid owned ref and can be previewed.
     preview = api.preview('s1', created['id'])
     assert preview['checkpoint_id'] == created['id']
+
+
+@needs_git
+@needs_restore
+def test_partial_rollback_is_reported_with_safety_checkpoint(tmp_path, monkeypatch):
+    """A mid-restore failure exposes the files already replaced and safety id."""
+    import odessy.application.checkpoints.win32_replace as wr
+    from odessy.application.checkpoints.service import CheckpointError
+
+    root, binding = workspace(tmp_path)
+    api = service(tmp_path, binding)
+    saved = api.create('s1', 'baseline')
+    (root / 'readme.txt').write_text('After\n', encoding='utf-8')
+    (root / 'notes.md').write_text('changed\n', encoding='utf-8')
+    preview = api.preview('s1', saved['id'])
+
+    # Fail the replace of the second file (sorted order: notes.md, readme.txt).
+    calls = {'n': 0}
+    if os.name == 'nt':
+        real = wr.replace_anchored
+    else:
+        real = api._replace_at_root
+
+    def fail_second(*args, **kwargs):
+        calls['n'] += 1
+        if calls['n'] == 2:
+            raise RuntimeError('injected replace failure')
+        return real(*args, **kwargs)
+
+    if os.name == 'nt':
+        monkeypatch.setattr(wr, 'replace_anchored', fail_second)
+    else:
+        monkeypatch.setattr(api, '_replace_at_root', fail_second)
+
+    with pytest.raises(CheckpointError) as caught:
+        api.restore('s1', saved['id'], preview_hash=preview['preview_hash'],
+                    expected_revision=preview['expected_revision'])
+
+    assert caught.value.details.get('partial_rollback') is True
+    assert 'notes.md' in caught.value.details.get('restored_files', [])
+    assert 'readme.txt' not in caught.value.details.get('restored_files', [])
+    assert caught.value.details.get('safety_checkpoint_id', '').startswith('ckpt_')
+    # The first file really was rolled back; the second was not.
+    assert (root / 'notes.md').read_text(encoding='utf-8') == '# Notes\n'
+    assert (root / 'readme.txt').read_text(encoding='utf-8') == 'After\n'

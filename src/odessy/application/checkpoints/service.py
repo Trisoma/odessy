@@ -46,10 +46,14 @@ _CONTROL = re.compile(r'[\x00-\x1f\x7f]')
 class CheckpointError(Exception):
     """Transport-neutral failure; routes translate ``status``."""
 
-    def __init__(self, status: int, message: str) -> None:
+    def __init__(self, status: int, message: str, details: Mapping[str, Any] | None = None) -> None:
         super().__init__(message)
         self.status = status
         self.message = message
+        # Optional machine-readable context (e.g. partially restored files).
+        # Kept separate from ``message`` so transport layers can surface it
+        # without it being mistaken for a human-readable string.
+        self.details: dict[str, Any] = dict(details or {})
 
 
 @dataclass(frozen=True)
@@ -802,7 +806,13 @@ class CheckpointService:
                                     kind='safety', pinned=checkpoint_id)
             if self._current_hashes(binding, entry) != current:
                 raise CheckpointError(409, 'Workspace changed during safety capture')
-            self._apply(binding, entry, current=current)
+            try:
+                self._apply(binding, entry, current=current)
+            except CheckpointError as exc:
+                # The safety checkpoint exists even when the apply failed: give
+                # callers the id so a partial rollback can be recovered from.
+                exc.details.setdefault('safety_checkpoint_id', safety.id)
+                raise
             data = self._read_metadata(binding)
             data['revision'] = int(data['revision']) + 1
             self._write_metadata(binding, data)
@@ -815,7 +825,21 @@ class CheckpointService:
             raise CheckpointError(501, reason)
         root = Path(binding.root_path)
         ref = f'{REF_PREFIX}{entry["checkpoint"]["id"]}'
-        restored = 0
+        restored: list[str] = []
+        try:
+            self._apply_files(binding, entry, current=current, root=root, ref=ref,
+                              restored=restored)
+        except CheckpointError as exc:
+            # A multi-file restore is not atomic. If any file was already
+            # replaced, say so explicitly instead of silently leaving a partial
+            # rollback: callers can point the user at the safety checkpoint.
+            if restored:
+                exc.details.setdefault('partial_rollback', True)
+                exc.details.setdefault('restored_files', list(restored))
+            raise
+
+    def _apply_files(self, binding, entry, *, current, root: Path, ref: str,
+                     restored: list[str]) -> None:
         for path in sorted(entry['files_sha256']):
             target = self._safe_path(binding, path)
             parent = target.parent
@@ -842,13 +866,18 @@ class CheckpointService:
             if os.name != 'nt':
                 self._replace_at_root(binding, path, data, current)
             else:
-                from .win32_replace import ReplaceUnavailable, WindowsReplaceError, replace_anchored
+                from .win32_replace import replace_anchored
                 try:
                     replace_anchored(str(root.resolve()), path, data,
                                      expected_sha256=(current or {}).get(path))
-                except (ReplaceUnavailable, WindowsReplaceError) as exc:
+                except CheckpointError:
+                    raise
+                except Exception as exc:
+                    # Any replace failure (including unexpected binding errors)
+                    # must surface as a transport-neutral CheckpointError so the
+                    # partial-rollback context below can be attached.
                     raise CheckpointError(503, f'Windows anchored restore failed: {exc}') from None
-            restored += 1
+            restored.append(path)
 
     def _replace_at_root(self, binding, path, data, current):
         flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW

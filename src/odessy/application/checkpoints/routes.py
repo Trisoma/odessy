@@ -22,9 +22,13 @@ def register(app: Any, dependencies: Any, *, service: CheckpointService) -> None
     app.state.checkpoints = service
 
     def fail(error: CheckpointError):
-        raise HTTPException(error.status,
-                            detail={'code': _CODES.get(error.status, 'error'),
-                                    'message': error.message})
+        detail = {'code': _CODES.get(error.status, 'error'),
+                  'message': error.message}
+        # Surface machine-readable failure context (e.g. a partial rollback and
+        # its safety checkpoint id) without folding it into the message text.
+        if error.details:
+            detail.update(error.details)
+        raise HTTPException(error.status, detail=detail)
 
     def invalid(message: str):
         raise HTTPException(400, detail={'code': 'invalid_request', 'message': message})
