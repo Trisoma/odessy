@@ -1300,14 +1300,12 @@ class _OdessyAppState extends State<OdessyApp> {
                                                   events: controller
                                                       .session!.events)
                                               : null,
-                                          // A resumed live session holds no
-                                          // output of its own; the earlier
-                                          // turns stay in saved history.
-                                          resumedFromHistory: controller
-                                                  .session?.conversationId !=
-                                              null,
-                                          onOpenHistory: () =>
-                                              unawaited(_openBasics('History')),
+                                          onOpenHistory: controller
+                                                      .session?.conversationId !=
+                                                  null
+                                              ? () => unawaited(
+                                                  _openBasics('History'))
+                                              : null,
                                           onOpenTerminal: () => unawaited(
                                               _openBasics('Terminal')),
                                           onClose: _closeInspector)

@@ -8,17 +8,11 @@ class WorkspaceInspector extends StatelessWidget {
       required this.onClose,
       this.activity,
       this.onOpenTerminal,
-      this.resumedFromHistory = false,
       this.onOpenHistory});
 
   /// Integrator supplies a typed terminal-controller command when supported.
   /// Recorded Output remains separate and never launches a shell on tab open.
   final VoidCallback? onOpenTerminal;
-
-  /// True when the live session was resumed from a saved conversation. The
-  /// transcript then holds earlier turns while this session holds no recorded
-  /// output, which is not the same as a command that failed or ran again.
-  final bool resumedFromHistory;
 
   /// Integrator-supplied read-only route to existing history. It must not resume,
   /// replay or run anything, and must leave the composer draft untouched.
@@ -43,26 +37,14 @@ class WorkspaceInspector extends StatelessWidget {
     }
   }
 
-  /// Says why the panel is empty without claiming an outcome. A session that was
-  /// resumed from history keeps its earlier replies elsewhere, which is why the
-  /// copy separates "not recorded here" from "no command has run".
   Widget _emptyOutput(BuildContext context) {
     final theme = Theme.of(context);
-    if (!resumedFromHistory) {
-      return Text(
-          'No command has run in this session, so there is no output to show. '
-          'Progress titles are not command output.',
-          key: const Key('recorded-output-empty'),
-          style: theme.textTheme.bodyMedium);
-    }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('This live session has no recorded command output yet.',
+      Text('No command output was recorded for this session.',
           key: const Key('recorded-output-empty'),
           style: theme.textTheme.bodyMedium),
       const SizedBox(height: 8),
-      Text(
-          'Earlier turns belong to the saved history, not to this session. Output '
-          'from before it was reopened is not replayed here, and nothing is run again.',
+      Text('Opening this panel does not rerun commands or replay past output.',
           style: theme.textTheme.bodySmall),
       if (onOpenHistory != null) ...[
         const SizedBox(height: 12),

@@ -305,32 +305,28 @@ void main() {
     expect(api.mutations, 0);
   });
 
-  // The panel must not let an empty Output tab read as a failed or repeated
-  // command. Each fixture states a different reason for the same empty list.
-  testWidgets('a session where nothing ran says so and offers no history route',
+  testWidgets('empty output makes no claim about whether a command ran',
       (tester) async {
     api.hasOutput = false;
     await controller.bind(sessionId: 'sid', serviceInstanceId: 'instance');
-    var opened = 0;
     controller.show(InspectorPanel.terminal);
     await tester.pumpWidget(MaterialApp(
         home: Scaffold(
             body: WorkspaceInspector(
                 controller: controller,
-                onClose: () {},
-                onOpenHistory: () => opened++))));
+                onClose: () {}))));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('recorded-output-empty')), findsOneWidget);
-    expect(find.textContaining('No command has run in this session'),
+    expect(find.text('No command output was recorded for this session.'),
         findsOneWidget);
-    expect(find.textContaining('saved history'), findsNothing);
+    expect(find.textContaining('No command has run'), findsNothing);
+    expect(find.textContaining('failed'), findsNothing);
     expect(find.byKey(const Key('open-recorded-history')), findsNothing);
-    expect(opened, 0);
     expect(api.mutations, 0);
   });
 
   testWidgets(
-      'reopened history explains the distinction and opens existing history once',
+      'empty output can open existing history without running a command',
       (tester) async {
     api.hasOutput = false;
     await controller.bind(sessionId: 'sid', serviceInstanceId: 'instance');
@@ -342,14 +338,12 @@ void main() {
             body: WorkspaceInspector(
                 controller: controller,
                 onClose: () {},
-                resumedFromHistory: true,
                 onOpenHistory: () => opened++))));
     await tester.pumpAndSettle();
-    expect(find.textContaining('live session has no recorded command output'),
+    expect(find.text('No command output was recorded for this session.'),
         findsOneWidget);
-    expect(find.textContaining('not replayed here'), findsOneWidget);
-    // The copy never asserts an outcome it cannot know.
-    expect(find.textContaining('failed'), findsNothing);
+    expect(find.textContaining('does not rerun commands'), findsOneWidget);
+    expect(find.textContaining('reopened'), findsNothing);
     final route = find.byKey(const Key('open-recorded-history'));
     expect(route, findsOneWidget);
     expect(find.text('Open recorded history'), findsOneWidget);
@@ -372,7 +366,6 @@ void main() {
             body: WorkspaceInspector(
                 controller: controller,
                 onClose: () {},
-                resumedFromHistory: true,
                 onOpenHistory: () {}))));
     await tester.pumpAndSettle();
     expect(find.text('Recorded fixture output\n'), findsOneWidget);
