@@ -1300,8 +1300,8 @@ class _OdessyAppState extends State<OdessyApp> {
                                                   events: controller
                                                       .session!.events)
                                               : null,
-                                          onOpenHistory: controller
-                                                      .session?.conversationId !=
+                                          onOpenHistory: controller.session
+                                                      ?.conversationId !=
                                                   null
                                               ? () => unawaited(
                                                   _openBasics('History'))

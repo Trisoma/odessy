@@ -312,9 +312,7 @@ void main() {
     controller.show(InspectorPanel.terminal);
     await tester.pumpWidget(MaterialApp(
         home: Scaffold(
-            body: WorkspaceInspector(
-                controller: controller,
-                onClose: () {}))));
+            body: WorkspaceInspector(controller: controller, onClose: () {}))));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('recorded-output-empty')), findsOneWidget);
     expect(find.text('No command output was recorded for this session.'),
