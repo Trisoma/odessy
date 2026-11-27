@@ -22,10 +22,14 @@ Prepare one coherent candidate; do not combine older binaries with newer source.
    [missing-cache recovery](setup/voice-components.md#upgrading-after-removing-the-speech-cache).
 5. Verify authenticated production connection, required Custom continuation,
    read-only Harness restart history, stale/revoked approvals and helper shutdown.
-6. Verify that Windows restoration returns HTTP 501 without approval or file writes,
-   while creation/list/preview remain available. The source disables restoration;
-   the actual candidate must include that restriction. Handle-based restoration
-   protection remains deferred; resolve or disable other safety findings.
+6. Verify Windows restoration works through the handle-anchored replacement and
+   matches the POSIX safety contract: creation/list/preview/restore all function,
+   a path component that is a junction or symlink is refused before any write, and
+   the replaced file is readable afterwards. The candidate must bundle the same
+   `win32_replace` module as the tested commit; a build that falls back to a plain
+   path-based restore is not acceptable. On a host where the NT bindings are
+   unavailable, restore must return HTTP 501 with no approval or file writes —
+   verify whichever branch applies and record the host in the evidence.
 7. Record matching screenshots/native executable identity, then obtain human
    visual acceptance. Signing, hosted CI, provider/hardware evidence and publication
    are separately recorded, never implied by a local passing test.

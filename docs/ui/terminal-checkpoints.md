@@ -44,24 +44,26 @@ Restoration takes a safety checkpoint first and writes only supported captured
 paths, atomically per file. It is not a multi-file atomic transaction and cannot
 undo network calls, executed commands or other external effects.
 
-## Windows restore restriction
+## Windows restore safety
 
-**Checkpoint restoration is disabled on Windows.** Directory-handle protection
-against concurrent path replacement is not yet implemented, so current path checks
-are insufficient to enable it safely. Creation, listing and read-only preview remain
-available. The service and final write owner refuse restoration with HTTP 501
-`unsupported` before approval, safety capture or workspace mutation. There is no
-environment/configuration flag or access mode that enables Windows restoration.
+**Checkpoint restoration works on Windows** through handle-anchored replacement.
+Python on Windows has no `dir_fd`/`O_NOFOLLOW`, so the POSIX no-follow defense does
+not port directly. Instead, `application/checkpoints/win32_replace.py` binds the NT
+primitives: each path component is opened relative to the already-verified parent
+handle with `FILE_OPEN_REPARSE_POINT`, a junction/symlink is refused at every level,
+and the final replace is an `NtSetInformationFile(FileRenameInformation)` rename
+relative to that verified handle. No path string is re-resolved after validation, so
+a concurrent directory swap cannot redirect the write outside the workspace.
+
+Creation, listing, preview and restore all function. If the NT bindings are
+unavailable on a host, restore returns HTTP 501 `unsupported` before approval,
+safety capture or workspace mutation; there is no unsafe path-based fallback.
 
 Preview replies include `restore_available` and `restore_unavailable_reason`.
-The desktop disables Confirm restore and shows the service's explanation; clients
-also refuse previews from older services without explicit availability. The connected
-service's operating system decides availability, not the client computer's OS.
-
-Re-enabling Windows restoration requires a reviewed implementation and tests for
-handle-based directory/path replacement protection. POSIX no-follow descriptor
-defenses do not establish Windows parity. Existing binaries/packages must be rebuilt
-from this source to contain the restriction; earlier installed receipts do not prove it.
+Clients should present the live capability rather than a fixed Windows restriction:
+the connected service's host and bindings decide availability, not the client's OS.
+Existing binaries/packages must be rebuilt from this source to contain the
+handle-anchored implementation; earlier installed receipts do not prove it.
 
 ## Ownership and verification
 

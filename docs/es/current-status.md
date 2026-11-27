@@ -25,7 +25,7 @@ Sigue [Primeros pasos](getting-started.md) y comprueba un comando local aprobado
 | Modos de acceso | Custom ask/auto/full con acuses de recibo del servicio y revisiones | La política existente, las denegaciones duras, las rutas sensibles y las concesiones independientes siguen vigentes. |
 | Contexto/memoria/recuperación | Hechos de proyecto explícitos, indexación léxica acotada con activación opt-in y contexto/citas de Custom | Siguen siendo necesarias la validación de fuentes y la autoridad actual del espacio de trabajo en vivo. Sin indexación automática en la nube. |
 | Terminal interactiva | PTY local de Windows con helper Node/nativo empaquetado verificado y concesión explícita | Se ejecuta con los permisos del sistema operativo del usuario; sin PTY remoto, handles restaurados ni entrada reproducida. Sin el conjunto completo de componentes necesarios, no está disponible. |
-| Checkpoints | Instantáneas de texto acotadas y vista previa respaldadas por Git; la restauración compatible fuera de Windows usa aprobación exacta y una instantánea de seguridad | La restauración en Windows está deshabilitada en el servicio y en la UI a la espera de una seguridad basada en handles. La creación, el listado y la vista previa siguen disponibles; los archivos binarios/sensibles/no compatibles quedan excluidos. |
+| Checkpoints | Instantáneas de texto acotadas y vista previa respaldadas por Git; la restauración usa aprobación exacta y una instantánea de seguridad, con reemplazo anclado a handles en Windows | La restauración en Windows está disponible cuando los enlaces NT están presentes; un host sin ellos devuelve unsupported. Los archivos binarios/sensibles/no compatibles quedan excluidos. |
 | Monitorización | Agregación opcional en Go con telemetría local/emparejada y estado SSH de solo lectura | La conectividad, el permiso y la frescura de los datos siguen siendo independientes. Los DTO de monitorización no conceden acceso de ejecución ni de espacio de trabajo. |
 | Ejecución SSH | Selección explícita de un destino Custom temporal y comandos `ssh.run` aprobados exactamente | Separada de la monitorización; sin sandbox remoto, PTY, inspector de archivos ni ejecución SSH de Harness. Reconecta tras reiniciar el servicio. |
 | Voz | Piper recomendado para CPU; Kokoro seleccionable; Whisper y descarga de activación por voz opcionales | Carga/síntesis Piper instalada verificada; micrófono, reproducción, eco y activación necesitan aceptación por dispositivo. |
@@ -46,8 +46,8 @@ descrito arriba; no es un IDE remoto general ni una garantía de confinamiento.
 
 ## Puertas de control antes de una afirmación de beta
 
-1. Mantén deshabilitada la restauración de checkpoints en Windows en el candidato de versión hasta que
-   se verifique la protección basada en handles. Resuelve o deshabilita cualquier otro hallazgo de seguridad/pérdida de datos.
+1. Verifica que el candidato empaquetado incluya la restauración anclada a handles de Windows y supere
+   sus comprobaciones de reparse rechazado y legibilidad tras el reemplazo. Resuelve o deshabilita cualquier otro hallazgo de seguridad/pérdida de datos.
 2. Compila y audita un candidato coherente a partir de la instantánea final del código fuente con
    conjunto de versiones fijadas del runtime, los componentes auxiliares y sus dependencias, licencias y hashes de artefactos.
 3. Verifica la instalación/actualización/desinstalación aisladas y la preservación de perfil/historial/ajustes

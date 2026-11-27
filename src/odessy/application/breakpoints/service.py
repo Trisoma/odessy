@@ -327,8 +327,9 @@ class BreakpointService:
             # cursor must not let undo discard unrelated later work.
             last_sequence = anchor['sequence']
 
-        tool_payload = payload.get('tool') or {}
-        call_id = tool_payload.get('call_id')
+        # call_id lives at the payload top level (record() writes it there);
+        # the nested tool projection never carries it.
+        call_id = payload.get('call_id')
         undone_call_ids = [str(call_id)] if call_id else []
         undone_files = [str(x) for x in (payload.get('completed') or {}).get('files_changed') or []]
 
@@ -341,7 +342,10 @@ class BreakpointService:
 
         from_sequence, through_sequence = self._invalidation_range(
             conversation_id, payload, anchor['sequence'], last_sequence)
-        undo_id = 'undo_' + uuid.uuid4().hex
+        # Deterministic id: store.append is idempotent by event_id, so a
+        # concurrent duplicate undo cannot append a second undo event even if
+        # both requests passed the _already_undone check above.
+        undo_id = 'undo_' + breakpoint_id[len('bp_'):]
         undo_payload = {
             'version': BREAKPOINT_SCHEMA,
             'id': undo_id,
@@ -410,7 +414,12 @@ class BreakpointService:
                     # transaction. Report an expired anchor explicitly instead
                     # of failing the whole undo — history invalidation still
                     # applies, only the file rollback is unavailable.
-                    if getattr(exc, 'status', None) == 404:
+                    # Only a CHECKPOINT-not-found 404 means "pruned". A Session
+                    # 404 (bad session_id) or a malformed id must propagate --
+                    # otherwise a caller typo is silently reported as expiry.
+                    message = str(exc)
+                    if (getattr(exc, 'status', None) == 404
+                            and 'Checkpoint not found' in message):
                         rollback = {'status': 'snapshot_expired', 'checkpoint_id': checkpoint_id,
                                     'files': [],
                                     'reason': 'the bound snapshot was pruned; files were not restored'}
@@ -435,13 +444,17 @@ class BreakpointService:
         last_sequence = _check_int((payload.get('cursor') or {}).get('last_event_sequence', 0),
                                    'last_event_sequence', 0)
         last_sequence = max(last_sequence, anchor['sequence'])
-        tool_payload = payload.get('tool') or {}
-        call_id = tool_payload.get('call_id')
+        # call_id lives at the payload top level (record() writes it there);
+        # the nested tool projection never carries it.
+        call_id = payload.get('call_id')
         undone_call_ids = [str(call_id)] if call_id else []
         undone_files = [str(x) for x in (payload.get('completed') or {}).get('files_changed') or []]
         from_sequence, through_sequence = self._invalidation_range(
             conversation_id, payload, anchor['sequence'], last_sequence)
-        undo_id = 'undo_' + uuid.uuid4().hex
+        # Deterministic id: store.append is idempotent by event_id, so a
+        # concurrent duplicate undo cannot append a second undo event even if
+        # both requests passed the _already_undone check above.
+        undo_id = 'undo_' + breakpoint_id[len('bp_'):]
         undo_payload = {
             'version': BREAKPOINT_SCHEMA, 'id': undo_id, 'undo_of': breakpoint_id,
             'created_at': self._clock(), 'invalidates_from_sequence': from_sequence,

@@ -239,7 +239,7 @@ def test_undo_async_reports_expired_snapshot_without_losing_history(tmp_path):
     """A pruned snapshot no longer fails the undo; it reports snapshot_expired."""
     class Expired:
         def preview(self, sid, cid):
-            err = Exception('checkpoint not found')
+            err = Exception('Checkpoint not found')
             err.status = 404
             raise err
 
@@ -284,6 +284,27 @@ def test_undo_async_propagates_non_notfound_preview_errors(tmp_path):
         workspace={'snapshot_ref': 'refs/odessy/checkpoints/ckpt_' + '0' * 32})
     revision = store.get(conversation['id'])['revision']
     with pytest.raises(Exception, match='preview exploded'):
+        asyncio.run(service.undo_async(
+            conversation['id'], anchor['id'], expected_revision=revision, session_id='e' * 32))
+
+
+def test_undo_async_does_not_mask_session_not_found_as_expired(tmp_path):
+    """A bad session_id 404 must propagate, not be reported as snapshot_expired."""
+    class BadSession:
+        def preview(self, sid, cid):
+            err = Exception('Session not found')
+            err.status = 404
+            raise err
+
+    store = make_store(tmp_path)
+    conversation = seed(store)
+    service = BreakpointService(store, clock=FixedClock())
+    service.checkpoints = BadSession()
+    anchor = service.record(
+        conversation['id'], kind='critical-before', session_id='e' * 32,
+        workspace={'snapshot_ref': 'refs/odessy/checkpoints/ckpt_' + '0' * 32})
+    revision = store.get(conversation['id'])['revision']
+    with pytest.raises(Exception, match='Session not found'):
         asyncio.run(service.undo_async(
             conversation['id'], anchor['id'], expected_revision=revision, session_id='e' * 32))
 

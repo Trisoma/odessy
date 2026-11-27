@@ -12,6 +12,7 @@ User-visible changes are recorded here, starting with the next release.
 - Store checkpoint file hashes with file-level content addressing: unchanged files across snapshots share one pool entry instead of being re-stored in every checkpoint, with legacy inline-hash metadata remaining readable. Unreferenced pool entries are reclaimed on write.
 - Allow checkpoints in repositories with no commits yet, and make task undo report an expired/pruned snapshot explicitly instead of failing while still preserving the history invalidation.
 - Exclude undone task turns from legacy conversation resume: undo now records the invalidated event range, and resume rebuilds context without those turns while keeping the append-only audit trail intact.
+- Harden undo and refresh Windows restore docs: dedupe undo event ids so concurrent requests cannot append duplicate invalidations, record the undone call id, distinguish a pruned snapshot from a bad session id, and update release/verification/limitation docs (EN/中文/ES) now that Windows restoration is enabled.
 
 - Update the pinned OpenTelemetry API to 1.45.2 and Node HTTP adapter to 2.1.6 for denial-of-service and request-path security fixes.
 - Keep backend exception text out of desktop audio errors while preserving device-selection guidance.

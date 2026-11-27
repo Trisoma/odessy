@@ -317,6 +317,8 @@ identity and revision conflicts must surface as errors, never optimistic authori
 or an automatic mutation retry. Unsupported engine/helper capabilities remain
 unavailable. Checkpoint preview adds optional `restore_available` (boolean) and
 `restore_unavailable_reason` (null when available, otherwise a nonempty string).
-New clients refuse restore when availability is absent or false. Windows service
-restore returns HTTP 501 `unsupported` regardless of UI or access mode; checkpoint
-creation/list/preview remain supported. Source declarations do not qualify an installed package.
+New clients refuse restore when availability is absent or false. Restore works on
+Windows through handle-anchored replacement; a service host without the required NT
+bindings returns HTTP 501 `unsupported` regardless of UI or access mode, while
+checkpoint creation/list/preview remain supported. Source declarations do not
+qualify an installed package.

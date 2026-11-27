@@ -25,7 +25,7 @@ Follow [Getting started](getting-started.md), then check one approved local comm
 | Access modes | Custom ask/auto/full with service acknowledgments and revisions | Existing policy, hard denials, sensitive paths and independent grants remain effective. |
 | Context/memory/retrieval | Explicit project facts, opt-in bounded lexical indexing and Custom context/citations | Source validation and current live workspace authority remain required. No automatic cloud indexing. |
 | Interactive terminal | Local Windows PTY with verified packaged Node/native helper and explicit grant | Runs with user OS permissions; no remote PTY, restored handles or replayed input. Missing closure means unavailable. |
-| Checkpoints | Git-backed bounded text snapshots and preview; supported non-Windows restoration uses exact approval and a safety snapshot | Windows restoration is disabled in the service and UI pending handle-based safety. Creation/list/preview remain available; binary/sensitive/unsupported files are excluded. |
+| Checkpoints | Git-backed bounded text snapshots and preview; restoration uses exact approval and a safety snapshot, with handle-anchored replacement on Windows | Windows restoration is enabled when the NT handle bindings are available; a host without them returns unsupported. Binary/sensitive/unsupported files are excluded. |
 | Monitoring | Optional Go aggregation with local/paired telemetry and read-only SSH status | Connectivity, permission and freshness remain separate. Monitoring DTOs grant no execution or workspace access. |
 | SSH execution | Explicit temporary Custom target selection and exactly approved `ssh.run` commands | Separate from monitoring; no remote sandbox, PTY, file inspector or Harness SSH execution. Reconnect after service restart. |
 | Voice | Piper recommended for CPU; Kokoro selectable; optional Whisper input and separate wake downloads | Installed Piper model load/synthesis verified; microphone, playback, echo and wake require device-specific acceptance. |
@@ -46,8 +46,9 @@ above; it is not a general remote IDE or confinement guarantee.
 
 ## Gates before a beta claim
 
-1. Keep Windows checkpoint restoration disabled in the release candidate until
-   handle-based protection is verified. Resolve or disable any other safety/data-loss findings.
+1. Verify the packaged candidate bundles the handle-anchored Windows restore and
+   passes its junction/refuse and readable-after-replace checks. Resolve or disable
+   any other safety/data-loss findings.
 2. Build and audit one coherent candidate from the final source snapshot with
    pinned runtime/helper closure, licenses and artifact hashes.
 3. Verify isolated install/update/uninstall and profile/history/settings preservation

@@ -34,8 +34,8 @@ RETENTION = 20
 GIT_TIMEOUT = 60
 REF_PREFIX = 'refs/odessy/checkpoints/'
 WINDOWS_RESTORE_REASON = (
-    'Checkpoint restoration is disabled on Windows until directory-handle '
-    'protection against path replacement is implemented. Creation and preview remain available.'
+    'Checkpoint restoration is disabled on Windows: the handle-anchored '
+    'protection is unavailable on this host. Creation and preview remain available.'
 )
 _GRANT_LOOP = contextvars.ContextVar('checkpoint_grant_loop', default=None)
 
