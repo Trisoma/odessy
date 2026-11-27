@@ -48,6 +48,11 @@ class _DevicePageState extends State<DevicePage> {
   bool get _restricted =>
       host != null && (host!.access != 'allowed' || host!.trust == 'revoked');
 
+  /// A verified SSH login: the saved alias authenticated even though no
+  /// readings are available here. Never inferred from trust or telemetry.
+  bool get _sshSignedIn =>
+      host?.connectionMethod == 'ssh' && host?.connectivity == 'online';
+
   /// Wire enum wording, kept literal so nothing unknown reads as healthy.
   String _statusWord(String raw) => switch (raw) {
         'online' => 'Online',
@@ -382,13 +387,17 @@ class _DevicePageState extends State<DevicePage> {
           Text(
             widget.monitoringOverview != null
                 ? 'Reported readings are shown in Overview.'
-                : 'Metrics unavailable',
+                : _sshSignedIn
+                    ? 'SSH sign-in succeeded · metrics unavailable'
+                    : 'Metrics unavailable',
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: OdessyTokens.spaceCompact),
           Text(widget.monitoringOverview != null
               ? 'Select a collector group there for its status, source and sample time. This page never infers a value.'
-              : 'No device metrics are available in this view.'),
+              : _sshSignedIn
+                  ? 'The SSH login to this device was accepted, so the saved alias still authenticates. No readings arrived, so none are shown here. Signing in again is not required; Refresh session retries the read-only request. Monitoring never grants execution or workspace access.'
+                  : 'No device metrics are available in this view.'),
           const SizedBox(height: OdessyTokens.spaceRegular),
           _detail(
               context,

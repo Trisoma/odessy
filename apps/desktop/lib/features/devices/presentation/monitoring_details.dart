@@ -34,6 +34,11 @@ class MonitoringDetails extends StatelessWidget {
   bool get _restricted => host?.access != 'allowed' || host?.trust == 'revoked';
   bool get _historical =>
       retained || error != null || host?.connectivity != 'online';
+
+  /// A verified SSH login: the saved alias authenticated even though readings
+  /// are not arriving. Never inferred from trust or telemetry access.
+  bool get _sshSignedIn =>
+      host?.connectionMethod == 'ssh' && host?.connectivity == 'online';
   Map get _sample => _restricted || _mismatched
       ? const {}
       : report != null
@@ -159,7 +164,21 @@ class MonitoringDetails extends StatelessWidget {
                                 if (_mismatched)
                                   _notice(context, 'Report unavailable',
                                       'The supplied report does not match this device or supported format.'),
-                                if (error != null)
+                                if (error != null && _sshSignedIn)
+                                  _card(
+                                      context,
+                                      'SSH sign-in succeeded · metrics unavailable',
+                                      [
+                                        Text(
+                                            'The SSH login to this device was accepted, so the saved alias still authenticates. '
+                                            'The metrics request did not complete: $error'),
+                                        const SizedBox(height: 8),
+                                        const Text(
+                                            'Readings stay unavailable until the collection service answers. '
+                                            'Signing in again is not required; use Refresh monitoring to retry the read-only request. '
+                                            'This view never grants execution or workspace access.'),
+                                      ])
+                                else if (error != null)
                                   _notice(context, 'Monitoring needs attention',
                                       error!),
                                 _card(context, 'Device state', [

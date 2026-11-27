@@ -5,6 +5,7 @@ import 'package:odessy_client/odessy_client.dart';
 import 'package:odessy_desktop/app/execution_hosts_controller.dart';
 import 'package:odessy_desktop/app/ssh_connection_controller.dart';
 import 'package:odessy_desktop/features/devices/presentation/execution_hosts_page.dart';
+import 'package:odessy_desktop/features/devices/presentation/monitoring_details.dart';
 
 final sshHostId = 'host_${List.filled(64, 'a').join()}';
 
@@ -460,6 +461,58 @@ void main() {
     expect(controller.hasTarget, isFalse);
     controller.dispose();
   });
+
+  for (final narrow in [false, true]) {
+    testWidgets(
+        'HTTP 503 keeps the verified SSH login and the read-only retry '
+        '${narrow ? 'narrow' : 'wide'}', (tester) async {
+      tester.view.physicalSize =
+          narrow ? const Size(480, 1000) : const Size(1200, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final host = MonitoringHost.fromJson({
+        'host_id': 'host_ssh_fixture',
+        'display_name': 'ubuntu-jetson',
+        'trust': {'state': 'unknown'},
+        'connectivity': {'state': 'online'},
+        'monitoring_access': 'allowed',
+        'connection': {'method': 'ssh', 'alias': 'jaimef@10.1.1.2'},
+        'sample': {
+          'observed_at': '2026-11-11T12:00:00Z',
+          'cpu': {'status': 'ok', 'utilization_percent': 12.5},
+        },
+      });
+      var refreshes = 0;
+      await tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+              body: MonitoringDetails(
+                  host: host,
+                  error: 'Monitoring unavailable (HTTP 503).',
+                  clock: () => DateTime.utc(2026, 11, 11, 12, 30),
+                  onRefresh: () => refreshes++))));
+      await tester.pumpAndSettle();
+      expect(find.text('SSH sign-in succeeded · metrics unavailable'),
+          findsOneWidget);
+      expect(find.textContaining('Monitoring unavailable (HTTP 503).'),
+          findsOneWidget);
+      expect(find.textContaining('Signing in again is not required'),
+          findsOneWidget);
+      expect(find.text('SSH · read-only monitoring'), findsOneWidget);
+      // A stale reading keeps the time it was observed at.
+      expect(find.text('2026-11-11T12:00:00.000Z'), findsWidgets);
+      expect(find.textContaining('Historical / stale reading'), findsWidgets);
+      // Monitoring never becomes an execution or workspace grant.
+      expect(find.textContaining('Not granted by monitoring'), findsOneWidget);
+      final retry = find.text('Refresh monitoring');
+      await tester.ensureVisible(retry);
+      await tester.pumpAndSettle();
+      await tester.tap(retry);
+      await tester.pumpAndSettle();
+      expect(refreshes, 1);
+      expect(tester.takeException(), isNull);
+    });
+  }
 }
 
 class _SlowSsh extends FakeSsh {
