@@ -864,7 +864,10 @@ class CheckpointService:
                 if observed != current[path]:
                     raise CheckpointError(409, 'Restore target changed after approval')
             if os.name != 'nt':
-                self._replace_at_root(binding, path, data, current)
+                try:
+                    self._replace_at_root(binding, path, data, current)
+                except OSError:
+                    raise CheckpointError(503, 'Checkpoint file could not be restored') from None
             else:
                 from .win32_replace import replace_anchored
                 try:

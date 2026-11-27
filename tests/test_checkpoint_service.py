@@ -583,7 +583,9 @@ def test_partial_rollback_is_reported_with_safety_checkpoint(tmp_path, monkeypat
     def fail_second(*args, **kwargs):
         calls['n'] += 1
         if calls['n'] == 2:
-            raise RuntimeError('injected replace failure')
+            if os.name == 'nt':
+                raise RuntimeError('injected replace failure')
+            raise OSError('injected replace failure')
         return real(*args, **kwargs)
 
     if os.name == 'nt':
@@ -595,6 +597,7 @@ def test_partial_rollback_is_reported_with_safety_checkpoint(tmp_path, monkeypat
         api.restore('s1', saved['id'], preview_hash=preview['preview_hash'],
                     expected_revision=preview['expected_revision'])
 
+    assert caught.value.status == 503
     assert caught.value.details.get('partial_rollback') is True
     assert 'notes.md' in caught.value.details.get('restored_files', [])
     assert 'readme.txt' not in caught.value.details.get('restored_files', [])
