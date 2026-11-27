@@ -21,9 +21,10 @@ import time
 import uuid
 from typing import Any, Callable, Mapping
 
-from odessy.authority.redaction import redact_text
+from odessy.authority.redaction import looks_like_secret_name, redact_text
 from odessy.tools.catalog import PATH_ARGUMENTS
 
+from ..checkpoints.service import CheckpointError
 from ..conversations.store import (Conflict, ConversationStore, Invalid, NotFound,
                                     StorageError, _check_id, _check_int, _check_text, utc_now)
 from .policy import is_critical
@@ -62,6 +63,9 @@ def _argument_projection(arguments: Any) -> dict[str, Any]:
         return projection
     for key, value in arguments.items():
         name = str(key)
+        if looks_like_secret_name(name):
+            projection[name] = {'type': type(value).__name__}
+            continue
         if isinstance(value, bool) or value is None:
             projection[name] = {'type': type(value).__name__, 'value': value}
             continue
@@ -99,11 +103,13 @@ class BreakpointService:
         checkpoints: Any | None = None,
         request_grant: Callable[[str, Mapping[str, Any]], Any] | None = None,
         clock: Callable[[], str] | None = None,
+        check_owner: Callable[[str, str | None], None] | None = None,
     ) -> None:
         self.store = store
         self.checkpoints = checkpoints
         self.request_grant = request_grant
         self._clock = clock or utc_now
+        self._check_owner = check_owner or (lambda cid, sid: None)
 
     # -- recording -------------------------------------------------------
 
@@ -248,260 +254,141 @@ class BreakpointService:
 
     # -- undo ------------------------------------------------------------
 
-    def _already_undone(self, conversation_id: str, breakpoint_id: str) -> bool:
-        """Whether this exact anchor already has an undo event.
-
-        Undo is intentionally append-only, but the same task must not be undone
-        twice: a second undo would re-append an invalidation and could trigger a
-        second file rollback against already-restored content.
-        """
-        return any(event.get('kind') == 'undo'
-                   and (event.get('payload') or {}).get('undo_of') == breakpoint_id
-                   for event in self.store.raw_events(conversation_id))
-
-    def _invalidation_range(self, conversation_id: str, payload: Mapping[str, Any],
-                            anchor_sequence: int, last_sequence: int) -> tuple[int, int]:
-        """Compute the [from, through] event range an undo invalidates.
-
-        The start is the task-start anchor named by ``undo_boundaries`` when
-        present; otherwise the anchor breakpoint being undone is itself the
-        start (undoing a task-start anchor invalidates from that anchor on).
-        Earlier conversation turns therefore survive. The end is the anchor's
-        last observed event sequence.
-        """
-        boundaries = [str(x) for x in (payload.get('resume') or {}).get('undo_boundaries') or []]
-        from_sequence = anchor_sequence
+    def _undo_plan(self, cid: str, breakpoint_id: str, revision: int,
+                   sid: str | None) -> tuple[dict[str, Any], str | None]:
+        _check_id(cid)
+        breakpoint_id = _check_text(breakpoint_id, 'breakpoint_id', 80)
+        if not breakpoint_id.startswith('bp_'):
+            raise Invalid('breakpoint_id must be a breakpoint id')
+        _check_int(revision, 'expected_revision', 0)
+        if self.store.get(cid)['revision'] != revision:
+            raise Conflict('Conversation changed; reload before undoing')
+        self._check_owner(cid, sid)
+        anchor = self.store.event_by_id(cid, breakpoint_id)
+        if anchor is None or anchor['kind'] != 'breakpoint':
+            raise NotFound('Breakpoint not found')
+        payload = anchor['payload']
+        if payload.get('version') != BREAKPOINT_SCHEMA:
+            raise Unsupported('This breakpoint schema cannot be undone')
+        boundaries = (payload.get('resume') or {}).get('undo_boundaries') or []
+        baseline = anchor
         if boundaries:
-            boundary = self.store.event_by_id(conversation_id, boundaries[0])
-            if boundary is not None and boundary.get('kind') == 'breakpoint':
-                from_sequence = _check_int(boundary.get('sequence', 0), 'sequence', 0)
-        # "Undo this task" must invalidate everything from the task start up to
-        # now, not just up to the anchor's cursor: turns generated after the
-        # anchor are part of the same undone task. Take the live high-water mark.
-        _first, current_last = self.store.sequence_bounds(conversation_id)
-        through_sequence = max(last_sequence, anchor_sequence, current_last)
-        from_sequence = min(from_sequence, through_sequence)
-        return from_sequence, through_sequence
-
-    def undo(
-        self,
-        conversation_id: str,
-        breakpoint_id: str,
-        *,
-        expected_revision: int,
-        session_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Undo a task back to the anchor breakpoint.
-
-        The anchor's ``resume.undo_boundaries`` and cursor define what is
-        discarded. File rollback is done only when the anchor carries a
-        ``workspace.snapshot_ref`` and a CheckpointService + approval broker are
-        wired; otherwise the undo records history-only invalidation.
-
-        History is never physically deleted: an ``undo`` event marks the range
-        invalid, so the audit trail stays intact (and Harness history is untouched).
-        """
-        conversation_id = _check_id(conversation_id)
-        breakpoint_id = _check_text(breakpoint_id, 'breakpoint_id', 80)
-        if not breakpoint_id.startswith('bp_'):
-            raise Invalid('breakpoint_id must be a breakpoint id')
-        expected_revision = _check_int(expected_revision, 'expected_revision', 0)
-
-        row = self.store.get(conversation_id)
-        if row['revision'] != expected_revision:
-            raise Conflict('Conversation changed; reload before undoing')
-
-        anchor = self.store.event_by_id(conversation_id, breakpoint_id)
-        if anchor is None or anchor['kind'] != 'breakpoint':
-            raise NotFound('Breakpoint not found')
-        payload = anchor.get('payload') or {}
-        if payload.get('version') != BREAKPOINT_SCHEMA:
-            raise Unsupported('This breakpoint schema cannot be undone')
-        if self._already_undone(conversation_id, breakpoint_id):
+            candidate = self.store.event_by_id(cid, boundaries[0])
+            if candidate is not None and candidate['kind'] == 'breakpoint':
+                baseline = candidate
+        events = self.store.raw_events(cid)
+        undo_events = [e['payload'] for e in events if e['kind'] == 'undo']
+        if any(e.get('undo_of') == baseline['event_id'] for e in undo_events):
             raise Conflict('This breakpoint has already been undone')
-        boundaries = [str(x) for x in (payload.get('resume') or {}).get('undo_boundaries') or []]
-        last_sequence = _check_int((payload.get('cursor') or {}).get('last_event_sequence', 0),
-                                   'last_event_sequence', 0)
-        if last_sequence < anchor['sequence']:
-            # An anchor must bound events at or before itself; a corrupt/future
-            # cursor must not let undo discard unrelated later work.
-            last_sequence = anchor['sequence']
-
-        # call_id lives at the payload top level (record() writes it there);
-        # the nested tool projection never carries it.
-        call_id = payload.get('call_id')
-        undone_call_ids = [str(call_id)] if call_id else []
-        undone_files = [str(x) for x in (payload.get('completed') or {}).get('files_changed') or []]
-
-        snapshot_ref = (payload.get('workspace') or {}).get('snapshot_ref')
-        rollback: dict[str, Any] = {'status': 'not_requested', 'files': []}
-        if snapshot_ref:
-            rollback = self._rollback_files(
-                conversation_id, session_id, str(snapshot_ref),
-                expected_revision=expected_revision)
-
-        from_sequence, through_sequence = self._invalidation_range(
-            conversation_id, payload, anchor['sequence'], last_sequence)
-        # Deterministic id: store.append is idempotent by event_id, so a
-        # concurrent duplicate undo cannot append a second undo event even if
-        # both requests passed the _already_undone check above.
-        undo_id = 'undo_' + breakpoint_id[len('bp_'):]
+        start = baseline['sequence']
+        turn_id = (baseline['payload'].get('task') or {}).get('turn_id')
+        if turn_id:
+            user = self.store.event_by_id(cid, f'{turn_id}:user')
+            if user is not None and user['kind'] == 'user' and user['sequence'] <= start:
+                start = user['sequence']
+        undone_ranges = [(e['invalidates_from_sequence'], e['invalidates_through_sequence'])
+                         for e in undo_events if 'invalidates_from_sequence' in e]
+        if any(e['sequence'] > baseline['sequence']
+               and ((e['kind'] == 'breakpoint' and e['payload'].get('kind') == 'task-start')
+                    or (e['kind'] == 'user' and e['event_id'].endswith(':user')))
+               and not any(lo <= e['sequence'] <= hi for lo, hi in undone_ranges)
+               for e in events):
+            raise Conflict('Only the latest task can be undone')
         undo_payload = {
-            'version': BREAKPOINT_SCHEMA,
-            'id': undo_id,
-            'undo_of': breakpoint_id,
-            'created_at': self._clock(),
-            'invalidates_from_sequence': from_sequence,
-            'invalidates_through_sequence': through_sequence,
+            'version': BREAKPOINT_SCHEMA, 'id': 'undo_' + baseline['event_id'][len('bp_'):],
+            'undo_of': baseline['event_id'], 'created_at': self._clock(),
+            'invalidates_from_sequence': start,
+            'invalidates_through_sequence': events[-1]['sequence'],
             'undo_boundaries': boundaries[:64],
-            'undone_call_ids': undone_call_ids[:200],
-            'undone_files': undone_files[:MAX_FILES],
-            'file_rollback': rollback,
+            'undone_call_ids': [payload['call_id']] if payload.get('call_id') else [],
+            'undone_files': ((payload.get('completed') or {}).get('files_changed') or [])[:MAX_FILES],
         }
-        self.store.append(conversation_id, event_id=undo_id, kind='undo', payload=undo_payload)
-        return {'version': 1, 'conversation_id': conversation_id,
-                'undo_id': undo_id, 'undo_of': breakpoint_id,
-                'breakpoint_id': breakpoint_id,
-                'invalidates_through_sequence': through_sequence,
-                'file_rollback': rollback, 'history_preserved': True}
+        snapshot = (baseline['payload'].get('workspace') or {}).get('snapshot_ref')
+        checkpoint_id = str(snapshot).rsplit('/', 1)[-1] if snapshot else None
+        return undo_payload, checkpoint_id
 
-    async def undo_async(
-        self,
-        conversation_id: str,
-        breakpoint_id: str,
-        *,
-        expected_revision: int,
-        session_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Async undo that also performs the approved file rollback in one call.
+    def _record_undo(self, cid, breakpoint_id, revision, sid, payload, rollback, *, apply=None):
+        self._check_owner(cid, sid)
+        receipts = {}
 
-        This mirrors the checkpoint restore route: Git and the broker run through
-        ``CheckpointService.run_async`` so Git stays off the event loop and an async
-        approval completes on the loop that owns it. History invalidation and the
-        ``undo`` event are appended after a successful rollback (or recorded as
-        history-only when no snapshot is bound).
-        """
-        conversation_id = _check_id(conversation_id)
-        breakpoint_id = _check_text(breakpoint_id, 'breakpoint_id', 80)
-        if not breakpoint_id.startswith('bp_'):
-            raise Invalid('breakpoint_id must be a breakpoint id')
-        expected_revision = _check_int(expected_revision, 'expected_revision', 0)
-        row = self.store.get(conversation_id)
-        if row['revision'] != expected_revision:
-            raise Conflict('Conversation changed; reload before undoing')
-        anchor = self.store.event_by_id(conversation_id, breakpoint_id)
-        if anchor is None or anchor['kind'] != 'breakpoint':
-            raise NotFound('Breakpoint not found')
-        payload = anchor.get('payload') or {}
-        if payload.get('version') != BREAKPOINT_SCHEMA:
-            raise Unsupported('This breakpoint schema cannot be undone')
-        if self._already_undone(conversation_id, breakpoint_id):
-            raise Conflict('This breakpoint has already been undone')
+        def restore_files():
+            self._check_owner(cid, sid)
+            receipts.update(apply())
+            return {**rollback, 'status': 'restored',
+                    'safety_checkpoint_id': receipts['safety_checkpoint_id']}
 
-        snapshot_ref = (payload.get('workspace') or {}).get('snapshot_ref')
-        rollback: dict[str, Any] = {'status': 'not_requested', 'files': []}
-        if snapshot_ref and self.checkpoints is not None and session_id:
-            checkpoint_id = str(snapshot_ref).rsplit('/', 1)[-1]
-            if checkpoint_id.startswith('ckpt_'):
-                try:
-                    preview = await asyncio.to_thread(self.checkpoints.preview, session_id, checkpoint_id)
-                except Exception as exc:
-                    # CheckpointError is transport-local, not a StorageError.
-                    # Accept any exception here but only swallow a genuine
-                    # not-found; everything else still propagates.
-                    # The breakpoint can outlive its snapshot: checkpoints are
-                    # pruned by retention, and the two stores have no shared
-                    # transaction. Report an expired anchor explicitly instead
-                    # of failing the whole undo — history invalidation still
-                    # applies, only the file rollback is unavailable.
-                    # Only a CHECKPOINT-not-found 404 means "pruned". A Session
-                    # 404 (bad session_id) or a malformed id must propagate --
-                    # otherwise a caller typo is silently reported as expiry.
-                    message = str(exc)
-                    if (getattr(exc, 'status', None) == 404
-                            and 'Checkpoint not found' in message):
-                        rollback = {'status': 'snapshot_expired', 'checkpoint_id': checkpoint_id,
-                                    'files': [],
-                                    'reason': 'the bound snapshot was pruned; files were not restored'}
-                        preview = None
-                    else:
-                        raise
-                else:
-                    # restore validates the CHECKPOINT revision (entry['checkpoint']['revision']),
-                    # not the conversation revision used above for the optimistic lock. They
-                    # are independent counters; preview already carries the checkpoint one.
-                    result = await self.checkpoints.run_async(
-                        self.checkpoints.restore, session_id, checkpoint_id,
-                        preview_hash=preview['preview_hash'],
-                        expected_revision=preview['expected_revision'])
-                    rollback = {'status': 'restored', 'checkpoint_id': checkpoint_id,
-                                'files': [c['path'] for c in preview.get('changes', [])],
-                                'safety_checkpoint_id': result.get('safety_checkpoint_id')}
-        # A successful file restore bumps the conversation revision (it appends a
-        # safety snapshot marker only in the checkpoint metadata, not the store),
-        # so re-read the anchor-derived fields from the unchanged event payload.
-        boundaries = [str(x) for x in (payload.get('resume') or {}).get('undo_boundaries') or []]
-        last_sequence = _check_int((payload.get('cursor') or {}).get('last_event_sequence', 0),
-                                   'last_event_sequence', 0)
-        last_sequence = max(last_sequence, anchor['sequence'])
-        # call_id lives at the payload top level (record() writes it there);
-        # the nested tool projection never carries it.
-        call_id = payload.get('call_id')
-        undone_call_ids = [str(call_id)] if call_id else []
-        undone_files = [str(x) for x in (payload.get('completed') or {}).get('files_changed') or []]
-        from_sequence, through_sequence = self._invalidation_range(
-            conversation_id, payload, anchor['sequence'], last_sequence)
-        # Deterministic id: store.append is idempotent by event_id, so a
-        # concurrent duplicate undo cannot append a second undo event even if
-        # both requests passed the _already_undone check above.
-        undo_id = 'undo_' + breakpoint_id[len('bp_'):]
-        undo_payload = {
-            'version': BREAKPOINT_SCHEMA, 'id': undo_id, 'undo_of': breakpoint_id,
-            'created_at': self._clock(), 'invalidates_from_sequence': from_sequence,
-            'invalidates_through_sequence': through_sequence,
-            'undo_boundaries': boundaries[:64], 'undone_call_ids': undone_call_ids[:200],
-            'undone_files': undone_files[:MAX_FILES], 'file_rollback': rollback,
-        }
-        self.store.append(conversation_id, event_id=undo_id, kind='undo', payload=undo_payload)
-        return {'version': 1, 'conversation_id': conversation_id, 'undo_id': undo_id,
-                'undo_of': breakpoint_id, 'breakpoint_id': breakpoint_id,
-                'invalidates_through_sequence': through_sequence,
-                'file_rollback': rollback, 'history_preserved': True}
-
-    def _rollback_files(
-        self, conversation_id: str, session_id: str | None, snapshot_ref: str,
-        *, expected_revision: int,
-    ) -> dict[str, Any]:
-        """Roll workspace files back via the existing approved checkpoint path."""
-        if self.checkpoints is None or self.request_grant is None or not session_id:
-            return {'status': 'unsupported', 'reason': 'no approved checkpoint owner is wired',
-                    'files': []}
-        checkpoint_id = snapshot_ref.rsplit('/', 1)[-1]
-        if not checkpoint_id.startswith('ckpt_'):
-            return {'status': 'unsupported', 'reason': 'invalid snapshot ref', 'files': []}
-        # The CheckpointService owns all path safety, approval and atomics. Reuse
-        # its restore with a freshly-previewed hash so content is bound exactly.
+        if apply is not None:
+            # Reject an oversized receipt before writing files. The real checkpoint id
+            # has the same length as the placeholder.
+            rollback = {**rollback, 'status': 'restored', 'safety_checkpoint_id': 'ckpt_' + '0' * 32}
         try:
-            preview = self.checkpoints.preview(session_id, checkpoint_id)
-        except StorageError as exc:
-            return {'status': 'unavailable', 'reason': str(exc), 'files': []}
-        return {
-            'status': 'requires_restore',
-            'checkpoint_id': checkpoint_id,
-            'preview_hash': preview.get('preview_hash'),
-            'expected_revision': expected_revision,
-            'files': [c['path'] for c in preview.get('changes', [])],
-            'note': ('File rollback must be completed with the approved checkpoint '
-                     'restore call carrying this preview_hash; this undo records the intent.'),
-        }
+            event = self.store.append(
+                cid, event_id=payload['id'], kind='undo',
+                payload={**payload, 'file_rollback': rollback}, expected_revision=revision,
+                before_undo=restore_files if apply is not None else None)
+        except StorageError:
+            if receipts:
+                raise CheckpointError(503, 'Files restored, but undo history could not be saved',
+                                      {'safety_checkpoint_id': receipts['safety_checkpoint_id'],
+                                       'restored_files': rollback['files']}) from None
+            raise
+        return {'version': 1, 'conversation_id': cid, 'undo_id': payload['id'],
+                'undo_of': payload['undo_of'], 'breakpoint_id': breakpoint_id,
+                'invalidates_through_sequence': payload['invalidates_through_sequence'],
+                'file_rollback': event['payload']['file_rollback'], 'history_preserved': True}
+
+    def undo(self, conversation_id: str, breakpoint_id: str, *, expected_revision: int,
+             session_id: str | None = None) -> dict[str, Any]:
+        """Record history-only undo. No checkpoint is applied without approval."""
+        payload, checkpoint_id = self._undo_plan(conversation_id, breakpoint_id,
+                                                 expected_revision, session_id)
+        rollback = {'status': 'not_requested', 'files': []}
+        if checkpoint_id:
+            rollback = {'status': 'unsupported', 'checkpoint_id': checkpoint_id, 'files': [],
+                        'reason': 'No live session requested file restoration'}
+        return self._record_undo(conversation_id, breakpoint_id, expected_revision,
+                                 session_id, payload, rollback)
+
+    async def undo_async(self, conversation_id: str, breakpoint_id: str, *, expected_revision: int,
+                         session_id: str | None = None) -> dict[str, Any]:
+        """Apply the task baseline only if approval and the history revision still match."""
+        payload, checkpoint_id = await asyncio.to_thread(
+            self._undo_plan, conversation_id, breakpoint_id, expected_revision, session_id)
+        rollback = {'status': 'not_requested', 'files': []}
+        if checkpoint_id and self.checkpoints is not None and session_id:
+            try:
+                preview = await asyncio.to_thread(self.checkpoints.preview, session_id, checkpoint_id)
+            except CheckpointError as exc:
+                if exc.status != 404 or exc.message != 'Checkpoint not found':
+                    raise
+                rollback = {'status': 'snapshot_expired', 'checkpoint_id': checkpoint_id,
+                            'files': [], 'reason': 'The bound snapshot was pruned; files were not restored'}
+            else:
+                rollback = {'checkpoint_id': checkpoint_id,
+                            'files': [c['path'] for c in preview.get('changes', [])
+                                      if c['status'] != 'unchanged']}
+
+                def commit_restore(apply):
+                    return self._record_undo(conversation_id, breakpoint_id, expected_revision,
+                                             session_id, payload, rollback, apply=apply)
+
+                return await self.checkpoints.run_async(
+                    self.checkpoints.restore, session_id, checkpoint_id,
+                    preview_hash=preview['preview_hash'],
+                    expected_revision=preview['expected_revision'], commit_restore=commit_restore)
+        elif checkpoint_id:
+            rollback = {'status': 'unsupported', 'checkpoint_id': checkpoint_id, 'files': [],
+                        'reason': 'No checkpoint owner is available'}
+        return await asyncio.to_thread(self._record_undo, conversation_id, breakpoint_id,
+                                       expected_revision, session_id, payload, rollback)
 
 
 def build_service(store: ConversationStore, *, checkpoints: Any | None = None,
                   request_grant: Callable[[str, Mapping[str, Any]], Any] | None = None,
-                  clock: Callable[[], str] | None = None) -> BreakpointService:
-    return BreakpointService(store, checkpoints=checkpoints,
-                             request_grant=request_grant, clock=clock)
-
+                  clock: Callable[[], str] | None = None,
+                  check_owner: Callable[[str, str | None], None] | None = None) -> BreakpointService:
+    return BreakpointService(store, checkpoints=checkpoints, request_grant=request_grant,
+                             clock=clock, check_owner=check_owner)
 
 class BreakpointHook:
     """Per-live-session adapter the runtime agent loop calls at dispatch points.

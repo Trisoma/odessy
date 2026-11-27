@@ -470,7 +470,8 @@ class CheckpointService:
         entries = data['checkpoints']
         if len(entries) <= RETENTION:
             return
-        candidates = [e for e in entries if e['checkpoint']['id'] != pinned]
+        candidates = sorted((e for e in entries if e['checkpoint']['id'] != pinned),
+                            key=lambda e: e.get('kind') not in ('auto', 'breakpoint'))
         drop = candidates[:len(entries) - RETENTION]
         keep = [e for e in entries if e not in drop]
         for entry in drop:
@@ -700,8 +701,11 @@ class CheckpointService:
                             'files': entry['checkpoint'].get('files', 0),
                             'files_sha256': dict(hashes),
                         }
-            safe_reason = _validate_label(f'{reason}'[:MAX_LABEL])
-            checkpoint = self._snapshot(binding, safe_reason, kind=kind, collected=collected)
+                if len(entries) >= RETENTION and not any(
+                        e.get('kind') in ('auto', 'breakpoint') for e in entries):
+                    return None  # Skip a new automatic snapshot rather than evict user history.
+                safe_reason = _validate_label(f'{reason}'[:MAX_LABEL])
+                checkpoint = self._snapshot(binding, safe_reason, kind=kind, collected=collected)
             return {
                 'id': checkpoint.id,
                 'ref': f'{REF_PREFIX}{checkpoint.id}',
@@ -771,7 +775,9 @@ class CheckpointService:
             _GRANT_LOOP.reset(token)
 
     def restore(self, sid: str, checkpoint_id: str, *, preview_hash: str,
-                expected_revision: int) -> dict[str, Any]:
+                expected_revision: int,
+                commit_restore: Callable[[Callable[[], dict[str, Any]]], dict[str, Any]] | None = None
+                ) -> dict[str, Any]:
         binding = self._binding(sid)
         if not isinstance(preview_hash, str) or len(preview_hash) != 64:
             raise CheckpointError(400, 'preview_hash is required')
@@ -806,18 +812,24 @@ class CheckpointService:
                                     kind='safety', pinned=checkpoint_id)
             if self._current_hashes(binding, entry) != current:
                 raise CheckpointError(409, 'Workspace changed during safety capture')
-            try:
-                self._apply(binding, entry, current=current)
-            except CheckpointError as exc:
-                # The safety checkpoint exists even when the apply failed: give
-                # callers the id so a partial rollback can be recovered from.
-                exc.details.setdefault('safety_checkpoint_id', safety.id)
-                raise
-            data = self._read_metadata(binding)
-            data['revision'] = int(data['revision']) + 1
-            self._write_metadata(binding, data)
-        return {'version': 1, 'checkpoint_id': entry['checkpoint']['id'],
-                'safety_checkpoint_id': safety.id, 'status': 'restored'}
+            def apply() -> dict[str, Any]:
+                try:
+                    self._apply(binding, entry, current=current)
+                    data = self._read_metadata(binding)
+                    data['revision'] = int(data['revision']) + 1
+                    self._write_metadata(binding, data)
+                except CheckpointError as exc:
+                    exc.details.setdefault('safety_checkpoint_id', safety.id)
+                    raise
+                except OSError:
+                    raise CheckpointError(503, 'Restore could not be completed',
+                                          {'safety_checkpoint_id': safety.id}) from None
+                return {'version': 1, 'checkpoint_id': entry['checkpoint']['id'],
+                        'safety_checkpoint_id': safety.id, 'status': 'restored'}
+
+            # Undo serializes the final apply with the conversation event. Never hold
+            # a conversation write transaction while waiting for user approval.
+            return apply() if commit_restore is None else commit_restore(apply)
 
     def _apply(self, binding, entry, *, current=None) -> None:
         reason = _restore_unavailable_reason()
@@ -841,9 +853,11 @@ class CheckpointService:
     def _apply_files(self, binding, entry, *, current, root: Path, ref: str,
                      restored: list[str]) -> None:
         for path in sorted(entry['files_sha256']):
-            target = self._safe_path(binding, path)
-            parent = target.parent
+            if current is not None and current[path] == entry['files_sha256'][path]:
+                continue
             try:
+                target = self._safe_path(binding, path)
+                parent = target.parent
                 if parent.is_symlink():
                     raise CheckpointError(403, 'Workspace path denied during restore')
                 parent.mkdir(parents=True, exist_ok=True)
@@ -857,12 +871,15 @@ class CheckpointService:
                 raise
             except OSError:
                 raise CheckpointError(503, 'Checkpoint file could not be restored') from None
-            # Recheck after the Git subprocess, which is an external scheduling gap.
-            target = self._safe_path(binding, path)
-            if current is not None:
-                observed = _hash_bytes(target.read_bytes()) if target.is_file() else None
-                if observed != current[path]:
-                    raise CheckpointError(409, 'Restore target changed after approval')
+            # Recheck after Git, before handing off to the handle-relative writer.
+            try:
+                target = self._safe_path(binding, path)
+                if current is not None:
+                    observed = _hash_bytes(target.read_bytes()) if target.is_file() else None
+                    if observed != current[path]:
+                        raise CheckpointError(409, 'Restore target changed after approval')
+            except OSError:
+                raise CheckpointError(503, 'Checkpoint file could not be restored') from None
             if os.name != 'nt':
                 try:
                     self._replace_at_root(binding, path, data, current)
@@ -871,15 +888,12 @@ class CheckpointService:
             else:
                 from .win32_replace import replace_anchored
                 try:
-                    replace_anchored(str(root.resolve()), path, data,
-                                     expected_sha256=(current or {}).get(path))
+                    replace_anchored(str(root), path, data, root_identity=binding.root_identity,
+                                     expected_sha256=current[path] if current is not None else None)
                 except CheckpointError:
                     raise
-                except Exception as exc:
-                    # Any replace failure (including unexpected binding errors)
-                    # must surface as a transport-neutral CheckpointError so the
-                    # partial-rollback context below can be attached.
-                    raise CheckpointError(503, f'Windows anchored restore failed: {exc}') from None
+                except Exception:
+                    raise CheckpointError(503, 'Windows anchored restore failed') from None
             restored.append(path)
 
     def _replace_at_root(self, binding, path, data, current):
@@ -899,22 +913,28 @@ class CheckpointService:
                     next_fd = os.open(component, flags, dir_fd=fd)
                 os.close(fd)
                 fd = next_fd
-            if current is not None:
-                try:
-                    source = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
-                except FileNotFoundError:
-                    digest = None
-                else:
-                    with os.fdopen(source, 'rb') as stream:
-                        digest = _hash_bytes(stream.read(MAX_FILE_BYTES + 1))
-                if digest != current[path]:
-                    raise CheckpointError(409, 'Restore target changed after approval')
             handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                              0o600, dir_fd=fd)
             with os.fdopen(handle, 'wb') as stream:
                 stream.write(data)
                 stream.flush()
                 os.fsync(stream.fileno())
+            if current is not None and current[path] is None:
+                try:
+                    os.link(temporary, parts[-1], src_dir_fd=fd, dst_dir_fd=fd,
+                            follow_symlinks=False)
+                except FileExistsError:
+                    raise CheckpointError(409, 'Restore target changed after approval') from None
+                return
+            if current is not None:
+                try:
+                    source = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+                except FileNotFoundError:
+                    raise CheckpointError(409, 'Restore target changed after approval') from None
+                with os.fdopen(source, 'rb') as stream:
+                    digest = _hash_bytes(stream.read(MAX_FILE_BYTES + 1))
+                if digest != current[path]:
+                    raise CheckpointError(409, 'Restore target changed after approval')
             os.replace(temporary, parts[-1], src_dir_fd=fd, dst_dir_fd=fd)
         finally:
             try:

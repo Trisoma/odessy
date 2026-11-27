@@ -322,3 +322,20 @@ Windows through handle-anchored replacement; a service host without the required
 bindings returns HTTP 501 `unsupported` regardless of UI or access mode, while
 checkpoint creation/list/preview remain supported. Source declarations do not
 qualify an installed package.
+
+### Execution breakpoints and task undo
+
+Use `GET /v1/conversations/{cid}/breakpoints` to list recorded breakpoints.
+`POST /v1/conversations/{cid}/undo` takes `breakpoint_id` and `expected_revision`.
+Only the latest task can be undone. Its events stay in history; Custom resume
+skips them.
+
+Pass the conversation's idle `session_id` to request file restoration from the
+task baseline. The service requires checkpoint approval. It returns HTTP 409 if
+a new turn arrives before restore can write. Omit `session_id` to change resume
+history only. If the baseline has been pruned, `file_rollback.status` is
+`snapshot_expired` and files stay unchanged.
+
+Undo restores eligible text files from the snapshot. It cannot undo external
+effects or delete files created after the snapshot. The desktop has no
+breakpoint or undo controls yet.

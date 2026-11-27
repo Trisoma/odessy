@@ -133,3 +133,27 @@ def test_end_to_end_undo_restores_file_on_windows(tmp_path):
 
     assert result['file_rollback']['status'] == 'restored'
     assert (root / 'readme.txt').read_text(encoding='utf-8') == 'baseline\n'
+
+
+@needs_nt
+def test_replacement_checks_open_root_identity(tmp_path):
+    old, current = tmp_path / 'old', tmp_path / 'current'
+    old.mkdir()
+    current.mkdir()
+    expected = old.stat()
+    with pytest.raises(wr.WindowsReplaceError, match='workspace root changed'):
+        wr.replace_anchored(str(current), 'new.txt', b'no',
+                            root_identity=(expected.st_dev, expected.st_ino))
+    assert not list(current.iterdir())
+
+
+@needs_nt
+def test_replacement_refuses_target_that_appeared_since_approval(tmp_path):
+    target = tmp_path / 'appeared.txt'
+    target.write_bytes(b'keep this')
+    root = tmp_path.stat()
+    with pytest.raises(wr.WindowsReplaceError, match='changed after approval'):
+        wr.replace_anchored(str(tmp_path), target.name, b'no', expected_sha256=None,
+                            root_identity=(root.st_dev, root.st_ino))
+    assert target.read_bytes() == b'keep this'
+    assert not list(tmp_path.glob('.ckpt-*'))

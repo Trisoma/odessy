@@ -6,6 +6,7 @@ import pytest
 
 from odessy.application.breakpoints import BreakpointHook, BreakpointService, is_critical
 from odessy.application.breakpoints.policy import SIDE_EFFECT_TOOLS
+from odessy.application.checkpoints.service import CheckpointError
 from odessy.application.conversations.store import Conflict, ConversationStore, Invalid
 
 
@@ -38,6 +39,7 @@ def test_is_critical_whitelist_risk_and_external():
     assert is_critical('some_new_builtin', {}, low, external=False) is False
     # Configured external tools are always critical.
     assert is_critical('mcp.custom_action', {}, None) is True
+    assert is_critical('filesystem.read', {}, None, external=True) is True
     assert is_critical('', {}, None) is False
 
 
@@ -52,7 +54,7 @@ def test_record_breakpoint_is_sanitized_and_excluded_from_messages(tmp_path):
             'name': 'filesystem.write', 'risk': 'high', 'policy_outcome': 'confirm',
             'status': 'pending',
             'arguments': {'path': 'src/a.py', 'content': 'TOP_SECRET_VALUE_12345',
-                          'api_key': 'sk-abcdefghijklmnop'},
+                          'api_key': 'sk-abcdefghijklmnop', 'password': 123456},
         },
         cursor={'first_event_sequence': 1, 'last_event_sequence': 4},
     )
@@ -62,7 +64,8 @@ def test_record_breakpoint_is_sanitized_and_excluded_from_messages(tmp_path):
     assert 'TOP_SECRET_VALUE_12345' not in str(payload)
     assert projection['content']['type'] == 'string'
     assert projection['content']['len'] == len('TOP_SECRET_VALUE_12345')
-    assert projection['api_key']['sha256']
+    assert projection['api_key'] == {'type': 'str'}
+    assert projection['password'] == {'type': 'int'}
     # Breakpoints never surface as messages.
     assert [m['kind'] for m in store.messages(conversation['id'])['messages']] == []
     # But the timeline path includes them.
@@ -203,9 +206,11 @@ class _FakeCheckpoints:
     async def run_async(self, function, *args, **kwargs):
         return function(*args, **kwargs)
 
-    def restore(self, sid, cid, *, preview_hash, expected_revision):
-        self.restore_revisions.append(expected_revision)
-        return {'safety_checkpoint_id': 'ckpt_safety'}
+    def restore(self, sid, cid, *, preview_hash, expected_revision, commit_restore):
+        def apply():
+            self.restore_revisions.append(expected_revision)
+            return {'safety_checkpoint_id': 'ckpt_' + '0' * 32}
+        return commit_restore(apply)
 
 
 def test_undo_async_passes_checkpoint_revision_not_conversation_revision(tmp_path):
@@ -239,9 +244,7 @@ def test_undo_async_reports_expired_snapshot_without_losing_history(tmp_path):
     """A pruned snapshot no longer fails the undo; it reports snapshot_expired."""
     class Expired:
         def preview(self, sid, cid):
-            err = Exception('Checkpoint not found')
-            err.status = 404
-            raise err
+            raise CheckpointError(404, 'Checkpoint not found')
 
         async def run_async(self, function, *args, **kwargs):
             pytest.fail('restore must not be attempted for an expired snapshot')
@@ -271,9 +274,7 @@ def test_undo_async_propagates_non_notfound_preview_errors(tmp_path):
     """Only a genuine 404 is tolerated; other preview failures still surface."""
     class Broken:
         def preview(self, sid, cid):
-            err = Exception('preview exploded')
-            err.status = 503
-            raise err
+            raise CheckpointError(503, 'preview exploded')
 
     store = make_store(tmp_path)
     conversation = seed(store)
@@ -292,9 +293,7 @@ def test_undo_async_does_not_mask_session_not_found_as_expired(tmp_path):
     """A bad session_id 404 must propagate, not be reported as snapshot_expired."""
     class BadSession:
         def preview(self, sid, cid):
-            err = Exception('Session not found')
-            err.status = 404
-            raise err
+            raise CheckpointError(404, 'Session not found')
 
     store = make_store(tmp_path)
     conversation = seed(store)
@@ -352,3 +351,16 @@ def test_undo_same_anchor_twice_is_refused(tmp_path):
                      expected_revision=store.get(conversation['id'])['revision'])
     undos = [e for e in store.raw_events(conversation['id']) if e['kind'] == 'undo']
     assert len(undos) == 1
+
+
+def test_undo_refuses_older_task_even_when_revision_is_current(tmp_path):
+    store = make_store(tmp_path)
+    cid = seed(store)['id']
+    service = BreakpointService(store)
+    old = service.record(cid, kind='task-start', session_id='s1')
+    store.append(cid, event_id='new:user', kind='user', payload={'text': 'newer turn'})
+
+    with pytest.raises(Conflict, match='latest task'):
+        service.undo(cid, old['id'], expected_revision=store.get(cid)['revision'])
+    assert store.prepare_resume(cid)['open_user'] == 'newer turn'
+    assert not any(e['kind'] == 'undo' for e in store.raw_events(cid))

@@ -19,12 +19,6 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Local analysis notes (not part of the published docs or source tree).
-# The apostrophe-free Chinese names are deliberate; these are personal notes
-# and must not be picked up by Sphinx's docs/** build.
-docs/断点机制重新设计.md
-会话持久化设计分析报告.md
-
 # Project-specific
 *.py[cod]
 *.egg-info/

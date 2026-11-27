@@ -287,6 +287,7 @@ class OdessyAgent:
         self._turn_state = TurnState()
         self._turn_id = ""
         self._turn_text = ""
+        self._breakpoint_lock = asyncio.Lock()
         self._call_index = 0
 
     async def _generate(self, call: Callable[[], ModelAction] | str, *args: Any) -> ModelAction:
@@ -388,18 +389,20 @@ class OdessyAgent:
         self._after_turn(user_text, "answered", result.final_text, result.tool_observations, result.log, stop_event)
         return result
 
-    def _breakpoint_step(self) -> None:
-        """Emit a step breakpoint after one tool iteration, if a hook is attached."""
-        basics = getattr(self, '_basics_session', None)
-        hook = getattr(basics, '_breakpoint_hook', None) if basics is not None else None
-        if hook is not None:
+    async def _observe_breakpoint(self, callback, **fields) -> None:
+        if callback is None:
+            return
+        async with self._breakpoint_lock:
             try:
-                hook.step()
-                tick = getattr(hook, 'tick', None)
-                if callable(tick):
-                    tick()
+                await asyncio.to_thread(callback, **fields)
             except Exception:
-                pass  # observation must not fail the turn
+                pass  # Observation cannot veto a tool call.
+
+    async def _breakpoint_step(self) -> None:
+        hook = getattr(getattr(self, '_basics_session', None), '_breakpoint_hook', None)
+        if hook is not None:
+            await self._observe_breakpoint(hook.step)
+            await self._observe_breakpoint(getattr(hook, 'tick', None))
 
     async def wait_for_hooks(self) -> None:
         """Wait for turn-end hooks still running (tests, and an orderly shutdown)."""
@@ -830,7 +833,7 @@ class OdessyAgent:
                         _add_ms(metrics, "mcp_execution_ms", (timing["completed"]-timing["started"])*1000)
                     log.append(LogEntry("tool_observation", {"name": observation.request.name, "call_id": observation.call_id, "batch_id": batch_id, "index": index, "result": observation.result}))
                 observations.extend(batch_observations)
-                self._breakpoint_step()
+                await self._breakpoint_step()
                 if self._hook_stop_text() is not None and not stopped:
                     stopped = self._hook_stop_text()
                 if stopped:
@@ -1077,7 +1080,7 @@ class OdessyAgent:
             await self._post_tool_hooks(action, structured_result, log)
             observation = ToolObservation(request=action, result=structured_result)
             observations.append(observation)
-            self._breakpoint_step()
+            await self._breakpoint_step()
             log.append(
                 LogEntry(
                     "tool_observation",
@@ -1275,16 +1278,7 @@ class OdessyAgent:
                 recorder = getattr(basics, '_conversation_recorder', None)
                 if recorder is not None:
                     recorder.tool_call(plan.call_id, action.name)
-                # Execution breakpoints are a no-op unless the composition attached
-                # a hook. The hook is best-effort observation and never gates the
-                # dispatch: a breakpoint failure cannot refuse an authorized call.
-                hook = getattr(basics, '_breakpoint_hook', None)
-                if hook is not None:
-                    try:
-                        hook.before_tool(name=action.name, arguments=arguments,
-                                         decision=decision, call_id=plan.call_id)
-                    except Exception:
-                        pass  # observation must not fail the turn
+
                 recorded = True
         bound = _BoundArguments(arguments, dispatch_checks)
         if basics is not None:
@@ -1608,6 +1602,12 @@ class OdessyAgent:
         if callable(preflight):
             preflight()
         try:
+            hook = getattr(arguments, '_basics_breakpoint_hook', None)
+            breakpoint_fields = {'name': name, 'arguments': dict(arguments),
+                                 'decision': getattr(arguments, '_basics_breakpoint_decision', None),
+                                 'call_id': getattr(arguments, '_basics_call_id', None)} if hook else {}
+            if hook is not None:
+                await self._observe_breakpoint(hook.before_tool, **breakpoint_fields)
             # Any server object that can dispatch a call by name: a configured server or
             # a paired host, which speaks the same protocol over its own transport.
             if hasattr(server, 'call_tool') and not isinstance(server, MCPServer):
@@ -1640,16 +1640,9 @@ class OdessyAgent:
             if recorder is not None:
                 recorder.tool_result(arguments._basics_call_id, name,
                                      'error' if _is_error_result(result) else 'ok')
-            hook = getattr(arguments, '_basics_breakpoint_hook', None)
             if hook is not None:
-                try:
-                    hook.after_tool(
-                        name=name, arguments=dict(arguments),
-                        decision=getattr(arguments, '_basics_breakpoint_decision', None),
-                        call_id=getattr(arguments, '_basics_call_id', None),
-                        status='error' if _is_error_result(result) else 'ok')
-                except Exception:
-                    pass  # observation must not fail the turn
+                await self._observe_breakpoint(hook.after_tool, **breakpoint_fields,
+                                              status='error' if _is_error_result(result) else 'ok')
             self._audit_call(name, result, started)
             return result
         except Exception as exc:

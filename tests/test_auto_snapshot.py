@@ -177,3 +177,16 @@ def test_breakpoints_track_file_changes_after_edit(tmp_path):
     assert hook._auto_snapshot_files['readme.txt'] != before_hash
     assert len(api.list(binding.session_id)['checkpoints']) == 2
 
+
+
+def test_auto_snapshot_does_not_evict_manual_checkpoints(tmp_path, monkeypatch):
+    from odessy.application.checkpoints import service as checkpoint_service
+
+    monkeypatch.setattr(checkpoint_service, 'RETENTION', 2)
+    root, binding = make_ws(tmp_path)
+    api = make_checkpoints(tmp_path, binding)
+    manual = [api.create('s1', f'manual {n}')['id'] for n in range(2)]
+    (root / 'readme.txt').write_text('new automatic state\n', encoding='utf-8')
+
+    assert api.auto_snapshot('s1', 'automatic') is None
+    assert {c['id'] for c in api.list('s1')['checkpoints']} == set(manual)

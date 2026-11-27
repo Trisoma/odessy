@@ -61,9 +61,7 @@ def is_critical(name: Any, arguments: Any, decision: Any = None, *,
         return True
     is_ext = _is_external(name) if external is None else external
     if is_ext:
-        # A configured external tool can do anything; read-only *builtins* are
-        # the only names we are willing to call non-critical with confidence.
-        return name not in READ_ONLY_TOOLS
+        return True
     risk = None
     if decision is not None:
         risk = getattr(decision, 'risk', None)

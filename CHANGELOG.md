@@ -4,15 +4,9 @@ User-visible changes are recorded here, starting with the next release.
 
 ## Unreleased — v0.5.0-alpha (Developer Preview)
 
-- Add backend execution breakpoints and task-level undo: sanitized breakpoints are recorded before/after critical tools, at each tool step and on idle timers; undoing a task marks the invalidated range and can restore workspace files through an approved checkpoint. Desktop UI is not wired yet.
-- Capture workspace checkpoints automatically at task start, before/after critical tools, on each step and on idle timers; content-addressed dedup reuses an unchanged snapshot instead of consuming retention, and the task-start breakpoint anchors task-level undo.
-- Fix task undo so file rollback passes the checkpoint revision (not the conversation revision) to restore; the two independent counters previously made an approved undo fail with a 409.
-- Enable checkpoint restoration on Windows through handle-anchored replacement: each path component is opened relative to a verified parent handle with reparse points refused, and the final replace is an NT rename relative to that handle. Restore stays disabled when these primitives are unavailable; no unsafe path-based fallback is used.
-- Reduce automatic checkpoint cost: deduplication now searches the whole retention window (so returning to an earlier state reuses its snapshot), and a fresh snapshot reads each workspace file once instead of two or three times.
-- Store checkpoint file hashes with file-level content addressing: unchanged files across snapshots share one pool entry instead of being re-stored in every checkpoint, with legacy inline-hash metadata remaining readable. Unreferenced pool entries are reclaimed on write.
-- Allow checkpoints in repositories with no commits yet, and make task undo report an expired/pruned snapshot explicitly instead of failing while still preserving the history invalidation.
-- Exclude undone task turns from legacy conversation resume: undo now records the invalidated event range, and resume rebuilds context without those turns while keeping the append-only audit trail intact.
-- Harden undo and refresh Windows restore docs: dedupe undo event ids so concurrent requests cannot append duplicate invalidations, record the undone call id, distinguish a pruned snapshot from a bad session id, and update release/verification/limitation docs (EN/中文/ES) now that Windows restoration is enabled.
+- Record execution breakpoints and let API clients undo the latest task. Undo preserves the original history and checks the conversation revision again after file restore approval. Desktop controls are not included.
+- Capture and deduplicate automatic text snapshots without evicting manual checkpoints. Checkpoint capture also works before the first Git commit.
+- Enable checkpoint restore on Windows when handle-based replacement is available. Check the opened workspace identity, reject junctions and symlinks, and keep restore unavailable when the native bindings cannot be used.
 
 - Update the pinned OpenTelemetry API to 1.45.2 and Node HTTP adapter to 2.1.6 for denial-of-service and request-path security fixes.
 - Keep backend exception text out of desktop audio errors while preserving device-selection guidance.

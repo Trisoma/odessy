@@ -61,11 +61,11 @@ class PersistentComposition:
         # Execution breakpoints and task-level undo share the conversation store and
         # the approved checkpoint owner. Breakpoints never authorize anything: file
         # rollback still goes through CheckpointService's broker.
-        from .breakpoints import BreakpointService, build_service as build_breakpoints
+        from .breakpoints import build_service as build_breakpoints
         from .breakpoints.routes import register as register_breakpoints
         self.breakpoints = build_breakpoints(
             self.service.store, checkpoints=self.checkpoints,
-            request_grant=self.request_grant)
+            request_grant=self.request_grant, check_owner=self.check_undo_owner)
         register_breakpoints(app, self.dependencies, service=self.breakpoints)
         # Now that the breakpoint service exists, restart settlement can also record
         # interrupted breakpoints for work left open by a previous process.
@@ -241,15 +241,12 @@ class PersistentComposition:
             record = getattr(controller, 'record', None) or {}
             runtime = record.get('runtime') or {}
             first_seq, last_seq = self.service.store.sequence_bounds(cid)
-            active = getattr(controller, '_active_turn_id', '') or ''
             return {
-                'turn_id': active,
-                'user_prompt': getattr(controller, '_active_prompt', '') or '',
+                'turn_id': controller._conversation_recorder.turn_id or '',
                 'last_sequence': last_seq,
                 'first_sequence': first_seq,
                 'workspace_identity': str(runtime.get('workspace') or ''),
-                'files_sha256': getattr(controller, '_bp_files_sha256', None),
-                'in_flight': ([active] if active else []),
+
             }
         controller._breakpoint_hook = BreakpointHook(
             self.breakpoints, conversation_id=cid, session_id=controller.id,
@@ -319,6 +316,15 @@ class PersistentComposition:
             db.execute('UPDATE conversations SET revision=revision+1,profile=? WHERE id=?', (profile, cid))
         self.service.store._write('bind_workspace', write)
         return self.service.get(cid)
+
+    def check_undo_owner(self, cid, sid):
+        owners = tuple(value for value in self.app.state.sessions.copy().values()
+                       if not value._closed and getattr(value, '_conversation_id', None) == cid)
+        if sid is not None and (len(owners) != 1 or owners[0].id != sid):
+            raise Conflict('Session does not own this conversation')
+        if any(owner.running or getattr(owner._conversation_recorder, 'turn_id', None)
+               for owner in owners):
+            raise Conflict('Wait for the active turn before undoing')
 
     def resolve_conversation_owner(self, cid):
         owners = [value for value in self.app.state.sessions.values()

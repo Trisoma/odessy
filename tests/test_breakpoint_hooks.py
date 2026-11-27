@@ -85,3 +85,15 @@ async def test_no_hook_is_a_noop(tmp_path):
     agent = _agent(tmp_path)  # no hook attached
     response = await agent.run_turn('run echo hi')
     assert response.final_text is not None  # turn succeeds; hooks are optional
+
+
+@pytest.mark.anyio
+async def test_failing_breakpoint_observer_does_not_block_dispatch(tmp_path):
+    class Failing(RecordingHook):
+        def before_tool(self, **kwargs):
+            raise RuntimeError('observer unavailable')
+
+    hook = Failing()
+    result = await _agent(tmp_path, hook=hook).run_turn('run echo hi')
+    assert result.metrics.tool_called
+    assert ('after', 'terminal.run', 'ok') in hook.calls

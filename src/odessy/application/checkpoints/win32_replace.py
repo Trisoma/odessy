@@ -51,6 +51,7 @@ FILE_WRITE_DATA = 0x0002
 DELETE = 0x00010000
 SYNCHRONIZE = 0x00100000
 FILE_SHARE_ALL = 0x00000007
+FILE_SHARE_READ_WRITE = 0x00000003
 FILE_OPEN = 1
 FILE_CREATE = 2
 FILE_DIRECTORY_FILE = 0x00000001
@@ -59,6 +60,7 @@ FILE_OPEN_REPARSE_POINT = 0x00200000
 FILE_SYNCHRONOUS_IO_NONALERT = 0x00000020
 FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400
 FileRenameInformation = 10  # NT enum value (user-mode FileRenameInfo is 3)
+FileDispositionInformation = 13
 STATUS_SUCCESS = 0
 _INVALID_HANDLE = ctypes.c_void_p(-1).value
 
@@ -159,9 +161,18 @@ def _bindings() -> dict[str, object]:
         close.argtypes = [wintypes.HANDLE]
         close.restype = wintypes.BOOL
 
+        duplicate = kernel32.DuplicateHandle
+        duplicate.argtypes = [wintypes.HANDLE, wintypes.HANDLE, wintypes.HANDLE,
+                              ctypes.POINTER(wintypes.HANDLE), wintypes.DWORD,
+                              wintypes.BOOL, wintypes.DWORD]
+        duplicate.restype = wintypes.BOOL
+        process = kernel32.GetCurrentProcess
+        process.argtypes = []
+        process.restype = wintypes.HANDLE
+
         _BINDINGS = {'nt_create': nt_create, 'nt_set_info': nt_set_info,
                      'get_info': get_info, 'write': write_file, 'read': read_file,
-                     'flush': flush, 'close': close}
+                     'flush': flush, 'close': close, 'duplicate': duplicate, 'process': process}
         return _BINDINGS
     except (OSError, AttributeError) as exc:
         _BINDING_ERROR = f'{type(exc).__name__}: {exc}'
@@ -186,13 +197,14 @@ def _close(handle: int) -> None:
 
 
 def _nt_open(parent: int | None, name: str, *, desired: int, disposition: int,
-             options: int) -> tuple[int, int]:
+             options: int, share: int = FILE_SHARE_ALL) -> tuple[int, int]:
     """Open a file/directory by name relative to ``parent`` (or by NT path)."""
     b = _bindings()
     handle = wintypes.HANDLE()
     io = _IO_STATUS_BLOCK()
     name_buf = ctypes.create_unicode_buffer(name)
-    unicode_name = _UNICODE_STRING(len(name) * 2, len(name) * 2 + 2,
+    name_bytes = len(name.encode('utf-16-le'))
+    unicode_name = _UNICODE_STRING(name_bytes, name_bytes + 2,
                                    ctypes.cast(name_buf, wintypes.LPWSTR))
     oa = _OBJECT_ATTRIBUTES(
         ctypes.sizeof(_OBJECT_ATTRIBUTES),
@@ -200,7 +212,7 @@ def _nt_open(parent: int | None, name: str, *, desired: int, disposition: int,
         ctypes.pointer(unicode_name), 0, None, None)
     status = b['nt_create'](  # type: ignore[index]
         ctypes.byref(handle), desired, ctypes.byref(oa), ctypes.byref(io),
-        None, 0, FILE_SHARE_ALL, disposition, options, None, 0)
+        None, 0, share, disposition, options, None, 0)
     if not _nt_success(status):
         raise WindowsReplaceError(f'open failed ntstatus=0x{status & 0xFFFFFFFF:x}: {name!r}')
     value = handle.value if hasattr(handle, 'value') else int(handle)
@@ -215,19 +227,41 @@ def _is_reparse(handle: int) -> bool:
     return bool(info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
 
 
-def _open_ancestors(root_path: str, parts: Sequence[str]) -> list[int]:
+def _handle_identity(handle: int) -> tuple[int, int]:
+    import msvcrt
+
+    b = _bindings()
+    process = b['process']()
+    copy = wintypes.HANDLE()
+    if not b['duplicate'](process, handle, process, ctypes.byref(copy), 0, False, 2):
+        raise WindowsReplaceError('could not verify workspace root handle')
+    try:
+        fd = msvcrt.open_osfhandle(copy.value, os.O_RDONLY)
+    except OSError:
+        _close(copy.value)
+        raise
+    try:
+        info = os.fstat(fd)
+        return info.st_dev, info.st_ino
+    finally:
+        os.close(fd)
+
+
+def _open_ancestors(root_path: str, parts: Sequence[str],
+                    expected_identity: tuple[int, int]) -> list[int]:
     """Open root then each directory component, anchored and reparse-free."""
     handles: list[int] = []
     try:
-        nt_root = '\\??\\' + str(Path(root_path).resolve())
+        nt_root = '\\??\\' + str(Path(root_path).absolute())
         _status, root_h = _nt_open(
             None, nt_root,
             desired=FILE_READ_ATTRIBUTES | SYNCHRONIZE,
             disposition=FILE_OPEN,
-            options=FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT)
-        if _is_reparse(root_h):
-            raise WindowsReplaceError('workspace root is a reparse point')
+            options=FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+            share=FILE_SHARE_READ_WRITE)
         handles.append(root_h)
+        if _is_reparse(root_h) or _handle_identity(root_h) != expected_identity:
+            raise WindowsReplaceError('workspace root changed')
         parent = root_h
         for component in parts:
             if component in ('', '.', '..') or '/' in component or '\\' in component:
@@ -236,11 +270,11 @@ def _open_ancestors(root_path: str, parts: Sequence[str]) -> list[int]:
                 parent, component,
                 desired=FILE_READ_ATTRIBUTES | SYNCHRONIZE,
                 disposition=FILE_OPEN,
-                options=FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT)
-            if _is_reparse(child):
-                _close(child)
-                raise WindowsReplaceError(f'reparse point in path: {component!r}')
+                options=FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+                share=FILE_SHARE_READ_WRITE)
             handles.append(child)
+            if _is_reparse(child):
+                raise WindowsReplaceError(f'reparse point in path: {component!r}')
             parent = child
         return handles
     except Exception:
@@ -295,7 +329,8 @@ def _anchored_hash(parent: int, name: str) -> str | None:
 
 
 def replace_anchored(root_path: str, relative_path: str, data: bytes,
-                     expected_sha256: str | None = None) -> None:
+                     expected_sha256: str | None = None, *,
+                     root_identity: tuple[int, int] | None = None) -> None:
     """Atomically replace ``relative_path`` under ``root_path`` with ``data``.
 
     Every directory component is opened relative to the verified parent handle
@@ -308,24 +343,24 @@ def replace_anchored(root_path: str, relative_path: str, data: bytes,
     or :class:`WindowsReplaceError` if any check fails (target untouched).
     """
     b = _bindings()
-    parts = [p for p in Path(relative_path).parts if p not in ('.', '')]
-    if not parts or '..' in parts:
+    relative = Path(relative_path)
+    parts = relative.parts
+    if relative.anchor or not parts or '..' in parts or any(':' in part for part in parts):
         raise WindowsReplaceError('relative_path must stay within the workspace root')
     final_name = parts[-1]
     if '/' in final_name or '\\' in final_name:
         raise WindowsReplaceError('invalid final path component')
 
-    handles = _open_ancestors(root_path, parts[:-1])
+    check_target = root_identity is not None or expected_sha256 is not None
+    if root_identity is None:
+        root_stat = Path(root_path).stat()
+        root_identity = (root_stat.st_dev, root_stat.st_ino)
+    handles = _open_ancestors(root_path, parts[:-1], root_identity)
     parent = handles[-1]
     temp_name = '.ckpt-' + uuid.uuid4().hex
     temp_handle = 0
+    replaced = False
     try:
-        # Re-check the target through the anchored handle, closing the window
-        # between the caller's approval hash check and this atomic replace.
-        if expected_sha256 is not None:
-            observed = _anchored_hash(parent, final_name)
-            if observed != expected_sha256:
-                raise WindowsReplaceError('target changed after approval')
         # Create the staged file relative to the verified parent handle.
         _status, temp_handle = _nt_open(
             parent, temp_name,
@@ -348,23 +383,27 @@ def replace_anchored(root_path: str, relative_path: str, data: bytes,
         size = ctypes.sizeof(_FILE_RENAME_INFORMATION) + len(name_bytes)
         info_buf = ctypes.create_string_buffer(size)
         info = ctypes.cast(info_buf, ctypes.POINTER(_FILE_RENAME_INFORMATION)).contents
-        info.ReplaceIfExists = True
+        info.ReplaceIfExists = not check_target or expected_sha256 is not None
         info.RootDirectory = wintypes.HANDLE(parent)
         info.FileNameLength = len(name_bytes)
         ctypes.memmove(ctypes.addressof(info_buf) +
                        _FILE_RENAME_INFORMATION.FileName.offset,
                        name_bytes, len(name_bytes))
+        if check_target and _anchored_hash(parent, final_name) != expected_sha256:
+            raise WindowsReplaceError('target changed after approval')
         io = _IO_STATUS_BLOCK()
         status = b['nt_set_info'](wintypes.HANDLE(temp_handle), ctypes.byref(io),  # type: ignore[index]
                                   info_buf, size, FileRenameInformation)
         if not _nt_success(status):
             raise WindowsReplaceError(
                 f'replace failed ntstatus=0x{status & 0xFFFFFFFF:x}')
-        # The NT rename moves the file object to final_name but does NOT close
-        # the handle. It must still be released or the replaced file stays
-        # locked for later readers.
+        replaced = True
     finally:
         if temp_handle:
+            if not replaced:
+                delete = ctypes.c_ubyte(1)
+                b['nt_set_info'](temp_handle, ctypes.byref(_IO_STATUS_BLOCK()),
+                                 ctypes.byref(delete), ctypes.sizeof(delete), FileDispositionInformation)
             _close(temp_handle)
         for h in reversed(handles):
             _close(h)

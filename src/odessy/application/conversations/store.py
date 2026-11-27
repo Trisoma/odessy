@@ -505,23 +505,38 @@ class ConversationStore:
                 'next_before': page[0]['sequence'] if more and page else None}
 
     def append(self, conversation_id: str, *, event_id: str, kind: str,
-               payload: Mapping[str, Any], created_at: str | None = None) -> Mapping[str, Any]:
+               payload: Mapping[str, Any], created_at: str | None = None,
+               expected_revision: int | None = None,
+               before_undo: Callable[[], Mapping[str, Any]] | None = None) -> Mapping[str, Any]:
+        if before_undo is not None and (kind != 'undo' or expected_revision is None):
+            raise Invalid('A guarded restore requires a revision and an undo event')
         _check_id(conversation_id)
         event_id = _check_text(event_id, 'event_id', 200)
         if kind not in KINDS:
             raise Invalid('Unknown event kind')
         if not isinstance(payload, Mapping):
             raise Invalid('payload must be an object')
-        encoded = json.dumps(payload, separators=(',', ':'), sort_keys=True)
-        if len(encoded.encode()) > MAX_PAYLOAD:
+        original = json.dumps(payload, separators=(',', ':'), sort_keys=True)
+        if len(original.encode()) > MAX_PAYLOAD:
             raise PayloadTooLarge('Event payload exceeds 256 KiB')
         created_at = utc_now() if created_at is None else _check_timestamp(created_at)
 
         def work(db):
             conversation = self._conversation(db, conversation_id)
+            if expected_revision is not None and conversation['revision'] != expected_revision:
+                raise Conflict('Conversation changed; reload before undoing')
             existing = db.execute(
                 'SELECT * FROM conversation_events WHERE conversation_id = ? AND event_id = ?',
                 (conversation_id, event_id)).fetchone()
+            if existing is not None and before_undo is not None:
+                raise Conflict('This breakpoint has already been undone')
+            final_payload = payload
+            encoded = original
+            if before_undo is not None:
+                final_payload = {**payload, 'file_rollback': before_undo()}
+                encoded = json.dumps(final_payload, separators=(',', ':'), sort_keys=True)
+                if len(encoded.encode()) > MAX_PAYLOAD:
+                    raise PayloadTooLarge('Event payload exceeds 256 KiB')
             if existing is not None:
                 if existing['kind'] != kind or existing['payload_json'] != encoded:
                     raise Conflict('Event id already exists with different content')
@@ -536,7 +551,7 @@ class ConversationStore:
             db.execute('UPDATE conversations SET updated_at = ?, revision = revision + 1 '
                        'WHERE id = ?',
                        (max(conversation['updated_at'], created_at), conversation_id))
-            self._index(db, conversation_id, sequence, kind, payload)
+            self._index(db, conversation_id, sequence, kind, final_payload)
             return _event({'conversation_id': conversation_id, 'sequence': sequence,
                            'event_id': event_id, 'kind': kind,
                            'payload_json': encoded, 'created_at': created_at})

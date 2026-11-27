@@ -10,8 +10,9 @@ for this change.
 import asyncio
 from typing import Any
 
-from .service import BreakpointService, Unsupported
-from ..conversations.store import Conflict, Invalid, NotFound, StorageError, _check_int
+from .service import BreakpointService
+from ..checkpoints.service import CheckpointError
+from ..conversations.store import Invalid, StorageError
 
 
 def _detail(exc: StorageError) -> dict[str, str]:
@@ -41,7 +42,7 @@ def register(app, dependencies, *, service: BreakpointService) -> None:
         try:
             return await asyncio.to_thread(
                 service.list, cid, limit=_int_arg(limit, 'limit', 200, minimum=1, maximum=500))
-        except (Invalid, NotFound, StorageError) as exc:
+        except StorageError as exc:
             raise fail(exc) from None
 
     @app.post('/v1/conversations/{cid}/undo')
@@ -58,7 +59,7 @@ def register(app, dependencies, *, service: BreakpointService) -> None:
             raise HTTPException(400, {'code': 'invalid',
                                       'message': 'expected_revision must be an integer'})
         sid = data.get('session_id')
-        if sid is not None and not isinstance(sid, str):
+        if sid is not None and (not isinstance(sid, str) or not sid.strip()):
             raise HTTPException(400, {'code': 'invalid', 'message': 'session_id must be a string'})
         try:
             if sid:
@@ -68,7 +69,10 @@ def register(app, dependencies, *, service: BreakpointService) -> None:
             return await asyncio.to_thread(
                 service.undo, cid, data['breakpoint_id'],
                 expected_revision=rev, session_id=sid)
-        except (Invalid, NotFound, Conflict, Unsupported, StorageError) as exc:
+        except CheckpointError as exc:
+            raise HTTPException(exc.status, detail={'code': 'checkpoint_error',
+                                                    'message': exc.message, **exc.details}) from None
+        except StorageError as exc:
             raise fail(exc) from None
 
 

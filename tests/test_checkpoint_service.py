@@ -605,3 +605,58 @@ def test_partial_rollback_is_reported_with_safety_checkpoint(tmp_path, monkeypat
     # The first file really was rolled back; the second was not.
     assert (root / 'notes.md').read_text(encoding='utf-8') == '# Notes\n'
     assert (root / 'readme.txt').read_text(encoding='utf-8') == 'After\n'
+
+
+@needs_git
+@needs_restore
+@pytest.mark.parametrize('new_turn_during_approval', [False, True])
+def test_task_undo_restores_baseline_only_at_approved_revision(tmp_path, new_turn_during_approval):
+    import asyncio
+    import uuid
+
+    from odessy.application.breakpoints import BreakpointService
+    from odessy.application.conversations.store import Conflict, ConversationStore
+
+    root, binding = workspace(tmp_path)
+    store = ConversationStore(tmp_path / 'conversations.sqlite3')
+    cid = uuid.uuid4().hex
+    store.create(conversation_id=cid, project_id=store.create_project('Work')['id'],
+                 engine='legacy', profile='default', title='Undo fixture')
+
+    async def grant(sid, plan):
+        if new_turn_during_approval:
+            store.append(cid, event_id='next:user', kind='user', payload={'text': 'Later question'})
+            store.append(cid, event_id='next:assistant', kind='assistant', payload={'text': 'Later answer'})
+        return True
+
+    checkpoints = service(tmp_path, binding)
+    baseline = checkpoints.create('s1', 'before task')
+    breaks = BreakpointService(store, checkpoints=checkpoints)
+    target = root / 'readme.txt'
+    store.append(cid, event_id='task:user', kind='user', payload={'text': 'Task question'})
+    start = breaks.record(cid, kind='task-start', session_id='s1', turn_id='task',
+                          workspace={'snapshot_ref': baseline['id']})
+    target.write_text('Halfway through\n', encoding='utf-8')
+    middle = checkpoints.create('s1', 'during task')
+    after = breaks.record(cid, kind='critical-after', session_id='s1', turn_id='task',
+                          workspace={'snapshot_ref': middle['id']}, undo_boundaries=[start['id']])
+    target.write_text('Finished task\n', encoding='utf-8')
+    store.append(cid, event_id='task:assistant', kind='assistant', payload={'text': 'Task answer'})
+    checkpoints._grant = grant
+
+    def undo():
+        return asyncio.run(breaks.undo_async(cid, after['id'], session_id='s1',
+                                            expected_revision=store.get(cid)['revision']))
+
+    if new_turn_during_approval:
+        with pytest.raises(Conflict, match='Conversation changed'):
+            undo()
+        assert target.read_text(encoding='utf-8') == 'Finished task\n'
+        assert not any(e['kind'] == 'undo' for e in store.raw_events(cid))
+        assert store.prepare_resume(cid)['turns'][-1] == {'user': 'Later question', 'assistant': 'Later answer'}
+    else:
+        assert undo()['file_rollback']['checkpoint_id'] == baseline['id']
+        assert target.read_text(encoding='utf-8') == 'Before\n'
+        assert store.event_by_id(cid, 'task:user') is not None
+        assert store.prepare_resume(cid)['turns'] == []
+        assert store.prepare_resume(cid)['open_user'] is None

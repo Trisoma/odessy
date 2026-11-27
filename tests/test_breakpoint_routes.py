@@ -50,4 +50,27 @@ def test_breakpoint_routes_mounted(tmp_path):
                                         json={'breakpoint_id': 'bad', 'expected_revision': 0})
                 assert bad.status_code == 400
 
+                basics = app.state.basics_composition
+                sid = live['id']
+                assert (await client.post(f'/v1/sessions/{sid}/turns',
+                                          json={'text': 'test turn'})).status_code == 202
+                await asyncio.gather(*app.state.turn_tasks.values())
+                store = basics.service.store
+                timeline = store.breakpoints(cid)
+                anchor = timeline[0]['payload']
+                turn_id = anchor['task']['turn_id']
+                assert turn_id and store.event_by_id(cid, f'{turn_id}:user') is not None
+                revision = store.get(cid)['revision']
+                undo_path = f'/v1/conversations/{cid}/undo'
+                undo = {'breakpoint_id': anchor['id'], 'expected_revision': revision}
+                stale = await client.post(undo_path, json={**undo, 'expected_revision': revision - 1})
+                assert stale.status_code == 409
+                other = (await client.post('/v1/sessions')).json()
+                wrong_owner = await client.post(undo_path, json={**undo, 'session_id': other['id']})
+                assert wrong_owner.status_code == 409
+                assert not any(e['kind'] == 'undo' for e in store.raw_events(cid))
+                saved = await client.post(undo_path, json={**undo, 'session_id': live['id']})
+                assert saved.status_code == 200
+                assert saved.json()['file_rollback']['status'] == 'not_requested'
+
     asyncio.run(run())
