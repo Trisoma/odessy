@@ -237,3 +237,22 @@ def test_export_shape_and_search_across_conversations(tmp_path):
     assert document['conversation']['title'] == 'Alpha'
     assert [event['kind'] for event in document['events']] == ['user']
     assert uuid.UUID(document['conversation']['id']).hex == first['id']
+
+
+def test_resume_result_reports_unfinished_and_open_user(tmp_path):
+    """The resume projection's loose ends reach the API result, not model memory."""
+    async def continuation(prepared):
+        # Mirrors basics_integration.resume: forward the projection's loose ends.
+        return {'session_id': 'live-x',
+                'unfinished': prepared['unfinished'],
+                'open_user': prepared['open_user']}
+
+    service = new_service(tmp_path, continuation=continuation)
+    row = service.create(project_id=project(service)['id'])
+    service.store.append(row['id'], event_id='u', kind='user', payload={'text': 'open question'})
+    service.store.append(row['id'], event_id='call', kind='tool_call',
+                         payload={'call_id': 'c1', 'name': 'write'})
+    result = asyncio.run(service.resume(row['id'], expected_revision=2))
+
+    assert result['open_user'] == 'open question'
+    assert [x['kind'] for x in result['unfinished']] == ['tool_call']

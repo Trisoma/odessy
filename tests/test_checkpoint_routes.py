@@ -15,6 +15,13 @@ from odessy.application.checkpoints.service import CheckpointService
 from odessy.authority.policy import OdessyPolicy
 
 
+def _restore_enabled():
+    if os.name != 'nt':
+        return True
+    from odessy.application.checkpoints import win32_replace
+    return win32_replace.available()
+
+
 def git(root: Path, *args: str) -> str:
     return subprocess.run(['git', '-C', str(root), *args], capture_output=True,
                           text=True, timeout=60, check=True).stdout
@@ -140,7 +147,7 @@ def test_checkpoint_routes_require_auth_and_report_shapes(tmp_path):
                     f'/v1/sessions/s1/checkpoints/{checkpoint["id"]}/restore',
                     body={'preview_hash': drifted.json()['preview_hash'],
                           'expected_revision': 1})
-    if os.name == 'nt':
+    if not _restore_enabled():
         assert drifted.json()['restore_available'] is False
         assert restored.status_code == 501
         assert restored.json()['detail']['code'] == 'unsupported'

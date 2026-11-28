@@ -4,6 +4,10 @@ User-visible changes are recorded here, starting with the next release.
 
 ## Unreleased — v0.5.0-alpha (Developer Preview)
 
+- Record execution breakpoints and let API clients undo the latest task. Undo preserves the original history and checks the conversation revision again after file restore approval. Desktop controls are not included.
+- Capture and deduplicate automatic text snapshots without evicting manual checkpoints. Checkpoint capture also works before the first Git commit.
+- Enable checkpoint restore on Windows when handle-based replacement is available. Check the opened workspace identity, reject junctions and symlinks, and keep restore unavailable when the native bindings cannot be used.
+
 - Update the pinned OpenTelemetry API to 1.45.2 and Node HTTP adapter to 2.1.6 for denial-of-service and request-path security fixes.
 - Keep backend exception text out of desktop audio errors while preserving device-selection guidance.
 - Make fake Harness protocol tests independent of runner sandbox capabilities; required production isolation still refuses unsupported boundaries.

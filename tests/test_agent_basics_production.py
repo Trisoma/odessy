@@ -166,7 +166,8 @@ def test_direct_shell_grant_respects_required_isolation_and_exact_broker(tmp_pat
                 restore_path = f"/v1/sessions/{sid}/checkpoints/{checkpoint['id']}/restore"
                 restore_body = {'preview_hash': preview['preview_hash'],
                                 'expected_revision': preview['expected_revision']}
-                if os.name == 'nt':
+                from odessy.application.checkpoints import win32_replace
+                if os.name == 'nt' and not win32_replace.available():
                     assert preview['restore_available'] is False
                     restored = await client.post(restore_path, json=restore_body)
                     assert restored.status_code == 501, restored.text

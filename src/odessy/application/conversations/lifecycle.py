@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from odessy.authority.redaction import redact_text
 
@@ -199,12 +199,15 @@ class ConversationLog:
                                          str(payload.get('status') or 'ok'))
 
 
-def settle_after_restart(store: ConversationStore, *, clock=utc_now) -> int:
+def settle_after_restart(store: ConversationStore, *, clock=utc_now,
+                         on_interrupt: Callable[[str, str, Mapping[str, Any]], None] | None = None) -> int:
     """Mark unfinished assistant streams and tool calls as interrupted/unknown.
 
     Idempotent: the settlement event id is derived from the last stored sequence, so
     repeating it after another restart cannot duplicate the record. Nothing is
-    retried and no tool is re-run.
+    retried and no tool is re-run. ``on_interrupt`` is an optional observer that
+    receives ``(conversation_id, reason, details)`` so the breakpoints subsystem
+    can record an interrupted breakpoint without a reverse import here.
     """
     settled = 0
     for conversation_id in store.all_conversation_ids():
@@ -240,19 +243,23 @@ def settle_after_restart(store: ConversationStore, *, clock=utc_now) -> int:
         open_tools = {call: event for call, event in open_tools.items()
                       if call not in reported_tools}
         if open_tools:
+            details = {'outcome': 'unknown', 'tool_calls': [str(call) for call in open_tools]}
             store.append(conversation_id, event_id=f'interrupted:tools:{last_sequence}',
                          kind='interrupted',
-                         payload={'reason': 'restart', 'outcome': 'unknown',
-                                  'tool_calls': [str(call) for call in open_tools]},
+                         payload={'reason': 'restart', **details},
                          created_at=clock())
             settled += 1
+            if on_interrupt is not None:
+                on_interrupt(conversation_id, 'restart:tools', details)
         if open_stream and last_stream_settlement < last_delta_at:
+            details = {'outcome': 'unknown', 'text': ''.join(partial)}
             store.append(conversation_id, event_id=f'interrupted:stream:{last_sequence}',
                          kind='interrupted',
-                         payload={'reason': 'restart', 'outcome': 'unknown',
-                                  'text': ''.join(partial)},
+                         payload={'reason': 'restart', **details},
                          created_at=clock())
             settled += 1
+            if on_interrupt is not None:
+                on_interrupt(conversation_id, 'restart:stream', details)
     return settled
 
 

@@ -34,7 +34,6 @@ class PersistentComposition:
                     conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
                     identity_json TEXT NOT NULL)''')
                 db.execute("INSERT OR IGNORE INTO schema_extensions(name,version) VALUES ('conversation_workspace_binding',1)")
-        settle_after_restart(self.service.store)
         self.modes = AccessModeService(self.dependencies, resolve_scope=self.scope)
         self.service.after_delete = self.close_conversation
         self.service.register_before_delete(self.guard_delete)
@@ -59,6 +58,28 @@ class PersistentComposition:
             inspector=app.state.workspace_inspector, request_grant=self.request_grant,
             state_dir=path.parent / 'checkpoints', mode_revision=self.mode_revision)
         register_checkpoints(app, self.dependencies, service=self.checkpoints)
+        # Execution breakpoints and task-level undo share the conversation store and
+        # the approved checkpoint owner. Breakpoints never authorize anything: file
+        # rollback still goes through CheckpointService's broker.
+        from .breakpoints import build_service as build_breakpoints
+        from .breakpoints.routes import register as register_breakpoints
+        self.breakpoints = build_breakpoints(
+            self.service.store, checkpoints=self.checkpoints,
+            request_grant=self.request_grant, check_owner=self.check_undo_owner)
+        register_breakpoints(app, self.dependencies, service=self.breakpoints)
+        # Now that the breakpoint service exists, restart settlement can also record
+        # interrupted breakpoints for work left open by a previous process.
+        def _settle_breakpoint(cid, reason, details):
+            try:
+                self.breakpoints.record(
+                    cid, kind='interrupted', session_id='restart',
+                    agent_state=reason,
+                    pending={'in_flight_tool_calls': list(details.get('tool_calls') or [])},
+                    tool={'name': None, 'status': 'interrupted'} if details.get('tool_calls') else None,
+                    cursor={}, resume={})
+            except Exception:
+                pass  # settlement observation is best-effort
+        settle_after_restart(self.service.store, on_interrupt=_settle_breakpoint)
         self.terminals = None
         # Only an explicitly configured, package-owned resource closure may mount PTY.
         from odessy.tools.node_mcp import _node_tools_dir, _public_repo_root
@@ -84,7 +105,8 @@ class PersistentComposition:
                     'conversations': True, 'custom_continuation': True,
                     'harness_continuation': False, 'access_modes': True,
                     **self.wave2.capability_flags,
-                    'terminal': self.terminals is not None, 'checkpoints': True}
+                    'terminal': self.terminals is not None, 'checkpoints': True,
+                    'breakpoints': True, 'undo': True}
 
     def mode_revision(self, sid):
         return self.modes.snapshot(sid)['revision']
@@ -211,6 +233,25 @@ class PersistentComposition:
         controller._conversation_id = cid
         controller._conversation_recorder = ConversationRecorder(self.service, cid,
                                                                  session_id=controller.id)
+        # Execution breakpoints are attached per live session. The context callback
+        # supplies turn/tool/workspace facts from the controller without coupling the
+        # runtime loop to this module; a store failure is swallowed by the hook.
+        from .breakpoints import BreakpointHook
+        def _bp_context(controller=controller):
+            record = getattr(controller, 'record', None) or {}
+            runtime = record.get('runtime') or {}
+            first_seq, last_seq = self.service.store.sequence_bounds(cid)
+            return {
+                'turn_id': controller._conversation_recorder.turn_id or '',
+                'last_sequence': last_seq,
+                'first_sequence': first_seq,
+                'workspace_identity': str(runtime.get('workspace') or ''),
+
+            }
+        controller._breakpoint_hook = BreakpointHook(
+            self.breakpoints, conversation_id=cid, session_id=controller.id,
+            get_context=_bp_context,
+            snapshot_fn=lambda reason, sid=controller.id: self.checkpoints.auto_snapshot(sid, reason))
         controller._access_modes = self.modes
         controller._basics_service_instance = self.dependencies.service_instance_id
         controller._basics_composition = self
@@ -275,6 +316,15 @@ class PersistentComposition:
             db.execute('UPDATE conversations SET revision=revision+1,profile=? WHERE id=?', (profile, cid))
         self.service.store._write('bind_workspace', write)
         return self.service.get(cid)
+
+    def check_undo_owner(self, cid, sid):
+        owners = tuple(value for value in self.app.state.sessions.copy().values()
+                       if not value._closed and getattr(value, '_conversation_id', None) == cid)
+        if sid is not None and (len(owners) != 1 or owners[0].id != sid):
+            raise Conflict('Session does not own this conversation')
+        if any(owner.running or getattr(owner._conversation_recorder, 'turn_id', None)
+               for owner in owners):
+            raise Conflict('Wait for the active turn before undoing')
 
     def resolve_conversation_owner(self, cid):
         owners = [value for value in self.app.state.sessions.values()
@@ -346,7 +396,7 @@ class PersistentComposition:
                 if live.running:
                     raise Conflict('Conversation already has a running session')
                 self.check_workspace(live, row['id'])
-                return {'session_id': live.id}
+                return {'session_id': live.id, 'unfinished': [], 'open_user': None}
         controller = self.factory()
         if inspect.isawaitable(controller):
             controller = await controller
@@ -363,7 +413,12 @@ class PersistentComposition:
             controller._workspace_inspector = self.app.state.workspace_inspector
             self.attach(controller, row['id'])
             self.app.state.sessions[controller.id] = controller
-            return {'session_id': controller.id}
+            # Report the resume projection's honest loose ends to the API
+            # caller. These are NOT injected into model memory (that would
+            # fabricate history); they tell the UI what was left unfinished.
+            return {'session_id': controller.id,
+                    'unfinished': prepared.get('unfinished') or [],
+                    'open_user': prepared.get('open_user')}
         except BaseException:
             await controller.close()
             raise

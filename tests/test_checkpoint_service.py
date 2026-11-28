@@ -23,8 +23,20 @@ def shutil_git() -> bool:
 
 
 needs_git = pytest.mark.skipif(not shutil_git(), reason='git is not installed')
+
+
+def _restore_supported() -> bool:
+    if os.name != 'nt':
+        return True
+    try:
+        from odessy.application.checkpoints import win32_replace
+        return win32_replace.available()
+    except Exception:
+        return False
+
+
 needs_restore = pytest.mark.skipif(
-    os.name == 'nt', reason='Checkpoint restoration is intentionally disabled on Windows')
+    not _restore_supported(), reason='No safe restore primitive on this host')
 
 
 @pytest.mark.parametrize('payload', [None, b'', b'exact reviewed blob\r\n'])
@@ -418,7 +430,7 @@ def test_binary_and_runtime_database_are_excluded_and_preserved(tmp_path):
     (root / 'binary.dat').write_bytes(b'\x00\xffkeep newer')
     (root / 'readme.txt').write_text('edited', encoding='utf-8')
     preview = api.preview('s1', created['id'])
-    if os.name == 'nt':
+    if os.name == 'nt' and not _restore_supported():
         with pytest.raises(CheckpointError, match='disabled on Windows') as disabled:
             api.restore('s1', created['id'], preview_hash=preview['preview_hash'],
                         expected_revision=preview['expected_revision'])
@@ -468,7 +480,28 @@ def test_restore_refuses_binary_destination_without_losing_bytes(tmp_path):
 
 def test_restore_availability_matches_host_platform():
     reason = checkpoint_module._restore_unavailable_reason()
-    assert reason == (checkpoint_module.WINDOWS_RESTORE_REASON if os.name == 'nt' else None)
+    if os.name == 'nt':
+        assert (reason is None) == _restore_supported()
+    else:
+        assert reason is None
+
+
+@needs_git
+def test_restore_works_on_windows_when_anchor_available(tmp_path):
+    if os.name != 'nt' or not _restore_supported():
+        pytest.skip('Windows anchored restore unavailable')
+    root, binding = workspace(tmp_path)
+    api = service(tmp_path, binding)
+    saved = api.create('s1', 'baseline')
+    (root / 'readme.txt').write_text('After\n', encoding='utf-8')
+    (root / 'notes.md').unlink()
+    preview = api.preview('s1', saved['id'])
+    assert preview['restore_available'] is True
+    result = api.restore('s1', saved['id'], preview_hash=preview['preview_hash'],
+                         expected_revision=preview['expected_revision'])
+    assert result['status'] == 'restored'
+    assert (root / 'readme.txt').read_text(encoding='utf-8') == 'Before\n'
+    assert (root / 'notes.md').read_text(encoding='utf-8') == '# Notes\n'
 
 
 @needs_git
@@ -503,3 +536,147 @@ def test_windows_restore_is_blocked_before_grant_snapshot_or_write(tmp_path, mon
     # The final write owner also refuses if invoked directly.
     with pytest.raises(CheckpointError, match='disabled on Windows'):
         CheckpointService._apply(api, binding, {})
+
+
+@needs_git
+def test_create_works_in_empty_repository_without_touching_user_head(tmp_path):
+    """A repo with no commits has no HEAD; snapshots must still work."""
+    root = tmp_path / 'empty'
+    root.mkdir()
+    (root / 'a.txt').write_text('hello\n', encoding='utf-8')
+    subprocess.run(['git', 'init', '-q', str(root)], check=True, timeout=60)
+    binding = Binding(root)
+    api = service(tmp_path, binding, state=tmp_path / 'empty-state')
+
+    created = api.create('s1', 'first snapshot')
+    assert created['id'].startswith('ckpt_')
+    # The user's repository still has no commits/branch of its own.
+    head = subprocess.run(['git', '-C', str(root), 'rev-parse', '--verify', 'HEAD'],
+                          capture_output=True, text=True)
+    assert head.returncode != 0
+    # The snapshot itself is a valid owned ref and can be previewed.
+    preview = api.preview('s1', created['id'])
+    assert preview['checkpoint_id'] == created['id']
+
+
+@needs_git
+@needs_restore
+def test_partial_rollback_is_reported_with_safety_checkpoint(tmp_path, monkeypatch):
+    """A mid-restore failure exposes the files already replaced and safety id."""
+    import odessy.application.checkpoints.win32_replace as wr
+    from odessy.application.checkpoints.service import CheckpointError
+
+    root, binding = workspace(tmp_path)
+    api = service(tmp_path, binding)
+    saved = api.create('s1', 'baseline')
+    (root / 'readme.txt').write_text('After\n', encoding='utf-8')
+    (root / 'notes.md').write_text('changed\n', encoding='utf-8')
+    preview = api.preview('s1', saved['id'])
+
+    # Fail the replace of the second file (sorted order: notes.md, readme.txt).
+    calls = {'n': 0}
+    if os.name == 'nt':
+        real = wr.replace_anchored
+    else:
+        real = api._replace_at_root
+
+    def fail_second(*args, **kwargs):
+        calls['n'] += 1
+        if calls['n'] == 2:
+            if os.name == 'nt':
+                raise RuntimeError('injected replace failure')
+            raise OSError('injected replace failure')
+        return real(*args, **kwargs)
+
+    if os.name == 'nt':
+        monkeypatch.setattr(wr, 'replace_anchored', fail_second)
+    else:
+        monkeypatch.setattr(api, '_replace_at_root', fail_second)
+
+    with pytest.raises(CheckpointError) as caught:
+        api.restore('s1', saved['id'], preview_hash=preview['preview_hash'],
+                    expected_revision=preview['expected_revision'])
+
+    assert caught.value.status == 503
+    assert caught.value.details.get('partial_rollback') is True
+    assert 'notes.md' in caught.value.details.get('restored_files', [])
+    assert 'readme.txt' not in caught.value.details.get('restored_files', [])
+    assert caught.value.details.get('safety_checkpoint_id', '').startswith('ckpt_')
+    # The first file really was rolled back; the second was not.
+    assert (root / 'notes.md').read_text(encoding='utf-8') == '# Notes\n'
+    assert (root / 'readme.txt').read_text(encoding='utf-8') == 'After\n'
+
+
+@needs_git
+@needs_restore
+@pytest.mark.parametrize('new_turn_during_approval', [False, True])
+def test_task_undo_restores_baseline_only_at_approved_revision(tmp_path, new_turn_during_approval):
+    import asyncio
+    import uuid
+
+    from odessy.application.breakpoints import BreakpointService
+    from odessy.application.conversations.store import Conflict, ConversationStore
+
+    root, binding = workspace(tmp_path)
+    store = ConversationStore(tmp_path / 'conversations.sqlite3')
+    cid = uuid.uuid4().hex
+    store.create(conversation_id=cid, project_id=store.create_project('Work')['id'],
+                 engine='legacy', profile='default', title='Undo fixture')
+
+    async def grant(sid, plan):
+        if new_turn_during_approval:
+            store.append(cid, event_id='next:user', kind='user', payload={'text': 'Later question'})
+            store.append(cid, event_id='next:assistant', kind='assistant', payload={'text': 'Later answer'})
+        return True
+
+    checkpoints = service(tmp_path, binding)
+    baseline = checkpoints.create('s1', 'before task')
+    breaks = BreakpointService(store, checkpoints=checkpoints)
+    target = root / 'readme.txt'
+    store.append(cid, event_id='task:user', kind='user', payload={'text': 'Task question'})
+    start = breaks.record(cid, kind='task-start', session_id='s1', turn_id='task',
+                          workspace={'snapshot_ref': baseline['id']})
+    target.write_text('Halfway through\n', encoding='utf-8')
+    middle = checkpoints.create('s1', 'during task')
+    after = breaks.record(cid, kind='critical-after', session_id='s1', turn_id='task',
+                          workspace={'snapshot_ref': middle['id']}, undo_boundaries=[start['id']])
+    target.write_text('Finished task\n', encoding='utf-8')
+    store.append(cid, event_id='task:assistant', kind='assistant', payload={'text': 'Task answer'})
+    checkpoints._grant = grant
+
+    def undo():
+        return asyncio.run(breaks.undo_async(cid, after['id'], session_id='s1',
+                                            expected_revision=store.get(cid)['revision']))
+
+    if new_turn_during_approval:
+        with pytest.raises(Conflict, match='Conversation changed'):
+            undo()
+        assert target.read_text(encoding='utf-8') == 'Finished task\n'
+        assert not any(e['kind'] == 'undo' for e in store.raw_events(cid))
+        assert store.prepare_resume(cid)['turns'][-1] == {'user': 'Later question', 'assistant': 'Later answer'}
+    else:
+        assert undo()['file_rollback']['checkpoint_id'] == baseline['id']
+        assert target.read_text(encoding='utf-8') == 'Before\n'
+        assert store.event_by_id(cid, 'task:user') is not None
+        assert store.prepare_resume(cid)['turns'] == []
+        assert store.prepare_resume(cid)['open_user'] is None
+
+
+@needs_git
+@needs_restore
+def test_restore_recreates_missing_parent_through_the_workspace_handle(tmp_path):
+    root, binding = workspace(tmp_path)
+    nested = root / 'docs' / 'guide.txt'
+    nested.parent.mkdir()
+    nested.write_text('Saved text\n', encoding='utf-8')
+    git(root, 'add', '--', 'docs/guide.txt')
+    api = service(tmp_path, binding)
+    saved = api.create('s1', 'baseline')
+    nested.unlink()
+    nested.parent.rmdir()
+    preview = api.preview('s1', saved['id'])
+
+    api.restore('s1', saved['id'], preview_hash=preview['preview_hash'],
+                expected_revision=preview['expected_revision'])
+
+    assert nested.read_text(encoding='utf-8') == 'Saved text\n'

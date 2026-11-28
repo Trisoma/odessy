@@ -967,10 +967,19 @@ class SessionController:
         recorder = getattr(self, '_conversation_recorder', None)
         if recorder is None:
             return await self._run_turn_impl(text, participant=participant, **kwargs)
-        if self._closed or self.running:
+        if self._closed or self.running or recorder.turn_id is not None:
             raise RuntimeError('Session is closed or a turn is already running')
         try:
-            recorder.begin_turn(self._public(text))
+            prompt = self._public(text)
+            recorded_turn = recorder.begin_turn(prompt)
+            # Automatic baseline snapshot + task undo anchor at turn start.
+            # Best-effort observation: the hook swallows its own storage errors.
+            bp_hook = getattr(self, '_breakpoint_hook', None)
+            if bp_hook is not None:
+                try:
+                    await asyncio.to_thread(bp_hook.begin_turn, recorded_turn, prompt)
+                except Exception:
+                    pass
             for attachment in attachments:
                 recorder.attachment(**attachment)
             recorder.activity('Turn admitted', name='turn_started')

@@ -162,7 +162,11 @@ class ConversationService:
             return {'version': 1, 'conversation_id': conversation_id,
                     'session_id': result['session_id'],
                     'service_instance_id': self.service_instance_id,
-                    'continuation': 'continuable'}
+                    'continuation': 'continuable',
+                    # Honest loose ends from the resume projection; the UI can
+                    # surface them without them being injected into model memory.
+                    'unfinished': result.get('unfinished') or [],
+                    'open_user': result.get('open_user')}
 
 
 def build_service(*, path: str | os.PathLike[str] | None = None,

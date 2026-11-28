@@ -8,11 +8,13 @@ The [current support matrix](docs/current-status.md) is the maintained capabilit
 and release baseline. This page summarizes constraints that affect adoption.
 
 - **Installer:** the [public alpha](https://github.com/Trisoma/odessy/releases/tag/v0.5.0-alpha) was built before the security fixes in `08efca9`. Use [source](docs/getting-started.md) for those fixes. See [release status](docs/current-status.md) for the build and its checks.
-- **Checkpoint safety:** restoration is disabled on Windows at the service and
-  write boundary until directory-handle race protection is implemented. Creation,
-  listing and preview remain available. Direct restore requests return unsupported;
-  an older running service must be updated to gain this restriction. Text-only
-  snapshots are not a full backup and cannot undo commands or external effects.
+- **Checkpoint safety:** Windows restoration uses handle-anchored replacement —
+  each path component is opened relative to a verified parent handle with reparse
+  points refused, and the replace is an NT rename relative to that handle. On a
+  host where those NT bindings are unavailable, restore returns unsupported while
+  creation/listing/preview remain available; an older running service must be
+  updated to gain restoration. Text-only snapshots are not a full backup and
+  cannot undo commands or external effects.
 - **Engine differences:** Custom supports bounded restart continuation. Harness
   history remains readable but cannot resume after restart through this adapter.
   Custom access modes and context injection are not silently emulated on Harness.

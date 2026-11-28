@@ -12,7 +12,7 @@ content:
 
 Use the [current support matrix](../current-status.md) for the maintained release baseline. The detailed isolation and egress constraints below remain applicable; historical test counts apply only to their dated snapshots.
 
-Windows checkpoint restoration is disabled pending directory-handle race protection; creation, listing and preview remain available. Conditional local PTY availability is not workspace sandboxing. See [terminal and checkpoint limits](../ui/terminal-checkpoints.md).
+Windows checkpoint restoration uses handle-anchored replacement and is available when the NT handle bindings are present; a host without them returns unsupported while creation, listing and preview remain available. Conditional local PTY availability is not workspace sandboxing. See [terminal and checkpoint limits](../ui/terminal-checkpoints.md).
 
 Configurable collaboration adds an authenticated loopback session API and coding jobs. It does not provide durable jobs, verified child-CLI confinement, mid-task model takeover, or hardware qualification. Coding-agent bills are outside the API budget. See [model collaboration](model-collaboration.mdx).
 

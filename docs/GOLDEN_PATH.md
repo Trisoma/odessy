@@ -135,7 +135,7 @@ The current SSH flow has several manual steps. Monitoring and command selection 
 | **Composer** | Change the model for the next turn. Open service permissions and check the effective mode. SSH commands still require explicit approval. |
 | **Inspector** | Browse workspace **Files**, recorded **Output**, and **Changes**. An available interactive **Terminal** uses a separate shell grant and runs under your OS account. [Terminal and checkpoints](ui/terminal-checkpoints.md) |
 | **Context, memory and documents** | Inspect context used by a turn, review project memory, or opt in to document indexing and follow retrieval citations. Availability depends on runtime and configuration. |
-| **Checkpoints** | Review or preview recorded workspace checkpoints. Windows supports checkpoint creation, listing and preview. Restoration is disabled. |
+| **Checkpoints** | Review or preview recorded workspace checkpoints. Windows supports checkpoint creation, listing, preview and restoration with handle-anchored protection. |
 | **Activity & usage** | Check recorded activity and model usage for this installation. |
 | **Devices, Jobs and Handoffs** | Check available hosts, then inspect recorded jobs or handoffs when the corresponding feature has activity. |
 | **Settings** | Explore general appearance, models and connections, speech to text, text to speech, voice, devices and tool access, advanced settings and installation maintenance. |
@@ -158,7 +158,7 @@ These are known constraints and likely failure points on this walkthrough. The [
 | Output is empty after reopening history | The maintainer observed an empty resumed SSH Output panel. Inspect and capture the live tool result before closing the chat; do not rerun an action just to recreate evidence. History and assistant prose are not proof of new execution. |
 | Saved chat cannot continue | Use the matching profile/workspace. Custom continuation is bounded; Harness restart history is read-only. Do not delete the history database to repair selection. |
 | Optional voice or Devices is unavailable | Typed local chat does not require either feature. Check the selected audio device and individual STT/TTS tests; SSH login, monitoring readiness and command authorization are separate. Reconnect temporary SSH sessions after service restart. |
-| A cloud or shell action exposes data | Cloud requests and allowed tool observations are sent to the configured provider. Shell actions have the documented host permissions; approvals are not a complete OS sandbox. Use disposable, non-sensitive data. Windows checkpoint restoration is disabled and is not a rollback for executed commands. |
+| A cloud or shell action exposes data | Cloud requests and allowed tool observations are sent to the configured provider. Shell actions have the documented host permissions; approvals are not a complete OS sandbox. Use disposable, non-sensitive data. Checkpoint restoration only restores captured text files and is not a rollback for executed commands. |
 
 ### If the approval never appears
 

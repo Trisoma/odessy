@@ -36,7 +36,13 @@ MAX_EXPORT = 2 * 1024 * 1024
 MAX_QUERY = 512
 MAX_SNIPPET = 400
 KINDS = ('user', 'assistant_delta', 'assistant', 'tool_call', 'tool_result',
-         'activity', 'attachment', 'interrupted')
+         'activity', 'attachment', 'interrupted', 'breakpoint', 'undo')
+#: Kinds that are execution metadata, not transcript messages. They are stored in
+#: the same append-only stream but never surface as messages, search hits or exports.
+NON_MESSAGE_KINDS = frozenset({'assistant_delta', 'breakpoint', 'undo'})
+# SQL fragments for message-facing reads; kinds are fixed literals, never user input.
+_MESSAGE_ONLY = "kind NOT IN ('assistant_delta','breakpoint','undo')"
+_MESSAGE_ONLY_E = "e.kind NOT IN ('assistant_delta','breakpoint','undo')"
 ENGINES = ('legacy', 'harness')
 _TIMESTAMP = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$')
 _ID = re.compile(r'^[0-9a-f]{32}$')
@@ -487,7 +493,7 @@ class ConversationStore:
                 args.append(before)
             rows = [dict(row) for row in db.execute(
                 'SELECT * FROM conversation_events WHERE conversation_id = ?' + extra +
-                " AND kind != 'assistant_delta' ORDER BY sequence DESC LIMIT ?",
+                ' AND ' + _MESSAGE_ONLY + ' ORDER BY sequence DESC LIMIT ?',
                 (*args, limit + 1))]
             return rows
 
@@ -499,23 +505,38 @@ class ConversationStore:
                 'next_before': page[0]['sequence'] if more and page else None}
 
     def append(self, conversation_id: str, *, event_id: str, kind: str,
-               payload: Mapping[str, Any], created_at: str | None = None) -> Mapping[str, Any]:
+               payload: Mapping[str, Any], created_at: str | None = None,
+               expected_revision: int | None = None,
+               before_undo: Callable[[], Mapping[str, Any]] | None = None) -> Mapping[str, Any]:
+        if before_undo is not None and (kind != 'undo' or expected_revision is None):
+            raise Invalid('A guarded restore requires a revision and an undo event')
         _check_id(conversation_id)
         event_id = _check_text(event_id, 'event_id', 200)
         if kind not in KINDS:
             raise Invalid('Unknown event kind')
         if not isinstance(payload, Mapping):
             raise Invalid('payload must be an object')
-        encoded = json.dumps(payload, separators=(',', ':'), sort_keys=True)
-        if len(encoded.encode()) > MAX_PAYLOAD:
+        original = json.dumps(payload, separators=(',', ':'), sort_keys=True)
+        if len(original.encode()) > MAX_PAYLOAD:
             raise PayloadTooLarge('Event payload exceeds 256 KiB')
         created_at = utc_now() if created_at is None else _check_timestamp(created_at)
 
         def work(db):
             conversation = self._conversation(db, conversation_id)
+            if expected_revision is not None and conversation['revision'] != expected_revision:
+                raise Conflict('Conversation changed; reload before undoing')
             existing = db.execute(
                 'SELECT * FROM conversation_events WHERE conversation_id = ? AND event_id = ?',
                 (conversation_id, event_id)).fetchone()
+            if existing is not None and before_undo is not None:
+                raise Conflict('This breakpoint has already been undone')
+            final_payload = payload
+            encoded = original
+            if before_undo is not None:
+                final_payload = {**payload, 'file_rollback': before_undo()}
+                encoded = json.dumps(final_payload, separators=(',', ':'), sort_keys=True)
+                if len(encoded.encode()) > MAX_PAYLOAD:
+                    raise PayloadTooLarge('Event payload exceeds 256 KiB')
             if existing is not None:
                 if existing['kind'] != kind or existing['payload_json'] != encoded:
                     raise Conflict('Event id already exists with different content')
@@ -530,7 +551,7 @@ class ConversationStore:
             db.execute('UPDATE conversations SET updated_at = ?, revision = revision + 1 '
                        'WHERE id = ?',
                        (max(conversation['updated_at'], created_at), conversation_id))
-            self._index(db, conversation_id, sequence, kind, payload)
+            self._index(db, conversation_id, sequence, kind, final_payload)
             return _event({'conversation_id': conversation_id, 'sequence': sequence,
                            'event_id': event_id, 'kind': kind,
                            'payload_json': encoded, 'created_at': created_at})
@@ -603,7 +624,7 @@ class ConversationStore:
                     "SELECT e.conversation_id, e.sequence, e.event_id, e.kind, e.payload_json "
                     "FROM conversation_events e JOIN conversations c ON c.id = e.conversation_id "
                     "WHERE e.payload_json LIKE ? ESCAPE '\\'" + project_clause +
-                    " AND e.kind != 'assistant_delta' ORDER BY e.conversation_id, e.sequence LIMIT ?",
+                    ' AND ' + _MESSAGE_ONLY_E + ' ORDER BY e.conversation_id, e.sequence LIMIT ?',
                     (f'%{escaped}%', *project_args, limit + 1)).fetchall()
             return [dict(row) for row in rows]
 
@@ -670,7 +691,7 @@ class ConversationStore:
             conversation = self._conversation(db, conversation_id)
             events = [dict(row) for row in db.execute(
                 'SELECT * FROM conversation_events WHERE conversation_id = ? '
-                "AND kind != 'assistant_delta' ORDER BY sequence", (conversation_id,))]
+                'AND ' + _MESSAGE_ONLY + ' ORDER BY sequence', (conversation_id,))]
             return conversation, events
 
         conversation, events = self._read(work)
@@ -729,15 +750,46 @@ class ConversationStore:
             conversation = self._conversation(db, conversation_id)
             events = [dict(row) for row in db.execute(
                 'SELECT sequence,event_id,kind,payload_json,created_at '
-                "FROM conversation_events WHERE conversation_id = ? AND kind != 'assistant_delta' "
+                'FROM conversation_events WHERE conversation_id = ? AND ' + _MESSAGE_ONLY + ' '
                 'ORDER BY sequence', (conversation_id,))]
-            return conversation, events
+            # Undo events are execution metadata, excluded from the message
+            # stream above, but they define which historical turns must NOT be
+            # rebuilt into the resume context. Read them separately; the audit
+            # trail itself is append-only and never modified.
+            undos = [dict(row) for row in db.execute(
+                'SELECT payload_json FROM conversation_events '
+                'WHERE conversation_id = ? AND kind = ? ORDER BY sequence',
+                (conversation_id, 'undo'))]
+            return conversation, events, undos
 
-        conversation, events = self._read(work)
+        conversation, events, undo_rows = self._read(work)
+        invalidated: list[tuple[int, int]] = []
+        for row in undo_rows:
+            try:
+                payload = json.loads(row['payload_json'])
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            through = payload.get('invalidates_through_sequence')
+            if isinstance(through, bool) or not isinstance(through, int):
+                continue
+            # Older undo events lack the explicit start; degrade to 0 so an
+            # undone task is never rebuilt into the resume context.
+            start = payload.get('invalidates_from_sequence', 0)
+            if isinstance(start, bool) or not isinstance(start, int):
+                start = 0
+            invalidated.append((min(start, through), through))
+
+        def is_invalidated(sequence: int) -> bool:
+            return any(lo <= sequence <= hi for lo, hi in invalidated)
+
         turns: list[dict[str, str]] = []
         pending_user: str | None = None
         unfinished: dict[str, dict[str, Any]] = {}
         for row in events:
+            if invalidated and is_invalidated(row['sequence']):
+                continue  # undone task: never rebuild it into the resume context
             try:
                 payload = json.loads(row['payload_json'])
             except ValueError:
@@ -779,6 +831,51 @@ class ConversationStore:
         rows = self._read(lambda db: [row[0] for row in db.execute(
             'SELECT id FROM conversations ORDER BY created_at, id')])
         return tuple(rows)
+
+    # -- breakpoints -----------------------------------------------------
+
+    def breakpoints(self, conversation_id: str, *, limit: int = 200) -> tuple[Mapping[str, Any], ...]:
+        """Execution/undo events in recorded order, for the breakpoint timeline.
+
+        Unlike :meth:`messages`, this path intentionally includes ``breakpoint``
+        and ``undo`` kinds. ``assistant_delta`` stays excluded: it is transient
+        stream text, never a durable breakpoint.
+        """
+        _check_id(conversation_id)
+        limit = _check_int(limit, 'limit', 1)
+        if limit > 500:
+            raise Invalid('limit must be 1-500')
+        rows = self._read(lambda db: [dict(row) for row in db.execute(
+            "SELECT * FROM conversation_events WHERE conversation_id = ? "
+            "AND kind IN ('breakpoint','undo') ORDER BY sequence DESC LIMIT ?",
+            (conversation_id, limit))])
+        return tuple(_event(row) for row in reversed(rows))
+
+    def sequence_bounds(self, conversation_id: str) -> tuple[int, int]:
+        """(first, last) event sequence for a conversation, in one indexed read.
+
+        Breakpoint context needs only the cursor bounds, not the whole event body;
+        reading every payload on each breakpoint would be quadratic in a long turn.
+        Returns (0, 0) for a conversation with no recorded events.
+        """
+        _check_id(conversation_id)
+        def work(db):
+            self._conversation(db, conversation_id)
+            row = db.execute(
+                'SELECT MIN(sequence) AS first_seq, MAX(sequence) AS last_seq '
+                'FROM conversation_events WHERE conversation_id = ?',
+                (conversation_id,)).fetchone()
+            return (int(row['first_seq'] or 0), int(row['last_seq'] or 0))
+        return self._read(work)
+
+    def event_by_id(self, conversation_id: str, event_id: str) -> Mapping[str, Any] | None:
+        """One event by its stable id, or None. Used to resolve an undo anchor."""
+        _check_id(conversation_id)
+        event_id = _check_text(event_id, 'event_id', 200)
+        row = self._read(lambda db: db.execute(
+            'SELECT * FROM conversation_events WHERE conversation_id = ? AND event_id = ?',
+            (conversation_id, event_id)).fetchone())
+        return _event(dict(row)) if row is not None else None
 
 
 def _event(row: Mapping[str, Any]) -> dict[str, Any]:

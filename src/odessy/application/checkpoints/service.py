@@ -34,8 +34,8 @@ RETENTION = 20
 GIT_TIMEOUT = 60
 REF_PREFIX = 'refs/odessy/checkpoints/'
 WINDOWS_RESTORE_REASON = (
-    'Checkpoint restoration is disabled on Windows until directory-handle '
-    'protection against path replacement is implemented. Creation and preview remain available.'
+    'Checkpoint restoration is disabled on Windows: the handle-anchored '
+    'protection is unavailable on this host. Creation and preview remain available.'
 )
 _GRANT_LOOP = contextvars.ContextVar('checkpoint_grant_loop', default=None)
 
@@ -46,10 +46,14 @@ _CONTROL = re.compile(r'[\x00-\x1f\x7f]')
 class CheckpointError(Exception):
     """Transport-neutral failure; routes translate ``status``."""
 
-    def __init__(self, status: int, message: str) -> None:
+    def __init__(self, status: int, message: str, details: Mapping[str, Any] | None = None) -> None:
         super().__init__(message)
         self.status = status
         self.message = message
+        # Optional machine-readable context (e.g. partially restored files).
+        # Kept separate from ``message`` so transport layers can surface it
+        # without it being mistaken for a human-readable string.
+        self.details: dict[str, Any] = dict(details or {})
 
 
 @dataclass(frozen=True)
@@ -89,7 +93,23 @@ def _now() -> str:
 
 
 def _restore_unavailable_reason() -> str | None:
-    return WINDOWS_RESTORE_REASON if os.name == 'nt' else None
+    """Why restoration cannot run here, or None when it can.
+
+    Windows restores are enabled only when the handle-anchored replacement
+    module is available: it opens every path component relative to a verified
+    parent handle and refuses reparse points, giving the same TOCTOU safety as
+    POSIX ``dir_fd``/``O_NOFOLLOW``. If those NT bindings are unavailable the
+    restore stays disabled rather than falling back to an unsafe path write.
+    """
+    if os.name == 'nt':
+        try:
+            from . import win32_replace
+            if win32_replace.available():
+                return None
+        except Exception:
+            pass
+        return WINDOWS_RESTORE_REASON
+    return None
 
 
 def _validate_label(label: Any) -> str:
@@ -176,7 +196,8 @@ class CheckpointService:
     def _read_metadata(self, binding) -> dict[str, Any]:
         path = self._metadata_path(binding)
         if not path.exists():
-            return {'schema_version': SCHEMA_VERSION, 'revision': 0, 'checkpoints': []}
+            return {'schema_version': SCHEMA_VERSION, 'revision': 0,
+                    'checkpoints': [], 'hash_pool': []}
         try:
             data = json.loads(path.read_text('utf-8'))
         except (OSError, ValueError):
@@ -189,6 +210,26 @@ class CheckpointService:
 
     def _write_metadata(self, binding, data: dict[str, Any]) -> None:
         path = self._metadata_path(binding)
+        # Garbage-collect unreferenced hash-pool entries and remap indices.
+        # Centralized here so every mutating path (create/auto/prune/delete)
+        # releases pool space consistently and no reference is left dangling.
+        pool = data.get('hash_pool')
+        if isinstance(pool, list) and pool:
+            referenced: set[int] = set()
+            for entry in data['checkpoints']:
+                refs = entry.get('hash_refs')
+                if isinstance(refs, dict):
+                    for index in refs.values():
+                        if isinstance(index, int) and not isinstance(index, bool):
+                            referenced.add(index)
+            if len(referenced) < len(pool):
+                remap = {old: new for new, old in enumerate(sorted(referenced))}
+                data['hash_pool'] = [pool[i] for i in sorted(referenced)]
+                for entry in data['checkpoints']:
+                    refs = entry.get('hash_refs')
+                    if isinstance(refs, dict):
+                        entry['hash_refs'] = {p: remap[i] for p, i in refs.items()
+                                              if i in remap}
         payload = _canonical(data).encode('utf-8')
         if len(payload) > 2 * 1024 * 1024:
             raise CheckpointError(413, 'Checkpoint metadata exceeds its bound')
@@ -262,12 +303,19 @@ class CheckpointService:
             paths.append(path)
         return sorted(set(paths))
 
-    def _collect(self, binding, root: Path) -> tuple[list[str], list[str], dict[str, str], int]:
-        """Returns (captured, unsupported, sha256 per path, total bytes)."""
+    def _collect(self, binding, root: Path, *, with_data: bool = False):
+        """Collect snapshottable files.
+
+        Returns ``(captured, unsupported, sha256 per path, total bytes)``, or a
+        5-tuple with ``data per path`` appended when ``with_data`` is set. The
+        single read is reused by automatic snapshots so a capture does not read
+        the whole workspace two or three times.
+        """
         policy = binding.policy
         captured: list[str] = []
         unsupported: list[str] = []
         hashes: dict[str, str] = {}
+        data_by_path: dict[str, bytes] = {}
         total = 0
         for path in self._candidate_paths(root):
             if len(captured) >= MAX_FILES:
@@ -304,12 +352,28 @@ class CheckpointService:
                 continue
             captured.append(path)
             hashes[path] = _hash_bytes(data)
+            if with_data:
+                data_by_path[path] = data
             total += len(data)
+        if with_data:
+            return captured, unsupported, hashes, total, data_by_path
         return captured, unsupported, hashes, total
 
-    def _snapshot(self, binding, label: str, *, kind: str, pinned: str | None = None) -> Checkpoint:
+    def _snapshot(self, binding, label: str, *, kind: str, pinned: str | None = None,
+                  collected=None) -> Checkpoint:
+        """Persist a snapshot.
+
+        ``collected`` is an optional 5-tuple from :meth:`_collect` with data.
+        Automatic snapshots pass it to reuse the single workspace read; manual
+        creation leaves it unset and keeps the stricter re-read/verify path.
+        """
         root = self._repository_root(binding)
-        captured, unsupported, hashes, total = self._collect(binding, root)
+        reused = collected is not None
+        if reused:
+            captured, unsupported, hashes, total, data_by_path = collected
+        else:
+            captured, unsupported, hashes, total = self._collect(binding, root)
+            data_by_path = {}
         if not captured and unsupported:
             raise CheckpointError(413, 'No checkpointable files fit the size limits')
         checkpoint_id = 'ckpt_' + uuid.uuid4().hex
@@ -322,10 +386,15 @@ class CheckpointService:
             self._git(root, 'read-tree', '--empty', env=env)
             for path in captured:
                 # Store raw reviewed bytes: git add may execute repository filters.
-                candidate = self._safe_path(binding, path, must_exist=True)
-                data = candidate.read_bytes()
-                if len(data) > MAX_FILE_BYTES or _hash_bytes(data) != hashes[path]:
-                    raise CheckpointError(409, 'Workspace changed during checkpoint capture')
+                if reused:
+                    # Data comes from the single _collect read; its hash was
+                    # computed from these exact bytes, no second read needed.
+                    data = data_by_path[path]
+                else:
+                    candidate = self._safe_path(binding, path, must_exist=True)
+                    data = candidate.read_bytes()
+                    if len(data) > MAX_FILE_BYTES or _hash_bytes(data) != hashes[path]:
+                        raise CheckpointError(409, 'Workspace changed during checkpoint capture')
                 blob = self._git(root, 'hash-object', '-w', '--stdin',
                                  input_bytes=data).decode().strip()
                 self._git(root, 'update-index', '--add', '--cacheinfo',
@@ -333,8 +402,21 @@ class CheckpointService:
             tree = self._git(root, 'write-tree', env=env).decode().strip()
             if not tree:
                 raise CheckpointError(503, 'Checkpoint snapshot failed')
+            # A brand-new repository has no HEAD commit, so `commit-tree -p
+            # HEAD` fails and snapshots would be unavailable exactly when a
+            # workspace is freshest. Detect HEAD first: create a root commit
+            # when absent, otherwise keep parenting the user's HEAD as before.
+            # Nothing here mutates the user's branch, index or working tree.
+            args = ['commit-tree', tree]
+            try:
+                self._git(root, 'rev-parse', '--verify', 'HEAD')
+            except CheckpointError:
+                pass  # no HEAD yet -> root commit, no parent
+            else:
+                args.extend(['-p', 'HEAD'])
+            args.append('-m')
             commit = self._git(
-                root, 'commit-tree', tree, '-p', 'HEAD', '-m',
+                root, *args,
                 f'odessy checkpoint {kind}: {label}'.encode('utf-8')[:512],
                 # These are service-owned snapshots, not user-authored commits.
                 # Do not depend on or mutate the user's Git identity/configuration.
@@ -361,9 +443,24 @@ class CheckpointService:
             data['revision'] = int(data['revision']) + 1
             checkpoint = Checkpoint(**{**checkpoint.__dict__,
                                        'revision': data['revision']})
+            # File-level content addressing: store each distinct (path, hash)
+            # once in a shared pool and reference it from the entry. Incremental
+            # edits then add only the changed files instead of re-storing the
+            # whole hash map in every snapshot. Old entries keep inline hashes.
+            pool = data.setdefault('hash_pool', [])
+            index = {item: i for i, item in enumerate(pool)}
+            refs: dict[str, int] = {}
+            for path, digest in hashes.items():
+                key = f'{path}\x00{digest}'
+                slot = index.get(key)
+                if slot is None:
+                    slot = len(pool)
+                    pool.append(key)
+                    index[key] = slot
+                refs[path] = slot
             data['checkpoints'].append({'checkpoint': checkpoint.public(),
                                         'kind': kind,
-                                        'files_sha256': hashes,
+                                        'hash_refs': refs,
                                         'unsupported': unsupported[:200]})
             self._prune(binding, data, pinned=pinned)
             self._write_metadata(binding, data)
@@ -373,7 +470,8 @@ class CheckpointService:
         entries = data['checkpoints']
         if len(entries) <= RETENTION:
             return
-        candidates = [e for e in entries if e['checkpoint']['id'] != pinned]
+        candidates = sorted((e for e in entries if e['checkpoint']['id'] != pinned),
+                            key=lambda e: e.get('kind') not in ('auto', 'breakpoint'))
         drop = candidates[:len(entries) - RETENTION]
         keep = [e for e in entries if e not in drop]
         for entry in drop:
@@ -387,9 +485,45 @@ class CheckpointService:
         data['checkpoints'] = keep
 
     # ------------------------------------------------------------------ read
+    @staticmethod
+    def _resolve_entry_hashes(entry: Mapping[str, Any], data: Mapping[str, Any]) -> dict[str, str]:
+        """Resolve an entry's file hashes regardless of storage format.
+
+        New entries carry ``hash_refs`` (path -> index into the shared
+        ``hash_pool``); older entries carry an inline ``files_sha256``. Both are
+        presented to callers as a plain ``files_sha256`` dict so no downstream
+        reader needs to know which format an entry uses.
+        """
+        if 'hash_refs' in entry:
+            refs = entry['hash_refs']
+            pool = data.get('hash_pool') or []
+            if not isinstance(refs, dict) or not isinstance(pool, list):
+                raise CheckpointError(503, 'Checkpoint hash pool is invalid')
+            resolved: dict[str, str] = {}
+            for path, index in refs.items():
+                if (isinstance(index, bool) or not isinstance(index, int)
+                        or index < 0 or index >= len(pool)):
+                    raise CheckpointError(503, 'Checkpoint hash reference is out of range')
+                item = pool[index]
+                if not isinstance(item, str) or '\x00' not in item:
+                    raise CheckpointError(503, 'Checkpoint hash pool entry is invalid')
+                stored_path, digest = item.split('\x00', 1)
+                if stored_path != path:
+                    raise CheckpointError(503, 'Checkpoint hash reference is inconsistent')
+                resolved[str(path)] = digest
+            return resolved
+        inline = entry.get('files_sha256')
+        if isinstance(inline, dict):
+            return dict(inline)
+        raise CheckpointError(503, 'Checkpoint has no file hashes')
+
     def _entries(self, binding) -> dict[str, dict[str, Any]]:
         data = self._read_metadata(binding)
-        return {entry['checkpoint']['id']: entry for entry in data['checkpoints']}
+        result: dict[str, dict[str, Any]] = {}
+        for entry in data['checkpoints']:
+            inlined = {**entry, 'files_sha256': self._resolve_entry_hashes(entry, data)}
+            result[inlined['checkpoint']['id']] = inlined
+        return result
 
     def list(self, sid: str) -> dict[str, Any]:
         binding = self._binding(sid)
@@ -509,6 +643,79 @@ class CheckpointService:
         self._authorize(sid, 'checkpoint.create', {'label': label, 'kind': kind})
         return self._snapshot(binding, label, kind=kind).public()
 
+    def snapshot_for_breakpoint(self, sid: str, label: str) -> dict[str, Any] | None:
+        """Capture an observation-only snapshot for an execution breakpoint.
+
+        Kept as an alias of :meth:`auto_snapshot` for callers that expect a
+        fresh capture. Automatic triggers should call ``auto_snapshot`` so an
+        unchanged workspace reuses the previous snapshot instead of exhausting
+        the retention window with identical copies.
+        """
+        return self.auto_snapshot(sid, label, kind='breakpoint')
+
+    def auto_snapshot(self, sid: str, reason: str, *, kind: str = 'auto') -> dict[str, Any] | None:
+        """Capture a snapshot automatically at a key execution moment.
+
+        Fully automatic with no approval: a snapshot only writes owned refs and
+        metadata, never mutating the workspace or the user's Git state, so it
+        carries no authorization risk (unlike ``restore``). Best-effort: any
+        unavailable/invalid Git workspace yields ``None`` rather than failing the
+        caller's turn.
+
+        Content-addressed deduplication is the point of this method. Automatic
+        triggers fire often (task start, before/after critical tools, every step,
+        idle timer), and capturing an identical full-tree snapshot each time
+        would blow through ``RETENTION`` in a single task. So the current file
+        hashes are compared with the most recent snapshot; when they match, that
+        snapshot is returned with ``deduplicated=True`` and no new ref is written.
+        An undo binds to whichever ref the breakpoint records, so reuse is safe.
+
+        Returns a dict with ``id``, ``ref`` and ``deduplicated``, or ``None``.
+        """
+        try:
+            binding = self._binding(sid)
+            root = self._repository_root(binding)
+            collected = self._collect(binding, root, with_data=True)
+            hashes = collected[2]
+            if not hashes:
+                # Nothing snapshottable (empty or screened workspace): nothing
+                # to roll back to, and no ref to bind.
+                return None
+            with self._lock(binding):
+                data = self._read_metadata(binding)
+                entries = data.get('checkpoints') or []
+                # Search the whole retention window, not just entries[-1]: a
+                # task can return to an earlier state (A -> B -> A), and a
+                # safety snapshot may sit between two identical captures. Reuse
+                # the most recent match so undo binds to the latest identical
+                # content. Safety snapshots are never reused as anchors.
+                for entry in reversed(entries):
+                    entry_hashes = self._resolve_entry_hashes(entry, data)
+                    if (entry.get('kind') in ('auto', 'breakpoint', 'manual')
+                            and entry_hashes == hashes):
+                        checkpoint_id = entry['checkpoint']['id']
+                        return {
+                            'id': checkpoint_id,
+                            'ref': f'{REF_PREFIX}{checkpoint_id}',
+                            'deduplicated': True,
+                            'files': entry['checkpoint'].get('files', 0),
+                            'files_sha256': dict(hashes),
+                        }
+                if len(entries) >= RETENTION and not any(
+                        e.get('kind') in ('auto', 'breakpoint') for e in entries):
+                    return None  # Skip a new automatic snapshot rather than evict user history.
+                safe_reason = _validate_label(f'{reason}'[:MAX_LABEL])
+                checkpoint = self._snapshot(binding, safe_reason, kind=kind, collected=collected)
+            return {
+                'id': checkpoint.id,
+                'ref': f'{REF_PREFIX}{checkpoint.id}',
+                'deduplicated': False,
+                'files': checkpoint.files,
+                'files_sha256': dict(hashes),
+            }
+        except CheckpointError:
+            return None
+
     def _authorize(self, sid: str, action: str, details: Mapping[str, Any]) -> None:
         if self._grant is None:
             raise CheckpointError(
@@ -568,7 +775,9 @@ class CheckpointService:
             _GRANT_LOOP.reset(token)
 
     def restore(self, sid: str, checkpoint_id: str, *, preview_hash: str,
-                expected_revision: int) -> dict[str, Any]:
+                expected_revision: int,
+                commit_restore: Callable[[Callable[[], dict[str, Any]]], dict[str, Any]] | None = None
+                ) -> dict[str, Any]:
         binding = self._binding(sid)
         if not isinstance(preview_hash, str) or len(preview_hash) != 64:
             raise CheckpointError(400, 'preview_hash is required')
@@ -603,12 +812,24 @@ class CheckpointService:
                                     kind='safety', pinned=checkpoint_id)
             if self._current_hashes(binding, entry) != current:
                 raise CheckpointError(409, 'Workspace changed during safety capture')
-            self._apply(binding, entry, current=current)
-            data = self._read_metadata(binding)
-            data['revision'] = int(data['revision']) + 1
-            self._write_metadata(binding, data)
-        return {'version': 1, 'checkpoint_id': entry['checkpoint']['id'],
-                'safety_checkpoint_id': safety.id, 'status': 'restored'}
+            def apply() -> dict[str, Any]:
+                try:
+                    self._apply(binding, entry, current=current)
+                    data = self._read_metadata(binding)
+                    data['revision'] = int(data['revision']) + 1
+                    self._write_metadata(binding, data)
+                except CheckpointError as exc:
+                    exc.details.setdefault('safety_checkpoint_id', safety.id)
+                    raise
+                except OSError:
+                    raise CheckpointError(503, 'Restore could not be completed',
+                                          {'safety_checkpoint_id': safety.id}) from None
+                return {'version': 1, 'checkpoint_id': entry['checkpoint']['id'],
+                        'safety_checkpoint_id': safety.id, 'status': 'restored'}
+
+            # Undo serializes the final apply with the conversation event. Never hold
+            # a conversation write transaction while waiting for user approval.
+            return apply() if commit_restore is None else commit_restore(apply)
 
     def _apply(self, binding, entry, *, current=None) -> None:
         reason = _restore_unavailable_reason()
@@ -616,17 +837,26 @@ class CheckpointService:
             raise CheckpointError(501, reason)
         root = Path(binding.root_path)
         ref = f'{REF_PREFIX}{entry["checkpoint"]["id"]}'
-        restored = 0
+        restored: list[str] = []
+        try:
+            self._apply_files(binding, entry, current=current, root=root, ref=ref,
+                              restored=restored)
+        except CheckpointError as exc:
+            # A multi-file restore is not atomic. If any file was already
+            # replaced, say so explicitly instead of silently leaving a partial
+            # rollback: callers can point the user at the safety checkpoint.
+            if restored:
+                exc.details.setdefault('partial_rollback', True)
+                exc.details.setdefault('restored_files', list(restored))
+            raise
+
+    def _apply_files(self, binding, entry, *, current, root: Path, ref: str,
+                     restored: list[str]) -> None:
         for path in sorted(entry['files_sha256']):
-            target = self._safe_path(binding, path)
-            parent = target.parent
+            if current is not None and current[path] == entry['files_sha256'][path]:
+                continue
             try:
-                if parent.is_symlink():
-                    raise CheckpointError(403, 'Workspace path denied during restore')
-                parent.mkdir(parents=True, exist_ok=True)
-                resolved_parent = parent.resolve()
-                if root.resolve() not in (resolved_parent, *resolved_parent.parents):
-                    raise CheckpointError(403, 'Workspace path escaped during restore')
+                self._safe_path(binding, path)
                 data = self._git(root, 'cat-file', 'blob', f'{ref}:{path}')
                 if _hash_bytes(data) != entry['files_sha256'][path]:
                     raise CheckpointError(409, 'Checkpoint content changed; restore refused')
@@ -634,26 +864,30 @@ class CheckpointService:
                 raise
             except OSError:
                 raise CheckpointError(503, 'Checkpoint file could not be restored') from None
-            # Recheck after the Git subprocess, which is an external scheduling gap.
-            target = self._safe_path(binding, path)
-            if current is not None:
-                observed = _hash_bytes(target.read_bytes()) if target.is_file() else None
-                if observed != current[path]:
-                    raise CheckpointError(409, 'Restore target changed after approval')
-            if os.name != 'nt':
-                self._replace_at_root(binding, path, data, current)
-                continue
-            handle, tmp = tempfile.mkstemp(dir=str(parent), prefix='.ckpt-', suffix='.tmp')
+            # Recheck after Git, before handing off to the handle-relative writer.
             try:
-                with os.fdopen(handle, 'wb') as stream:
-                    stream.write(data)
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                os.replace(tmp, target)
-                restored += 1
-            finally:
-                if os.path.exists(tmp):
-                    os.unlink(tmp)
+                target = self._safe_path(binding, path)
+                if current is not None:
+                    observed = _hash_bytes(target.read_bytes()) if target.is_file() else None
+                    if observed != current[path]:
+                        raise CheckpointError(409, 'Restore target changed after approval')
+            except OSError:
+                raise CheckpointError(503, 'Checkpoint file could not be restored') from None
+            if os.name != 'nt':
+                try:
+                    self._replace_at_root(binding, path, data, current)
+                except OSError:
+                    raise CheckpointError(503, 'Checkpoint file could not be restored') from None
+            else:
+                from .win32_replace import replace_anchored
+                try:
+                    replace_anchored(str(root), path, data, root_identity=binding.root_identity,
+                                     expected_sha256=current[path] if current is not None else None)
+                except CheckpointError:
+                    raise
+                except Exception:
+                    raise CheckpointError(503, 'Windows anchored restore failed') from None
+            restored.append(path)
 
     def _replace_at_root(self, binding, path, data, current):
         flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -672,22 +906,28 @@ class CheckpointService:
                     next_fd = os.open(component, flags, dir_fd=fd)
                 os.close(fd)
                 fd = next_fd
-            if current is not None:
-                try:
-                    source = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
-                except FileNotFoundError:
-                    digest = None
-                else:
-                    with os.fdopen(source, 'rb') as stream:
-                        digest = _hash_bytes(stream.read(MAX_FILE_BYTES + 1))
-                if digest != current[path]:
-                    raise CheckpointError(409, 'Restore target changed after approval')
             handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                              0o600, dir_fd=fd)
             with os.fdopen(handle, 'wb') as stream:
                 stream.write(data)
                 stream.flush()
                 os.fsync(stream.fileno())
+            if current is not None and current[path] is None:
+                try:
+                    os.link(temporary, parts[-1], src_dir_fd=fd, dst_dir_fd=fd,
+                            follow_symlinks=False)
+                except FileExistsError:
+                    raise CheckpointError(409, 'Restore target changed after approval') from None
+                return
+            if current is not None:
+                try:
+                    source = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+                except FileNotFoundError:
+                    raise CheckpointError(409, 'Restore target changed after approval') from None
+                with os.fdopen(source, 'rb') as stream:
+                    digest = _hash_bytes(stream.read(MAX_FILE_BYTES + 1))
+                if digest != current[path]:
+                    raise CheckpointError(409, 'Restore target changed after approval')
             os.replace(temporary, parts[-1], src_dir_fd=fd, dst_dir_fd=fd)
         finally:
             try:
